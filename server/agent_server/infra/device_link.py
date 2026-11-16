@@ -4,10 +4,12 @@ After ``POST /api/v3/device/ready`` the worker that took the request becomes the
 device's holder: it opens ``Link/attach`` and ``Link/outbox`` and keeps them open.
 
 - Presence is the open ``attach`` stream. The holder writes the shared lease
-  ``connector:presence:{deviceId}`` (``{"instanceId": worker, "connectionId":
-  "lc_…", "ready": true, "transport": "mesh"}``), renews it on every heartbeat
-  (every 20 s, TTL 60 s) and deletes it by value when the stream ends, so an
-  older generation never deletes a newer one. v2 code that asks
+  ``connector:presence:{deviceId}`` (``{"instanceId": worker, "holderId":
+  "<worker>:<nonce>", "connectionId": "lc_…", "ready": true, "transport":
+  "mesh"}``), renews it on every heartbeat (every 20 s, TTL 60 s) and deletes
+  it by value when the stream ends, so an older holder, of this generation or
+  an older one, never deletes a newer one. ``ready`` again with the current
+  ``connectionId`` takes the link over. v2 code that asks
   ``ConnectorRpcManager.is_online`` sees v3 devices through the same key.
 - ``outbox`` items are handed to a handler and acknowledged cumulatively after
   it returns; a handler failure closes the pump so the device resends.
@@ -19,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import secrets
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -88,8 +91,16 @@ class DeviceLinkHub:
         return self._coordinator.key("connector", "presence", device_id)
 
     def _lease_value(self, connection_id: str) -> str:
+        # ``holderId`` is unique per hold: one connectionId can be held by two workers in turn
+        # (ready is retried after a holder change), and only the current holder may renew or delete.
         return json.dumps(
-            {"connectionId": connection_id, "instanceId": self.worker_id, "ready": True, "transport": "mesh"},
+            {
+                "connectionId": connection_id,
+                "holderId": f"{self.worker_id}:{secrets.token_urlsafe(8)}",
+                "instanceId": self.worker_id,
+                "ready": True,
+                "transport": "mesh",
+            },
             separators=(",", ":"),
             sort_keys=True,
         )

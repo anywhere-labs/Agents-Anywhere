@@ -24,6 +24,11 @@ from agent_server.api.connector_runtimes import (
     parse_runtime_model_catalog_response,
     parse_runtime_permission_catalog_response,
 )
+from agent_server.api.device_session_reads import (
+    device_events,
+    device_snapshot,
+    device_timeline,
+)
 from agent_server.api.server_push_websocket import (
     run_server_push_until_disconnect,
 )
@@ -35,6 +40,7 @@ from agent_server.core.capabilities import (
 from agent_server.core.events import (
     EventCursorError,
     event_cursor,
+    parse_event_cursor,
     protocol_event,
 )
 from agent_server.core.models import (
@@ -70,6 +76,11 @@ from agent_server.core.protocol import (
     ProtocolTimelineResponse,
     ProtocolTimelineSnapshot,
 )
+from agent_server.core.protocol_v1_2 import (
+    ProtocolEventRecoveryResponseV12,
+    ProtocolSessionSnapshotResponseV12,
+    ProtocolTimelineResponseV12,
+)
 from agent_server.core.runtime_identity import (
     SessionRuntimeBindingError,
     resolve_session_runtime_binding,
@@ -78,6 +89,7 @@ from agent_server.core.utc import utc_now
 from agent_server.deps import (
     current_user_id,
     get_catalog_service,
+    get_device_reads,
     get_device_runtime_service,
     get_event_recovery_service,
     get_message_queue_wake,
@@ -105,6 +117,7 @@ from agent_server.services.connector_presence import (
     with_effective_session_connector_statuses,
 )
 from agent_server.services.dashboard_events import publish_dashboard_changed
+from agent_server.services.device_reads import DeviceReadService
 from agent_server.services.device_runtimes import (
     DeviceRuntimeError,
     DeviceRuntimeService,
@@ -833,7 +846,7 @@ async def patch_session_selections(
     )
 
 
-@router.get("/{session_id}/timeline", response_model=ProtocolTimelineResponse)
+@router.get("/{session_id}/timeline", response_model=ProtocolTimelineResponseV12)
 async def session_timeline(
     session_id: str,
     after_seq: int = Query(0, alias="afterSeq", ge=0),
@@ -845,9 +858,24 @@ async def session_timeline(
     timeline_write_buffer: TimelineWriteBuffer = Depends(
         get_timeline_write_buffer
     ),
+    reads: DeviceReadService = Depends(get_device_reads),
 ) -> ProtocolTimelineResponse:
     try:
-        await db.get_session(session_id, user_id=user_id)
+        session = await db.get_session(session_id, user_id=user_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="session not found") from None
+    if await reads.is_v3_device(session.connectorId):
+        # v3: the device holds the timeline (D1).
+        return await device_timeline(
+            db=db,
+            reads=reads,
+            session=session,
+            mode=mode,
+            after_seq=after_seq,
+            before_order_seq=before_order_seq,
+            limit=limit,
+        )
+    try:
         async with timeline_write_buffer.session_fence(session_id):
             if mode == "latest":
                 items, has_more = await db.list_timeline_latest(
@@ -890,7 +918,45 @@ async def session_timeline(
 # - new: GET /sessions/{session_id}/runtime/state for live runtime state
 
 
-@router.get("/{session_id}/snapshot", response_model=ProtocolSessionSnapshotResponse)
+async def _device_session_snapshot(
+    *,
+    db: Store,
+    manager: ConnectorRpcManager,
+    catalogs: CatalogService,
+    reads: DeviceReadService,
+    session: SessionView,
+    user_id: str,
+    limit: int,
+) -> ProtocolSessionSnapshotResponseV12:
+    """Snapshot of a session on a v3 device: directory facts here, content from the device."""
+
+    session = await with_effective_session_connector_status(manager, session)
+    # Stored facts only: the device body carries live capabilities when it has them, so
+    # first paint makes one device call, not two.
+    runtime_capabilities = ProtocolCapabilitySet.model_validate(
+        await db.get_protocol_capabilities(session.connectorId, user_id=user_id)
+    )
+    runtime_id = _session_runtime_id(session)
+    model_catalog = await catalogs.model_catalog(session.connectorId, runtime_id=runtime_id, user_id=user_id)
+    permission_catalog = await catalogs.permission_catalog(session.connectorId, runtime_id=runtime_id, user_id=user_id)
+    return await device_snapshot(
+        db=db,
+        reads=reads,
+        session=session,
+        limit=limit,
+        runtime_capabilities=runtime_capabilities,
+        effective_capabilities=derive_session_effective_capabilities(
+            session=session, runtime_capabilities=runtime_capabilities
+        ),
+        catalogs={
+            key: catalog.model_dump(mode="json")
+            for key, catalog in (("model", model_catalog), ("permission", permission_catalog))
+            if catalog is not None
+        },
+    )
+
+
+@router.get("/{session_id}/snapshot", response_model=ProtocolSessionSnapshotResponseV12)
 async def session_snapshot(
     session_id: str,
     background_tasks: BackgroundTasks,
@@ -907,6 +973,7 @@ async def session_snapshot(
         get_timeline_write_buffer
     ),
     usage_recorder: UsageRecorder = Depends(get_usage_recorder),
+    reads: DeviceReadService = Depends(get_device_reads),
 ) -> ProtocolSessionSnapshotResponse:
     snapshot_started_at = time.monotonic()
 
@@ -926,6 +993,16 @@ async def session_snapshot(
         log_snapshot_stage("authorization", stage_started_at)
         # Opening a session is platform usage; the recorder folds quick repeats.
         await usage_recorder.touch_session_view(session, user_id=user_id)
+        if await reads.is_v3_device(session.connectorId):
+            return await _device_session_snapshot(
+                db=db,
+                manager=manager,
+                catalogs=catalogs,
+                reads=reads,
+                session=session,
+                user_id=user_id,
+                limit=limit,
+            )
 
         stage_started_at = time.monotonic()
         notices = await read_session_notices_for_snapshot(manager, session)
@@ -996,7 +1073,7 @@ async def session_snapshot(
         session_id=session_id,
         previous_state=runtime_state,
     )
-    return ProtocolSessionSnapshotResponse(
+    return ProtocolSessionSnapshotResponseV12(
         goalState=await db.read_goal(session_id),
         session=session.model_dump(mode="json"),
         state=(
@@ -1028,14 +1105,19 @@ async def session_snapshot(
 # - new: WS /dashboard/ws
 
 
-@router.get("/{session_id}/events")
+@router.get("/{session_id}/events", response_model=ProtocolEventRecoveryResponseV12)
 async def session_events(
     session_id: str,
     after: str = Query("seq:0"),
     user_id: str = Depends(current_user_id),
     recovery: EventRecoveryService = Depends(get_event_recovery_service),
+    db: Store = Depends(get_store),
+    reads: DeviceReadService = Depends(get_device_reads),
 ) -> ProtocolEventRecoveryResponse:
     try:
+        session = await db.get_session(session_id, user_id=user_id)
+        if await reads.is_v3_device(session.connectorId):
+            return await device_events(reads=reads, session=session, after_seq=parse_event_cursor(after))
         return await recovery.recover(
             session_id,
             after=after,
@@ -1100,7 +1182,7 @@ async def session_ws(
         while True:
             try:
                 message = await asyncio.wait_for(queue.get(), timeout=15.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 await websocket.send_json(
                     {"type": "keepalive", "serverTime": utc_now()}
                 )
@@ -1323,6 +1405,7 @@ async def execute_session_command(
         raise HTTPException(status_code=404, detail="session not found") from None
     if payload.command == "plan":
         from uuid import uuid4
+
         from agent_server.core.capabilities import SESSION_PLANNING
         from agent_server.core.planning.commands import parse_plan_command
         from agent_server.core.planning.models import PlanningRequest

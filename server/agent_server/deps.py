@@ -23,6 +23,7 @@ from agent_server.services.connector_ingest import ConnectorIngestService
 from agent_server.services.connector_notifications import ConnectorNotificationService
 from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.connector_shell import ConnectorShellService
+from agent_server.services.device_reads import DeviceReadService
 from agent_server.services.device_runtimes import (
     DeviceRuntimeError,
     DeviceRuntimeService,
@@ -239,6 +240,10 @@ def get_rpc(conn: HTTPConnection) -> ConnectorRpcManager:
 
 def get_device_mesh(conn: HTTPConnection) -> DeviceMesh:
     return conn.app.state.device_mesh
+
+
+def get_device_reads(conn: HTTPConnection) -> DeviceReadService:
+    return conn.app.state.device_reads
 
 
 def get_terminal_broker(conn: HTTPConnection) -> TerminalBroker:

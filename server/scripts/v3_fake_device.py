@@ -50,6 +50,7 @@ from agent_server.core.device_meshcall import (
     StreamChunk,
     command_route,
 )
+from agent_server.core.events import protocol_event
 
 SERVICE_PREFIX = "aa.device.v1"
 POLL_SECONDS = 0.01
@@ -82,12 +83,12 @@ class FakeSession:
             toSeq=self.head_seq,
             resetSeq=self.reset_seq,
             events=[
-                {
-                    "type": "timeline.item_created",
-                    "sessionId": self.session_id,
-                    "seq": self.head_seq,
-                    "payload": {"item": item},
-                }
+                protocol_event(
+                    self.session_id,
+                    sequence=self.head_seq,
+                    event_type="timeline.item_created",
+                    payload={"item": item},
+                )
             ],
         )
         for queue in tuple(self.watchers):
@@ -296,12 +297,9 @@ def _make_services(state: FakeDeviceState) -> list[object]:
                 )
             changed = [item for item in session.items if item.get("updatedSeq", 0) > afterSeq][:limit]
             events = [
-                {
-                    "type": "timeline.item_updated",
-                    "sessionId": sessionId,
-                    "seq": item["updatedSeq"],
-                    "payload": {"item": item},
-                }
+                protocol_event(
+                    sessionId, sequence=item["updatedSeq"], event_type="timeline.item_updated", payload={"item": item}
+                )
                 for item in changed
             ]
             return ChangesSinceResponse(

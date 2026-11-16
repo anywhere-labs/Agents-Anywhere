@@ -73,11 +73,12 @@ from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.infra.tokens_access_cache import TokensAccessCache
 from agent_server.infra.tokens_client import TokensClient
 from agent_server.infra.ws_tickets import ClientWsTicketManager
-from agent_server.services.device_link import DeviceLinkService
 from agent_server.services.channel_reconciliation import ChannelReconciler
 from agent_server.services.connector_deletion import ConnectorDeletionRecovery
 from agent_server.services.connector_rpc import ConnectorServiceError
 from agent_server.services.dashboard_events import publish_dashboard_changed
+from agent_server.services.device_link import DeviceLinkService
+from agent_server.services.device_reads import DeviceReadService
 from agent_server.services.device_runtimes import DeviceRuntimeService
 from agent_server.services.effective_capabilities import (
     ConnectorCapabilityRefresh,
@@ -382,6 +383,9 @@ def create_app(
         app.state.timeline_broker,
         capability_refresh=app.state.capability_refresh,
         usage_recorder=app.state.usage_recorder,
+    )
+    app.state.device_reads = DeviceReadService(
+        app.state.store, app.state.device_mesh, app.state.device_link_hub
     )
     app.state.usage_maintenance = UsageMaintenanceLoop(
         app.state.store,
