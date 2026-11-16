@@ -14,6 +14,11 @@ const contracts = [
     generatedDir: path.join(webRoot, "src", "generated", "protocol", "v1_1") },
   { contractDir: path.join(repositoryRoot, "contracts", "protocol", "1.2"),
     generatedDir: path.join(webRoot, "src", "generated", "protocol", "v1_2") },
+  // v3: end-to-end encryption (pairing, tunnel frames) and port preview.
+  { contractDir: path.join(repositoryRoot, "contracts", "e2ee", "1.0"),
+    generatedDir: path.join(webRoot, "src", "generated", "e2ee", "v1_0") },
+  { contractDir: path.join(repositoryRoot, "contracts", "preview", "1.0"),
+    generatedDir: path.join(webRoot, "src", "generated", "preview", "v1_0") },
   { contractDir: path.join(repositoryRoot, "contracts", "runtime-workflows", "1.2"),
     generatedDir: path.join(webRoot, "src", "generated", "runtime-workflows", "v1_2") },
 ]
