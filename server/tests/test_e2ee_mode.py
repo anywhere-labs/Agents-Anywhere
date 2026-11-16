@@ -7,7 +7,7 @@ import asyncio
 import json
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 from starlette.websockets import WebSocketDisconnect
 from test_backend_mvp import auth_headers, create_connector_and_session, make_client
 
@@ -316,6 +316,48 @@ def test_switching_to_required_clears_plaintext_display_once(tmp_path, monkeypat
     assert asyncio.run(apply_e2ee_mode(store, E2eeSettings("required"))).purged_sessions == 0
     back = asyncio.run(apply_e2ee_mode(store, E2eeSettings("off")))
     assert back.previous == "required" and back.purged_sessions == 0
+
+
+async def _set_envelopes(store, session_id, *, device, user):
+    async with store.engine.begin() as conn:
+        await conn.execute(
+            update(sessions)
+            .where(sessions.c.id == session_id)
+            .values(display_device=json.dumps(device), display_user=json.dumps(user))
+        )
+
+
+async def _envelopes(store, session_id):
+    async with store.engine.connect() as conn:
+        row = (
+            await conn.execute(
+                select(sessions.c.display_device, sessions.c.display_user).where(sessions.c.id == session_id)
+            )
+        ).first()
+    return tuple(json.loads(value) if value else None for value in row)
+
+
+SEALED = {"mode": "sealed", "keyId": "k1", "payload": "c2VhbGVk"}
+
+
+@pytest.mark.parametrize(
+    ("device", "user", "kept"),
+    [
+        ({"mode": "plain", "payload": {"title": "Payroll", "cwd": "/srv/payroll"}}, SEALED, (None, SEALED)),
+        (SEALED, {"mode": "plain", "payload": {"title": "Payroll fix"}}, (SEALED, None)),
+    ],
+)
+def test_switching_to_required_clears_plain_envelopes_and_keeps_sealed_ones(tmp_path, monkeypatch, device, user, kept):
+    client = _client(tmp_path, monkeypatch, "off")
+    _, _, session_id, _ = create_connector_and_session(client)
+    store = client.app.state.store
+    asyncio.run(_set_envelopes(store, session_id, device=device, user=user))
+    asyncio.run(apply_e2ee_mode(store, E2eeSettings("off")))
+
+    switched = asyncio.run(apply_e2ee_mode(store, E2eeSettings("required")))
+    assert switched.purged_sessions >= 1
+    assert asyncio.run(_envelopes(store, session_id)) == kept
+    assert asyncio.run(_session_display(store, session_id)) == (None, None, None)
 
 
 # ---------------------------------------------------------------------------
