@@ -351,6 +351,7 @@ V2_COMMAND_METHODS: dict[str, str] = {
     "interaction.respond": "session.respondNotice",
     "session.selections.update": "session.select",
     "session.sync": "session.sync",
+    "session.creation.begin": "session.creation.begin",
     "session.creation.respond": "session.creation.respond",
     "session.creation.cancel": "session.creation.cancel",
     "workspace.preparation.respond": "workspace.preparation.respond",
