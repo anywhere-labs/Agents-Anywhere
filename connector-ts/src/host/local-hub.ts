@@ -4,11 +4,21 @@ import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync, ch
 import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { LocalRouter, Mesh, type RunningServer } from 'meshcall'
 
 import { rpcLogger } from '../mesh/index.js'
 import { agentsAnywhereHome } from './paths.js'
+
+/**
+ * The Router a packaged build ships next to its bundle (`<bundle>/router/meshcall-router`, see
+ * scripts/fetch-router.mjs). Running from source there is none, and meshcall's own lookup applies.
+ */
+export function shippedRouterBinary(base: string | URL = import.meta.url): string | undefined {
+  const path = fileURLToPath(new URL(`./router/${process.platform === 'win32' ? 'meshcall-router.exe' : 'meshcall-router'}`, base))
+  return existsSync(path) ? path : undefined
+}
 
 export const CONTROL_SERVICE = 'aa.local.v2.Control'
 export const LOGS_SERVICE = 'aa.local.v2.Logs'
@@ -247,7 +257,7 @@ export class LocalHub {
       ...this.endpoint,
       authFile,
       maxFrameSize: this.options.maxFrameSize ?? 4 * 1024 * 1024,
-      ...(this.options.binaryPath !== undefined ? { binaryPath: this.options.binaryPath } : process.env.MESHCALL_ROUTER_BINARY ? { binaryPath: process.env.MESHCALL_ROUTER_BINARY } : {}),
+      ...routerBinaryOption(this.options.binaryPath),
     })
     try {
       await router.start()
@@ -297,4 +307,10 @@ export class LocalHub {
       await this.startServing()
     }).catch(error => this.log('error', `local router restart failed: ${(error as Error).message}`))
   }
+}
+
+/** Explicit path, then `MESHCALL_ROUTER_BINARY`, then the shipped Router; none leaves meshcall to search. */
+function routerBinaryOption(configured: string | undefined): { binaryPath?: string } {
+  const binaryPath = configured ?? (process.env.MESHCALL_ROUTER_BINARY || undefined) ?? shippedRouterBinary()
+  return binaryPath !== undefined ? { binaryPath } : {}
 }
