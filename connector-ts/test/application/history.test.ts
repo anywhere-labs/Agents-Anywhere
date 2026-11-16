@@ -120,6 +120,28 @@ describe('native history projection', () => {
     expect(native.reads).toEqual([])
   })
 
+  it("shows an unopened session's permission as the Runtime reported it, and nothing when it did not", async () => {
+    native.add('a', 1, { permission: 'codex:permission:full_access' })
+    native.add('b', 1)
+    await history.scan('rti_pi', 's')
+    const readers = new DeviceReaders(store, clock.nowIso, { sessionCapabilities: async () => null, catalogs: async () => null, selections: id => history.nativeSelections(id) })
+    expect(((await readers.sessionState({ sessionId: 'sess_rti_pi_a' })).state as Record<string, unknown>).selections).toEqual({ permission: 'codex:permission:full_access' })
+    // No report, no default.
+    expect((await readers.sessionState({ sessionId: 'sess_rti_pi_b' })).state).not.toHaveProperty('selections')
+    expect(((await readers.snapshot({ sessionId: 'sess_rti_pi_a' })).state as Record<string, unknown>).selections).toEqual({ permission: 'codex:permission:full_access' })
+    // Open here: the session's own configuration counts.
+    bound.add('sess_rti_pi_a')
+    expect(await history.nativeSelections('sess_rti_pi_a')).toBeNull()
+    bound.clear()
+    // A later report changes it; a report without one forgets it.
+    native.add('a', 0, { permission: 'codex:permission:request_approval' })
+    await history.scan('rti_pi', 's2')
+    expect(await history.nativeSelections('sess_rti_pi_a')).toEqual({ permission: 'codex:permission:request_approval' })
+    delete (native.summaries.find(summary => summary.nativeSessionId === 'a') as { permission?: string }).permission
+    await history.scan('rti_pi', 's3')
+    expect(await history.nativeSelections('sess_rti_pi_a')).toBeNull()
+  })
+
   it('projects older pages when a client pages back, below what is stored', async () => {
     native.add('a', 8)
     await history.scan('rti_pi', 's')

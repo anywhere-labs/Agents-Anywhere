@@ -146,6 +146,7 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
             const handle = await runtimes.started(session.runtimeId)
             return handle === null || handle === undefined ? null : capabilitySet(handle.capabilities(), { runtime: session.runtimeId, sessionId: null })
           },
+          selections: sessionId => history.nativeSelections(sessionId),
           catalogs: async sessionId => {
             const session = await store.sessions.get(sessionId)
             const handle = session === null ? null : await runtimes.started(session.runtimeId)

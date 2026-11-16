@@ -40,6 +40,8 @@ export interface NativeHistoryDeps {
 }
 
 const stateKey = (sessionId: string): string => `history:${sessionId}`
+/** The permission the Runtime reported for a native session not open here (`NativeSessionSummary.permission`). */
+const permissionKey = (sessionId: string): string => `native-permission:${sessionId}`
 
 /**
  * When native history is projected into the local store (04-connector.md §6.6):
@@ -78,6 +80,31 @@ export class NativeHistory {
 
   private async saveState(session: Session, state: HistoryState): Promise<void> {
     await this.deps.store.kv.set(session.runtimeId, stateKey(session.sessionId), state)
+  }
+
+  /**
+   * Selections as the Runtime last reported them for a session that is not open here: today the permission of an
+   * unopened Codex thread (`{permission: <selection id>}`). Null when nothing was reported (no default is assumed)
+   * or the session is open, where its own configuration is what counts.
+   */
+  public async nativeSelections(sessionId: string): Promise<Record<string, string> | null> {
+    if (this.deps.isBound?.(sessionId) === true) return null
+    const session = await this.deps.store.sessions.get(sessionId)
+    if (session === null) return null
+    const stored = await this.deps.store.kv.get(session.runtimeId, permissionKey(sessionId))
+    const permission = (stored as { permission?: unknown } | null | undefined)?.permission
+    return typeof permission === 'string' && permission !== '' ? { permission } : null
+  }
+
+  /** Keeps the last reported permission; a summary without one forgets it rather than keeping a stale value. */
+  private async rememberPermission(session: Session, permission: string | undefined): Promise<void> {
+    const key = permissionKey(session.sessionId)
+    const stored = (await this.deps.store.kv.get(session.runtimeId, key)) as { permission?: unknown } | null | undefined
+    if (permission === undefined || permission === '') {
+      if (stored !== null && stored !== undefined) await this.deps.store.kv.delete(session.runtimeId, key)
+      return
+    }
+    if (stored?.permission !== permission) await this.deps.store.kv.set(session.runtimeId, key, { permission })
   }
 
   private async source(sessionId: string): Promise<{ session: Session; handle: RuntimeHandle; ref: NativeSessionRef } | null> {
@@ -293,6 +320,7 @@ export class NativeHistory {
     if (summary.cwd !== undefined && summary.cwd !== session.cwd) patch.cwd = summary.cwd
     if (session.sourceAvailability !== availability) patch.sourceAvailability = availability
     if (Object.keys(patch).length > 0) session = (await this.deps.store.sessions.update(sessionId, patch)).session
+    await this.rememberPermission(session, summary.permission)
     const state = await this.state(session)
     if (state === null || (summary.updatedAt !== undefined && summary.updatedAt !== state.nativeUpdatedAt)) {
       if (this.deps.isBound?.(sessionId) !== true) await this.catchUp(sessionId, summary.updatedAt ?? null)

@@ -11,6 +11,11 @@ import { timelineEvents } from './client-shape.js'
 export interface RuntimeFacts {
   sessionCapabilities(sessionId: string): Promise<Record<string, unknown> | null>
   catalogs(sessionId: string): Promise<Record<string, unknown> | null>
+  /**
+   * `state.selections` of a session that is not open (the Runtime's own report, e.g. an unopened Codex thread's
+   * permission); null when there is none. An open session's selections travel with its configuration events.
+   */
+  selections?(sessionId: string): Promise<Record<string, string> | null>
 }
 
 /** Native history projected on demand (application `NativeHistory`); absent for Runtimes without native records. */
@@ -58,13 +63,14 @@ export class DeviceReaders {
     await this.history?.ensureLatest(request.sessionId)
     const session = await this.session(request.sessionId)
     const page = await this.store.timeline.read(request.sessionId, 'latest', null, request.limit ?? SNAPSHOT_LIMIT, request.byteBudget ?? PAGE_BUDGET)
-    const [interactions, queue, planning, goal, capabilities, catalogs] = await Promise.all([
+    const [interactions, queue, planning, goal, capabilities, catalogs, selections] = await Promise.all([
       this.store.interactions.list(request.sessionId, true),
       this.store.queues.get(request.sessionId),
       this.store.planning.load(request.sessionId),
       this.store.goals.load(request.sessionId),
       this.facts.sessionCapabilities(request.sessionId),
       this.facts.catalogs(request.sessionId),
+      this.selections(request.sessionId),
     ])
     return {
       historySource: 'live',
@@ -76,7 +82,7 @@ export class DeviceReaders {
       queue: queue.items.length > 0 || queue.revision > 0 ? queueRules.queueState(queue) : null,
       planning: planning === null ? null : planningWire(planning),
       goalState: goal === null ? null : goalWire(goal, session.takeover),
-      state: this.state(session),
+      state: this.state(session, selections),
       runtimeCapabilities: capabilities,
       catalogs: catalogs ?? {},
     }
@@ -117,7 +123,11 @@ export class DeviceReaders {
     return { sessionId: request.sessionId, notices: (await this.store.interactions.list(request.sessionId, true)).map(noticeOf) }
   }
 
-  private state(session: Session): Record<string, unknown> {
+  private async selections(sessionId: string): Promise<Record<string, string> | null> {
+    return (await this.facts.selections?.(sessionId)) ?? null
+  }
+
+  private state(session: Session, selections: Record<string, string> | null): Record<string, unknown> {
     return {
       sessionId: session.sessionId,
       runtime: session.runtimeType,
@@ -128,11 +138,13 @@ export class DeviceReaders {
       updatedAt: session.lastActivityAt,
       updatedSeq: session.clock.headSeq,
       metadata: { activeTurnId: session.activeTurn?.turnId ?? null },
+      ...(selections !== null ? { selections } : {}),
     }
   }
 
   public async sessionState(request: { sessionId: string }): Promise<Record<string, unknown>> {
-    return { state: this.state(await this.session(request.sessionId)) }
+    const session = await this.session(request.sessionId)
+    return { state: this.state(session, await this.selections(request.sessionId)) }
   }
 
   public async capabilities(request: { sessionId: string }): Promise<Record<string, unknown>> {
