@@ -27,6 +27,8 @@ final class V2ClientServices {
     let runtimeWorkflows: V2RuntimeWorkflowAPI
     let modelConfigAPI: V2ModelConfigAPI
     let newSession: NewSessionModel
+    /// Port preview actions; the instance's availability lasts for this app run.
+    let portPreviews: PortPreviewStore
 
     /// Parent of every account's offline directory (one per server + account).
     nonisolated static let defaultOfflineRoot = URL.applicationSupportDirectory.appendingPathComponent("AgentsAnywhere/Offline/v1")
@@ -39,6 +41,7 @@ final class V2ClientServices {
         self.offlineRoot = offlineRoot
         runtimeWorkflows = V2RuntimeWorkflowAPI(transport: api.sessions.transport)
         modelConfigAPI = api.modelConfig
+        portPreviews = PortPreviewStore(api: api.previews)
         scope = V2ClientScope(serverURL: api.serverURL, accountID: accountID)
         let cacheDirectory = offlineRoot.appendingPathComponent(V2RestorationStore.scopeKey(scope))
         localStore = V2LocalStore(directory: cacheDirectory)

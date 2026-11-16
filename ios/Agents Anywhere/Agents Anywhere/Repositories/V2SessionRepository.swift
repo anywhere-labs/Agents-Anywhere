@@ -595,6 +595,12 @@ final class V2SessionRepository {
 
     private func receive(_ event: V2SessionEvent, entry: Entry) async throws {
         guard event.sessionId == entry.id else { return }
+        if V3SessionPorts.isPortEvent(event.type) {
+            // Preview 1.0 device facts ride the session socket but are not
+            // timeline data: they never recover, acknowledge or move the cursor.
+            entry.model.observePorts(event)
+            return
+        }
         if event.type == "goal.state.updated", let raw = event.payload["state"] {
             entry.model.observeGoal(try JSONDecoder().decode(V2GoalState.self, from: JSONEncoder().encode(raw)))
             return

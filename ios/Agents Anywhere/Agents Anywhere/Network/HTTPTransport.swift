@@ -201,10 +201,13 @@ nonisolated struct URLSessionHTTPTransport: HTTPTransport {
 }
 
 nonisolated private let v2Namespace = "/api/v2"
+/// Resources outside the default namespace name it themselves, e.g. port
+/// preview's `/api/v3/previews`. These paths are used as given.
+nonisolated private let versionedNamespaces = [v2Namespace, "/api/v3"]
 
 nonisolated func v2APIPath(_ path: String) -> String {
     let normalized = path.hasPrefix("/") ? path : "/\(path)"
-    if normalized == v2Namespace || normalized.hasPrefix("\(v2Namespace)/") {
+    if versionedNamespaces.contains(where: { normalized == $0 || normalized.hasPrefix("\($0)/") }) {
         return normalized
     }
     return "\(v2Namespace)\(normalized)"

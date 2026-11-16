@@ -157,6 +157,19 @@ foreground), edits a draft of the pushed model choices and saves it in one
 request. `TokensAccountPresentation` sums yuan amounts as integer
 ten-thousandths, never as floating point.
 
+## Port preview
+
+Preview 1.0 (`contracts/preview/1.0`) lives under `/api/v3/previews`;
+`V3PreviewAPI` names that path itself and the HTTP transport passes `/api/v3`
+paths through instead of adding `/api/v2`. `port.listening` (the device's whole
+list) and `port.closed` arrive on the session socket; the repository hands them
+to `V2SessionModel.listeningPorts`, keeping only this session's ports, before
+any recovery logic, so they never acknowledge or move the cursor. A device
+going offline clears the list. `PortPreviewStore` (account scope) creates a
+preview on demand and exchanges a fresh one-time ticket for every open, which
+`SessionPortPreviewCard` shows in `SFSafariViewController`; a 404 or
+`preview_disabled` hides the card for the rest of the app run.
+
 ## Migration boundary
 
 Retired session/runtime API methods, models and the chat placeholder live in

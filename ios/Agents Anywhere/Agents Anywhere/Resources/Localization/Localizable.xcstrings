@@ -25280,6 +25280,258 @@
           }
         }
       }
+    },
+    "检测到 %@": {
+      "comment": "Port preview card above the composer: a session process listens on this address (preview 1.0).",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Detected %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "检测到 %@"
+          }
+        }
+      }
+    },
+    "预览": {
+      "comment": "Port preview card: opens the port in the in-app browser.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preview"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "预览"
+          }
+        }
+      }
+    },
+    "停止预览": {
+      "comment": "Port preview card: closes the open preview.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stop preview"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "停止预览"
+          }
+        }
+      }
+    },
+    "复制链接": {
+      "comment": "Port preview card: copies the preview domain address.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copy link"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "复制链接"
+          }
+        }
+      }
+    },
+    "预览不是端到端加密的": {
+      "comment": "Port preview plaintext notice title (PreviewView.plaintextNotice).",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The preview is not end-to-end encrypted"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "预览不是端到端加密的"
+          }
+        }
+      }
+    },
+    "会话内容已端到端加密，但预览页面的流量会经过服务器转发，服务器能看到页面内容。": {
+      "comment": "Port preview plaintext notice message.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Session content is end-to-end encrypted, but preview traffic is relayed by the server, which can see the page."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "会话内容已端到端加密，但预览页面的流量会经过服务器转发，服务器能看到页面内容。"
+          }
+        }
+      }
+    },
+    "继续预览": {
+      "comment": "Port preview plaintext notice: confirms opening the preview.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open preview"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "继续预览"
+          }
+        }
+      }
+    },
+    "这个端口已经没有在监听了。": {
+      "comment": "Port preview error port_not_listening.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nothing is listening on this port anymore."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这个端口已经没有在监听了。"
+          }
+        }
+      }
+    },
+    "只能预览本机地址上的端口。": {
+      "comment": "Port preview error port_not_local.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Only ports on local addresses can be previewed."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "只能预览本机地址上的端口。"
+          }
+        }
+      }
+    },
+    "同时打开的预览已达上限，请先停止其他预览。": {
+      "comment": "Port preview error preview_limit.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Too many previews are open. Stop another preview first."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同时打开的预览已达上限，请先停止其他预览。"
+          }
+        }
+      }
+    },
+    "设备上的预览通道暂时不可用，请稍后重试。": {
+      "comment": "Port preview error preview_unavailable.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The device's preview tunnel is unavailable. Try again later."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设备上的预览通道暂时不可用，请稍后重试。"
+          }
+        }
+      }
+    },
+    "这个服务器没有开启端口预览。": {
+      "comment": "Port preview error preview_disabled.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Port preview isn't enabled on this server."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这个服务器没有开启端口预览。"
+          }
+        }
+      }
+    },
+    "设备离线，上线后才能预览。": {
+      "comment": "Port preview error connector_offline.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The device is offline. Preview is available once it's back."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设备离线，上线后才能预览。"
+          }
+        }
+      }
+    },
+    "无法建立预览，请稍后重试。": {
+      "comment": "Port preview: any other failure.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't set up the preview. Try again later."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法建立预览，请稍后重试。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

@@ -11,6 +11,7 @@ struct SessionChatView: View, Equatable {
     @State private var expandedNoticeID: String?
     private let fileService: V2WorkspaceFilesService
     private let detailService: V2SessionDetailService
+    private let portPreviews: PortPreviewStore
     private enum SessionSheet: Identifiable {
         case notices, details, files, preview(SessionFileReference, root: String? = nil)
         var id: String { switch self { case .notices: "notices"; case .details: "details"; case .files: "files"; case .preview(let reference, let root): "file:\(root ?? ""):\(reference.id)" } }
@@ -40,6 +41,7 @@ struct SessionChatView: View, Equatable {
         sessionIdentity = session
         self.deviceName = deviceName
         fileService = services.workspaceFiles; detailService = services.sessionDetail
+        portPreviews = services.portPreviews
         self.onMenu = onMenu
     }
     private var controls: ChatControlMetrics { .init(bodyLineHeight: bodyLineHeight) }
@@ -93,6 +95,7 @@ struct SessionChatView: View, Equatable {
                         if session.historyUnavailable && !session.timeline.isEmpty {
                             deviceOfflineNotice
                         }
+                        SessionPortPreviewCard(session: session, store: portPreviews)
                         ChatComposerDock(draft: session.composer, settings: model.settings,
                             maximumEditorHeight: min(160, max(72, geometry.size.height * 0.30)), controls: controls,
                             canSend: session.canSend || session.queueMode || ((model.goalMode || session.composer.text.hasPrefix("/goal")) && session.runtime.allows("session.goal")) || (V2PlanningCommand.parse(session.composer.text) != nil && session.runtime.allows("session.planning")), canAttach: model.canAttach,

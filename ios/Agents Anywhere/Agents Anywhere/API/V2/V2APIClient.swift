@@ -12,6 +12,8 @@ struct V2APIClient {
     let attachments: V2AttachmentAPI
     let modelConfig: V2ModelConfigAPI
     let realtime: V2RealtimeAPI
+    /// Port preview (`/api/v3/previews`).
+    let previews: V3PreviewAPI
     private let ownedURLSession: URLSession?
 
     init(
@@ -36,6 +38,7 @@ struct V2APIClient {
         planning = V2PlanningAPI(transport: transport)
         attachments = V2AttachmentAPI(transport: transport)
         modelConfig = V2ModelConfigAPI(transport: transport)
+        previews = V3PreviewAPI(transport: transport)
         realtime = V2RealtimeAPI(
             serverURL: serverURL,
             transport: transport,

@@ -148,8 +148,9 @@ struct V2SessionProjection {
             }
         case "runtime.catalog.updated":
             break // Catalog reads are independently cached and invalidated by the repository.
-        case "session.subscribed", "session.refetch_required", V2SessionEvent.catchupRequired:
-            return // These are recovery signals, never cursor acknowledgements.
+        case "session.subscribed", "session.refetch_required", V2SessionEvent.catchupRequired,
+             V3SessionPorts.listening, V3SessionPorts.closed:
+            return // Recovery signals and device port facts never acknowledge the cursor.
         default:
             data.lastExtensionEvent = event
         }
