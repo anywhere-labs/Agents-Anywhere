@@ -150,9 +150,15 @@ def hash_password_verifier(verifier: str, *, salt: str) -> str:
     return f"pbkdf2_sha256${salt}${verifier}"
 
 
-def create_user_access_token(user_id: str, expires_in: int = DEFAULT_USER_EXPIRES_IN) -> str:
+def create_user_access_token(
+    user_id: str, expires_in: int = DEFAULT_USER_EXPIRES_IN, *, family_id: str | None = None
+) -> str:
+    """``family_id``: the login the token belongs to; revoking it rejects the token."""
+
     header = {"alg": "HS256", "typ": "JWT"}
-    payload = {"sub": user_id, "exp": int(time.time()) + expires_in}
+    payload: dict[str, Any] = {"sub": user_id, "exp": int(time.time()) + expires_in}
+    if family_id is not None:
+        payload["fam"] = family_id
     signing_input = f"{_b64_json(header)}.{_b64_json(payload)}"
     signature = _b64_bytes(hmac.new(_secret(), signing_input.encode("utf-8"), hashlib.sha256).digest())
     return f"{signing_input}.{signature}"
@@ -182,6 +188,13 @@ def verify_signed_token(kind: str, token: str) -> dict[str, Any] | None:
 
 
 def verify_user_access_token(token: str) -> str | None:
+    claims = verify_user_access_claims(token)
+    return claims[0] if claims is not None else None
+
+
+def verify_user_access_claims(token: str) -> tuple[str, str | None] | None:
+    """``(user_id, family_id)`` of a valid token; tokens issued before families have no family."""
+
     try:
         header, payload, signature = token.split(".", 2)
         expected = _b64_bytes(hmac.new(_secret(), f"{header}.{payload}".encode(), hashlib.sha256).digest())
@@ -193,7 +206,10 @@ def verify_user_access_token(token: str) -> str | None:
     if int(data.get("exp") or 0) < int(time.time()):
         return None
     subject = data.get("sub")
-    return subject if isinstance(subject, str) and subject else None
+    if not isinstance(subject, str) or not subject:
+        return None
+    family = data.get("fam")
+    return subject, family if isinstance(family, str) and family else None
 
 
 def _b64_json(value: dict[str, Any]) -> str:

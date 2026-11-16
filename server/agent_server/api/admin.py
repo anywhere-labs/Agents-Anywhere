@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from agent_server.core.auth import hash_password_verifier
 from agent_server.core.models import (
@@ -108,6 +108,7 @@ async def create_user(
 async def update_user(
     user_id: str,
     payload: AdminUserUpdateRequest,
+    request: Request,
     db: Store = Depends(get_store),
     admin: UserView = Depends(require_admin),
 ) -> UserView:
@@ -130,9 +131,13 @@ async def update_user(
             updated = await db.update_user_role(target, payload.role)
         if payload.disabled is not None:
             updated = await db.set_user_disabled(target, payload.disabled)
+            if payload.disabled:
+                # Signing back in is required even if the account is enabled again.
+                await request.app.state.user_tokens.revoke_user(target, reason="account_disabled")
         password_hash = _password_hash_from_update(payload)
         if payload.password is not None or password_hash is not None:
             await db.update_user_password(target, payload.password, password_hash=password_hash)
+            await request.app.state.user_tokens.revoke_user(target, reason="password_reset")
     except KeyError:
         raise HTTPException(status_code=404, detail="user not found") from None
     except ValueError as exc:

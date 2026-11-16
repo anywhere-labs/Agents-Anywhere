@@ -21,6 +21,7 @@ All Server HTTP, SSE, and WebSocket API documentation should live under this dir
 - [Effective capability API](./capabilities.md): global and session-scoped effective capability semantics, paths, and realtime events.
 - [Capability event deduplication](./capability-event-deduplication.md): why repeated session capability events occurred and how live projection delivery is deduplicated safely.
 - [模型配置](model-config.md)：模型配置、预览、应用与恢复，Tokens Anywhere 链接，以及 Runtime 的成熟度和模型连接状态。
+- [登录令牌与刷新](auth-tokens.md)：登录响应里的刷新令牌、`/auth/refresh` 轮换、`/auth/logout`，以及令牌什么时候失效。
 - [Realtime API](./realtime.md): session, dashboard, connector, and terminal realtime channel semantics.
 - [Admin Usage API](./admin-usage.md): event-driven usage statistics for administrators (`/admin/usage/*`), how events are collected and what each metric means.
 - [Frontend migration checklist](./frontend-migration-checklist.md): frontend API call-site replacements and behavior changes to apply after backend cleanup.

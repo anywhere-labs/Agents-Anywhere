@@ -1042,7 +1042,7 @@ def test_mobile_login_qr_requires_phone_request_and_web_confirm(tmp_path, monkey
         assert auth["accessToken"] != body["auth"]["accessToken"]
         assert client.get("/auth/me", headers=bearer(auth["accessToken"])).status_code == 200
         assert client.get("/sessions", headers=bearer(auth["accessToken"])).status_code == 200
-        assert "refreshToken" not in auth
+        assert auth.get("refreshToken") is None
 
     with monkeypatch.context() as clock:
         clock.setattr(time, "time", lambda: issued_at + 31 * 24 * 60 * 60)
