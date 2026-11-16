@@ -34,6 +34,9 @@ final class V2ClientServices {
     let portPreviews: PortPreviewStore
     /// Optional end-to-end encryption: client trust, secure channels and per-device transport choice.
     let e2ee: V2E2EEService
+    /// Opens session display envelopes with the directory keys in `e2ee.trust`.
+    let sessionDisplay: V2SessionDisplayResolver
+    private var trustObserver: UUID?
 
     /// Parent of every account's offline directory (one per server + account).
     nonisolated static let defaultOfflineRoot = URL.applicationSupportDirectory.appendingPathComponent("AgentsAnywhere/Offline/v1")
@@ -90,6 +93,9 @@ final class V2ClientServices {
             api: e2eeAPI,
             clientLabel: Self.clientLabel
         )
+        sessionDisplay = V2SessionDisplayResolver(trust: trust)
+        dashboardRepository.displayResolver = sessionDisplay
+        sessionRepository.displayResolver = sessionDisplay
         // Session content follows its device: the dashboard knows most sessions' devices,
         // otherwise the (always plaintext) directory entry is read once.
         let sessionsAPI = api.sessions
@@ -139,6 +145,15 @@ final class V2ClientServices {
             self?.onConnectivityChange?(status)
         }
         connectivity.start()
+        // `e2ee.directory_key`, pairing again or forgetting a device: retry the envelopes.
+        trustObserver = trust.observeDevices { [weak self] in
+            Task { @MainActor in self?.redisplaySessions() }
+        }
+    }
+
+    private func redisplaySessions() {
+        dashboardRepository.redisplay()
+        sessionRepository.redisplay()
     }
 
     func agents(on connectorID: String) -> DeviceAgentModel {
@@ -194,6 +209,7 @@ final class V2ClientServices {
         onConnectivityChange = nil
         sessionRepository.reset()
         api.routing.detach()
+        if let trustObserver { e2ee.trust.removeObserver(trustObserver); self.trustObserver = nil }
         Task { [e2ee] in await e2ee.shutdown() }
         api.cancelOutstandingRequests()
     }

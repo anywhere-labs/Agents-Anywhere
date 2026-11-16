@@ -24,6 +24,8 @@ final class V2SessionRepository {
     private var accessCounter = 0
     private var suspended = false
     private(set) var network = V2NetworkStatus()
+    /// Opens display envelopes (encrypted mode) for the session page's title and `cwd`.
+    var displayResolver: V2SessionDisplayResolver?
 
     init(
         scope: V2ClientScope,
@@ -740,7 +742,14 @@ final class V2SessionRepository {
     }
 
     private func observation(_ entry: Entry) -> V2SessionObservation {
-        V2SessionObservation(sessionId: entry.id, data: entry.projection?.data, connection: entry.connection, error: entry.error)
+        var data = entry.projection?.data
+        if let displayResolver, let session = data?.session { data?.session = displayResolver.resolve(session) }
+        return V2SessionObservation(sessionId: entry.id, data: data, connection: entry.connection, error: entry.error)
+    }
+
+    /// A directory key arrived or changed: republish open sessions with their envelopes opened again.
+    func redisplay() {
+        for entry in entries.values { emit(entry, persist: false) }
     }
 
     /// Frames buffered during a reconnect or a long reconcile are delivered

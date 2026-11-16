@@ -221,6 +221,25 @@ the files. Device files download chunk by chunk through the channel
 (`displayUser` sealed with the directory key) are refused in encrypted routes
 until the Server supports them.
 
+Session lists and pages show the protocol 1.2 display envelopes
+(`displayDevice`, `displayUser`). `V2SessionDisplayResolver` (account scope) opens
+them where sessions enter `V2DashboardRepository` (HTTP inventory, dashboard
+push, PATCH answers, cache restore) and in the observations
+`V2SessionRepository` publishes, and writes the result into `title` / `cwd`, so
+views and file browsing read them as before. Normal mode prefers plain envelopes
+and keeps the Server's fields they omit. Once any envelope is sealed, only sealed
+ones count: the AD uses the session's `connectorId` and the slot of its field,
+the key is the device's current-epoch directory key, and when any of them does
+not open the title is the locked placeholder and `cwd` is nil, never the
+Server's plaintext. Opened payloads are cached in memory per (session, slot,
+`keyId`, payload); `ClientTrustStore.observeDevices` (pairing, a new
+`e2ee.directory_key`, forgetting a device) makes both repositories resolve
+again. A session without a project whose sealed `displayDevice` opened is
+matched to a project of the same device (exact path, else the longest
+whole-segment prefix; only `X:\` paths ignore case) and assigned with
+`PATCH /sessions/{id}/meta {projectId}`; each session is sent at most once per
+app run and failures only reach the debug log.
+
 ## Migration boundary
 
 Retired session/runtime API methods, models and the chat placeholder live in

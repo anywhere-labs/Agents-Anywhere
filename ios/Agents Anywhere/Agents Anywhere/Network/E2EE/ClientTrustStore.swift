@@ -111,6 +111,7 @@ nonisolated final class ClientTrustStore: Sendable {
     private let storage: any E2EESecureStorage
     private let scope: String
     private let state = Mutex(State())
+    private let observers = Mutex<[UUID: @Sendable () -> Void]>([:])
 
     /// - Parameter scope: 账号范围的稳定字符串（例如 Server 地址与用户 ID 的摘要）。
     init(storage: any E2EESecureStorage, scope: String) {
@@ -139,6 +140,23 @@ nonisolated final class ClientTrustStore: Sendable {
         }
     }
 
+    /// 设备记录变了（配对、列表密钥轮换、忘记设备）之后调用，在调用方的线程上，不持有锁。
+    /// 用来让解不开的展示信封用新的列表密钥重试。
+    @discardableResult
+    func observeDevices(_ handler: @escaping @Sendable () -> Void) -> UUID {
+        let id = UUID()
+        observers.withLock { $0[id] = handler }
+        return id
+    }
+
+    func removeObserver(_ id: UUID) {
+        observers.withLock { _ = $0.removeValue(forKey: id) }
+    }
+
+    private func notifyDevicesChanged() {
+        for handler in observers.withLock({ Array($0.values) }) { handler() }
+    }
+
     func clientId() throws -> String {
         E2EEFormats.clientId(for: try identity().publicKey)
     }
@@ -163,12 +181,13 @@ nonisolated final class ClientTrustStore: Sendable {
             )
             try saveDevices(devices, into: &state)
         }
+        notifyDevicesChanged()
     }
 
     /// 设备轮换列表密钥（`e2ee.directory_key` 或 `GET /e2ee/v1/directory-key`）。旧纪元不会覆盖新纪元。
     @discardableResult
     func updateDirectoryKey(_ grant: E2EEDirectoryKeyGrant) throws -> Bool {
-        try state.withLock { state in
+        let updated = try state.withLock { state -> Bool in
             var devices = try loadDevices(&state)
             guard var record = devices[grant.deviceId], grant.epoch >= record.directoryKey.epoch,
                   grant != record.directoryKey,
@@ -179,15 +198,19 @@ nonisolated final class ClientTrustStore: Sendable {
             try saveDevices(devices, into: &state)
             return true
         }
+        if updated { notifyDevicesChanged() }
+        return updated
     }
 
     /// 忘记一台设备的授权（之后要重新扫码）。「要求加密」的记录保留。
     func forget(_ deviceId: String) throws {
-        try state.withLock { state in
+        let removed = try state.withLock { state -> Bool in
             var devices = try loadDevices(&state)
-            guard devices.removeValue(forKey: deviceId) != nil else { return }
+            guard devices.removeValue(forKey: deviceId) != nil else { return false }
             try saveDevices(devices, into: &state)
+            return true
         }
+        if removed { notifyDevicesChanged() }
     }
 
     func requiresEncryption(_ deviceId: String) throws -> Bool {

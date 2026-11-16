@@ -25788,6 +25788,24 @@
         }
       }
     },
+    "e2ee.display.locked": {
+      "comment": "Placeholder for a session title or working directory this phone cannot decrypt yet (no directory key for it, or it does not open).",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Encrypted — shown once the device is online"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "加密中，设备上线后显示"
+          }
+        }
+      }
+    },
     "e2ee.error.commandDuplicate": {
       "extractionState": "manual",
       "localizations": {

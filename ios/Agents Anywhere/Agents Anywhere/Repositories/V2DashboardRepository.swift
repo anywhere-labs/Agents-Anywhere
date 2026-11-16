@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import os
 
 /// Account-scoped list cache. HTTP, push and explicit mutations share a revision
 /// fence, so a late read cannot replace a newer snapshot or user action.
@@ -21,6 +22,11 @@ final class V2DashboardRepository {
     private(set) var network = V2NetworkStatus()
     @ObservationIgnored var onChange: (() -> Void)?
     @ObservationIgnored var reconcile: (V2SessionMeta) -> V2SessionMeta = { $0 }
+    /// Opens display envelopes (encrypted mode) before a session enters the list.
+    @ObservationIgnored var displayResolver: V2SessionDisplayResolver?
+    /// Sessions this run already tried to assign to a project by their decrypted `cwd`.
+    @ObservationIgnored private var projectAssignmentsTried: Set<V2SessionID> = []
+    @ObservationIgnored private static let log = Logger(subsystem: "agents.anywhere", category: "e2ee-display")
     @ObservationIgnored private let localStore: V2LocalStore?
     @ObservationIgnored private var persistenceTask: Task<Void, Never>?
     @ObservationIgnored private let service: V2DashboardService
@@ -40,7 +46,7 @@ final class V2DashboardRepository {
     }
     func restoreCache() async {
         guard let localStore, let value = await localStore.dashboard(), isValid, !hasLoaded else { return }
-        connectors = value.connectors; projects = value.projects; sessions = value.sessions.map(reconcile)
+        connectors = value.connectors; projects = value.projects; sessions = value.sessions.map { reconcile(display($0)) }
         hasLoaded = true; isFresh = false; onChange?()
     }
     func flushCache() async {
@@ -97,7 +103,7 @@ final class V2DashboardRepository {
         if !hasLoaded { hasLoaded = true }
         if !isFresh { isFresh = true }
         if error != nil { error = nil }
-        changed(persist: mutated); refreshMissingProjects()
+        changed(persist: mutated); refreshMissingProjects(); assignProjectsByCwd()
     }
 
     /// The project list is shared by all expanded groups and refreshed independently
@@ -113,7 +119,7 @@ final class V2DashboardRepository {
                 let response = try await service.projectAPI.list()
                 guard isValid, projectGeneration == revision, !Task.isCancelled else { return false }
                 generation += 1
-                projects = response.projects; error = nil; changed()
+                projects = response.projects; error = nil; changed(); assignProjectsByCwd()
                 return true
             } catch {
                 if isValid, projectGeneration == revision, !Task.isCancelled { self.error = error.localizedDescription }
@@ -146,7 +152,48 @@ final class V2DashboardRepository {
 
     func upsert(_ values: [V2SessionMeta]) {
         guard isValid else { return }
-        generation += 1; mergeSessions(values); changed(); refreshMissingProjects()
+        generation += 1; mergeSessions(values); changed(); refreshMissingProjects(); assignProjectsByCwd()
+    }
+
+    /// A directory key arrived or changed: open every envelope again with it.
+    func redisplay() {
+        guard isValid, let displayResolver else { return }
+        displayResolver.clearCache()
+        let resolved = sessions.map(display)
+        guard resolved != sessions else { return }
+        sessions = resolved; changed(); assignProjectsByCwd()
+    }
+
+    private func display(_ session: V2SessionMeta) -> V2SessionMeta {
+        displayResolver?.resolve(session) ?? session
+    }
+
+    /// Encrypted mode: a session without a project whose sealed `displayDevice` opened is
+    /// assigned to the matching project of its device (`PATCH meta {projectId}`). Each session
+    /// is tried at most once per run; every failure (for example 404 `project_not_found` or
+    /// 422 `project_workspace_mismatch`) stays silent and the session stays unassigned.
+    private func assignProjectsByCwd() {
+        guard isValid, isFresh, network.availability != .offline else { return }
+        for session in sessions where session.projectId == nil && session.displayDevice?.mode == .sealed
+            && !session.id.hasPrefix("local:") && !projectAssignmentsTried.contains(session.id) {
+            guard let cwd = session.cwd, !cwd.isEmpty else { continue }
+            // No matching project yet is not an attempt: a project created later still gets the session.
+            guard let project = V2SessionProjectMatch.project(forCwd: cwd, connectorID: session.connectorId,
+                                                              projects: projects) else { continue }
+            projectAssignmentsTried.insert(session.id)
+            let sessionId = session.id, projectId = project.id
+            Task { [weak self] in
+                guard let self else { return }
+                do {
+                    let response = try await service.sessionAPI.patchSessionMeta(
+                        sessionId: sessionId, request: .init(title: nil, pinned: nil, archived: nil, projectId: projectId))
+                    guard isValid, !Task.isCancelled else { return }
+                    upsert([response.session])
+                } catch {
+                    Self.log.debug("project assignment of \(sessionId, privacy: .public) failed: \(String(describing: error), privacy: .public)")
+                }
+            }
+        }
     }
     func removeLocalSession(_ id: String) {
         guard id.hasPrefix("local:") else { return }
@@ -218,14 +265,14 @@ final class V2DashboardRepository {
         persistenceTask?.cancel(); persistenceTask = nil
         isValid = false; generation += 1; onChange = nil
         projectRefreshTask?.cancel(); projectRefreshTask = nil; projectRefreshID = nil
-        checkedMissingProjects = []
+        checkedMissingProjects = []; projectAssignmentsTried = []
         sessions = []; connectors = []; projects = []; runtimes = []; modelConfig = nil
     }
     func upsertProject(_ project: V2Project) {
         guard isValid else { return }
         if let old = projects.first(where: { $0.id == project.id }), old.updatedAt > project.updatedAt { return }
         generation += 1; projectGeneration += 1
-        projects.removeAll { $0.id == project.id }; projects.append(project); changed()
+        projects.removeAll { $0.id == project.id }; projects.append(project); changed(); assignProjectsByCwd()
     }
     private func mergeSessions(_ incoming: [V2SessionMeta]) {
         var values = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
@@ -236,7 +283,7 @@ final class V2DashboardRepository {
         var value = current.map { $0.updatedSeq > incoming.updatedSeq ? $0 : incoming } ?? incoming
         value.lastReadSeq = max(current?.lastReadSeq ?? 0, incoming.lastReadSeq)
         if value.lastReadSeq >= value.latestTurnEndSeq { value.unread = false }
-        return reconcile(value)
+        return reconcile(display(value))
     }
     private func unique(_ values: [V2SessionMeta]) -> [V2SessionMeta] {
         var result: [String: V2SessionMeta] = [:]
