@@ -3,7 +3,8 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "clientId": {
-      "minLength": 1,
+      "description": "client_id_for(identity public key)",
+      "pattern": "^cli_[a-z2-7]{26}$",
       "title": "Clientid",
       "type": "string"
     },
@@ -28,6 +29,25 @@
     "label": {
       "title": "Label",
       "type": "string"
+    },
+    "platform": {
+      "anyOf": [
+        {
+          "enum": [
+            "web",
+            "desktop",
+            "android",
+            "ios",
+            "cli"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Platform"
     },
     "revokedAt": {
       "anyOf": [

@@ -40,20 +40,20 @@ describe('the DSH plugin dialect (contracts/dsh-bridge/3.0)', () => {
   test('a stream attempt fills the item; a retry starts it over; the committed message replaces it', () => {
     const dialect = dshPluginDialect()
     const ctx = context('s')
-    expect(dialect.translateUpdate!(chunk({ itemId: item, transient: true, attemptId: 'a1' }, '你'), ctx)).toEqual([{ type: 'message.delta', itemId: item, role: 'assistant', text: '你' }])
-    expect(dialect.translateUpdate!(chunk({ itemId: item, transient: true, attemptId: 'a2' }, '好'), ctx)).toEqual([
+    expect(dialect.translateUpdate!(chunk({ itemId: item, transient: true, attemptId: 'a1' }, '你'), ctx, {})).toEqual([{ type: 'message.delta', itemId: item, role: 'assistant', text: '你' }])
+    expect(dialect.translateUpdate!(chunk({ itemId: item, transient: true, attemptId: 'a2' }, '好'), ctx, {})).toEqual([
       { type: 'message.completed', itemId: item, role: 'assistant', text: '' }, { type: 'message.delta', itemId: item, role: 'assistant', text: '好' }])
-    expect(dialect.translateUpdate!(chunk({ itemId: item, committed: true }, '你好', 'agent_thought_chunk'), ctx)).toEqual([{ type: 'message.completed', itemId: item, role: 'reasoning', text: '你好' }])
-    expect(dialect.translateUpdate!(chunk({ abandoned: true }), ctx)).toEqual([])
+    expect(dialect.translateUpdate!(chunk({ itemId: item, committed: true }, '你好', 'agent_thought_chunk'), ctx, {})).toEqual([{ type: 'message.completed', itemId: item, role: 'reasoning', text: '你好' }])
+    expect(dialect.translateUpdate!(chunk({ abandoned: true }), ctx, {})).toEqual([])
   })
 
   test('writer changes and turn events on session_info_update', () => {
     const dialect = dshPluginDialect()
     const info = (dsh: JsonRecord) => ({ sessionUpdate: 'session_info_update', _meta: { dsh } })
-    expect(dialect.translateUpdate!(info({ writer: 'external' }), context('s'))).toEqual([{ type: 'writer.changed', writer: { holder: 'external', by: 'dsh' } }])
-    expect(dialect.translateUpdate!(info({ writer: 'host' }), context('s'))).toEqual([{ type: 'writer.changed', writer: { holder: 'self' } }])
-    expect(dialect.translateUpdate!(info({ turnEvent: { kind: 'started' } }), context('s'))).toEqual([])
-    expect(dialect.translateUpdate!(info({}), context('s'))).toBeUndefined()
+    expect(dialect.translateUpdate!(info({ writer: 'external' }), context('s'), {})).toEqual([{ type: 'writer.changed', writer: { holder: 'external', by: 'dsh' } }])
+    expect(dialect.translateUpdate!(info({ writer: 'host' }), context('s'), {})).toEqual([{ type: 'writer.changed', writer: { holder: 'self' } }])
+    expect(dialect.translateUpdate!(info({ turnEvent: { kind: 'started' } }), context('s'), {})).toEqual([])
+    expect(dialect.translateUpdate!(info({}), context('s'), {})).toBeUndefined()
   })
 
   test('new sessions need AA\'s native ID; prompts carry the request ID; errors map to port codes', () => {

@@ -99,6 +99,7 @@ dependencies {
     implementation(libs.androidx.webkit)
     implementation(libs.lucide.icons)
     implementation(libs.mlkit.barcode.scanning)
+    implementation(libs.noise.java)
     implementation(libs.okhttp)
     implementation(libs.sora.editor)
     implementation(libs.sora.language.textmate)

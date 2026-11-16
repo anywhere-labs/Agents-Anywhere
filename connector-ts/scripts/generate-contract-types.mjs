@@ -55,6 +55,32 @@ for (const [name, version] of CONTRACTS) {
     expected.set(`${artifact.slug}.ts`, output)
   }
 
+  // Non-schema artifacts (device.meshcall.json, mesh-errors.json, e2ee-registration.json): verify their
+  // checksums too, and turn the E2EE registration table into constants the device link uses.
+  for (const extra of manifest.extras ?? []) {
+    const bytes = await readFile(path.join(contractDir, extra.path))
+    if (createHash("sha256").update(bytes).digest("hex") !== extra.sha256) {
+      throw new Error(`${name}/${version}/${extra.path} does not match its manifest checksum`)
+    }
+    if (extra.path === "e2ee-registration.json") {
+      const table = JSON.parse(bytes.toString("utf8"))
+      expected.set(
+        "e2ee-registration.ts",
+        [
+          "/* eslint-disable */",
+          `/** Generated from contracts/${name}/${version}/${extra.path}. Do not edit; run \`yarn contracts:generate\`. */`,
+          "",
+          "/** Services and methods the device registers on the Router, per E2EE mode. */",
+          `export const REGISTERED_SERVICES = ${JSON.stringify(table.modes, null, 2)} as const`,
+          "",
+          "/** Link/attach event methods allowed in plaintext, per E2EE mode. */",
+          `export const ATTACH_EVENTS = ${JSON.stringify(table.attachEvents, null, 2)} as const`,
+          "",
+        ].join("\n"),
+      )
+    }
+  }
+
   const index = [...expected.keys()]
     .sort()
     .map((file) => `export * as ${toIdentifier(file.replace(/\.ts$/, ""))} from "./${file.replace(/\.ts$/, ".js")}"`)

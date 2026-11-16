@@ -6,7 +6,9 @@ export type Deviceid = string
 export type Inputdigest = string
 
 /**
- * Plaintext side-channel so the Server can keep idempotency for encrypted commands.
+ * ``POST /api/v3/e2ee/commands`` before the command goes through the channel, so the Server
+ * keeps idempotency for encrypted commands. ``inputDigest`` is keyed (see ``input_digest``):
+ * the Server can compare it but cannot confirm a guessed input.
  */
 export interface CommandRegistration {
   commandId: Commandid

@@ -1,0 +1,26 @@
+{
+  "$id": "urn:agents-anywhere:e2ee:1.0:pairing-device-hello",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Payload of XXpsk0 message 2 (device -> client). The client checks ``deviceId`` and that the\nstatic key in the same message equals ``PairingPayload.deviceIdentityPub``.",
+  "properties": {
+    "deviceId": {
+      "minLength": 1,
+      "title": "Deviceid",
+      "type": "string"
+    },
+    "label": {
+      "default": "",
+      "title": "Label",
+      "type": "string"
+    }
+  },
+  "required": [
+    "deviceId"
+  ],
+  "title": "PairingDeviceHello",
+  "type": "object",
+  "x-contract": "e2ee",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

@@ -3,7 +3,8 @@ import { MeshCallError, ResourceExhaustedError, z, type DuplexChannel, type RpcC
 import { CommandInbox, errorCode } from '../application/inbound/index.js'
 import type { OutboxStore } from '../application/ports/index.js'
 import type { CommandCall } from '../generated/device-meshcall/v1_0/command-call.js'
-import { chunkJson, outboxStream, watchSession, type DeviceReaders, type OutboxStreamOptions, type WatchDeps } from '../sync/index.js'
+import { REGISTERED_SERVICES } from '../generated/device-meshcall/v1_0/e2ee-registration.js'
+import { chunkJson, outboxStream, scrubForE2ee, watchSession, type DeviceReaders, type OutboxStreamOptions, type WatchDeps } from '../sync/index.js'
 import { defineService, type MethodDef } from '../mesh/index.js'
 import type { AttachHub } from './attach.js'
 
@@ -14,32 +15,13 @@ export type E2eeMode = 'off' | 'required'
 /** Service → methods the device registers, per E2EE mode. */
 export type Registration = Readonly<Record<string, readonly string[]>>
 
-const COMMAND_METHODS = [
-  'sessionSendMessage', 'sessionSteer', 'sessionInterrupt', 'sessionRespondNotice', 'sessionSelect', 'sessionCreationBegin',
-  'sessionPlanning', 'sessionGoal', 'sessionQueueUpdate', 'sessionQueueDelete', 'sessionQueueRetry', 'sessionQueueSendNow',
-  'sessionQueueResume', 'sessionQueueReorder', 'sessionQueueClear', 'sessionSync', 'runtimeApply', 'deviceSettingsApply',
-  'channelSwitch', 'previewOpen', 'previewClose',
-] as const
-
 /**
- * What the device registers, per mode: the same table as `contracts/device-meshcall/1.0/e2ee-registration.json`
- * (F's encrypted-mode contract). In encrypted mode only Link, Secure and the Server-initiated, content-free
- * commands are on the Router, so the Server has nothing to send a plaintext read or user command to.
+ * What the device registers, per mode: the generated `REGISTERED_SERVICES` of
+ * `contracts/device-meshcall/1.0/e2ee-registration.json` (F's encrypted-mode contract). In encrypted mode only
+ * Link, Secure and the Server-initiated, content-free commands are on the Router, so the Server has nothing to
+ * send a plaintext read or user command to.
  */
-export const DEFAULT_REGISTRATION: Readonly<Record<E2eeMode, Registration>> = {
-  off: {
-    'aa.device.v1.Link': ['attach', 'outbox', 'ackOutbox'],
-    'aa.device.v1.Sessions': ['snapshot', 'watch', 'notices', 'state', 'capabilities', 'queue'],
-    'aa.device.v1.Store': ['read', 'changesSince', 'readBlob', 'exportShare', 'planDocument'],
-    'aa.device.v1.Runtime': ['catalogs'],
-    'aa.device.v1.Commands': ['status', ...COMMAND_METHODS],
-  },
-  required: {
-    'aa.device.v1.Link': ['attach', 'outbox', 'ackOutbox'],
-    'aa.device.v1.Commands': ['status', 'runtimeApply', 'deviceSettingsApply', 'channelSwitch', 'previewOpen', 'previewClose'],
-    'aa.device.v1.Secure': ['channel'],
-  },
-}
+export const DEFAULT_REGISTRATION: Readonly<Record<E2eeMode, Registration>> = REGISTERED_SERVICES
 
 /** Concurrency classes: long streams cannot starve approvals, notices or the outbox acknowledgements. */
 export type CallClass = 'critical' | 'command' | 'read' | 'stream' | 'secure'
@@ -135,6 +117,8 @@ class Limiter {
 export class DeviceServices {
   private readonly limiter: Limiter
   private outboxController: AbortController | null = null
+  /** Encrypted mode: command receipts reach the Server without their result body or error text. */
+  private encrypted = false
 
   public constructor(private readonly deps: DeviceServicesDeps) {
     this.limiter = new Limiter({ ...DEFAULT_LIMITS, ...deps.limits })
@@ -276,14 +260,17 @@ export class DeviceServices {
     const callSchema = z.looseObject({ commandId: z.string().min(1), deadline: z.string(), inputDigest: z.string().nullable().optional(), p: z.looseObject({}).optional() })
     return names.map(name => {
       if (name === 'status') {
-        return this.unary(S, 'status', 'Receipt lookup by commandId; never executes anything.', async request => this.deps.readers.commandStatus({ commandId: String(request.commandId) }),
+        return this.unary(S, 'status', 'Receipt lookup by commandId; never executes anything.', async request => {
+          const status = await this.deps.readers.commandStatus({ commandId: String(request.commandId) })
+          return this.encrypted ? (scrubForE2ee('command.status', status as unknown as Record<string, unknown>) as never) : status
+        },
           { request: z.looseObject({ commandId: z.string().min(1) }) })
       }
       return this.unary(S, name, `Command ${name}: accepted only once its effect and receipt are on disk.`, async request => {
         // Not tied to the call's signal: a command the caller stopped waiting for still settles.
         const ack = await this.deps.inbox.handle(name, request as unknown as CommandCall)
         this.deps.onCommand?.()
-        return ack
+        return this.encrypted ? (scrubForE2ee('command.ack', ack as unknown as Record<string, unknown>) as never) : ack
       }, { readOnly: false, idempotent: true, request: callSchema })
     })
   }
@@ -312,7 +299,8 @@ export class DeviceServices {
    * The services of `registration`, limited to those the Router token grants (`granted` null = all): the
    * Router refuses a whole registration that names a service the token does not cover.
    */
-  public build(registration: Registration, granted: readonly string[] | null): { services: object[]; names: string[]; skipped: string[] } {
+  public build(registration: Registration, granted: readonly string[] | null, mode: E2eeMode = 'off'): { services: object[]; names: string[]; skipped: string[] } {
+    this.encrypted = mode === 'required'
     const all: Record<string, () => MethodDef[]> = {
       'aa.device.v1.Link': () => this.linkMethods(),
       'aa.device.v1.Sessions': () => this.sessionsMethods(),

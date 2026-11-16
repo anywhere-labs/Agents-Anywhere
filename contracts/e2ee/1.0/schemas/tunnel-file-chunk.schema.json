@@ -1,0 +1,45 @@
+{
+  "$id": "urn:agents-anywhere:e2ee:1.0:tunnel-file-chunk",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Response body of a file read through the channel:\n``GET /api/v2/connectors/{deviceId}/fs/read?root=…&path=…&offset=…&length=…`` (the normal-mode query plus\n``offset`` and ``length``; ``length`` at most\n``FILE_CHUNK_MAX_BYTES``; the device may return less). Large files are read chunk by chunk; each chunk is a\nnormal channel message, so it is encrypted and fragmented like any other.",
+  "properties": {
+    "data": {
+      "description": "base64 (standard alphabet) of the bytes at [offset, offset + len)",
+      "title": "Data",
+      "type": "string"
+    },
+    "encoding": {
+      "const": "base64",
+      "default": "base64",
+      "title": "Encoding",
+      "type": "string"
+    },
+    "eof": {
+      "title": "Eof",
+      "type": "boolean"
+    },
+    "offset": {
+      "minimum": 0,
+      "title": "Offset",
+      "type": "integer"
+    },
+    "size": {
+      "description": "total file size",
+      "minimum": 0,
+      "title": "Size",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "data",
+    "offset",
+    "size",
+    "eof"
+  ],
+  "title": "TunnelFileChunk",
+  "type": "object",
+  "x-contract": "e2ee",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

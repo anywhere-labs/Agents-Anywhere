@@ -9,6 +9,7 @@
 // 布尔项保留布尔值（端口的 ConfigOption.type = 'boolean'）。
 
 import type { ConfigOption } from '../../application/ports/runtime-session.js'
+import type { SelectionCodec } from './dialect.js'
 import { fail } from './errors.js'
 import { asRecord, type JsonRecord } from './client.js'
 
@@ -227,11 +228,11 @@ export function decodeAcpSelection(value: string): { model: string; effort?: str
  * acp/domain/configuration.py `merge_legacy`：按类别给出的初始选择（model / effort / permission…）
  * 落到会话配置项上。每个类别必须恰好对应一个配置项，值必须在可选范围内。返回按类别顺序的赋值。
  */
-export function selectionsToConfig(config: readonly ConfigOption[], selections: Readonly<Record<string, string | null>>): Array<{ optionId: string; value: string }> {
+export function selectionsToConfig(config: readonly ConfigOption[], selections: Readonly<Record<string, string | null>>, codec?: SelectionCodec): Array<{ optionId: string; value: string }> {
   const flat: Record<string, string | null> = { ...selections }
   const model = flat.model
   if (model !== undefined && model !== null) {
-    const decoded = decodeAcpSelection(model)
+    const decoded = codec ? decodeModelSelection(config, model, codec) : decodeAcpSelection(model)
     if (decoded.effort !== undefined && flat.effort !== undefined && flat.effort !== null && flat.effort !== decoded.effort) {
       fail('configuration_conflict', '模型选择与推理强度不一致。')
     }
@@ -241,13 +242,32 @@ export function selectionsToConfig(config: readonly ConfigOption[], selections: 
   const out: Array<{ optionId: string; value: string }> = []
   for (const [category, value] of Object.entries(flat)) {
     if (value === null || value === undefined) continue
+    const permission = category === 'permission' && codec ? decodePermissionSelection(config, value, codec) : undefined
     const matches = config.filter(option => option.category === category)
     if (matches.length !== 1) fail('configuration_mapping_unavailable', '该选择没有唯一且无损的 Agent 配置映射。')
     const option = matches[0]!
-    if (choiceError(config, option.id, value) !== undefined) fail('invalid_configuration_value', '配置值不在当前可用范围。')
-    out.push({ optionId: option.id, value })
+    const resolved = permission ?? value
+    if (choiceError(config, option.id, resolved) !== undefined) fail('invalid_configuration_value', '配置值不在当前可用范围。')
+    out.push({ optionId: option.id, value: resolved })
   }
   return out
+}
+
+function decodeModelSelection(config: readonly ConfigOption[], selectionId: string, codec: SelectionCodec): { model: string; effort?: string } {
+  const models = config.find(o => o.category === 'model' && o.type === 'select')?.values ?? []
+  const efforts = config.find(o => o.category === 'effort' && o.type === 'select')?.values ?? []
+  for (const model of models) {
+    if (codec.modelSelectionId(model.value, null) === selectionId) return { model: model.value }
+    for (const effort of efforts) if (codec.modelSelectionId(model.value, effort.value) === selectionId) return { model: model.value, effort: effort.value }
+  }
+  return fail('invalid_selection', '模型选择不在当前可用范围。')
+}
+
+function decodePermissionSelection(config: readonly ConfigOption[], selectionId: string, codec: SelectionCodec): string {
+  for (const value of config.find(o => o.category === 'permission' && o.type === 'select')?.values ?? []) {
+    if (codec.permissionSelectionId(value.value) === selectionId) return value.value
+  }
+  return fail('invalid_selection', '权限选择不在当前可用范围。')
 }
 
 /**

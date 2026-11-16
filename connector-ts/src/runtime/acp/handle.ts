@@ -23,11 +23,12 @@ import type {
 } from '../../application/ports/runtime-session.js'
 import { acpSelectionId } from '../../domain/identity/index.js'
 import type { ProtocolModelCatalog } from '../../generated/protocol/v1_2/model-catalog.js'
+import type { ProtocolPermissionItem } from '../../generated/protocol/v1_2/permission-catalog-response.js'
 import { AgentPool, type PooledConnection } from '../supervisor/agent-pool.js'
 import { AgentProcess, type AgentCommand } from '../supervisor/agent-process.js'
 import { AcpClient, asRecord, type AgentInfo, type JsonRecord } from './client.js'
 import { normalizeConfig, selectionsToConfig } from './config.js'
-import type { AcpDialect } from './dialect.js'
+import type { AcpDialect, SelectionCodec } from './dialect.js'
 import { RuntimeFailure } from './errors.js'
 import type { JsonRpcPeer } from './jsonrpc.js'
 import { translateUpdate } from './mapping.js'
@@ -108,6 +109,8 @@ export interface AcpHandleOptions {
   readonly processPerWorkspace?: boolean
   /** 建会话前就能列出的权限选项（v2 definition `permission_options`：值, 名称）。 */
   readonly permissionOptions?: ReadonlyArray<readonly [string, string]>
+  /** 完整的权限目录条目（带 v2 的 i18n、identity 等元数据），可按当前配置过滤；优先于 permissionOptions。 */
+  readonly permissionCatalog?: (config: readonly ConfigOption[]) => readonly ProtocolPermissionItem[]
 }
 
 /** 会话能力：协商得到的 sessionCapabilities 里有没有某一项。 */
@@ -139,6 +142,13 @@ export class AcpRuntimeHandle implements RuntimeHandle {
         const connection = await options.connect(scope === '' ? undefined : { cwd: scope })
         this.info = connection.info
         this.sessions.set(connection, new Set())
+        for (const method of options.dialect.notificationMethods ?? []) {
+          connection.client.onNotification(method, params => {
+            for (const session of this.sessions.get(connection) ?? []) {
+              if (session.nativeSessionId === params.sessionId) session.dialectNotification(method, params)
+            }
+          })
+        }
         this.events.push({ type: 'status', status: 'ready' })
         return connection
       },
@@ -176,18 +186,12 @@ export class AcpRuntimeHandle implements RuntimeHandle {
   }
 
   async catalogs(): Promise<Catalogs> {
-    const fromConfig = catalogsFromConfig(this.type, this.lastConfig)
-    const permissions = this.options.permissionOptions
-    if (!permissions?.length) return fromConfig
+    const fromConfig = catalogsFromConfig(this.type, this.lastConfig, this.options.dialect.selections)
     // acp/runtime.py `list_permission_catalog`
-    return {
-      ...fromConfig,
-      permissions: {
-        runtime: this.type,
-        revision: 1,
-        permissions: permissions.map(([value, title]) => ({ id: value, displayName: title, description: null, default: false, selectionId: value, metadata: {} })),
-      },
-    }
+    const items = this.options.permissionCatalog?.(this.lastConfig)
+      ?? this.options.permissionOptions?.map(([value, title]) => ({ id: value, displayName: title, description: null, default: false, selectionId: value, metadata: {} }))
+    if (!items?.length) return fromConfig
+    return { ...fromConfig, permissions: { runtime: this.type, revision: 1, permissions: [...items] } }
   }
 
   async listNativeSessions(cursor?: string): Promise<NativeSessionPage> {
@@ -207,9 +211,10 @@ export class AcpRuntimeHandle implements RuntimeHandle {
   }
 
   async readNativeHistory(ref: NativeSessionRef, window: HistoryWindow): Promise<NativeHistoryPage> {
-    const connection = await this.connection(ref.locator)
-    const special = this.options.dialect.readNativeHistory?.(connection.client, ref, `history:${ref.nativeSessionId}`)
+    // 方言自己的只读实现（Claude 读 JSONL）不一定需要 Agent 进程，按需再取连接。
+    const special = this.options.dialect.readNativeHistory?.(ref, window, () => this.connection(ref.locator))
     if (special !== undefined) return special
+    const connection = await this.connection(ref.locator)
     // 通用实现：加载并捕获回放，再关闭。会写原生记录的 Runtime（Claude）必须由方言或原生历史伴随层接管。
     if (connection.info.agentCapabilities.loadSession !== true) return { items: [] }
     const { updates } = await connection.client.capture(ref.nativeSessionId, () => connection.client.request('session/load', {
@@ -265,7 +270,7 @@ export class AcpRuntimeHandle implements RuntimeHandle {
       this.sessions.get(connection)?.delete(session)
       await originalClose()
     }
-    const problem = dialect.verifySession?.(session.configOptions)
+    const problem = dialect.verifySession?.(session.configOptions, response, nativeSessionId)
     if (problem !== undefined) {
       await session.close().catch(() => undefined)
       throw new RuntimeFailure(problem)
@@ -281,7 +286,7 @@ export class AcpRuntimeHandle implements RuntimeHandle {
    */
   private async applySelections(session: AcpRuntimeSession, selections: Readonly<Record<string, string | null>>): Promise<void> {
     try {
-      for (const change of selectionsToConfig(session.configOptions, selections)) await session.configure(change)
+      for (const change of selectionsToConfig(session.configOptions, selections, this.options.dialect.selections)) await session.configure(change)
     } catch (error) {
       await session.close().catch(() => undefined)
       throw error
@@ -294,11 +299,13 @@ export class AcpRuntimeHandle implements RuntimeHandle {
 }
 
 /** 从会话配置项生成 AA 模型目录（selection ID 沿用 v2 ACP 规则）。 */
-export function catalogsFromConfig(runtime: string, options: readonly ConfigOption[]): Catalogs {
+export function catalogsFromConfig(runtime: string, options: readonly ConfigOption[], codec?: SelectionCodec): Catalogs {
   const model = options.find(o => o.category === 'model' && o.type === 'select')
   if (!model?.values?.length) return {}
   const effort = options.find(o => o.category === 'effort' && o.type === 'select')
-  const efforts = effort?.values ?? []
+  const hidden = new Set(codec?.hiddenEfforts ?? [])
+  const efforts = (effort?.values ?? []).filter(e => !hidden.has(e.value))
+  const selectionId = codec ? (m: string, e: string | null) => codec.modelSelectionId(m, e) : acpSelectionId
   const models: ProtocolModelCatalog = {
     runtime,
     revision: 1,
@@ -307,9 +314,10 @@ export function catalogsFromConfig(runtime: string, options: readonly ConfigOpti
       displayName: value.name,
       ...(value.description ? { description: value.description } : {}),
       default: value.value === model.currentValue,
-      selectionId: acpSelectionId(value.value, null),
-      reasoningItems: efforts.map(e => ({ id: e.value, displayName: e.name, default: e.value === effort?.currentValue, selectionId: acpSelectionId(value.value, e.value) })),
+      selectionId: selectionId(value.value, null),
+      reasoningItems: efforts.map(e => ({ id: e.value, displayName: e.name, default: e.value === effort?.currentValue, selectionId: selectionId(value.value, e.value) })),
     })),
   }
-  return { models, selections: { model: acpSelectionId(String(model.currentValue), effort ? String(effort.currentValue) : null) } }
+  const currentEffort = effort && !hidden.has(String(effort.currentValue)) ? String(effort.currentValue) : null
+  return { models, selections: { model: selectionId(String(model.currentValue), currentEffort) } }
 }

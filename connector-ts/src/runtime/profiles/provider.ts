@@ -44,13 +44,13 @@ export class AcpAgentProvider implements RuntimeProvider {
     }
     try {
       const path = resolveExecutable(this.definition, {}, this.options.platform)
-      let agentVersion: string | undefined
-      if (this.definition.version) {
-        const command = launchCommand(this.definition, path, this.options.platform)
-        const output = await runCheck(this.definition, command, this.definition.version, {}, this.options.platform)
-        agentVersion = output.split('\n').map(line => line.trim()).filter(Boolean).at(-1)
-      }
-      return { ...base, installed: true, ...(agentVersion !== undefined ? { agentVersion } : {}), problems: [] }
+      const command = launchCommand(this.definition, path, this.options.platform)
+      const read = async (args: readonly string[] | undefined) => (args
+        ? (await runCheck(this.definition, command, args, {}, this.options.platform)).split('\n').map(line => line.trim()).filter(Boolean).at(-1)
+        : undefined)
+      const agentVersion = await read(this.definition.version)
+      const adapterVersion = await read(this.definition.adapterVersion)
+      return { ...base, installed: true, ...(agentVersion !== undefined ? { agentVersion } : {}), ...(adapterVersion !== undefined ? { adapterVersion } : {}), problems: [] }
     } catch (error) {
       if (!(error instanceof RuntimeFailure)) throw error
       return { ...base, installed: error.error.code !== 'agent_cli_missing', problems: [error.error] }
@@ -65,6 +65,13 @@ export class AcpAgentProvider implements RuntimeProvider {
     return { ...(schema.defaults ?? {}), ...settings }
   }
 
+  /** 进程环境：通用边界 → 定义的调整 → 设置项映射出的变量。 */
+  environment(fromSettings: Readonly<Record<string, string>>, instance: RuntimeInstanceConfig): NodeJS.ProcessEnv {
+    const base = agentEnvironment({}, this.options.platform ? { base: this.options.platform.env } : {})
+    const adjusted = this.definition.environment ? this.definition.environment(base, instance) : base
+    return { ...adjusted, ...fromSettings }
+  }
+
   async start(instance: RuntimeInstanceConfig): Promise<AcpRuntimeHandle> {
     const settings = this.validateSettings(instance.settings)
     const definition = this.definition
@@ -77,15 +84,23 @@ export class AcpAgentProvider implements RuntimeProvider {
       dialect,
       // 每次拉起进程前重新解析和检查（v2 `validated_launch`）：用户可能刚升级或卸载了 Agent。
       connect: async scope => {
-        const launch = await localLaunch(definition, settings, this.options.platform)
+        const launch = definition.prepareLaunch
+          ? await definition.prepareLaunch({
+            instanceId: instance.instanceId, sessionNamespace: instance.sessionNamespace, settings, dataDir: cwd,
+            ...(instance.modelGateway ? { modelGateway: instance.modelGateway } : {}),
+            ...(scope ? { scope } : {}),
+            ...(this.options.platform ? { platform: this.options.platform } : {}),
+          })
+          : await localLaunch(definition, settings, this.options.platform)
         return processConnection(
-          { command: launch.command, args: launch.args, cwd: definition.launchInWorkspace && scope ? scope.cwd : cwd, env: agentEnvironment(launch.environment, this.options.platform ? { base: this.options.platform.env } : {}) },
+          { command: launch.command, args: launch.args, cwd: definition.launchInWorkspace && scope ? scope.cwd : cwd, env: this.environment(launch.environment, instance) },
           dialect,
           onStderr ? { onStderr: line => onStderr(instance.instanceId, line) } : {},
         )()
       },
-      ...(this.options.idleMs !== undefined ? { idleMs: this.options.idleMs } : {}),
+      ...((this.options.idleMs ?? definition.idleMs) !== undefined ? { idleMs: (this.options.idleMs ?? definition.idleMs)! } : {}),
       ...(definition.permissionOptions ? { permissionOptions: definition.permissionOptions } : {}),
+      ...(definition.permissionCatalog ? { permissionCatalog: definition.permissionCatalog } : {}),
       ...(definition.nativeInventory === false ? { nativeInventory: false } : {}),
       ...(definition.launchInWorkspace ? { processPerWorkspace: true } : {}),
     })

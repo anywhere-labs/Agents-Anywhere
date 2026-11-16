@@ -20,7 +20,8 @@ export {
   type SystemProxySettings,
 } from './egress.js'
 export { ProxyError, egressAgent, openTunnel, trustedCAs } from './tunnel.js'
-export { connectOrigin, requestJson, HttpError, type JsonRequest } from './http.js'
+export { connectOrigin, requestBytes, requestJson, HttpError, type BytesRequest, type JsonRequest } from './http.js'
+export { deviceAttachmentFetcher } from './device-files.js'
 export { ControlPlane, CredentialRejected, MESH_MAX_FRAME_BYTES, meshGrant, type ControlPlaneOptions, type DeviceCredential, type MeshGrant } from './control-plane.js'
 export { RouterBridge, rewriteUpgradeHead } from './bridge.js'
 export { ATTACH_EVENTS, ATTACH_STALL_MS, AttachHub, HEARTBEAT_MS, MAX_PENDING_EVENTS, type AttachEnd, type AttachHubOptions } from './attach.js'
@@ -49,4 +50,4 @@ export {
   type LinkLogger,
   type LinkState,
 } from './device-link.js'
-export { secureChannelVia, type SecureChannelHubLike, type SecureChannelLike, type SecureChannelWire } from './secure.js'
+export { secureChannelVia, type SecureChannelFrame, type SecureChannelHubLike, type SecureChannelLike, type SecureChannelWire } from './secure.js'

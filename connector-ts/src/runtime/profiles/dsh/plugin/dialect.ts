@@ -155,7 +155,9 @@ export function dshPluginDialect(): AcpDialect {
     },
     // Read-only history with the same item IDs as live delivery: load attaches without taking the
     // writer lock, close only detaches (invariant I1).
-    async readNativeHistory(client, ref, sessionId) {
+    async readNativeHistory(ref, window, connection) {
+      const { client } = await connection()
+      const sessionId = `history:${ref.nativeSessionId}`
       const { updates } = await client.capture(ref.nativeSessionId, () => client.request('session/load', {
         sessionId: ref.nativeSessionId, cwd: ref.locator ?? process.cwd(), mcpServers: [] }, { timeoutMs: 120_000 }))
       await client.request('session/close', { sessionId: ref.nativeSessionId }, { timeoutMs: 15_000 }).catch(() => undefined)
@@ -164,7 +166,7 @@ export function dshPluginDialect(): AcpDialect {
       const ids = identity(context)
       const items: HistoryItem[] = []
       for (const update of updates) {
-        const events = dialect.translateUpdate!(update, context)
+        const events = dialect.translateUpdate!(update, context, {})
           ?? genericTranslate(update, { identity: ids, replay: true, suppressUserEcho: false, config: [] })
         for (const event of events) {
           if (event.type === 'message.delta' || event.type === 'message.completed' || event.type === 'tool.started'
@@ -172,7 +174,7 @@ export function dshPluginDialect(): AcpDialect {
         }
       }
       attempts.delete(`${context.epoch}\u0000${context.nativeSessionId}`)
-      return { items }
+      return { items: window.limit > 0 && items.length > window.limit ? items.slice(-window.limit) : items }
     },
   }
   return dialect

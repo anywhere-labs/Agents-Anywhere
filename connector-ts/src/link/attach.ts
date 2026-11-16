@@ -1,4 +1,5 @@
 import type { LiveEvents } from '../application/ports/index.js'
+import { ATTACH_EVENTS as GENERATED_ATTACH_EVENTS } from '../generated/device-meshcall/v1_0/e2ee-registration.js'
 import type { LinkAttachItem } from '../generated/device-meshcall/v1_0/link-attach-item.js'
 
 /** Device heartbeat on `Link/attach` (06-protocols.md §2.5); the Server's lease is 60 s. */
@@ -10,11 +11,8 @@ export const MAX_PENDING_EVENTS = 256
 
 export type AttachEnd = 'cancelled' | 'superseded' | 'stalled' | 'closed'
 
-/** Events allowed in plaintext on `Link/attach`, per E2EE mode (`ATTACH_EVENTS` of `e2ee-registration.json`). */
-export const ATTACH_EVENTS: Readonly<Record<'off' | 'required', readonly string[]>> = {
-  off: ['runtime.status', 'runtime.notice.updated', 'runtime.queue.updated', 'port.listening', 'port.closed'],
-  required: ['runtime.status', 'port.listening', 'port.closed'],
-}
+/** Events allowed in plaintext on `Link/attach`, per E2EE mode (generated from `e2ee-registration.json`). */
+export const ATTACH_EVENTS: Readonly<Record<'off' | 'required', readonly string[]>> = GENERATED_ATTACH_EVENTS
 
 interface OpenStream {
   readonly id: number
@@ -37,7 +35,10 @@ export interface AttachHubOptions {
 
 function eventKey(method: string, payload: Record<string, unknown>): string {
   const scope = payload.sessionId ?? payload.runtimeId ?? payload.port ?? ''
-  return `${method}\u0000${String(scope)}`
+  // Session facts of different kinds (planning, goal, status) share a session: one must not replace another.
+  const status = payload.status
+  const kind = status !== null && typeof status === 'object' && typeof (status as Record<string, unknown>).event === 'string' ? (status as Record<string, unknown>).event : ''
+  return `${method}\u0000${String(scope)}\u0000${String(kind)}`
 }
 
 /**
@@ -54,6 +55,7 @@ export class AttachHub implements LiveEvents {
   private current: OpenStream | null = null
   private nextId = 1
   private allowed: ReadonlySet<string> = new Set(ATTACH_EVENTS.off)
+  private encrypted = false
 
   public constructor(private readonly options: AttachHubOptions = {}) {}
 
@@ -63,15 +65,24 @@ export class AttachHub implements LiveEvents {
 
   public setMode(mode: 'off' | 'required'): void {
     this.allowed = new Set(ATTACH_EVENTS[mode])
-    for (const [key, event] of this.pending) if (!this.allowed.has(event.method)) this.pending.delete(key)
+    this.encrypted = mode === 'required'
+    for (const [key, event] of this.pending) if (!this.passes(event.method, event.payload)) this.pending.delete(key)
   }
 
   public get isOpen(): boolean {
     return this.current !== null && this.current.ended === null
   }
 
+  /**
+   * In encrypted mode only device-level facts go out in plaintext: a session's facts (anything naming a
+   * `sessionId`: notices, planning, configuration) reach clients through their secure channel subscriptions.
+   */
+  private passes(method: string, payload: Record<string, unknown>): boolean {
+    return this.allowed.has(method) && !(this.encrypted && payload.sessionId !== undefined)
+  }
+
   public emit(method: string, payload: Record<string, unknown>): void {
-    if (!this.allowed.has(method)) return
+    if (!this.passes(method, payload)) return
     const key = eventKey(method, payload)
     this.pending.delete(key)
     this.pending.set(key, { method, payload })
