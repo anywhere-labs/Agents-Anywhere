@@ -185,16 +185,17 @@ describe('shell', () => {
     const events: { method: string; params: Record<string, unknown> }[] = []
     const ops = shell((method, params) => events.push({ method, params }))
     await ops.taskStart({ root: home, cwd: '.', taskId: 't1', sessionId: 's1', command: 'echo done', timeoutMs: 10_000 })
-    await expect(ops.taskStart({ root: home, cwd: '.', taskId: 't1', sessionId: 's1', command: 'true', timeoutMs: 10_000 })).rejects.toMatchObject({ code: 'invalid_argument' })
     await expect.poll(() => events.find(e => e.method === 'shell.task.completed')).toBeTruthy()
     expect(events.map(e => e.method)).toEqual(['shell.task.started', 'shell.task.completed'])
     expect(events[1]!.params).toMatchObject({ taskId: 't1', status: 'completed', result: { stdout: 'done\n', exitCode: 0 } })
 
     events.length = 0
     await ops.taskStart({ root: home, cwd: '.', taskId: 't2', sessionId: 's1', command: 'sleep 30', timeoutMs: 60_000 })
+    // A task id still running is refused (a finished one may be reused, so this needs a task that lasts).
+    await expect(ops.taskStart({ root: home, cwd: '.', taskId: 't2', sessionId: 's1', command: 'true', timeoutMs: 10_000 })).rejects.toMatchObject({ code: 'invalid_argument' })
     expect(await ops.taskCancel({ taskId: 't2', sessionId: 's1' })).toEqual({ taskId: 't2', sessionId: 's1', cancelled: true })
     expect(await ops.taskCancel({ taskId: 't2', sessionId: 's1' })).toMatchObject({ cancelled: false })
-    await new Promise(resolve => setTimeout(resolve, 50))
+    await expect.poll(() => events.length).toBe(2)
     expect(events.map(e => [e.method, e.params.status])).toEqual([['shell.task.started', 'running'], ['shell.task.completed', 'cancelled']])
     await ops.close()
   })
