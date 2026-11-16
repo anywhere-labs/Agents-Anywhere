@@ -113,8 +113,13 @@ export interface AcpDialect {
   interactionKind?(method: string, params: JsonRecord): InteractionKind | undefined
   /** 反向请求到达时先给方言看一眼（Hermes 记下审批卡的 toolCallId）。不改变处理方式。 */
   observeRequest?(method: string, params: JsonRecord, context: SessionContext): void
-  /** 打开会话后检查 Agent 是否满足要求（例如必须提供模型配置）；返回错误时会话打开失败。 */
-  verifySession?(config: readonly ConfigOption[]): RuntimeError | undefined
+  /**
+   * 打开会话后检查 Agent 是否满足要求（例如必须提供模型配置）；返回错误时会话打开失败。
+   * `response` 是 session/new|load|resume 的原始响应（Pi 从 `_meta.pi` 核对审批守卫已载入）。
+   */
+  verifySession?(config: readonly ConfigOption[], response: JsonRecord, nativeSessionId: string): RuntimeError | undefined
+  /** 方言自己的接纳证据（Pi 守卫在模型输出前报告回合已开始）；通用证据之外再算一条。 */
+  acceptanceEvidence?(update: JsonRecord): boolean
   /** 计划审阅的回答怎么落到 ACP 选项上。 */
   planReview?(answer: Extract<InteractionAnswer, { kind: 'plan_review' }>, options: readonly JsonRecord[], context: { readonly modeBeforePlan?: string }): PlanReviewDecision
   /** 计划模式承载在哪个配置项上。 */
