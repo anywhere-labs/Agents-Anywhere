@@ -233,6 +233,7 @@ export class AcpRuntimeHandle implements RuntimeHandle {
   }
 
   async open(target: OpenTarget, options: OpenOptions): Promise<AcpRuntimeSession> {
+    if (this.draining) throw new RuntimeFailure({ code: 'runtime_route_switching', message: 'this route is being handed over', retryable: true })
     const connection = await this.connection(target.kind === 'new' ? target.spec.cwd : target.ref.locator)
     const { client, info } = connection
     const dialect = this.options.dialect
@@ -292,9 +293,38 @@ export class AcpRuntimeHandle implements RuntimeHandle {
       throw error
     }
   }
- async stop(): Promise<void> {
+  async stop(): Promise<void> {
     await Promise.all([...this.pools.values()].map(pool => pool.shutdown()))
     this.events.close()
+  }
+
+  private draining = false
+
+  /** 打开的会话（路由切换时按会话交接）。 */
+  openSessions(): AcpRuntimeSession[] {
+    return [...this.sessions.values()].flatMap(set => [...set])
+  }
+
+  /**
+   * 把这条路由让出去（04 §5.6「路由切换要交接写锁」）：不再打开新会话；空闲会话立即关闭，运行中的等回合
+   * 结束再关；全部关完后停掉进程。返回时这条路由持有的写锁都已释放。`onReleased` 在每个会话关闭后调用，
+   * 上层据此把它切到新路由。
+   */
+  async drain(onReleased?: (session: AcpRuntimeSession) => void): Promise<void> {
+    this.draining = true
+    await Promise.all(this.openSessions().map(async session => {
+      await session.releaseBetweenTurns()
+      onReleased?.(session)
+    }))
+    const pools = [...this.pools.values()]
+    // 关掉的进程池不能再用：之后若重新允许打开（resumeOpening），按需建新进程池。
+    this.pools.clear()
+    await Promise.all(pools.map(pool => pool.shutdown()))
+  }
+
+  /** 交接取消（例如新路由没起来）：重新允许打开会话。 */
+  resumeOpening(): void {
+    this.draining = false
   }
 }
 
