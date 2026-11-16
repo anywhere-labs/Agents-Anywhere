@@ -34,6 +34,7 @@
     <string name="runtime_error_configuration_mapping_unavailable">该旧选择没有唯一且无损的 Agent 配置映射。</string>
     <string name="runtime_error_device_pin_mismatch">设备身份发生了变化，需要重新配对。</string>
     <string name="runtime_error_device_read_timeout">设备响应较慢，请稍后重试。</string>
+    <string name="runtime_error_device_upgrade_required">这台设备上的 Agents Anywhere 版本过旧，Server 已不再保存会话内容。请在设备上升级 Agents Anywhere 后再打开会话。</string>
     <string name="runtime_error_e2ee_not_paired">这台设备还没有授权当前客户端，请先配对。</string>
     <string name="runtime_error_e2ee_required">这个服务器启用了端到端加密，需要先和设备配对。</string>
     <string name="runtime_error_image_input_unsupported">当前模型声明不支持图片输入，请移除图片或切换支持图片的模型。</string>

@@ -25226,6 +25226,23 @@
           }
         }
       }
+    },
+    "这台设备上的 Agents Anywhere 版本过旧，Server 已不再保存会话内容。请在设备上升级 Agents Anywhere 后再打开会话。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agents Anywhere on this device is out of date, and the server no longer stores session content. Upgrade Agents Anywhere on the device to open this session."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这台设备上的 Agents Anywhere 版本过旧，Server 已不再保存会话内容。请在设备上升级 Agents Anywhere 后再打开会话。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

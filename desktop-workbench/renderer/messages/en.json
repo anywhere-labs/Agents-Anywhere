@@ -2673,6 +2673,7 @@
     "configuration_mapping_unavailable": "This earlier selection has no exact agent configuration mapping.",
     "device_pin_mismatch": "The device identity has changed. Pair with it again.",
     "device_read_timeout": "The device is responding slowly. Try again shortly.",
+    "device_upgrade_required": "Agents Anywhere on this device is out of date, and the server no longer stores session content. Upgrade Agents Anywhere on the device to open this session.",
     "e2ee_not_paired": "This device has not authorised this client yet. Pair with it first.",
     "e2ee_required": "This server requires end-to-end encryption. Pair with the device first.",
     "image_input_unsupported": "The current model does not declare image input. Remove the image or switch to a model that supports images.",
