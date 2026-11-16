@@ -46,16 +46,22 @@ test('the plugin syncs and answers through the TS Connector 2.0 compatibility la
   assert.equal(meshcallVersion(new URL('../../', import.meta.url)), '0.3.0', 'the plugin keeps meshcall 0.3.0')
   assert.match(meshcallVersion(connectorTs), /9334405/, 'the Connector runs meshcall 9334405')
   const compat = await import(new URL('src/runtime/dsh-bridge2/index.ts', connectorTs).href) as typeof import('../../../connector-ts/src/runtime/dsh-bridge2/index.js')
+  const storage = await import(new URL('src/store/index.ts', connectorTs).href) as typeof import('../../../connector-ts/src/store/index.js')
+  const feeds = await import(new URL('src/sync/change-feed.ts', connectorTs).href) as typeof import('../../../connector-ts/src/sync/change-feed.js')
   const home = await mkdtemp(join(tmpdir(), 'aa-dsh-ts-'))
+  // The Connector's real local store (SQLite) behind the 2.0 ledger; the recorder only watches.
+  const store = storage.inProcessStore(storage.openSqliteStore({ dataDir: join(home, 'store'), durability: 'normal' }))
+  const inner = new compat.StoreBridge2Ledger({ store, feed: new feeds.MemoryChangeFeed(), live: { emit: () => undefined }, runtimeId: 'rti_dsh',
+    inventory: (method, params) => published.push({ method, params }) })
   const published: Notification[] = []
   const sessions = new Map<string, { meta: Json, items: Json[] }>()
   const state = new Map<string, Json>()
-  const ledger = {
-    async publish(notifications: readonly Notification[]) { published.push(...notifications) },
-    async replaceSession(id: string, meta: Json, items: readonly Json[]) { sessions.set(id, { meta, items: [...items] }) },
-    async readState(key: string) { return state.get(key) },
-    async writeState(key: string, value: Json) { state.set(key, value) },
-    async deleteState(key: string) { state.delete(key) },
+  const ledger: import('../../../connector-ts/src/runtime/dsh-bridge2/index.js').Bridge2Ledger = {
+    async publish(notifications) { await inner.publish(notifications); published.push(...notifications) },
+    async replaceSession(id, meta, items) { await inner.replaceSession(id, meta, items); sessions.set(id, { meta, items: [...items] }) },
+    readState: key => inner.readState(key),
+    async writeState(key, value) { await inner.writeState(key, value); state.set(key, value) },
+    async deleteState(key) { await inner.deleteState(key); state.delete(key) },
   }
   let context: Awaited<ReturnType<typeof nativeRuntime>> | undefined
   let router: InstanceType<typeof compat.Bridge2Router> | undefined
@@ -98,9 +104,23 @@ test('the plugin syncs and answers through the TS Connector 2.0 compatibility la
     const checkpoint = state.get('dsh/sync/checkpoints/native-main')!
     assert.equal(checkpoint.version, 1)
     assert.match(String(checkpoint.historyHash), /^[0-9a-f]{64}$/)
+
+    // What landed in the local store: sessions with their facts, the whole capture, the checkpoints.
+    assert.equal((await store.sessions.get(main))?.nativeTitle, '官方原生会话')
+    assert.equal((await store.sessions.get(main))?.runtimeType, 'dsh')
+    const stored: string[] = []
+    for (let cursor: number | null = null; ;) {
+      const page = await store.timeline.read(persisted, 'after', cursor, 500, 1 << 24)
+      stored.push(...page.items.map(item => item.id))
+      if (!page.hasMore || !page.items.length) break
+      cursor = page.items.at(-1)!.orderSeq
+    }
+    assert.deepEqual(stored.sort(), sessions.get(persisted)!.items.map(item => String(item.id)).sort(), 'the store holds the capture')
+    assert.deepEqual(await store.kv.get('rti_dsh', 'dsh/sync/checkpoints/native-main'), checkpoint)
   } finally {
     await runtime?.stop().catch(() => undefined)
     await router?.stop().catch(() => undefined)
+    await store.close().catch(() => undefined)
     await context?.ctx.fiber.dispose()
     await rm(home, { recursive: true, force: true })
   }
