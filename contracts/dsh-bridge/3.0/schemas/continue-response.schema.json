@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "continue-response.schema.json",
+  "title": "DshContinueResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "outcome"
+  ],
+  "properties": {
+    "outcome": {
+      "type": "string",
+      "enum": [
+        "accepted",
+        "unavailable"
+      ]
+    }
+  }
+}

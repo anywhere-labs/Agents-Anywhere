@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "list-changes.schema.json",
+  "title": "DshListChanges",
+  "description": "_session/list/changes notification params (§4).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "upserts",
+    "removals"
+  ],
+  "properties": {
+    "upserts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "sessionId",
+          "cwd"
+        ],
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "cwd": {
+            "type": "string",
+            "minLength": 1
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updatedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "_meta": {
+            "type": "object",
+            "required": [
+              "dsh"
+            ],
+            "properties": {
+              "dsh": {
+                "title": "DshSessionInfoMeta",
+                "description": "_meta.dsh of a session/list entry or _session/list/changes upsert (§4).",
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "running",
+                  "lastSeq",
+                  "writer"
+                ],
+                "properties": {
+                  "createdAt": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "running": {
+                    "type": "boolean"
+                  },
+                  "lastSeq": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "workspaceId": {
+                    "type": "string"
+                  },
+                  "writer": {
+                    "type": "string",
+                    "enum": [
+                      "host",
+                      "external",
+                      "none"
+                    ],
+                    "description": "Who holds the DSH session write lock (§9)."
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "removals": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}

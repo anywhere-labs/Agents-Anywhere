@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "steering-response.schema.json",
+  "title": "DshSteeringResponse",
+  "description": "_session/steering result (§8).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "outcome"
+  ],
+  "properties": {
+    "outcome": {
+      "type": "string",
+      "enum": [
+        "injected",
+        "promptRequired",
+        "failed"
+      ]
+    },
+    "message": {
+      "type": "string"
+    }
+  }
+}

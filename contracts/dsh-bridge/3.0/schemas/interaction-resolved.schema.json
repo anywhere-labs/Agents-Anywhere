@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "interaction-resolved.schema.json",
+  "title": "DshInteractionResolved",
+  "description": "_dsh/interaction/resolved notification params (§10).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "sessionId",
+    "interactionId",
+    "by"
+  ],
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "interactionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "by": {
+      "type": "string",
+      "enum": [
+        "dsh",
+        "timeout",
+        "cancelled"
+      ]
+    },
+    "optionId": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

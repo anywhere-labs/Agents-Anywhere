@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "planning-state.schema.json",
+  "title": "DshPlanningState",
+  "description": "_dsh/planning/get and /set result (§10).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "available"
+  ],
+  "properties": {
+    "available": {
+      "type": "boolean"
+    },
+    "active": {
+      "type": "boolean"
+    },
+    "pending": {
+      "type": "boolean"
+    },
+    "outcome": {
+      "type": "string",
+      "enum": [
+        "committed",
+        "queued",
+        "cancelled",
+        "noop"
+      ]
+    }
+  }
+}

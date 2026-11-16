@@ -21,6 +21,7 @@ const checkOnly = process.argv.includes("--check")
 /** @type {ReadonlyArray<readonly [name: string, version: string]>} */
 const CONTRACTS = [
   ["device-meshcall", "1.0"],
+  ["dsh-bridge", "3.0"],
   ["e2ee", "1.0"],
   ["preview", "1.0"],
   ["protocol", "1.2"],

@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "welcome.schema.json",
+  "title": "DshBridgeHandshakeReply",
+  "description": "Connector's single-line answer to hello (§1.3).",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "bridgeProtocol",
+        "connectorInstance",
+        "connectorVersion"
+      ],
+      "properties": {
+        "t": {
+          "const": "welcome"
+        },
+        "bridgeProtocol": {
+          "type": "string",
+          "pattern": "^3\\.[0-9]+$"
+        },
+        "connectorInstance": {
+          "type": "string",
+          "minLength": 1
+        },
+        "connectorVersion": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "code",
+        "message"
+      ],
+      "properties": {
+        "t": {
+          "const": "reject"
+        },
+        "code": {
+          "type": "string",
+          "enum": [
+            "bad_key",
+            "unsupported_protocol",
+            "duplicate_host",
+            "busy"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    }
+  ]
+}

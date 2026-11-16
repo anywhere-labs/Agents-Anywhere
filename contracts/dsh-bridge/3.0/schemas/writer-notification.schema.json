@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "writer-notification.schema.json",
+  "title": "DshWriterNotification",
+  "description": "_dsh/session/writer notification params (§9).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "sessionId",
+    "writer"
+  ],
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "writer": {
+      "type": "string",
+      "enum": [
+        "host",
+        "external",
+        "none"
+      ],
+      "description": "Who holds the DSH session write lock (§9)."
+    },
+    "waiting": {
+      "type": "boolean",
+      "description": "the DSH UI is waiting for the external writer to release"
+    }
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "upload-meta.schema.json",
+  "title": "DshUploadMeta",
+  "description": "resource_link _meta.dsh.upload (§8).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "path",
+    "name",
+    "size"
+  ],
+  "properties": {
+    "path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "mimeType": {
+      "type": "string",
+      "minLength": 1
+    },
+    "size": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}
