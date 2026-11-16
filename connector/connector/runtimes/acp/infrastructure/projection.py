@@ -12,6 +12,9 @@ class Projection:
         self.items: dict[str, dict] = {}
         self.message_index = 0
         self.current_kind = None
+        self.current_thought_identity = None
+        self.current_thought_key = None
+        self.verified_thought_occurrences: dict[str, int] = {}
 
     def apply(self, update: dict) -> dict | None:
         native = update.get("_meta", {}).get("aa", {}).get("timelineItem")
@@ -39,35 +42,125 @@ class Projection:
             return item
         kind = update.get("sessionUpdate")
         if kind in {"agent_message_chunk", "agent_thought_chunk", "user_message_chunk"}:
-            if self.current_kind != kind:
-                self.message_index += 1
-                self.current_kind = kind
-            message_id = update.get("messageId")
-            key = fingerprint([self.session_id, kind, message_id]) if message_id and update.get("aaProjectionVerified") else fingerprint([self.session_id, self.epoch, kind, self.message_index])
-            old = self.items.get(key, {})
+            is_thought = kind == "agent_thought_chunk"
             content = update.get("content", {})
             if content.get("type") != "text":
                 return None
-            text = old.get("content", {}).get("text", "") + content.get("text", "")
+            chunk_text = content.get("text", "")
+            if not chunk_text:
+                return None
+
+            message_id = update.get("messageId")
+            verified_message_id = (
+                message_id
+                if is_thought
+                and update.get("aaProjectionVerified")
+                and isinstance(message_id, str)
+                and message_id
+                else None
+            )
+            thought_identity = (
+                ("verified", verified_message_id)
+                if verified_message_id is not None
+                else ("unverified", message_id)
+                if is_thought and isinstance(message_id, str) and message_id
+                else ("fallback", None)
+            )
+            new_kind = self.current_kind != kind
+            new_thought_segment = (
+                is_thought
+                and not new_kind
+                and self.current_thought_identity != thought_identity
+            )
+            if new_kind or new_thought_segment:
+                self.message_index += 1
+                self.current_kind = kind
+                if is_thought:
+                    self.current_thought_identity = thought_identity
+                    if verified_message_id is not None:
+                        # Occurrences are connection-local: persisted items do
+                        # not retain enough data to reconstruct prior segments.
+                        # Keep the first observed segment on Pi's key for upserts.
+                        occurrence = self.verified_thought_occurrences.get(
+                            verified_message_id, 0
+                        )
+                        self.verified_thought_occurrences[verified_message_id] = (
+                            occurrence + 1
+                        )
+                        self.current_thought_key = (
+                            fingerprint(
+                                [self.session_id, kind, verified_message_id]
+                            )
+                            if occurrence == 0
+                            else fingerprint(
+                                [
+                                    self.session_id,
+                                    kind,
+                                    verified_message_id,
+                                    self.message_index,
+                                ]
+                            )
+                        )
+                    else:
+                        self.current_thought_key = fingerprint(
+                            [self.session_id, self.epoch, kind, self.message_index]
+                        )
+                else:
+                    self.current_thought_identity = None
+                    self.current_thought_key = None
+            if is_thought:
+                key = self.current_thought_key
+            elif message_id and update.get("aaProjectionVerified"):
+                key = fingerprint([self.session_id, kind, message_id])
+            else:
+                key = fingerprint(
+                    [self.session_id, self.epoch, kind, self.message_index]
+                )
+            old = self.items.get(key, {})
+            text = old.get("content", {}).get("text", "") + chunk_text
+            aa_metadata = update.get("_meta", {}).get("aa", {})
+            status = (
+                "cancelled"
+                if aa_metadata.get("stopReason") == "aborted"
+                else "failed"
+                if aa_metadata.get("stopReason") == "error"
+                else "done"
+                if aa_metadata.get("boundary")
+                else "running"
+            )
             item = {
                 "id": key,
                 "sessionId": self.session_id,
-                "type": "message",
-                "role": "user" if kind == "user_message_chunk" else "assistant",
-                "status": "cancelled" if update.get("_meta", {}).get("aa", {}).get("stopReason") == "aborted" else "failed" if update.get("_meta", {}).get("aa", {}).get("stopReason") == "error" else "done" if update.get("_meta", {}).get("aa", {}).get("boundary") else "running",
+                "type": "system" if is_thought else "message",
+                "role": (
+                    "system"
+                    if is_thought
+                    else "user"
+                    if kind == "user_message_chunk"
+                    else "assistant"
+                ),
+                "status": status,
                 "content": {
-                    "kind": "markdown",
+                    "kind": "reasoning" if is_thought else "markdown",
                     "format": "markdown",
                     "text": text,
-                    "isThinking": kind == "agent_thought_chunk",
-                    **({"clientMessageId": update["_meta"]["aa"]["clientMessageId"]}
-                       if update.get("_meta", {}).get("aa", {}).get("clientMessageId") else {}),
-                    **({"attachments": update["_meta"]["aa"]["attachments"]}
-                       if update.get("_meta", {}).get("aa", {}).get("attachments") else {}),
+                    **({"isThinking": False} if not is_thought else {}),
+                    **(
+                        {"clientMessageId": aa_metadata["clientMessageId"]}
+                        if aa_metadata.get("clientMessageId")
+                        else {}
+                    ),
+                    **(
+                        {"attachments": aa_metadata["attachments"]}
+                        if aa_metadata.get("attachments")
+                        else {}
+                    ),
                 },
             }
         elif kind in {"tool_call", "tool_call_update"}:
             self.current_kind = None
+            self.current_thought_identity = None
+            self.current_thought_key = None
             tool_id = update["toolCallId"]
             key = fingerprint([self.session_id, "tool", tool_id]) if update.get("aaProjectionVerified") else fingerprint([self.session_id, self.epoch, "tool", tool_id])
             old = self.items.get(key, {})
@@ -141,7 +234,7 @@ class Projection:
     def finish(self) -> list[dict]:
         result = []
         for item in self.items.values():
-            if item["type"] == "message" and item["status"] == "running":
+            if item["type"] in {"message", "system"} and item["status"] == "running":
                 item["status"] = "done"
                 item["revision"] += 1
                 item["contentHash"] = "sha256:" + fingerprint(
@@ -152,4 +245,6 @@ class Projection:
                 )
                 result.append(dict(item))
         self.current_kind = None
+        self.current_thought_identity = None
+        self.current_thought_key = None
         return result
