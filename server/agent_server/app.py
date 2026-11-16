@@ -90,7 +90,7 @@ from agent_server.services.connector_rpc import ConnectorServiceError
 from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.device_blobs import DeviceBlobService
 from agent_server.services.device_commands import DeviceCommandService
-from agent_server.services.device_link import DeviceLinkService, e2ee_mode
+from agent_server.services.device_link import DeviceLinkService
 from agent_server.services.device_planning import DevicePlanningService
 from agent_server.services.device_queue import DeviceQueueService
 from agent_server.services.device_reads import DeviceReadService
@@ -373,6 +373,9 @@ def create_app(
             os.environ.get("AGENT_SERVER_USAGE_FLUSH_INTERVAL_SECONDS", "1")
         ),
     )
+    def _e2ee_settings() -> E2eeSettings:
+        return app.state.e2ee_settings
+
     app.state.device_link = DeviceLinkService(
         app.state.store,
         app.state.device_mesh,
@@ -381,6 +384,7 @@ def create_app(
         app.state.timeline_broker,
         capability_refresh=app.state.capability_refresh,
         usage_recorder=app.state.usage_recorder,
+        e2ee_settings=_e2ee_settings,
     )
     app.state.device_reads = DeviceReadService(
         app.state.store, app.state.device_mesh, app.state.device_link_hub
@@ -393,11 +397,11 @@ def create_app(
         app.state.timeline_broker.publish,
         worker_id=app.state.rpc.instance_id,
         # Encrypted mode: content never passes through the Server, the device registers no Sessions.
-        enabled=lambda: e2ee_mode() != "required",
+        enabled=lambda: not _e2ee_settings().required,
     )
     app.state.device_link.session_watch = app.state.session_watch
     app.state.device_commands = DeviceCommandService(
-        app.state.store, app.state.device_mesh, app.state.device_link_hub
+        app.state.store, app.state.device_mesh, app.state.device_link_hub, e2ee_settings=_e2ee_settings
     )
     app.state.device_link.commands = app.state.device_commands
     app.state.device_rpc_bridge.commands = app.state.device_commands
@@ -432,6 +436,7 @@ def create_app(
         app.state.device_commands,
         app.state.timeline_broker.publish,
         _device_online,
+        e2ee_settings=_e2ee_settings,
     )
     app.state.device_link.event_listeners.append(app.state.previews.on_device_event)
     app.state.device_link.presence_listeners.append(app.state.previews.on_presence)

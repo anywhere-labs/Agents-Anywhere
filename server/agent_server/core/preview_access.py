@@ -31,7 +31,6 @@ SLUG_PATTERN = re.compile(r"^[a-z2-7]{10}$")
 
 _DOMAIN_ENV = "AGENT_SERVER_PREVIEW_DOMAIN"
 _TOKEN_ENV = "AGENT_SERVER_PREVIEW_INTERNAL_TOKEN"
-_E2EE_ENV = "AGENT_SERVER_E2EE_PREVIEW"
 _FRPS_ENV = "AGENT_SERVER_PREVIEW_FRPS_ADDR"
 MIN_INTERNAL_TOKEN_LENGTH = 32
 
@@ -46,10 +45,6 @@ def preview_domain() -> str | None:
 def internal_token() -> str | None:
     value = os.environ.get(_TOKEN_ENV, "").strip()
     return value if len(value) >= MIN_INTERNAL_TOKEN_LENGTH else None
-
-
-def e2ee_preview_denied() -> bool:
-    return os.environ.get(_E2EE_ENV, "").strip().lower() == "deny"
 
 
 def frps_addr() -> str | None:

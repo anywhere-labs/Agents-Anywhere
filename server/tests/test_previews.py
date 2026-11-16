@@ -12,6 +12,7 @@ from device_link_helpers import eventually, offline, server, user_and_device
 from mesh_fixtures import RouterProcess
 
 from agent_server.core.device_meshcall import LinkError
+from agent_server.core.e2ee_settings import E2eeSettings
 from agent_server.core.preview_access import COOKIE_NAME
 from scripts.v3_fake_device import connect_device
 
@@ -159,13 +160,12 @@ def test_previews_are_hidden_without_a_preview_domain(mesh_router: RouterProcess
 
             monkeypatch.setenv("AGENT_SERVER_PREVIEW_DOMAIN", DOMAIN)
             monkeypatch.setenv("AGENT_SERVER_PREVIEW_INTERNAL_TOKEN", TOKEN)
-            monkeypatch.setenv("AGENT_SERVER_E2EE", "required")
-            monkeypatch.setenv("AGENT_SERVER_E2EE_PREVIEW", "deny")
+            app.state.e2ee_settings = E2eeSettings(mode="required", preview="deny")
             denied = await client.post("/api/v3/previews", headers=headers, json={"deviceId": device_id, "port": 5173})
             assert denied.status_code == 404 and denied.json()["detail"]["code"] == "preview_disabled"
 
             # A v2 Connector cannot run frpc.
-            monkeypatch.delenv("AGENT_SERVER_E2EE_PREVIEW")
+            app.state.e2ee_settings = E2eeSettings(mode="required")
             v2 = await client.post("/api/v3/previews", headers=headers, json={"deviceId": device_id, "port": 5173})
             assert v2.status_code == 409 and v2.json()["detail"]["code"] == "device_upgrade_required"
 

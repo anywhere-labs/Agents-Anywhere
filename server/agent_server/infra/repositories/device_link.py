@@ -114,10 +114,17 @@ class DeviceLinkRepositoryMixin:
     # -- reported directory fields --------------------------------------------
 
     async def apply_device_session_summary(
-        self, session_id: str, summary: SessionSummary, *, reported_at: str | None = None
+        self,
+        session_id: str,
+        summary: SessionSummary,
+        *,
+        reported_at: str | None = None,
+        accept_display: bool = True,
     ) -> bool:
         """Store a device summary unless it is older than what is stored (by ``headSeq``).
 
+        ``accept_display=False`` (E2EE required mode, plaintext envelope): the display envelope and
+        the plaintext title and working directory are cleared instead of stored.
         Returns whether anything a client would see changed.
         """
 
@@ -136,7 +143,7 @@ class DeviceLinkRepositoryMixin:
             "latest_item_role": latest.role if latest else None,
             "latest_item_status": latest.status if latest else None,
             "latest_item_time": latest.time if latest else None,
-            "display_device": _json(display.model_dump(mode="json", exclude_none=True)),
+            "display_device": _json(display.model_dump(mode="json", exclude_none=True)) if accept_display else None,
             "reported_at": reported_at or utc_now(),
             "updated_at": utc_now(),
         }
@@ -150,7 +157,10 @@ class DeviceLinkRepositoryMixin:
             )
         # Plain envelopes keep the v2 title/cwd columns current for clients that do not read
         # envelopes yet; sealed ones clear them (the Server must not hold plaintext).
-        if display.mode == "plain" and isinstance(display.payload, dict):
+        if not accept_display:
+            values["title"] = None
+            values["cwd"] = None
+        elif display.mode == "plain" and isinstance(display.payload, dict):
             if isinstance(display.payload.get("title"), str):
                 values["title"] = display.payload["title"]
             if isinstance(display.payload.get("cwd"), str):

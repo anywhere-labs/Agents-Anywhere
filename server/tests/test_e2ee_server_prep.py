@@ -13,7 +13,8 @@ from device_link_helpers import server, user_and_device
 from mesh_fixtures import RouterProcess
 from test_backend_mvp import create_connector_and_session, make_client
 
-from agent_server.infra.device_mesh import E2EE_DEVICE_SERVICES
+from agent_server.core.device_meshcall import registered_services
+from agent_server.core.e2ee_settings import E2eeSettings
 from scripts.v3_fake_device import connect_device
 
 
@@ -28,13 +29,13 @@ def _meta_upsert(session_id: str, **fields) -> dict:
     }
 
 
-def test_required_mode_drops_v2_plaintext_titles_and_working_directories(tmp_path, monkeypatch) -> None:
+def test_required_mode_drops_v2_plaintext_titles_and_working_directories(tmp_path) -> None:
     client = make_client(tmp_path)
     _connector_id, token, session_id, _headers = create_connector_and_session(client)
     store = client.app.state.store
     ingest = {"Authorization": f"Bearer {token}"}
 
-    monkeypatch.setenv("AGENT_SERVER_E2EE", "required")
+    client.app.state.e2ee_settings = E2eeSettings(mode="required")
     kept = client.post("/connector/ingest", headers=ingest, json=_meta_upsert(session_id, title="plain", cwd="/other"))
     assert kept.status_code == 200, kept.text
     session = asyncio.run(store.get_session(session_id))
@@ -48,7 +49,7 @@ def test_required_mode_drops_v2_plaintext_titles_and_working_directories(tmp_pat
     titles = [s.title for s in asyncio.run(store.list_sessions_for_connector(_connector_id))]
     assert "secret" not in titles
 
-    monkeypatch.setenv("AGENT_SERVER_E2EE", "off")
+    client.app.state.e2ee_settings = E2eeSettings(mode="off")
     renamed = client.post("/connector/ingest", headers=ingest, json=_meta_upsert(session_id, title="plain"))
     assert renamed.status_code == 200, renamed.text
     assert asyncio.run(store.get_session(session_id)).title == "plain"
@@ -84,7 +85,7 @@ def test_fake_device_registers_only_e2ee_services_in_required_mode(mesh_router: 
             device, welcome, _access = await connect_device(client, connector_id=device_id, connector_token=token)
             try:
                 assert welcome["e2eeMode"] == "required"
-                assert await app.state.device_mesh.registered_services(device_id) == set(E2EE_DEVICE_SERVICES)
+                assert await app.state.device_mesh.registered_services(device_id) == set(registered_services("required"))
             finally:
                 await device.stop()
 

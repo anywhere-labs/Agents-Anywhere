@@ -40,6 +40,7 @@ from agent_server.deps import (
     get_attachment_service,
     get_connector_ingest_service,
     get_connector_realtime_service,
+    get_e2ee_settings,
     get_fs_downloads,
     get_rpc,
     get_store,
@@ -613,6 +614,7 @@ async def connector_ws(
                 db, ConnectorNotificationService(
                     db, realtime,
                     usage_recorder=websocket.app.state.usage_recorder,
+                    e2ee_settings=lambda: get_e2ee_settings(websocket),
                 ),
                 timeline_broker, runtime_service, manager,
                 websocket.app.state.session_runtime_state_cache,

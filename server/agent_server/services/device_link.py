@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import secrets
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -32,16 +33,18 @@ from agent_server.core.device_meshcall import (
     SessionSummary,
     SessionSummaryOut,
     UsageReportOut,
+    registered_services,
+    scrub_for_e2ee,
 )
+from agent_server.core.e2ee_settings import E2eeSettings, accept_display_envelope
 from agent_server.infra.device_link import DeviceLinkHub
 from agent_server.infra.device_mesh import (
-    DEVICE_SERVICES,
-    E2EE_DEVICE_SERVICES,
     DeviceCallError,
     DeviceMesh,
     MeshNotConfigured,
 )
 from agent_server.services.dashboard_events import publish_dashboard_changed
+from agent_server.services.e2ee_commands import E2eeCommandService
 
 LINK_CONTRACT = f"device-meshcall/{DEVICE_MESHCALL_VERSION}"
 REQUIRED_SERVICES = frozenset({"aa.device.v1.Link", "aa.device.v1.Commands"})
@@ -55,12 +58,6 @@ class DeviceLinkError(Exception):
         self.status = status
         self.code = code
         self.message = message
-
-
-def e2ee_mode() -> str:
-    import os
-
-    return "required" if os.environ.get("AGENT_SERVER_E2EE", "off").strip().lower() == "required" else "off"
 
 
 def _iso_from_ms(value: int) -> str:
@@ -80,8 +77,11 @@ class DeviceLinkService:
         *,
         capability_refresh: Any | None = None,
         usage_recorder: Any | None = None,
+        e2ee_settings: Callable[[], E2eeSettings] = E2eeSettings,
     ) -> None:
         self._store = store
+        # ``app.state.e2ee_settings``, read on every use.
+        self._e2ee_settings = e2ee_settings
         self._mesh = mesh
         self._hub = hub
         self._coordinator = coordinator
@@ -142,10 +142,10 @@ class DeviceLinkService:
             )
         if not self._mesh.configured:
             raise DeviceLinkError(503, "mesh_unavailable", "this Server has no MeshCall Router configured")
-        mode = e2ee_mode()
-        services = E2EE_DEVICE_SERVICES if mode == "required" else DEVICE_SERVICES
+        mode = self._e2ee_settings().mode
         try:
-            token = await self._mesh.issue_device_token(device_id, services)
+            # The token may register exactly the contract's table for this mode (``e2ee-registration.json``).
+            token = await self._mesh.issue_device_token(device_id, registered_services(mode))
         except (DeviceCallError, MeshNotConfigured) as exc:
             raise DeviceLinkError(503, "mesh_unavailable", f"MeshCall Router unavailable: {exc}") from exc
         connection_id = f"lc_{secrets.token_urlsafe(16)}"
@@ -247,6 +247,10 @@ class DeviceLinkService:
     async def handle_outbox(self, device_id: str, item: OutboxItem) -> None:
         """Process one outbox message idempotently (by natural key); raising makes the device resend."""
 
+        required = self._e2ee_settings().required
+        if required:
+            # Defence in depth: a correct device sends no content here; drop it before storing or logging.
+            item = item.model_copy(update={"p": scrub_for_e2ee(item.m, item.p)})
         try:
             if item.m == "session.summary":
                 await self._apply_summary(device_id, SessionSummaryOut.model_validate(item.p).summary)
@@ -262,6 +266,12 @@ class DeviceLinkService:
                     state=result.outcome,
                     result={"r": result.r, "e": result.e.model_dump() if result.e else None},
                 )
+                if required:
+                    # Encrypted commands converge through ``GET /api/v3/e2ee/commands/{id}``; ids it did not
+                    # register are ignored (normal-mode commands use their own receipts).
+                    await E2eeCommandService(self._store).record_result(
+                        device_id, result.commandId, result.outcome, result.e.code if result.e else None
+                    )
             elif item.m == "attachment.consumed":
                 consumed = AttachmentConsumedOut.model_validate(item.p)
                 await self._attachment_consumed(device_id, consumed)
@@ -275,7 +285,12 @@ class DeviceLinkService:
             logger.error("dropping invalid outbox message device_id={} m={} error={}", device_id, item.m, exc)
 
     async def _apply_summary(self, device_id: str, summary: SessionSummary) -> None:
-        display = summary.displayDevice.payload if summary.displayDevice.mode == "plain" else {}
+        # Required mode drops a plaintext envelope (the list shows "encrypting until the device is online"):
+        # neither the envelope nor its title or working directory is stored.
+        accepted = accept_display_envelope(
+            self._e2ee_settings().mode, summary.displayDevice.model_dump(mode="json")
+        ) is not None
+        display = summary.displayDevice.payload if accepted and summary.displayDevice.mode == "plain" else {}
         display = display if isinstance(display, dict) else {}
         try:
             session = await self._store.upsert_connector_session(
@@ -296,7 +311,7 @@ class DeviceLinkService:
                 exc,
             )
             return
-        changed = await self._store.apply_device_session_summary(session.id, summary)
+        changed = await self._store.apply_device_session_summary(session.id, summary, accept_display=accepted)
         if summary.sourceAvailability != "available":
             await self._store.update_session_source_state(
                 session.id,

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -35,7 +36,9 @@ from agent_server.core.device_meshcall import (
     CommandStatusRequest,
     CommandStatusResponse,
     command_route,
+    scrub_for_e2ee,
 )
+from agent_server.core.e2ee_settings import E2eeSettings
 from agent_server.infra.device_link import DeviceLinkHub
 from agent_server.infra.device_mesh import DeviceCallError, DeviceMesh
 
@@ -85,10 +88,18 @@ def input_digest(kind: str, payload: dict[str, Any]) -> str:
 
 
 class DeviceCommandService:
-    def __init__(self, store: Any, mesh: DeviceMesh, hub: DeviceLinkHub) -> None:
+    def __init__(
+        self,
+        store: Any,
+        mesh: DeviceMesh,
+        hub: DeviceLinkHub,
+        *,
+        e2ee_settings: Callable[[], E2eeSettings] = E2eeSettings,
+    ) -> None:
         self._store = store
         self._mesh = mesh
         self._hub = hub
+        self._e2ee_settings = e2ee_settings
 
     async def send(
         self,
@@ -201,6 +212,9 @@ class DeviceCommandService:
         *,
         only_from: tuple[str, ...] = ("pending", "unknown"),
     ) -> dict[str, Any] | None:
+        if result is not None and self._e2ee_settings().required:
+            # Defence in depth: in required mode a receipt keeps the outcome and error code only.
+            result = scrub_for_e2ee("command.result", result)
         return await self._store.settle_device_command(
             device_id=receipt["deviceId"],
             command_id=receipt["commandId"],

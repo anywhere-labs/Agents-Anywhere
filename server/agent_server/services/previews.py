@@ -22,6 +22,7 @@ from typing import Any
 
 from loguru import logger
 
+from agent_server.core.e2ee_settings import E2eeSettings
 from agent_server.core.preview import (
     COOKIE_TTL_HOURS,
     DEFAULT_TTL_HOURS,
@@ -37,7 +38,6 @@ from agent_server.core.preview_access import (
     COOKIE,
     FRP_TOKEN,
     TICKET_PATH,
-    e2ee_preview_denied,
     frps_addr,
     internal_token,
     preview_domain,
@@ -51,7 +51,6 @@ from agent_server.services.device_commands import (
     DeviceCommandOutcomeUnknown,
     DeviceCommandService,
 )
-from agent_server.services.device_link import e2ee_mode
 
 OFFLINE_GRACE_SECONDS = 600
 SWEEP_INTERVAL_SECONDS = 30
@@ -88,7 +87,9 @@ class PreviewService:
         is_online: IsOnline,
         *,
         clock: Callable[[], float] = time.time,
+        e2ee_settings: Callable[[], E2eeSettings] = E2eeSettings,
     ) -> None:
+        self._e2ee_settings = e2ee_settings
         self._store = store
         self._state = state
         self._commands = commands
@@ -103,7 +104,8 @@ class PreviewService:
         domain, token = preview_domain(), internal_token()
         if domain is None or token is None:
             raise PreviewError(404, "preview_domain_not_configured", "this server has no preview domain configured")
-        if e2ee_mode() == "required" and e2ee_preview_denied():
+        settings = self._e2ee_settings()
+        if settings.required and settings.preview == "deny":
             raise PreviewError(404, "preview_disabled", "port preview is turned off on this server")
         return domain, token
 
@@ -120,7 +122,7 @@ class PreviewService:
             closeReason=row["closeReason"],
             url=f"https://{row['slug']}.{domain}" if domain and row["state"] != "closed" else None,
             expiresAt=row["expiresAt"],
-            plaintextNotice=e2ee_mode() == "required",
+            plaintextNotice=self._e2ee_settings().required,
         )
 
     # -- client API -------------------------------------------------------------------

@@ -18,6 +18,9 @@ def _route(device_id: str, ch: str = "c1") -> dict:
 
 
 def test_frames_are_forwarded_both_ways_and_ends_are_reported(mesh_router: RouterProcess, monkeypatch) -> None:
+    # Devices register ``Secure`` only in E2EE required mode (``e2ee-registration.json``).
+    monkeypatch.setenv("AGENT_SERVER_E2EE", "required")
+
     async def scenario() -> None:
         async with server(mesh_router, monkeypatch) as (app, client):
             _headers, device_id, token = await user_and_device(app, client)

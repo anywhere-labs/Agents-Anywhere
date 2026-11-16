@@ -42,12 +42,6 @@ ResponseT = TypeVar("ResponseT", bound=BaseModel)
 DEVICE_SERVICES: tuple[str, ...] = tuple(
     f"{MESH_SERVICE_PREFIX}.{name}" for name in ("Link", "Sessions", "Store", "Runtime", "Commands", "Secure")
 )
-# Services a device may register in E2EE ``required`` mode (content services are not registered).
-E2EE_DEVICE_SERVICES: tuple[str, ...] = (
-    f"{MESH_SERVICE_PREFIX}.Link",
-    f"{MESH_SERVICE_PREFIX}.Commands",
-    f"{MESH_SERVICE_PREFIX}.Secure",
-)
 ROUTER_AUTH_SERVICE = "meshcall.router.v1.AuthService"
 ROUTER_REGISTRY_SERVICE = "meshcall.router.v1.Registry"
 DEFAULT_ROUTER_USER = "aa-server"
@@ -319,14 +313,26 @@ class DeviceMesh:
     # -- Router administration ----------------------------------------------
 
     async def issue_device_token(
-        self, device_id: str, services: tuple[str, ...] = DEVICE_SERVICES, *, ttl_seconds: int | None = None
+        self,
+        device_id: str,
+        services: Mapping[str, list[str]] | tuple[str, ...] = DEVICE_SERVICES,
+        *,
+        ttl_seconds: int | None = None,
     ) -> DeviceToken:
-        """A token that may register only ``device_id`` and only ``services``."""
+        """A token that may register only ``device_id`` and only ``services``.
+
+        ``services`` is ``{service: [method, …]}`` (``core.device_meshcall.registered_services``,
+        the per-mode registration table) or a tuple of whole services.
+        """
 
         from meshcall import RouterScope
 
         mesh = await self._connect(5)
-        scopes = [RouterScope(service=name, register=True, instance_ids=[device_id]) for name in services]
+        methods = services if isinstance(services, Mapping) else {name: [] for name in services}
+        scopes = [
+            RouterScope(service=name, methods=list(names), register=True, instance_ids=[device_id])
+            for name, names in methods.items()
+        ]
         try:
             issued = await mesh.auth.issue_token(scopes, ttl_seconds=ttl_seconds or self.settings.token_ttl_seconds)
         except Exception as exc:
@@ -336,7 +342,7 @@ class DeviceMesh:
             token=issued.token,
             token_id=issued.token_id,
             expires_at_ms=issued.expires_at_unix_ms,
-            services=tuple(services),
+            services=tuple(methods),
         )
 
     async def revoke_token(self, token_id: str) -> bool:

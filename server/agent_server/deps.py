@@ -66,6 +66,7 @@ def get_connector_ingest_service(conn: HTTPConnection) -> ConnectorIngestService
             conn.app.state.store,
             realtime,
             usage_recorder=get_usage_recorder(conn),
+            e2ee_settings=lambda: get_e2ee_settings(conn),
         ),
         conn.app.state.timeline_broker,
         conn.app.state.device_runtime_service,

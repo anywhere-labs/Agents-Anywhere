@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, ClassVar
 
 from loguru import logger
@@ -10,6 +11,7 @@ from agent_server.core.catalogs import (
     validate_model_catalog,
     validate_permission_catalog,
 )
+from agent_server.core.e2ee_settings import E2eeSettings
 from agent_server.core.models import (
     NoticeIn,
     SessionStatus,
@@ -24,7 +26,6 @@ from agent_server.core.protocol import (
 from agent_server.core.runtime_identity import RuntimeIdentity, RuntimeIdentityError
 from agent_server.infra.repositories.projects import MissingWorkspaceError
 from agent_server.services.connector_realtime import ConnectorRealtimeService
-from agent_server.services.device_link import e2ee_mode
 from agent_server.services.ingest_effects import IngestEffect
 from agent_server.services.repository_ports import ConnectorNotificationRepository
 from agent_server.services.usage_events import (
@@ -90,8 +91,10 @@ class ConnectorNotificationService:
         realtime: ConnectorRealtimeService,
         *,
         usage_recorder: UsageRecorder | NullUsageRecorder | None = None,
+        e2ee_settings: Callable[[], E2eeSettings] = E2eeSettings,
     ) -> None:
         self._realtime = realtime
+        self._e2ee_settings = e2ee_settings
         usage = usage_recorder or NullUsageRecorder()
         self._handlers = (
             ConnectorProtocolNotificationHandler(store),
@@ -128,7 +131,7 @@ class ConnectorNotificationService:
         if method in V2_CONTENT_NOTIFICATIONS:
             logger.debug("v2 content notification dropped connector_id={} method={}", connector_id, method)
             return IngestEffect()
-        if method in _SESSION_DISPLAY_NOTIFICATIONS and e2ee_mode() == "required":
+        if method in _SESSION_DISPLAY_NOTIFICATIONS and self._e2ee_settings().required:
             # A v2 Connector cannot seal titles or working directories; in encrypted mode the
             # Server must not store them (they would undo clearing the directory). Without a
             # ``cwd`` a session the Server does not know yet is not created.

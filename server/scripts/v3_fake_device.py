@@ -53,6 +53,7 @@ from agent_server.core.device_meshcall import (
     StoreReadResponse,
     StreamChunk,
     command_route,
+    registered_services,
 )
 from agent_server.core.events import protocol_event
 
@@ -159,7 +160,7 @@ class FakeDeviceState:
             )
 
 
-def _make_services(state: FakeDeviceState, *, e2ee_required: bool = False) -> list[object]:
+def _make_services(state: FakeDeviceState, *, mode: str = "off") -> list[object]:
     @service(f"{SERVICE_PREFIX}.Link", targeted=True)
     class Link:
         """Presence, lossy events and the durable outbox."""
@@ -421,9 +422,14 @@ def _make_services(state: FakeDeviceState, *, e2ee_required: bool = False) -> li
             await asyncio.sleep(state.ack_delay)
         return ack
 
+    # What a device registers in this mode (``contracts/device-meshcall/1.0/e2ee-registration.json``).
+    registration = registered_services(mode)  # type: ignore[arg-type]
+    allowed_commands = set(registration.get(f"{SERVICE_PREFIX}.Commands", ()))
     namespace: dict[str, Any] = {"__doc__": "State-changing commands with durable receipts."}
     for business in COMMAND_METHODS:
         name = command_route(business).method
+        if name not in allowed_commands:
+            continue
 
         def make(business_method: str, method_name: str) -> Any:
             async def handler(
@@ -474,10 +480,15 @@ def _make_services(state: FakeDeviceState, *, e2ee_required: bool = False) -> li
                     )
                 await wire.send(SecureChannelItem(n=item.n, ct=f"echo:{item.ct}"))
 
-    if e2ee_required:
-        # E2EE ``required``: a device registers no content services (``E2EE_DEVICE_SERVICES``).
-        return [Link(), commands(), Secure()]
-    return [Link(), Sessions(), Store(), commands(), Secure()]
+    built = {
+        f"{SERVICE_PREFIX}.Link": Link,
+        f"{SERVICE_PREFIX}.Sessions": Sessions,
+        f"{SERVICE_PREFIX}.Store": Store,
+        f"{SERVICE_PREFIX}.Commands": commands,
+        f"{SERVICE_PREFIX}.Secure": Secure,
+    }
+    # The fake has no ``Runtime`` service; everything else follows the registration table.
+    return [factory() for name, factory in built.items() if name in registration]
 
 
 class FakeDevice:
@@ -501,7 +512,7 @@ class FakeDevice:
             max_frame_size=MESH_MAX_FRAME_BYTES,
         )
         self.mesh.mount(
-            *_make_services(self.state, e2ee_required=self.e2ee_mode == "required"),
+            *_make_services(self.state, mode=self.e2ee_mode),
             instance_id=self.state.device_id,
         )
         self._serve = self.mesh.serve(access_log=False, log_level="WARNING", drain_timeout=0.5)
