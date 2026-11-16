@@ -85,6 +85,7 @@ from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.device_blobs import DeviceBlobService
 from agent_server.services.device_commands import DeviceCommandService
 from agent_server.services.device_link import DeviceLinkService, e2ee_mode
+from agent_server.services.device_planning import DevicePlanningService
 from agent_server.services.device_queue import DeviceQueueService
 from agent_server.services.device_reads import DeviceReadService
 from agent_server.services.device_runtimes import DeviceRuntimeService
@@ -426,6 +427,9 @@ def create_app(
     )
     app.state.device_link.attachment_consumed = app.state.device_blobs.consumed
     app.state.device_queue = DeviceQueueService(app.state.device_reads, app.state.device_commands)
+    app.state.device_planning = DevicePlanningService(
+        app.state.store, app.state.device_reads, app.state.device_commands
+    )
     app.state.usage_maintenance = UsageMaintenanceLoop(
         app.state.store,
         app.state.redis,

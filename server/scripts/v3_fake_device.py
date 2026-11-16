@@ -124,6 +124,12 @@ class FakeDeviceState:
         self.blobs: dict[str, tuple[bytes, str, str]] = {}
         # sessionId -> SessionQueueState the device reports on Sessions/queue.
         self.queues: dict[str, dict[str, Any]] = {}
+        # (sessionId, part) -> the body of ``Sessions/state`` with ``part`` ("planning", "goal").
+        self.state_parts: dict[tuple[str, str], dict[str, Any]] = {}
+        # Session capabilities ``Sessions/capabilities`` reports as supported.
+        self.capability_ids: list[str] = []
+        # sessionId -> plan documents, newest first (``Store/planDocument``).
+        self.plans: dict[str, list[dict[str, Any]]] = {}
         self.blob_uploader: Callable[[dict[str, Any], bytes], Any] | None = None
         self.attach_opened = threading.Event()
         self.outbox_opened = threading.Event()
@@ -251,14 +257,36 @@ def _make_services(state: FakeDeviceState) -> list[object]:
             return Payload(notices=[])
 
         @query
-        async def state(self, sessionId: str) -> Payload:
-            """Runtime state."""
+        async def state(self, sessionId: str, part: str | None = None) -> Payload:
+            """Runtime state, or one part of it (``planning``, ``goal``)."""
+            if part is not None:
+                return Payload(**state.state_parts.get((sessionId, part), {}))
             return Payload(status="idle")
 
         @query
-        async def capabilities(self, sessionId: str) -> Payload:
-            """Runtime capabilities."""
-            return Payload(capabilities={})
+        async def capabilities(
+            self, sessionId: str, runtime: str | None = None, runtimeId: str | None = None,
+            externalSessionId: str | None = None,
+        ) -> Payload:
+            """Session capabilities: every id in ``state.capability_ids`` is supported and allowed."""
+            return Payload(
+                capabilities={},
+                capabilitySet={
+                    "revision": 1,
+                    "capabilities": [
+                        {
+                            "capabilityId": capability_id,
+                            "scope": "session",
+                            "runtime": runtime or "codex",
+                            "sessionId": sessionId,
+                            "supported": True,
+                            "available": True,
+                            "allowed": True,
+                        }
+                        for capability_id in state.capability_ids
+                    ],
+                },
+            )
 
         @query
         async def queue(self, sessionId: str) -> Payload:
@@ -305,6 +333,18 @@ def _make_services(state: FakeDeviceState) -> list[object]:
                 items = [item for item in items if item["id"] in wanted]
             files = sorted(set(re.findall(r'"fileId":\s*"(file_[^"]+)"', json.dumps(items))))
             yield StreamChunk(seq=0, chunk={"items": items, "attachments": files}, end=True)
+
+        @query
+        async def planDocument(self, sessionId: str, planId: str | None = None, revision: int | None = None) -> Payload:
+            """Plan documents: all of them, or one revision."""
+            state.calls.append("planDocument")
+            plans = state.plans.get(sessionId, [])
+            if planId is None:
+                return Payload(plans=plans)
+            for plan in plans:
+                if plan["planId"] == planId and plan["revision"] == revision:
+                    return Payload(plan=plan)
+            raise MeshCallError("not_found", "no such plan", details={"source": "device", "aaCode": "plan_not_found"})
 
         @query
         async def read(

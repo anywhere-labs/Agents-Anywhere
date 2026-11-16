@@ -120,7 +120,10 @@ class DeviceReadService:
             return None
         if exc.outcome_unknown:
             return DeviceReadTimeout(exc.message or "the device did not answer in time")
-        return DeviceReadError(exc.code, exc.message or exc.code)
+        # The device's own error code (``details.aaCode``) wins over the MeshCall status.
+        aa_code = exc.details.get("aaCode") if isinstance(exc.details, dict) else None
+        code = aa_code if isinstance(aa_code, str) and aa_code else exc.code
+        return DeviceReadError(code, exc.message or code)
 
     async def _connection(self, device_id: str) -> str | None:
         return await self._hub.current_connection(device_id)
