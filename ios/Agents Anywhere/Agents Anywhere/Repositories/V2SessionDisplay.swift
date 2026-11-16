@@ -17,7 +17,8 @@ import Synchronization
 ///   `displayDevice.title`. `cwd` comes only from an opened `displayDevice`. When any of
 ///   them does not open (no key for its `keyId`, wrong key, tampered payload) the session is
 ///   locked, and an unknown title shows the locked placeholder.
-/// - Sessions without envelopes are returned unchanged; unknown fields are ignored.
+/// - Sessions without envelopes are returned unchanged; unknown fields are ignored, and an
+///   envelope whose `mode` is neither `plain` nor `sealed` counts as absent.
 ///
 /// Opened payloads are cached in memory by `(sessionId, slot, keyId, payload)`. Failures are
 /// not cached, so a new directory key (`e2ee.directory_key`, pairing again) only needs the

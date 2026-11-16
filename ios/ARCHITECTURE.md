@@ -226,7 +226,8 @@ Session lists and pages show the protocol 1.2 display envelopes
 them where sessions enter `V2DashboardRepository` (HTTP inventory, dashboard
 push, PATCH answers, cache restore) and in the observations
 `V2SessionRepository` publishes, and writes the result into `title` / `cwd`, so
-views and file browsing read them as before. Normal mode prefers plain envelopes
+views and file browsing read them as before. An envelope whose `mode` is neither
+`plain` nor `sealed` counts as absent. Normal mode prefers plain envelopes
 and keeps the Server's fields they omit. Once any envelope is sealed, only sealed
 ones count: the AD uses the session's `connectorId` and the slot of its field,
 the key is the device's current-epoch directory key. The title is the opened

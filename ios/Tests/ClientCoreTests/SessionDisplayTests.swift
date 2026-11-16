@@ -72,6 +72,27 @@ import Testing
         #expect(jsonString.title == "Text")
     }
 
+    @Test func unknownModesCountAsAbsentEnvelopes() throws {
+        let future: [String: Any] = ["mode": "future", "keyId": Self.keyId, "payload": "abc"]
+        let alone = try meta(try sessionObject(title: "Server", cwd: "/server", device: future, user: future))
+        let resolvedAlone = resolver().resolve(alone)
+        #expect(resolvedAlone.title == "Server" && resolvedAlone.cwd == "/server" && resolvedAlone.displayLocked == nil)
+        #expect(alone.displayDevice?.mode == .unknown)
+        // Next to a plain envelope: still normal mode, as if the unknown one were not there.
+        let withPlain = try resolver(nil).resolve(meta(try sessionObject(title: "Server", cwd: "/server",
+            device: future, user: ["mode": "plain", "payload": ["title": "Mine"]])))
+        let plainOnly = try resolver(nil).resolve(meta(try sessionObject(title: "Server", cwd: "/server",
+            user: ["mode": "plain", "payload": ["title": "Mine"]])))
+        #expect(withPlain.title == plainOnly.title && withPlain.cwd == plainOnly.cwd && withPlain.displayLocked == nil)
+        // Next to a sealed envelope: encrypted mode, the unknown slot neither locks nor feeds anything.
+        let sealedUser = try resolver().resolve(meta(try sessionObject(title: "Server", cwd: "/server",
+            device: future, user: try sealed(["title": "Renamed"], slot: .user))))
+        #expect(sealedUser.title == "Renamed" && sealedUser.cwd == nil && sealedUser.displayLocked == nil)
+        let sealedDevice = try resolver().resolve(meta(try sessionObject(title: "Server", cwd: "/server",
+            device: try sealed(["title": "Device", "cwd": "/work"], slot: .device), user: future)))
+        #expect(sealedDevice.title == "Device" && sealedDevice.cwd == "/work" && sealedDevice.displayLocked == nil)
+    }
+
     @Test func sealedEnvelopesWinOverPlainOnes() throws {
         let device = try sealed(["title": "Sealed", "cwd": "/sealed"], slot: .device)
         let session = try resolver().resolve(meta(try sessionObject(title: "Server", cwd: "/server", device: device,
