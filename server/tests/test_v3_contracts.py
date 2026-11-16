@@ -9,6 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from agent_server.core import device_meshcall as dl
+from agent_server.core import e2ee
 from agent_server.core.e2ee import ClientTunnelFrame, PairingPayload
 from agent_server.core.preview import CreatePreviewRequest
 from agent_server.core.protocol_v1_2 import ProtocolSessionSnapshotResponseV12
@@ -143,10 +144,15 @@ def test_method_registries_are_disjoint() -> None:
 
 
 def test_client_tunnel_frame_is_closed() -> None:
-    frame = {"t": "tun", "route": {"deviceId": "d", "clientId": "c", "ch": "c_1"}, "n": 0, "ct": "AAAA"}
+    client_id = "cli_" + "a" * 26
+    frame = {"t": "tun", "route": {"deviceId": "d", "clientId": client_id, "ch": "c_1"}, "n": 0, "ct": "AAAA"}
     ClientTunnelFrame.model_validate(frame)
     with pytest.raises(ValidationError):
         ClientTunnelFrame.model_validate({**frame, "extra": 1})
+    with pytest.raises(ValidationError):
+        ClientTunnelFrame.model_validate({**frame, "route": {**frame["route"], "clientId": "c"}})
+    with pytest.raises(ValidationError):
+        ClientTunnelFrame.model_validate({**frame, "route": {**frame["route"], "ch": "a/b"}})
 
 
 def test_protocol_1_2_snapshot_is_additive() -> None:
@@ -158,12 +164,99 @@ def test_protocol_1_2_snapshot_is_additive() -> None:
 def test_pairing_payload_and_preview_request_validate() -> None:
     PairingPayload(
         deviceId="dev_1",
-        deviceIdentityPub="AAAA",
+        deviceIdentityPub="A" * 43,
         pairingId="pair_1",
-        psk="BBBB",
+        psk="B" * 43,
         serverUrl="https://aa.example.com",
         e2eeMode="required",
         expiresAt="2026-11-16T00:10:00Z",
     )
     with pytest.raises(ValidationError):
         CreatePreviewRequest(deviceId="dev_1", port=70000)
+
+
+E2EE_VECTORS = REPOSITORY_ROOT / "contracts" / "e2ee" / "1.0" / "vectors"
+
+
+def test_e2ee_helpers_match_the_shared_vectors() -> None:
+    """The Python helpers and the independent generator agree byte for byte."""
+
+    formats = json.loads((E2EE_VECTORS / "aa-formats.json").read_text())
+    for identity in formats["identities"]:
+        pub = bytes.fromhex(identity["identityPub"])
+        assert e2ee.client_id_for(pub) == identity["clientId"]
+        assert e2ee.is_client_id(identity["clientId"])
+        assert e2ee.identity_fingerprint(pub) == identity["fingerprint"]
+        assert e2ee.b64url(pub) == identity["identityPubB64"]
+    pair, connect = formats["prologues"]
+    assert e2ee.pairing_prologue(*pair["fields"]).hex() == pair["bytes"]
+    assert e2ee.connect_prologue(*connect["fields"]).hex() == connect["bytes"]
+    for envelope in formats["displayEnvelopes"]:
+        ad = e2ee.display_envelope_ad(envelope["deviceId"], envelope["sessionId"], envelope["slot"], envelope["keyId"])
+        assert ad.hex() == envelope["ad"]
+    for sealed in formats["sealedObjects"]:
+        for segment in sealed["segments"]:
+            ad = e2ee.sealed_segment_ad(sealed["purpose"], sealed["objectId"], segment["index"], segment["final"])
+            assert ad.hex() == segment["ad"]
+    for digest in formats["inputDigests"]:
+        key = bytes.fromhex(digest["directoryKey"])
+        assert e2ee.input_digest_key(key).hex() == digest["digestKey"]
+        assert e2ee.input_digest(key, digest["body"].encode()) == digest["inputDigest"]
+        e2ee.CommandRegistration(commandId="c_1", deviceId="dev", inputDigest=digest["inputDigest"])
+    uri = formats["pairingUri"]
+    assert uri["uri"].startswith(e2ee.PAIRING_URI_PREFIX)
+    decoded = e2ee.b64url_decode(uri["uri"][len(e2ee.PAIRING_URI_PREFIX):])
+    assert PairingPayload.model_validate_json(decoded).model_dump() == uri["payload"]
+
+
+def test_tunnel_end_codes_have_client_messages() -> None:
+    from typing import get_args
+
+    messages = json.loads((REPOSITORY_ROOT / "contracts" / "runtime-errors" / "1.1" / "messages.json").read_text())
+    # connector_offline is the v2 API error clients already translate.
+    codes = set(get_args(e2ee.TunnelEndCode)) - {"closed", "too_large", "connector_offline"}
+    assert codes <= set(messages["messages"]), codes - set(messages["messages"])
+    e2ee.ClientTunnelEnd.model_validate({"t": "end", "route": {"deviceId": "d", "clientId": "cli_" + "a" * 26, "ch": "c"},
+                                         "code": "pairing_expired"})
+
+
+def test_e2ee_frame_body_limit_fits_one_noise_message() -> None:
+    assert e2ee.FRAME_MAX_BODY_BYTES + 1 + e2ee.NOISE_TAG_BYTES == e2ee.NOISE_MAX_MESSAGE_BYTES
+    formats = json.loads((E2EE_VECTORS / "aa-formats.json").read_text())
+    for case in formats["framing"]:
+        assert all(frame["bodyLength"] <= e2ee.FRAME_MAX_BODY_BYTES for frame in case["frames"])
+        assert sum(frame["bodyLength"] for frame in case["frames"]) == case["messageLength"]
+        assert [frame["flag"] for frame in case["frames"]][-1] == e2ee.FRAME_FINAL
+
+
+def test_e2ee_noise_vectors_use_real_client_ids() -> None:
+    noise = json.loads((E2EE_VECTORS / "aa-noise.json").read_text())
+    for vector in noise["vectors"]:
+        fields = bytes.fromhex(vector["init_prologue"]).split(b"\0")
+        assert fields[0] == e2ee.PROLOGUE_LABEL.encode()
+        assert any(e2ee.is_client_id(field.decode()) for field in fields)
+    assert {v["protocol_name"] for v in noise["vectors"]} == {e2ee.NOISE_PAIRING_PROTOCOL, e2ee.NOISE_RECONNECT_PROTOCOL}
+
+
+def test_required_mode_registers_no_content_methods() -> None:
+    required = dl.registered_services("required")
+    assert required["aa.device.v1.Secure"] == ["channel"]
+    assert "aa.device.v1.Sessions" not in required and "aa.device.v1.Store" not in required
+    assert "aa.device.v1.Runtime" not in required
+    commands = set(required["aa.device.v1.Commands"])
+    assert "sessionSendMessage" not in commands and "sessionSync" not in commands
+    assert commands == {"status", "runtimeApply", "deviceSettingsApply", "channelSwitch", "previewOpen", "previewClose"}
+    assert set(dl.E2EE_COMMAND_METHODS) <= set(dl.COMMAND_METHODS)
+    assert set(dl.E2EE_EVENT_METHODS) <= set(dl.EVENT_METHODS)
+    off = dl.registered_services("off")
+    assert "aa.device.v1.Secure" not in off
+    assert len(dl.registered_routes("off")) == len(dl.REQUEST_METHODS) + len(dl.COMMAND_METHODS) + 3
+
+
+def test_scrub_for_e2ee_drops_results_and_error_text() -> None:
+    scrubbed = dl.scrub_for_e2ee(
+        "command.result",
+        {"commandId": "c", "outcome": "rejected", "r": {"text": "secret"}, "e": {"code": "x", "message": "secret"}},
+    )
+    assert scrubbed["r"] is None and scrubbed["e"] == {"code": "x", "message": "", "retryable": False}
+    assert dl.scrub_for_e2ee("usage.report", {"counters": []}) == {"counters": []}

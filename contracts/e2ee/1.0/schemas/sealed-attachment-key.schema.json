@@ -1,0 +1,42 @@
+{
+  "$id": "urn:agents-anywhere:e2ee:1.0:sealed-attachment-key",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Travels inside the channel with the request that references an encrypted upload\n(``AttachmentRef.encrypted = true``); the Server only ever holds the ciphertext.",
+  "properties": {
+    "fileId": {
+      "minLength": 1,
+      "title": "Fileid",
+      "type": "string"
+    },
+    "key": {
+      "description": "32 bytes, base64url without padding",
+      "pattern": "^[A-Za-z0-9_-]{43}$",
+      "title": "Key",
+      "type": "string"
+    },
+    "sha256": {
+      "description": "hex SHA-256 of the plaintext",
+      "minLength": 1,
+      "title": "Sha256",
+      "type": "string"
+    },
+    "size": {
+      "description": "plaintext size",
+      "minimum": 0,
+      "title": "Size",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "fileId",
+    "key",
+    "size",
+    "sha256"
+  ],
+  "title": "SealedAttachmentKey",
+  "type": "object",
+  "x-contract": "e2ee",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}
