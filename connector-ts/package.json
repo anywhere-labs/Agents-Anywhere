@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.4.0",
+    "meshcall": "0.3.0",
     "zod": "^4.1.0"
   },
   "devDependencies": {
