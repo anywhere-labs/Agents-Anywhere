@@ -1,0 +1,10 @@
+{"type":"queue-operation","operation":"enqueue","sessionId":"5b1c2d3e-0000-4000-8000-000000000001","timestamp":"2026-11-16T10:00:00.000Z"}
+{"type":"user","uuid":"u-1","isSidechain":false,"sessionId":"5b1c2d3e-0000-4000-8000-000000000001","message":{"role":"user","content":"List the files"}}
+{"type":"assistant","uuid":"a-1","isSidechain":false,"message":{"id":"msg_01A","role":"assistant","content":[{"type":"thinking","thinking":"Use ls."}]}}
+{"type":"assistant","uuid":"a-2","isSidechain":false,"message":{"id":"msg_01A","role":"assistant","content":[{"type":"tool_use","id":"toolu_01","name":"Bash","input":{"command":"ls"}}]}}
+{"type":"user","uuid":"u-2","isSidechain":false,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01","content":"a.txt\nb.txt","is_error":false}]}}
+{"type":"assistant","uuid":"a-3","isSidechain":false,"message":{"id":"msg_01B","role":"assistant","content":[{"type":"text","text":"Two files: "}]}}
+{"type":"assistant","uuid":"a-4","isSidechain":false,"message":{"id":"msg_01B","role":"assistant","content":[{"type":"text","text":"a.txt and b.txt."}]}}
+{"type":"assistant","uuid":"s-1","isSidechain":true,"message":{"id":"msg_side","role":"assistant","content":[{"type":"text","text":"subagent"}]}}
+{"type":"user","uuid":"m-1","isMeta":true,"message":{"role":"user","content":"<local-command-caveat>"}}
+{"type":"ai-title","sessionId":"5b1c2d3e-0000-4000-8000-000000000001","title":"Files"}
