@@ -97,6 +97,12 @@ class E2eeClient(
 
     fun pairedDevice(deviceId: String): PairedDevice? = trust.device(deviceId)
 
+    /** 设备当前纪元的列表密钥（解开会话列表的展示信封用）；没有配对时为 null。 */
+    fun directoryKey(deviceId: String): DirectoryKeyGrant? = trust.directoryKey(deviceId)
+
+    /** 列表密钥或配对变化时递增（见 [ClientTrustStore.directoryKeyRevision]）。 */
+    val directoryKeyRevision: StateFlow<Long> get() = trust.directoryKeyRevision
+
     fun transportFor(deviceId: String): DeviceTransport = E2eeTransportPolicy.select(
         deviceId = deviceId,
         server = serverConfig,

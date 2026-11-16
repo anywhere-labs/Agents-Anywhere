@@ -13,6 +13,10 @@ import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 
 /**
  * Client Trust：本机的客户端身份密钥、每台设备钉住的公钥与列表密钥、本机的「该设备要求加密」策略。
@@ -33,6 +37,15 @@ class ClientTrustStore(
 ) {
     private val lock = Any()
     private var cachedIdentity: X25519KeyPair? = null
+    private val revisionState = MutableStateFlow(0L)
+
+    /**
+     * 列表密钥变化时递增：配对、重新配对、轮换（`e2ee.directory_key`）、撤销。
+     * 展示信封的解密缓存据此作废，界面据此重试打不开的会话。
+     */
+    val directoryKeyRevision: StateFlow<Long> = revisionState.asStateFlow()
+
+    private fun bumpRevision() = revisionState.update { it + 1 }
 
     /** 本机的客户端身份；第一次调用时生成。Keystore 密钥丢失（例如恢复到另一台手机）时重新生成，原有配对作废。 */
     fun identity(): X25519KeyPair = synchronized(lock) {
@@ -74,6 +87,7 @@ class ClientTrustStore(
             storage.write(requireKey(deviceId), "1")
             storage.write(ANY_DEVICE, "1")
         }
+        bumpRevision()
         return record
     }
 
@@ -91,13 +105,17 @@ class ClientTrustStore(
         if (grant.epoch < record.directoryKeyEpoch) return false
         storage.write(directoryKeyKey(grant.deviceId), E2eeFormats.b64url(sealer.seal(grant.keyBytes)))
         storage.write(deviceKey(grant.deviceId), record.copy(directoryKeyId = grant.keyId, directoryKeyEpoch = grant.epoch).toJson().toString())
+        bumpRevision()
         true
     }
 
     /** 设备撤销了本机（KK 收到 `e2ee_not_paired`）：删掉钉住的公钥与列表密钥，但保留「要求加密」。 */
-    fun forgetPairing(deviceId: String) = synchronized(lock) {
-        storage.write(deviceKey(deviceId), null)
-        storage.write(directoryKeyKey(deviceId), null)
+    fun forgetPairing(deviceId: String) {
+        synchronized(lock) {
+            storage.write(deviceKey(deviceId), null)
+            storage.write(directoryKeyKey(deviceId), null)
+        }
+        bumpRevision()
     }
 
     fun markEncryptionRequired(deviceId: String) = synchronized(lock) {

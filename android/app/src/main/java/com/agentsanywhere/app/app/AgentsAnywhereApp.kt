@@ -86,6 +86,7 @@ import com.agentsanywhere.app.ui.screens.announcements.AnnouncementPage
 import com.agentsanywhere.app.ui.screens.update.AppUpdatePromptDialog
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -140,6 +141,16 @@ fun AgentsAnywhereApp(
     // E2EE: session and device content goes through the device's secure channel (or is refused) for
     // every ApiClient in the process; the tunnel's tickets use this client so tokens refresh as usual.
     val e2eeClient = remember(context, apiClient) { E2eeClient.install(context, apiClient) }
+    // E2EE: session titles and working directories in the list come from sealed display envelopes.
+    remember(context, e2eeClient) {
+        com.agentsanywhere.app.feature.sessions.SessionDisplayEnvironment.lockedLabel =
+            context.getString(com.agentsanywhere.app.R.string.session_display_locked)
+        com.agentsanywhere.app.feature.sessions.SessionDisplayEnvironment.decryptor =
+            com.agentsanywhere.app.feature.e2ee.SessionDisplayDecryptor(
+                keyFor = e2eeClient::directoryKey,
+                revision = { e2eeClient.directoryKeyRevision.value },
+            )
+    }
     val e2eeRouter = remember(context, e2eeClient, apiClient) {
         E2eeContentRouter(
             client = e2eeClient,
@@ -254,6 +265,18 @@ fun AgentsAnywhereApp(
     val projectLoadSlots = remember { Semaphore(3) }
     var projectsRequestVersion by remember { mutableStateOf(0L) }
     val scope = rememberCoroutineScope()
+    // E2EE: a session the device found itself has no project; match it by the decrypted working directory.
+    val projectAutoAssigner = remember(sessionsController) {
+        com.agentsanywhere.app.feature.sessions.SessionProjectAutoAssigner(
+            assign = { sessionId, projectId ->
+                val request = sessionsState.beginSessionRequest(listOf(sessionId))
+                sessionsState = request.state
+                sessionsController.assignSessionProject(sessionId, projectId, sessionsState.devices)
+                    .onSuccess { updated -> sessionsState = sessionsState.withPatchedSession(updated, request.generation) }
+            },
+            log = { message -> android.util.Log.d("AgentsAnywhere", message) },
+        )
+    }
     val lifecycleOwner = LocalLifecycleOwner.current
     var appVisible by remember(lifecycleOwner) {
         mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
@@ -308,6 +331,8 @@ fun AgentsAnywhereApp(
         }
         // E2EE: forget which session belongs to which device and the attachment keys; close every channel.
         e2eeRouter.resetForLogout()
+        com.agentsanywhere.app.feature.sessions.SessionDisplayEnvironment.decryptor.invalidate()
+        projectAutoAssigner.reset()
         appUpdateViewModel.syncSession(false)
         remoteTerminalPool.disposeLocal()
         sessionsState = SessionsState()
@@ -459,6 +484,27 @@ fun AgentsAnywhereApp(
                     }
                 }
             }
+        }
+    }
+
+    // E2EE: assign unplaced sessions once their working directory is decrypted (once per session per run;
+    // failures stay silent). Runs on the app scope so a list update does not cancel a PATCH halfway.
+    LaunchedEffect(projectAutoAssigner, sessionsState.sessions, sessionsState.archivedSessions, sessionsState.projects) {
+        val sessions = sessionsState.sessions + sessionsState.archivedSessions
+        if (!hasAuthSession || projectAutoAssigner.pending(sessions, sessionsState.projects).isEmpty()) return@LaunchedEffect
+        val authSessionId = sessionStore.readAuthSessionId()
+        scope.launch {
+            if (sessionStore.readAuthSessionId() != authSessionId) return@launch
+            projectAutoAssigner.run(sessions, sessionsState.projects)
+        }
+    }
+    // E2EE: the directory key changed (pairing, rotation, revocation): reload so the list is decrypted again
+    // with the new key (placeholders get another try; a revoked device's rows go back to the placeholder).
+    LaunchedEffect(e2eeClient, hasAuthSession) {
+        if (!hasAuthSession) return@LaunchedEffect
+        e2eeClient.directoryKeyRevision.drop(1).collect {
+            val encrypted = (sessionsState.sessions + sessionsState.archivedSessions).any { it.encryptedDisplay }
+            if (encrypted && sessionStore.hasAuthSession()) refreshSessions(showInitialLoading = false, showRefreshIndicator = false)
         }
     }
 

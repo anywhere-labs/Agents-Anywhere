@@ -229,6 +229,7 @@
     <string name="e2ee_error_attachments_unsupported">This attachment could not be encrypted for the device. Try again.</string>
     <string name="e2ee_error_file_transfer_unsupported">This file could not be read through the encrypted connection. Try again.</string>
     <string name="e2ee_error_rename_unsupported">Sessions on an end-to-end encrypted device cannot be renamed yet.</string>
+    <string name="session_display_locked">Encrypted — shown once the device is online</string>
     <string name="e2ee_error_create_unsupported">On an end-to-end encrypted device, a new session cannot include attachments or use the setup wizard. Create the session first, then send attachments in it.</string>
     <string name="e2ee_error_channel_failed">The encrypted connection to the device failed. Try again.</string>
     <string name="device_settings_save_failed">Could not save device settings.</string>

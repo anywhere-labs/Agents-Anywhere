@@ -88,8 +88,11 @@ fun mergeObservedSession(current: AgentSession?, incoming: AgentSession): AgentS
     if (current == null || current.id != incoming.id) return incoming
     val base = if (incoming.updatedSeq >= current.updatedSeq) incoming else current
     val lastReadSeq = maxOf(current.lastReadSeq, incoming.lastReadSeq)
+    // An observed update keeps the title the list already shows, unless that was the "Encrypted" placeholder.
+    val keepTitle = !(current.titleLocked && !incoming.titleLocked)
     return base.copy(
-        title = current.title,
+        title = if (keepTitle) current.title else incoming.title,
+        titleLocked = if (keepTitle) current.titleLocked else incoming.titleLocked,
         pinned = current.pinned,
         archived = current.archived,
         archivedAt = current.archivedAt,
@@ -105,6 +108,7 @@ fun mergeAuthoritativeSessionMetadata(current: AgentSession?, incoming: AgentSes
     val lastReadSeq = maxOf(current.lastReadSeq, incoming.lastReadSeq)
     return base.copy(
         title = incoming.title,
+        titleLocked = incoming.titleLocked,
         pinned = incoming.pinned,
         archived = incoming.archived,
         archivedAt = incoming.archivedAt,

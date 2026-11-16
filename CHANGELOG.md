@@ -36,9 +36,10 @@
   - 文件浏览与下载、终端；
   - 附件先在手机上加密再上传，图片附件也经加密连接取回后显示；
   - 新建会话时，标题、第一条消息以及 `/goal`、`/plan` 都经加密连接交给设备，由设备创建会话；新建时带附件或使用配置向导会提示原因，附件需要在会话建好后再发送；
-  - 加密设备上的会话暂不支持改名，会提示原因。
+  - 加密设备上的会话暂不支持改名，会提示原因；
+  - 会话列表和会话详情在手机上解密并显示标题和工作目录，暂时解不开的显示「加密中，设备上线后显示」，完成配对或设备发来新密钥后自动重试；设备自己发现的会话会按工作目录自动归入同一设备上的对应项目。
 
-  （[#719](https://github.com/anywhere-labs/Agents-Anywhere/pull/719)、[#726](https://github.com/anywhere-labs/Agents-Anywhere/pull/726)）
+  （[#719](https://github.com/anywhere-labs/Agents-Anywhere/pull/719)、[#726](https://github.com/anywhere-labs/Agents-Anywhere/pull/726)、PR_LINK）
 
 ### iOS
 

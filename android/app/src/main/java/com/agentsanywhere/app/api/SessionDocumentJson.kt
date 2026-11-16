@@ -36,6 +36,13 @@ internal fun RemoteSession.toProtocolJson(): JSONObject = JSONObject()
     .put("updatedSeq", updatedSeq)
     .put("planState", planState)
     .put("goalState", goalState)
+    .putNullable("displayDevice", displayDevice?.toProtocolJson())
+    .putNullable("displayUser", displayUser?.toProtocolJson())
+
+private fun RemoteDisplayEnvelope.toProtocolJson(): JSONObject = JSONObject()
+    .put("mode", mode)
+    .putNullable("keyId", keyId)
+    .put("payload", if (isPlain) runCatching { JSONObject(payload) }.getOrDefault(payload) else payload)
 
 internal fun RemoteTimelineItem.toProtocolJson(): JSONObject = JSONObject()
     .put("id", id)

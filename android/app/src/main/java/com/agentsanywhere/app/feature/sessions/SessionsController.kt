@@ -425,6 +425,22 @@ class SessionsController(
         )
     }
 
+    /** E2EE：把会话归到按解出的工作目录匹配到的项目（`PATCH /sessions/{id}/meta {projectId}`）。 */
+    suspend fun assignSessionProject(
+        sessionId: String,
+        projectId: String,
+        devices: List<AgentDevice>,
+    ): Result<AgentSession> {
+        return patchSession(
+            sessionId = sessionId,
+            title = null,
+            pinned = null,
+            archived = null,
+            devices = devices,
+            projectId = projectId,
+        )
+    }
+
     private fun resolveDirectory(serverUrl: String, token: String, connectorId: String, path: String): String {
         val clean = path.trim()
         if (!clean.startsWith("~")) return clean
@@ -677,6 +693,7 @@ class SessionsController(
         pinned: Boolean?,
         archived: Boolean?,
         devices: List<AgentDevice>,
+        projectId: String? = null,
     ): Result<AgentSession> {
         val serverUrl = sessionStore.readServerUrl()
         val accessToken = sessionStore.readAccessToken()
@@ -693,6 +710,7 @@ class SessionsController(
                     title = title,
                     pinned = pinned,
                     archived = archived,
+                    projectId = projectId,
                 ).session.toAgentSession(devices.associateBy { it.id })
             }.recoverCatching { error ->
                 if (error is CancellationException || error is ApiException) throw error

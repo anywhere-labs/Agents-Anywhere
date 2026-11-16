@@ -32,7 +32,27 @@ data class RemoteSession(
     /** Protocol 1.2 state-only enums; `none` from older Servers. Readable while the device is offline. */
     val planState: String = "none",
     val goalState: String = "none",
+    /** Protocol 1.2 display envelopes (`SessionView.displayDevice` / `displayUser`); null when the Server does not send them. */
+    val displayDevice: RemoteDisplayEnvelope? = null,
+    val displayUser: RemoteDisplayEnvelope? = null,
 )
+
+/**
+ * `DisplayEnvelope`：`plain` 时 [payload] 是明文 JSON 对象的文本；`sealed` 时是 base64url 密文，用 [keyId] 对应的列表密钥解开。
+ * 不认识的 `mode` 原样保留（显示为「加密中」）。
+ */
+data class RemoteDisplayEnvelope(
+    val mode: String,
+    val keyId: String?,
+    val payload: String,
+) {
+    val isPlain: Boolean get() = mode == MODE_PLAIN
+
+    companion object {
+        const val MODE_PLAIN = "plain"
+        const val MODE_SEALED = "sealed"
+    }
+}
 
 /** Protocol 1.2: whether the Server could read history from the session's device. */
 const val HISTORY_SOURCE_LIVE = "live"

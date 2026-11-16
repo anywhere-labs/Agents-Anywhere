@@ -204,11 +204,13 @@ class SessionsApi(
         title: String? = null,
         pinned: Boolean? = null,
         archived: Boolean? = null,
+        projectId: String? = null,
     ): RemoteSessionResponse {
         val body = JSONObject().apply {
             title?.let { put("title", it) }
             pinned?.let { put("pinned", it) }
             archived?.let { put("archived", it) }
+            projectId?.let { put("projectId", it) }
         }
         return client.patchJson(
             serverUrl = serverUrl,
@@ -807,7 +809,21 @@ class SessionsApi(
             runtimeName = runtimeName,
             planState = optNullableString("planState") ?: "none",
             goalState = optNullableString("goalState") ?: "none",
+            displayDevice = optDisplayEnvelope("displayDevice"),
+            displayUser = optDisplayEnvelope("displayUser"),
         )
+    }
+
+    /** `DisplayEnvelope`; a missing, null or malformed value reads as absent. */
+    private fun JSONObject.optDisplayEnvelope(name: String): RemoteDisplayEnvelope? {
+        val value = optJSONObject(name) ?: return null
+        val mode = value.optNullableString("mode") ?: return null
+        val payload = when (val raw = value.opt("payload")) {
+            is JSONObject -> raw.toString()
+            is String -> raw
+            else -> return null
+        }
+        return RemoteDisplayEnvelope(mode = mode, keyId = value.optNullableString("keyId"), payload = payload)
     }
 
     private fun JSONObject.toRemoteProject(): RemoteProject {

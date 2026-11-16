@@ -10,11 +10,18 @@ import java.time.Instant
 import java.time.format.DateTimeParseException
 
 internal fun RemoteSession.toAgentSession(devicesById: Map<String, AgentDevice>): AgentSession {
-    val workspace = cwd.workspaceName()
+    val display = resolveDisplay(SessionDisplayEnvironment.decryptor)
+    val lockedLabel = SessionDisplayEnvironment.lockedLabel
+    val cwd = display.cwd
+    val workspace = if (display.cwdLocked) lockedLabel else cwd.workspaceName()
     val statusValue = status.toSessionStatus()
-    val displayTitle = title?.takeIf { it.isNotBlank() }
-        ?: externalSessionId?.takeIf { it.isNotBlank() }
-        ?: "Untitled session"
+    val displayTitle = if (display.titleLocked) {
+        lockedLabel
+    } else {
+        display.title?.takeIf { it.isNotBlank() }
+            ?: externalSessionId?.takeIf { it.isNotBlank() }
+            ?: "Untitled session"
+    }
     val activityAt = sortAt ?: lastActivityAt ?: lastItemAt ?: lastSyncedAt ?: sourceObservedAt
     val runtimeLabels = runtimeInstanceLabels(runtimeName, runtimeType)
     val deviceName = devicesById[connectorId]?.name ?: connectorId.take(8).ifBlank { "Device" }
@@ -31,7 +38,7 @@ internal fun RemoteSession.toAgentSession(devicesById: Map<String, AgentDevice>)
         projectId = projectId,
         deviceName = deviceName,
         title = displayTitle,
-        summary = summaryText(statusValue, cwd, connectorStatus),
+        summary = summaryText(statusValue, if (display.cwdLocked) lockedLabel else cwd, connectorStatus),
         cwd = cwd,
         workspaceLabel = workspace,
         runtime = runtimeType,
@@ -61,6 +68,9 @@ internal fun RemoteSession.toAgentSession(devicesById: Map<String, AgentDevice>)
         sortAt = sortAt,
         planState = planState,
         goalState = goalState,
+        encryptedDisplay = display.encrypted,
+        titleLocked = display.titleLocked,
+        cwdLocked = display.cwdLocked,
     )
 }
 
