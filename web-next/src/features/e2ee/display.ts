@@ -101,12 +101,13 @@ export class SessionDisplayDecryptor {
     const device = session.displayDevice
     const user = session.displayUser
     if (!isSealed(device) && !isSealed(user)) {
-      // Normal mode: plaintext envelopes when the Server sends them, otherwise the legacy fields exactly as before.
+      // Normal mode: the Server's own title/cwd stay authoritative (a rename only updates them); plaintext
+      // envelopes only fill what they leave empty. Envelopes of an unknown mode are ignored.
       const deviceFields = plainFields(device)
       const userFields = plainFields(user)
       return {
-        title: text(userFields?.title) ?? text(deviceFields?.title) ?? session.title ?? null,
-        cwd: text(deviceFields?.cwd) ?? session.cwd ?? null,
+        title: session.title || (text(userFields?.title) ?? text(deviceFields?.title) ?? null),
+        cwd: session.cwd || (text(deviceFields?.cwd) ?? null),
         preview: text(deviceFields?.preview),
         state: "plain",
       }
