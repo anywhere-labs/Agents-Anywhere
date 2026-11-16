@@ -128,6 +128,22 @@ class ClientSecureChannelTest {
     }
 
     @Test
+    fun aDueRekeyNeverSplitsAMessage() = runBlocking<Unit> {
+        // Every clock read is an hour later, so a time-based rekey is due before every single frame.
+        var clock = 0L
+        val tick = { clock += E2eeFormats.REKEY_INTERVAL_MS; clock }
+        val device = TestDevice().apply { now = tick }
+        val channel = pair(device, now = tick).channel
+        val big = "y".repeat(3 * E2eeFormats.FRAME_MAX_BODY + 17)
+        repeat(2) {
+            // The request and the echoed response both span several fragments in each direction.
+            val response = channel.request("POST", "/api/v2/big", JSONObject().put("text", big).toString())
+            assertEquals(big, response.bodyObject()!!.getJSONObject("echo").getString("text"))
+        }
+        assertTrue(channel.isOpen)
+    }
+
+    @Test
     fun pairingRejectsADeviceKeyThatIsNotInTheQrCode() = runBlocking<Unit> {
         val device = TestDevice()
         val forged = device.pairingPayload(devicePub = NoiseCrypto.generateKeyPair().publicKey)

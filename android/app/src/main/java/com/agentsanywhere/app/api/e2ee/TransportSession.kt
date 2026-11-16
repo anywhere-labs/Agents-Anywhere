@@ -44,10 +44,12 @@ class TransportSession(
     fun sendMessage(json: String) {
         val frames = E2eeFormats.fragment(json.toByteArray(Charsets.UTF_8))
         synchronized(sendLock) {
+            // Only before a message's first fragment: the receiver rejects a rekey frame inside a message.
+            // The frame counter may overshoot 2^20 by one message's worth of fragments, which is fine.
+            if (framesSinceRekey >= E2eeFormats.REKEY_INTERVAL_FRAMES || now() - lastRekeyMs >= E2eeFormats.REKEY_INTERVAL_MS) {
+                rekeyLocked()
+            }
             for (frame in frames) {
-                if (framesSinceRekey >= E2eeFormats.REKEY_INTERVAL_FRAMES || now() - lastRekeyMs >= E2eeFormats.REKEY_INTERVAL_MS) {
-                    rekeyLocked()
-                }
                 writeFrame(frame)
                 framesSinceRekey += 1
             }
