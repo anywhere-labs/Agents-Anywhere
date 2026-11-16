@@ -76,19 +76,36 @@ export class UserApprovals {
   async respond(namespace: string, id: string, noticeId: string, actionId: string) {
     const entry = this.find(namespace, id, noticeId)
     const stale = { ok: false, code: 'dsh_approval_not_pending', message: '这个权限请求已处理或已失效。' }
-    if (!entry || entry.status !== 'open' || !await this.visible(id)) return stale
-    if (actionId !== 'allow-once' && actionId !== 'reject') return { ok: false, code: 'dsh_approval_invalid_action', message: '未知的批准操作。' }
+    if (actionId !== 'allow-once' && actionId !== 'reject') {
+      if (!entry || entry.status !== 'open' || !await this.visible(id)) return stale
+      return { ok: false, code: 'dsh_approval_invalid_action', message: '未知的批准操作。' }
+    }
+    const outcome = entry ? await this.answer(entry.eventId, actionId) : 'stale'
+    if (outcome === 'resolved') return { ok: true, result: { resolved: true, noticeId, sessionId: sessionId(namespace, id) } }
+    if (outcome === 'unavailable') return { ok: false, code: 'dsh_approval_unavailable', message: 'DSH 未接收批准结果，请稍后重试。' }
+    return stale
+  }
+  /** Pending approvals, for consumers that key them by the native event ID (dsh-bridge 3.0). */
+  pendingEntries(agentId?: string): ReadonlyArray<Readonly<Pick<Approval, 'eventId' | 'agentId' | 'toolName' | 'reason' | 'callId'>>> {
+    return [...this.entries.values()].filter(entry => this.pending(entry) && (agentId === undefined || entry.agentId === agentId))
+      .map(({ eventId, agentId, toolName, reason, callId }) => ({ eventId, agentId, toolName, ...(reason ? { reason } : {}), ...(callId ? { callId } : {}) }))
+  }
+  entryStatus(eventId: string): Approval['status'] | undefined { return this.entries.get(eventId)?.status }
+  /** Answer one pending approval by its native event ID; the grant always applies once. */
+  async answer(eventId: string, actionId: 'allow-once' | 'reject'): Promise<'resolved' | 'stale' | 'unavailable'> {
+    const entry = this.entries.get(eventId)
+    if (!entry || entry.status !== 'open' || !await this.visible(entry.agentId)) return 'stale'
     // Visibility awaits I/O; another client may have decided in the meantime.
-    if (entry.status !== 'open') return stale
+    if (entry.status !== 'open') return 'stale'
     this.update(entry, 'responding')
     try {
       await this.stream.reply(entry.eventId, { kind: 'result', value: actionId === 'allow-once' ? 'allowed-once' : 'rejected' })
-      if (entry.withdrawn) return stale
+      if (entry.withdrawn) return 'stale'
       this.update(entry, 'resolved')
-      return { ok: true, result: { resolved: true, noticeId, sessionId: sessionId(namespace, id) } }
+      return 'resolved'
     } catch {
       if (!entry.withdrawn) this.update(entry, 'open')
-      return { ok: false, code: 'dsh_approval_unavailable', message: 'DSH 未接收批准结果，请稍后重试。' }
+      return 'unavailable'
     }
   }
   observe(id: SessionId, event: SessionEvent): void {
