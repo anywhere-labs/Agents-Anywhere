@@ -29,8 +29,7 @@
 ## 验证层次
 
 - `connector/tests/test_codex_recovery_simulation.py`：使用脚本化 SDK 历史、真实扫描器、实例隔离 JSON 存储和模拟 ingestion，验证提交边界、重传数量及最终条目集合。
-- `connector/tests/codex_recovery_probe.py`：把同样四种故障接到实际 AA 后端 ASGI ingestion 与临时数据库，验证返回结果和数据库最终内容。
-- `connector/tests/dsh_event_probe.py` + `dsh-bridge-next/tests/integration/runtime-events.test.ts`：真实 DSH SDK/原生 AgentLoop、Bridge socket、Python Connector、实际后端 ingestion 和数据库。测试扩展了磁盘恢复与 Host 销毁重建，并保留坏历史隔离、双轮对话、流式内容、丢响应、归档与删除等原有断言。
+- 以前还有两项接实际后端的探针（Codex 四种故障、DSH 原生 AgentLoop 全链路），验证后端数据库里的时间线。v3 Server 不再保存会话内容，v2 Connector 推送的时间线会被丢弃，这两项探针已下线。
 - 定向 pytest（Codex 故障模拟、DSH 检查点、存储迁移）16 项通过；DSH 跨语言组合测试通过；Codex 实际后端四场景通过；修改测试文件 Ruff 和 `git diff --check` 通过。
 
 ## 复现
@@ -39,18 +38,6 @@
 
 ```sh
 uv run pytest tests/test_codex_recovery_simulation.py tests/test_dsh_checkpoints.py tests/test_runtime_storage.py -q
-```
-
-在 `server/` 执行：
-
-```sh
-uv run --with-editable ../connector --with pytest python ../connector/tests/codex_recovery_probe.py
-```
-
-在 `dsh-bridge-next/`（已安装依赖并完成 build）执行：
-
-```sh
-corepack yarn exec tsx --test --test-name-pattern='official native loop crosses' tests/integration/runtime-events.test.ts
 ```
 
 ## 边界

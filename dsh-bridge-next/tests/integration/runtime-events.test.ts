@@ -1,17 +1,14 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, rm, readFile, realpath, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { setTimeout as delay } from 'node:timers/promises'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
 import { SessionId, type Session } from '@deepseek-ai/dsh-session'
 import { createAssistantMessage, createToolResultMessage, createUserMessage, LlmError, ToolCallId, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { LocalRouter, Mesh, MeshCallError, Router } from 'meshcall'
 import { bridgePath, nativeRuntime } from '../fixtures/native-runtime.js'
-import { corruptHistory } from '../fixtures/corrupt-history.js'
 import { mountAgents, TextAdapter, initialSelections } from '../fixtures/agent-runtime.js'
 import { MAX_RETAINED_PROJECTIONS, SyncFeed, SYNC_FLUSH_MS, type SyncOperation, type SyncTransport } from '../../src/host/dsh-runtime/sync.js'
 import type { SnapshotRequest, SnapshotResult } from '../../src/host/generated/dsh-sync.js'
@@ -590,59 +587,6 @@ test('real AgentLoop sends text once, streams before idle, queues followups and 
     assert.deepEqual(stream.errors, [])
   } finally { stream.feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
 })
-
-// The Python probe builds the Server in-process, so it needs a throwaway PostgreSQL database.
-test('official native loop crosses Python and backend despite corrupt history, including two turns, lost ACK and reconnect', { timeout: 75_000, skip: !process.env.AGENT_SERVER_TEST_DB_URL && 'AGENT_SERVER_TEST_DB_URL is not set' }, async () => {
-  const home = await realpath(await mkdtemp(join(tmpdir(), 'dsh-pipeline-')))
-  const adapter = new TextAdapter()
-  const fixture = await nativeRuntime(home, async ctx => {
-    await corruptHistory(ctx, home)
-    await mountAgents(ctx, adapter)
-  })
-  let closed = false
-  const mutations = (async () => {
-    while (!closed) {
-      const marker = join(home, 'native-action.json')
-      const action = await readFile(marker, 'utf8').then(text => JSON.parse(text) as { action: string, sessionId: string }).catch(() => undefined)
-      if (action) {
-        const workspace = fixture.ctx.workspaceRegistry.list().find(workspace => workspace.path === home)!
-        if (action.action === 'release') {
-          assert.ok(adapter.release, 'the model must still be streaming when the backend observes partial text')
-          adapter.release()
-        } else if (action.action === 'draft') {
-          fixture.ctx.sessions.create(SessionId(action.sessionId), { meta: { cwd: home } })
-          fixture.ctx.agentsAnywhereRuntime.native.presence.report('pipeline-client', 1, action.sessionId)
-        } else if (action.action === 'first-message') {
-          const session = fixture.ctx.sessions.get(SessionId(action.sessionId))!
-          session.append('turn/start', { turn: 1 })
-          session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'first native user message' }] }), { surfaceOp: 'append' })
-          session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
-          await fixture.ctx.sessions.flush(session)
-        } else if (action.action === 'host-restart') {
-          await fixture.plugin.dispose()
-          const host = await import('../../lib/index.js')
-          fixture.plugin = fixture.ctx.plugin(host, { dshHome: home, stateRoot: join(home, 'account'), connectorSourceDir: home })
-          await fixture.plugin.await()
-        } else if (action.action === 'offline-message') {
-          fixture.session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'offline recovery message' }] }), { surfaceOp: 'append' })
-        } else if (action.action === 'rename') await workspace.setTitle('DSH 项目改名')
-        else if (action.action === 'archive') await fixture.ctx.workspaceRegistry.archiveSession(SessionId(action.sessionId))
-        else if (action.action === 'delete') await fixture.ctx.workspaceRegistry.delete(workspace.id)
-        else throw new Error(`Unknown test action: ${action.action}`)
-        await rm(marker)
-      }
-      await delay(20)
-    }
-  })()
-  try {
-    const result = await promisify(execFile)('uv', ['run', '--with-editable', '../connector', 'python', '../connector/tests/dsh_event_probe.py', home], {
-      cwd: new URL('../../../server/', import.meta.url), timeout: 60_000,
-    })
-    assert.match(result.stdout, /DSH event pipeline passed/)
-    assert.match(result.stdout, /offline change=1 delta, 0 snapshots/)
-  } finally { closed = true; adapter.release?.(); await mutations; await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
-})
-
 
 test('a replacement feed uses Connector checkpoints and uploads only offline deltas', { timeout: 30_000 }, async () => {
   const home = await mkdtemp(join(tmpdir(), 'dsh-checkpoints-'))
