@@ -15,6 +15,8 @@
 
 import type { BlobRef, JsonObject, TimelineDraft, TimelineItem } from '../domain/conversation/index.js'
 
+export { PAGE_BUDGET, PAGE_LIMIT_MAX, SNAPSHOT_LIMIT } from '../domain/conversation/index.js'
+
 /** A string longer than this leaves the item (agentd TOOL_STRING_MAX). */
 export const STRING_MAX = 48 * 1024
 /** An item's stored payload above this gets harder cuts (04-connector.md §6.4). */
@@ -22,13 +24,8 @@ export const ITEM_PAYLOAD_MAX = 64 * 1024
 /** Head and tail kept as the preview of a moved string (04-connector.md §6.4: 4 KiB each). */
 export const PREVIEW_HEAD = 4 * 1024
 export const PREVIEW_TAIL = 4 * 1024
-/** Default byte budget of a snapshot or page (06-protocols.md §2.6). */
-export const PAGE_BUDGET = 1024 * 1024
 /** One item on the wire, whatever the page budget (agentd MESSAGE_BUDGET, below the 4 MiB Router frame). */
 export const ITEM_WIRE_MAX = 3 * 1024 * 1024
-/** Count limits from v2 (snapshot 100, page 500). */
-export const SNAPSHOT_LIMIT = 100
-export const PAGE_LIMIT_MAX = 500
 
 const MEDIA_TYPES = new Set(['image', 'audio', 'blob'])
 const DATA_URL = /^data:([\w.+-]+\/[\w.+-]+)?(;[\w=.+-]+)*;base64,/u

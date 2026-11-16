@@ -58,7 +58,8 @@ import { goalStateSummary, type GoalState } from '../domain/goals/index.js'
 import { planStateSummary, type PlanDocument, type PlanningState } from '../domain/planning/index.js'
 import { BlobFiles } from './blob-files.js'
 import { SCHEMA_VERSION, migrate, schemaVersion } from './schema.js'
-import { PAGE_BUDGET, PAGE_LIMIT_MAX, fitPage, jsonBytes, slimDraft } from './slim.js'
+import { PAGE_BUDGET, PAGE_LIMIT_MAX } from '../domain/conversation/index.js'
+import { fitPage, jsonBytes, slimDraft } from './slim.js'
 
 /** The synchronous form of a repository port: what runs on the store thread. */
 export type Sync<T> = { [K in keyof T]: T[K] extends (...args: infer A) => Promise<infer R> ? (...args: A) => R : T[K] }
