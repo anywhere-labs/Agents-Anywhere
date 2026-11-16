@@ -17,7 +17,6 @@ from agent_server.deps import (
     get_session_runtime_state_cache,
     get_store,
     get_terminal_broker,
-    get_timeline_write_buffer,
     require_admin,
 )
 from agent_server.infra.connector_rpc import ConnectorRpcManager
@@ -29,7 +28,6 @@ from agent_server.services.email_delivery import (
     update_email_settings,
 )
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
-from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 from agent_server.services.user_deletion import UserDeletionPending, delete_user_account
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
@@ -153,7 +151,6 @@ async def delete_user(
     admin: UserView = Depends(require_admin),
     manager: ConnectorRpcManager = Depends(get_rpc),
     terminals: TerminalBroker = Depends(get_terminal_broker),
-    timeline_buffer: TimelineWriteBuffer = Depends(get_timeline_write_buffer),
     runtime_state_cache: SessionRuntimeStateCache = Depends(get_session_runtime_state_cache),
 ) -> None:
     target = (user_id or "").strip().lower()
@@ -161,7 +158,7 @@ async def delete_user(
         raise HTTPException(status_code=409, detail="cannot delete yourself")
     try:
         await delete_user_account(
-            target, db, manager, terminals, timeline_buffer, runtime_state_cache
+            target, db, manager, terminals, runtime_state_cache
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="user not found") from None

@@ -24,7 +24,6 @@ from agent_server.infra.repositories.protocol_catalogs import (
 from agent_server.infra.repositories.sessions import SessionRepositoryMixin
 from agent_server.infra.repositories.shares import SessionShareRepositoryMixin
 from agent_server.infra.repositories.store_support import *
-from agent_server.infra.repositories.timeline import TimelineRepositoryMixin
 from agent_server.infra.repositories.token_families import TokenFamilyRepositoryMixin
 from agent_server.infra.repositories.usage import UsageRepositoryMixin
 from agent_server.infra.repositories.users import UserRepositoryMixin
@@ -33,11 +32,8 @@ _MAX_TRACKED_LOCKS = 4096
 _TRACKED_LOCK_IDLE_SECONDS = 900.0
 
 
-from agent_server.infra.repositories.goals import GoalRepositoryMixin
-from agent_server.infra.repositories.message_queue import MessageQueueRepositoryMixin
 from agent_server.infra.repositories.model_channels import ModelChannelRepositoryMixin
 from agent_server.infra.repositories.model_config import ModelConfigRepositoryMixin
-from agent_server.infra.repositories.planning import PlanningRepositoryMixin
 from agent_server.infra.repositories.runtime_workflows import (
     RuntimeWorkflowRepositoryMixin,
 )
@@ -47,13 +43,10 @@ from agent_server.infra.repositories.tokens_links import TokensLinkRepositoryMix
 class Store(
     TokenFamilyRepositoryMixin,
     DeviceLinkRepositoryMixin,
-    MessageQueueRepositoryMixin,
-    GoalRepositoryMixin,
     ChannelReconciliationRepositoryMixin,
     ModelChannelRepositoryMixin,
     ModelConfigRepositoryMixin,
     TokensLinkRepositoryMixin,
-    PlanningRepositoryMixin,
     RuntimeWorkflowRepositoryMixin,
     DeviceRuntimeRepositoryMixin,
     ProtocolCatalogRepositoryMixin,
@@ -66,7 +59,6 @@ class Store(
     SessionShareRepositoryMixin,
     AttachmentRepositoryMixin,
     ActiveRunRepositoryMixin,
-    TimelineRepositoryMixin,
     UsageRepositoryMixin,
 ):
     def __init__(
@@ -77,7 +69,6 @@ class Store(
     ) -> None:
         engine = build_engine(db_url)
         self._engine: AsyncEngine = engine
-        self.timeline: SqlTimelineStore = SqlTimelineStore(engine)
         self.files: FileStorage = file_storage or build_file_storage(
             default_local_root=_default_files_root(engine)
         )

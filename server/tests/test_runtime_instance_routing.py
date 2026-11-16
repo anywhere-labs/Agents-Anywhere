@@ -13,7 +13,6 @@ from agent_server.services.connector_notifications import (
     InteractionNotificationHandler,
     NotificationValidationError,
     RuntimeCatalogNotificationHandler,
-    TimelineNotificationHandler,
 )
 
 
@@ -158,52 +157,6 @@ def test_connector_cannot_rebind_an_existing_session(tmp_path) -> None:
         assert session.externalSessionId == "external_a"
     finally:
         asyncio.run(store.close())
-
-
-def test_timeline_notification_rejects_connector_or_runtime_rebinding() -> None:
-    session = SessionView(
-        id="sess_owned",
-        connectorId="conn_a",
-        connectorStatus="online",
-        runtime="codex",
-        runtimeId="rti_work",
-        status="idle",
-        takeover=False,
-        updatedSeq=1,
-    )
-
-    class Repository:
-        async def resolve_connector_session_id(self, **values: Any) -> str:
-            raise KeyError(values["session_id"])
-
-        async def get_session(
-            self,
-            session_id: str,
-            *,
-            user_id: str | None = None,
-        ) -> SessionView:
-            assert session_id == session.id
-            assert user_id is None
-            return session
-
-    handler = TimelineNotificationHandler(Repository())  # type: ignore[arg-type]
-    params = {
-        "sessionId": session.id,
-        "runtime": "codex",
-        "runtimeId": "rti_other",
-        "items": [],
-    }
-
-    with pytest.raises(NotificationValidationError) as raised:
-        asyncio.run(
-            handler.apply(
-                connector_id="conn_b",
-                method="timeline.sync",
-                params=params,
-            )
-        )
-
-    assert raised.value.code == "session_connector_mismatch"
 
 
 def test_notice_notification_uses_nested_runtime_instance_identity() -> None:

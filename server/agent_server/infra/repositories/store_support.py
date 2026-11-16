@@ -45,7 +45,6 @@ from agent_server.infra.db import (
     session_inventory_scans as session_inventory_scans_t,
     sessions as sessions_t,
     session_shares as session_shares_t,
-    timeline_items as timeline_items_t,
     usage_events as usage_events_t,
     usage_inventory_snapshots as usage_inventory_snapshots_t,
     users as users_t,
@@ -69,7 +68,6 @@ from agent_server.infra.repositories import (
 )
 from agent_server.services.attachments import AttachmentService
 from agent_server.core.utc import utc_now
-from agent_server.infra.timeline_store import SqlTimelineStore
 
 DERIVED_SESSION_TITLE_MAX_CHARS = 48
 
@@ -178,15 +176,6 @@ def _user_from_row(row: Any) -> UserView:
 
 def _mobile_login_token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
-
-
-def _message_text(content: Any) -> str:
-    if not isinstance(content, dict):
-        return ""
-    text = content.get("text")
-    if not isinstance(text, str):
-        return ""
-    return " ".join(text.split())
 
 
 def _truncate_title(text: str) -> str:

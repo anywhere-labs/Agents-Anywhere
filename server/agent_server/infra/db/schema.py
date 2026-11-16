@@ -335,17 +335,6 @@ instance_settings = Table(
 )
 
 
-legacy_import_archive = Table(
-    "legacy_import_archive",
-    metadata,
-    Column("source_table", Text, nullable=False),
-    Column("row_key", Text, nullable=False),
-    Column("payload_json", Text, nullable=False),
-    Column("archived_at", Text, nullable=False),
-    PrimaryKeyConstraint("source_table", "row_key"),
-)
-
-
 projects = Table(
     "projects",
     metadata,
@@ -446,17 +435,17 @@ sessions = Table(
         BigInteger,
         server_default=text("nextval('session_source_change_seq')"),
     ),
-    Column("last_read_seq", BigInteger, nullable=False, server_default="0"),
+    # Device-clock position the user has read up to. The two negative values are the
+    # sentinels v2_60 left: -1 "read to the newest turn", -2 "unread"; the device's
+    # first ``latestTurnEndSeq`` resolves them (``core.read_marks``).
+    Column("read_seq", BigInteger, nullable=False, server_default="0"),
     Column("latest_turn_end_seq", BigInteger, nullable=False, server_default="0"),
     Column("timeline_reset_seq", BigInteger, nullable=False, server_default="0"),
     Column("last_synced_at", Text),
     Column("source_observed_at", Text),
     Column("last_activity_at", Text),
     Column("sort_at", Text),
-    # Summary of the newest timeline row (same order as
-    # ``idx_timeline_items_session_latest``), kept current by every timeline
-    # write so session lists never look into ``timeline_items``. All NULL when
-    # the session has no timeline rows.
+    # Summary of the newest timeline item, as the device reports it.
     Column("latest_item_id", Text),
     Column("latest_item_time", Text),
     Column("latest_item_order_seq", Integer),
@@ -535,40 +524,6 @@ session_active_runs = Table(
     Column("params_json", Text),
     Column("started_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
-)
-
-
-timeline_items = Table(
-    "timeline_items",
-    metadata,
-    Column(
-        "session_id",
-        Text,
-        ForeignKey("sessions.id", ondelete="CASCADE"),
-        nullable=False,
-    ),
-    Column("id", Text, nullable=False),
-    Column("type", Text, nullable=False),
-    Column("status", Text, nullable=False),
-    Column("role", Text),
-    Column("order_seq", Integer, nullable=False),
-    Column("updated_seq", BigInteger, nullable=False),
-    Column("item_time", Text),
-    Column("payload_json", Text, nullable=False),
-    PrimaryKeyConstraint("session_id", "id"),
-    Index("idx_timeline_items_session_updated_seq", "session_id", "updated_seq"),
-    Index(
-        "idx_timeline_items_session_latest",
-        "session_id",
-        text("coalesce(item_time, '') DESC"),
-        text("order_seq DESC"),
-        text("updated_seq DESC"),
-    ),
-    Index(
-        "idx_timeline_items_session_order_seq",
-        "session_id",
-        "order_seq",
-    ),
 )
 
 
@@ -711,29 +666,6 @@ runtime_workflows = Table(
 )
 
 
-session_runtime_event_receipts = Table(
-    "session_runtime_event_receipts", metadata,
-    Column("session_id", Text, ForeignKey("sessions.id", ondelete="CASCADE"), primary_key=True),
-    Column("source_event_id", Text, primary_key=True),
-    Column("event_digest", Text, nullable=False),
-)
-session_planning = Table("session_planning", metadata,
-    Column("session_id", Text, ForeignKey("sessions.id", ondelete="CASCADE"), primary_key=True),
-    Column("payload", Text, nullable=False))
-plan_documents = Table("plan_documents", metadata,
-    Column("session_id", Text, ForeignKey("sessions.id", ondelete="CASCADE"), primary_key=True),
-    Column("plan_id", Text, primary_key=True), Column("revision", Integer, primary_key=True),
-    Column("content_hash", Text, nullable=False), Column("payload", Text, nullable=False), Column("created_at", Text, nullable=False))
-planning_operations = Table("planning_operations", metadata,
-    Column("session_id", Text, ForeignKey("sessions.id", ondelete="CASCADE"), primary_key=True),
-    Column("operation_id", Text, primary_key=True), Column("fingerprint", Text, nullable=False), Column("payload", Text, nullable=False))
-
-planning_creations = Table("planning_creations", metadata,
-    Column("connector_id", Text, ForeignKey("connectors.id", ondelete="CASCADE"), primary_key=True),
-    Column("runtime_id", Text, primary_key=True), Column("operation_id", Text, primary_key=True),
-    Column("fingerprint", Text, nullable=False), Column("payload", Text, nullable=False))
-
-
 tokens_links = Table("tokens_links", metadata,
     Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
     Column("issuer", Text, nullable=False), Column("account_json", Text, nullable=False),
@@ -843,15 +775,7 @@ channel_rotation_intents = Table("channel_rotation_intents", metadata,
 channel_device_gates = Table("channel_device_gates", metadata,
     Column("connector_id", Text, ForeignKey("connectors.id", ondelete="CASCADE"), primary_key=True),
     Column("connection_id", Text, nullable=False), Column("expires_at", Text, nullable=False))
-from agent_server.infra.db.goal_schema import define_goal_tables
 
-session_goals, session_goal_state, goal_operations, goal_event_outbox = (
-    define_goal_tables(metadata)
-)
-
-from agent_server.infra.db.message_queue_schema import define_message_queue_tables
-
-session_queued_messages, session_queue_state = define_message_queue_tables(metadata)
 
 # One durable receipt per state-changing device command (device-meshcall 1.0).
 device_commands = Table(

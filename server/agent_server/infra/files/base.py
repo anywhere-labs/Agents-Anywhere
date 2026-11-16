@@ -82,6 +82,15 @@ class FileStorage(ABC):
     async def delete_session(self, session_id: str) -> None:
         """Remove all blobs and metadata for one session. Safe to retry."""
 
+    async def delete_session_except(self, session_id: str, keep: set[str]) -> None:
+        """Remove one session's files except the file ids in ``keep``. Safe to retry.
+
+        Backends that cannot list a session's files keep everything when ``keep`` is not empty.
+        """
+
+        if not keep:
+            await self.delete_session(session_id)
+
     @staticmethod
     def _validate_session_id(session_id: str) -> None:
         if (

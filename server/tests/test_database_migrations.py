@@ -23,7 +23,6 @@ from agent_server.infra.db.schema import (
     connector_runtime_types,
     metadata,
     sessions,
-    timeline_items,
 )
 from alembic import command
 from migrations.versions import v2_24
@@ -46,7 +45,7 @@ def test_protocol_clock_revisions_use_64_bit_columns() -> None:
 
 def test_session_sequence_clocks_use_64_bit_columns() -> None:
     for column_name in (
-        "last_read_seq",
+        "read_seq",
         "latest_turn_end_seq",
         "timeline_reset_seq",
         "seq",
@@ -54,7 +53,6 @@ def test_session_sequence_clocks_use_64_bit_columns() -> None:
         "updated_seq",
     ):
         assert isinstance(sessions.c[column_name].type, BigInteger)
-    assert isinstance(timeline_items.c.updated_seq.type, BigInteger)
 
 
 def test_v2_24_protocol_limit_uses_postgresql_bigint_bind() -> None:
@@ -191,9 +189,7 @@ def test_unversioned_recent_v2_database_runs_remaining_migrations(tmp_path,
         assert "turn_id" not in {
             column["name"] for column in inspector.get_columns("session_active_runs")
         }
-        assert "turn_id" not in {
-            column["name"] for column in inspector.get_columns("timeline_items")
-        }
+        assert "timeline_items" not in inspector.get_table_names()
         with engine.connect() as connection:
             assert (
                 connection.execute(
@@ -286,6 +282,7 @@ def test_v2_0_database_upgrades_through_current_revision(fresh_database_url) -> 
         ("v2_56", "v2_57"),
         ("v2_57", "v2_58"),
         ("v2_58", "v2_59"),
+        ("v2_59", "v2_60"),
     ],
 )
 def test_every_adjacent_schema_upgrade(tmp_path,
@@ -1026,9 +1023,9 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(tmp_path,
     )
 
 
-def test_current_schema_version_is_v2_59() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_59"
-    assert CURRENT_SCHEMA_VERSION == "2.59"
+def test_current_schema_version_is_v2_60() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_60"
+    assert CURRENT_SCHEMA_VERSION == "2.60"
 
 
 def test_v2_57_starts_the_seq_ceiling_above_v2_sequences(fresh_database_url) -> None:
@@ -1262,7 +1259,7 @@ def test_v2_53_backfills_hourly_usage_rollups(fresh_database_url) -> None:
     finally:
         engine.dispose()
 
-    upgrade_database(db_url=url)
+    upgrade_database(db_url=url, revision="v2_59")  # v2_60 cannot be downgraded
 
     engine = create_engine(_sync_url(url))
     try:
@@ -1382,8 +1379,8 @@ def test_v2_42_replaces_dashboard_tables_with_usage_events(fresh_database_url) -
     finally:
         engine.dispose()
 
-    upgrade_database(db_url=url)
-    upgrade_database(db_url=url)
+    upgrade_database(db_url=url, revision="v2_59")  # v2_60 cannot be downgraded
+    upgrade_database(db_url=url, revision="v2_59")  # v2_60 cannot be downgraded
 
     engine = create_engine(_sync_url(url))
     try:
@@ -1467,7 +1464,7 @@ def test_v2_40_removes_auto_archive_and_restores_swept_sessions(fresh_database_u
         engine.dispose()
 
     upgrade_database(db_url=url, revision="v2_40")
-    upgrade_database(db_url=url)
+    upgrade_database(db_url=url, revision="v2_59")  # its orphan rows fail v2_60's foreign key checks
 
     engine = create_engine(_sync_url(url))
     try:
@@ -2707,3 +2704,56 @@ def test_v2_56_adds_session_message_queue(fresh_database_url) -> None:
         assert not inspector.has_table("session_queue_state")
     finally:
         engine.dispose()
+
+
+def test_v2_60_drops_session_content_and_leaves_read_sentinels(fresh_database_url) -> None:
+    url = fresh_database_url
+    upgrade_database(db_url=url, revision="v2_59")
+    engine = create_engine(_sync_url(url))
+    try:
+        with engine.begin() as connection:
+            _insert_required(connection, "users", {"id": "alice"})
+            _insert_required(connection, "connectors", {"id": "c1", "user_id": "alice"})
+            for session_id, last_read, turn_end in (("read", 9, 9), ("unread", 4, 9), ("fresh", 0, 0)):
+                _insert_required(connection, "sessions", {
+                    "id": session_id, "connector_id": "c1", "last_read_seq": last_read,
+                    "latest_turn_end_seq": turn_end, "seq": 10, "updated_seq": 10,
+                })
+            _insert_required(connection, "timeline_items", {
+                "session_id": "read", "id": "tl_1", "payload_json": "{}",
+            })
+            _insert_required(connection, "session_active_runs", {
+                "session_id": "unread", "params_json": '{"content": "secret prompt"}',
+            })
+    finally:
+        engine.dispose()
+
+    upgrade_database(db_url=url)
+
+    engine = create_engine(_sync_url(url))
+    try:
+        inspector = inspect(engine)
+        tables = set(inspector.get_table_names())
+        for table in ("timeline_items", "session_planning", "plan_documents", "session_goals",
+                      "goal_event_outbox", "session_queued_messages", "legacy_import_archive"):
+            assert table not in tables
+        columns = {column["name"] for column in inspector.get_columns("sessions")}
+        assert "read_seq" in columns and "last_read_seq" not in columns
+        with engine.connect() as connection:
+            marks = dict(connection.execute(text("SELECT id, read_seq FROM sessions")).all())
+            params = connection.execute(text("SELECT params_json FROM session_active_runs")).scalar_one()
+            purge = connection.execute(
+                text("SELECT value FROM instance_settings WHERE key = 'v3_attachment_purge'")
+            ).scalar_one()
+        assert marks == {"read": -1, "unread": -2, "fresh": -1}
+        assert params is None
+        assert purge == "pending"
+        with engine.begin() as connection:
+            connection.execute(text("DROP TABLE alembic_version"))
+    finally:
+        engine.dispose()
+    assert asyncio.run(classify_database(url)) == UnversionedDatabase("v2", "v2_60")
+
+    command.stamp(_alembic_config(url), "v2_60")
+    with pytest.raises(RuntimeError, match="cannot be downgraded"):
+        command.downgrade(_alembic_config(url), "v2_59")

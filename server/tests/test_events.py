@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 
 import pytest
 
@@ -13,11 +12,6 @@ from agent_server.core.events import (
     protocol_event,
     revisions_are_complete,
 )
-from agent_server.core.models import TimelineItemIn
-from agent_server.infra.connector_rpc import ConnectorRpcManager
-from agent_server.infra.repositories.facade import Store
-from agent_server.services.event_recovery import EventRecoveryService
-from session_fixtures import create_session_with_project
 
 
 def test_event_cursor_is_a_strict_durable_revision_token() -> None:
@@ -265,64 +259,3 @@ def test_recovery_requires_every_durable_revision_to_be_projected() -> None:
     )
 
 
-def test_timeline_snapshot_replace_requires_snapshot_for_deleted_items(
-    tmp_path,
-) -> None:
-    async def exercise() -> None:
-        store = Store()
-        presence = ConnectorRpcManager()
-        try:
-            connector, _token, _prefix = await store.create_connector(
-                name="dev",
-                user_id="user-1",
-            )
-            session = await create_session_with_project(
-                store,
-                connector_id=connector.id,
-                user_id="user-1",
-                external_session_id="thread-1",
-                title="Recovery",
-            )
-            first = _timeline_item(session.id, "item-1", 1)
-            second = _timeline_item(session.id, "item-2", 2)
-            await store.upsert_timeline_item(session_id=session.id, item=first)
-            await store.upsert_timeline_item(session_id=session.id, item=second)
-            before_replace = await store.get_session_seq(session.id)
-
-            await store.replace_timeline_snapshot(
-                session_id=session.id,
-                items=[first],
-            )
-            recovery = await EventRecoveryService(store, presence).recover(
-                session.id,
-                after=event_cursor(before_replace),
-                user_id="user-1",
-            )
-
-            assert recovery.snapshotRequired is True
-        finally:
-            await presence.close()
-            await store.close()
-
-    asyncio.run(exercise())
-
-
-def _timeline_item(session_id: str, item_id: str, order_seq: int) -> TimelineItemIn:
-    return TimelineItemIn.model_validate(
-        {
-            "id": item_id,
-            "sessionId": session_id,
-            "type": "message",
-            "status": "done",
-            "role": "assistant",
-            "content": {"text": item_id},
-            "source": {
-                "runtime": "codex",
-                "sessionId": "thread-1",
-                "itemId": item_id,
-            },
-            "orderSeq": order_seq,
-            "revision": 1,
-            "contentHash": f"sha256:{item_id}",
-        }
-    )

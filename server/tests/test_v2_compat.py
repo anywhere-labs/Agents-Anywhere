@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from sqlalchemy import text
 from test_backend_mvp import create_connector_and_session, make_client
 
 UPGRADE = "device_upgrade_required"
@@ -69,7 +70,6 @@ def test_v2_session_directory_still_works(tmp_path) -> None:
 def test_v2_content_notifications_are_acknowledged_and_dropped(tmp_path) -> None:
     client = make_client(tmp_path)
     _connector_id, token, session_id, _headers = create_connector_and_session(client)
-    store = client.app.state.store
 
     response = client.post(
         "/connector/ingest",
@@ -81,8 +81,42 @@ def test_v2_content_notifications_are_acknowledged_and_dropped(tmp_path) -> None
                 {"method": "notice.upsert", "params": {"sessionId": session_id, "noticeId": "n_1"}},
                 {"method": "session.planning.updated", "params": {"sessionId": session_id}},
                 {"method": "session.goal.updated", "params": {"sessionId": session_id}},
+                {"method": "session.turnEnded", "params": {"sessionId": session_id}},
             ]
         },
     )
     assert response.status_code == 200, response.text
-    assert asyncio.run(store.timeline.read(session_id)) == []
+    assert response.json().get("errors") in (None, [])
+
+
+def test_v2_attachments_are_purged_once_except_shared_files(tmp_path) -> None:
+    client = make_client(tmp_path)
+    _connector_id, _token, session_id, _headers = create_connector_and_session(client)
+    store = client.app.state.store
+
+    async def scenario() -> None:
+        meta = {"name": "a.txt", "size": 1}
+        for file_id in ("file_private", "file_shared"):
+            await store.files.write(session_id, file_id, b"x", {**meta, "fileId": file_id})
+        async with store.engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO session_shares (id, user_id, session_id, scope, snapshot_json, "
+                    "allowed_file_ids_json, created_at) SELECT 'share_1', c.user_id, s.id, 'session', '{}', "
+                    "'[\"file_shared\"]', 'now' FROM sessions s JOIN connectors c ON c.id = s.connector_id "
+                    "WHERE s.id = :sid"
+                ),
+                {"sid": session_id},
+            )
+        # Nothing happens unless the migration asked for it.
+        assert await store.attachments.purge_v2_files() == 0
+        assert await store.files.exists(session_id, "file_private")
+
+        await store.set_setting("v3_attachment_purge", "pending")
+        assert await store.attachments.purge_v2_files() == 1
+        assert not await store.files.exists(session_id, "file_private")
+        assert await store.files.exists(session_id, "file_shared")
+        assert await store.get_setting("v3_attachment_purge") == "done"
+        assert await store.attachments.purge_v2_files() == 0
+
+    asyncio.run(scenario())

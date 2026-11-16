@@ -22,19 +22,15 @@ from agent_server.core.utc import utc_now
 from agent_server.deps import (
     current_user_id,
     get_attachment_service,
-    get_device_reads,
     get_store,
-    get_timeline_write_buffer,
 )
 from agent_server.infra.repositories.facade import Store
 from agent_server.services.attachments import AttachmentService
 from agent_server.services.device_blobs import DeviceBlobService
 from agent_server.services.device_reads import (
     DeviceReadError,
-    DeviceReadService,
     DeviceReadTimeout,
 )
-from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 
 router = APIRouter(tags=["session-shares"])
 
@@ -51,68 +47,14 @@ async def create_session_share(
     request: Request,
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
-    timeline_write_buffer: TimelineWriteBuffer = Depends(get_timeline_write_buffer),
-    reads: DeviceReadService = Depends(get_device_reads),
     blobs: DeviceBlobService = Depends(get_device_blobs),
 ) -> SessionShareCreateResponse:
     try:
         owned = await db.get_session(session_id, user_id=user_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
-    if await reads.is_v3_device(owned.connectorId):
-        share = await _device_share(db, blobs, owned, payload, user_id=user_id)
-        return _share_response(request, share, payload.scope)
-    try:
-        async with timeline_write_buffer.session_fence(session_id):
-            session = await db.get_session(session_id, user_id=user_id)
-            timeline = await db.timeline.read(session_id)
-            if payload.scope == "message":
-                requested_ids = set(payload.itemIds)
-                items_by_id = {item.id: item for item in timeline}
-                if not requested_ids.issubset(items_by_id):
-                    raise HTTPException(
-                        status_code=404,
-                        detail="timeline item not found",
-                    )
-                selected = [item for item in timeline if item.id in requested_ids]
-                if any(
-                    item.type != "message" or item.role != "assistant"
-                    for item in selected
-                ):
-                    raise HTTPException(
-                        status_code=422,
-                        detail="a reply share may only contain assistant messages",
-                    )
-            else:
-                selected = timeline
-
-            if not selected:
-                raise HTTPException(
-                    status_code=422,
-                    detail="there is no content to share",
-                )
-
-            snapshot = {
-                "session": {
-                    "id": session.id,
-                    "title": session.title,
-                    "runtime": session.runtime,
-                    "runtimeName": session.runtimeName,
-                    "cwd": session.cwd,
-                },
-                "items": [
-                    item.model_dump(mode="json", exclude_none=True) for item in selected
-                ],
-            }
-            share = await db.create_session_share(
-                user_id=user_id,
-                session_id=session_id,
-                scope=payload.scope,
-                snapshot=snapshot,
-                allowed_file_ids=_attachment_file_ids(snapshot["items"]),
-            )
-    except KeyError:
-        raise HTTPException(status_code=404, detail="session not found") from None
+    # The device exports the snapshot (v3); v2 sessions never get here (``V3_SESSION_ONLY``).
+    share = await _device_share(db, blobs, owned, payload, user_id=user_id)
     return _share_response(request, share, payload.scope)
 
 

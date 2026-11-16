@@ -46,6 +46,8 @@ Claude 通过 SDK 发送原生 `/goal`、`/goal clear`，读取其原生 JSONL �
 
 本次新增 Alembic `v2_47`，schema version 为 `2.47`，产品版本不变。迁移只新增表、约束和索引，不回填旧会话。
 
+> 3.0 起这些表由 `v2_60` 迁移删除：目标保存在设备上，Server 通过设备连接转发读取和修改（见 [Server 架构](../server-architecture.md)）。下表描述 2.x 的实现。
+
 | PostgreSQL 表 | 责任 |
 | --- | --- |
 | `session_goals` | 每个目标一行的生命周期历史，复合主键及每会话最多一个未结束目标的部分唯一索引 |

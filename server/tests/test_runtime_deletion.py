@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock
 import pytest
 from conftest import ApiV2TestClient as TestClient
 from sqlalchemy import insert, select, update
-from test_connector_deletion import timeline_input
 from test_runtime_instances_lifecycle import (
     FakeRuntimeRpc,
     _auth_headers,
@@ -71,9 +70,6 @@ async def add_session(app, device, runtime, name):
     )
     now = utc_now()
     owner = (await store.get_connector(device)).userId
-    await store.upsert_timeline_item(
-        session_id=session.id, item=timeline_input(session.id)
-    )
     async with store.engine.begin() as conn:
         await conn.execute(
             insert(db.session_active_runs).values(
@@ -109,9 +105,6 @@ async def add_session(app, device, runtime, name):
     await store.save_user_uploaded_file(
         session_id=session.id, user_id=owner, name="private.txt", data=b"attachment"
     )
-    await app.state.timeline_write_buffer.accept(
-        session_id=session.id, item=timeline_input(session.id, "pending")
-    )
     await app.state.session_runtime_state_cache.put(
         SessionRuntimeState(
             sessionId=session.id,
@@ -142,7 +135,6 @@ async def assert_session_data(app, expected_ids):
             == expected_ids
         )
         for table in (
-            db.timeline_items,
             db.session_active_runs,
             db.session_shares,
             db.connector_terminal_roots,
@@ -213,10 +205,6 @@ def test_runtime_deletion_removes_only_its_sessions_and_related_data(api):
             client.get(f"/sessions/{session.id}/meta", headers=headers).status_code
             == 404
         )
-        assert (
-            client.get(f"/sessions/{session.id}/timeline", headers=headers).status_code
-            == 404
-        )
         assert client.get(f"/public/shares/{session.id}").status_code == 404
     assert response.json()["runtimeId"] == runtime
     assert client.get(f"{runtime_url}", headers=headers).status_code == 404
@@ -245,13 +233,6 @@ def test_runtime_deletion_removes_only_its_sessions_and_related_data(api):
             assert (
                 await client.app.state.terminal_broker.get_for_session(session.id) == []
             )
-            assert (
-                session.id
-                not in await client.app.state.timeline_write_buffer.dirty_session_ids()
-            )
-        await client.app.state.timeline_write_buffer.flush_all()
-        for session in deleted:
-            assert await store.timeline.read(session.id) == []
 
     asyncio.run(check())
     # A stale retry must not delete the successor, even after it is configured.

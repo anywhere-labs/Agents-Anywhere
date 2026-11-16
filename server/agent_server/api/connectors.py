@@ -28,7 +28,6 @@ from agent_server.deps import (
     get_store,
     get_terminal_broker,
     get_timeline_broker,
-    get_timeline_write_buffer,
 )
 from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.infra.repositories.facade import Store
@@ -46,7 +45,6 @@ from agent_server.services.connector_presence import (
 )
 from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
-from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 
 router = APIRouter(prefix="/connectors", tags=["connectors"])
 
@@ -178,11 +176,10 @@ async def delete_connector(
     manager: ConnectorRpcManager = Depends(get_rpc),
     broker: TimelineBroker = Depends(get_timeline_broker),
     terminals: TerminalBroker = Depends(get_terminal_broker),
-    timeline_buffer: TimelineWriteBuffer = Depends(get_timeline_write_buffer),
     runtime_state_cache: SessionRuntimeStateCache = Depends(get_session_runtime_state_cache),
 ) -> None:
     try:
-        await delete_connector_data(connector_id, user_id, store, manager, terminals, timeline_buffer, runtime_state_cache)
+        await delete_connector_data(connector_id, user_id, store, manager, terminals, runtime_state_cache)
     except KeyError:
         raise HTTPException(status_code=404, detail="connector not found") from None
     await publish_dashboard_changed(

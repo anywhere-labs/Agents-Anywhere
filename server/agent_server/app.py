@@ -95,13 +95,26 @@ from agent_server.services.effective_capabilities import (
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 from agent_server.services.setup_tokens import SetupTokenService
 from agent_server.services.shell_tasks import ShellTaskManager
-from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 from agent_server.services.usage_events import UsageRecorder
 from agent_server.services.usage_maintenance import UsageMaintenanceLoop
 from agent_server.services.user_tokens import UserTokenService
 from agent_server.services.workspace import WorkspaceServiceError
 
 CONNECTOR_PRESENCE_SWEEP_SECONDS = 5
+
+
+async def _purge_v2_attachments(app: FastAPI) -> None:
+    """Delete the attachments v2 stored, once after the 3.0 upgrade (v2_60, D8)."""
+
+    try:
+        swept = await app.state.store.attachments.purge_v2_files()
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001 - retried at the next start; never stops the Server
+        logger.exception("failed to delete v2 attachments; retrying at the next start")
+        return
+    if swept:
+        logger.info("deleted v2 attachments of {} sessions (share files kept)", swept)
 
 
 async def _connector_presence_watchdog(app: FastAPI) -> None:
@@ -153,8 +166,8 @@ def create_app(
         deletion_task: asyncio.Task[None] | None = None
         usage_task: asyncio.Task[None] | None = None
         tokens_task: asyncio.Task[None] | None = None
-        goal_task: asyncio.Task[None] | None = None
         trim_task: asyncio.Task[None] | None = None
+        purge_task: asyncio.Task[None] | None = None
         try:
             logger.info(
                 "server concurrency pid={} workers={} event_workers={}",
@@ -166,7 +179,6 @@ def create_app(
             )
             await app.state.redis.start()
             await app.state.timeline_broker.start()
-            await app.state.timeline_write_buffer.start()
             await app.state.terminal_stream_hub.start()
             await app.state.terminal_broker.start()
             await app.state.rpc.start()
@@ -178,18 +190,12 @@ def create_app(
             deletion_task = asyncio.create_task(app.state.connector_deletion_recovery.run())
             usage_task = asyncio.create_task(app.state.usage_maintenance.run())
             tokens_task = asyncio.create_task(tokens_link_service_for(app.state).run_keep_alive())
+            purge_task = asyncio.create_task(_purge_v2_attachments(app), name="v2-attachment-purge")
             # Switches a stopped worker left behind; waiting ones resume on events.
             await model_channel_service_for(app.state).resume()
             app.state.channel_reconciler = ChannelReconciler(app.state.store,
                 model_channel_service_for(app.state), app.state.redis, tokens_link_service_for(app.state))
             await app.state.channel_reconciler.start()
-            from agent_server.services.goal.outbox import run_goal_outbox
-
-            goal_task = asyncio.create_task(
-                run_goal_outbox(app.state.store, app.state.timeline_broker)
-            )
-            # Messages that waited across a restart go out once their session is idle.
-            app.state.message_queue_dispatcher.start()
             if process_settings.malloc_trim_interval_seconds > 0:
                 # Opt-in mitigation for glibc heap creep in long-lived workers (#466).
                 trim_task = asyncio.create_task(
@@ -201,6 +207,9 @@ def create_app(
                 await SetupTokenService(app.state.setup_token, app.state.redis).snapshot()
             yield
         finally:
+            if purge_task is not None:
+                purge_task.cancel()
+                await asyncio.gather(purge_task, return_exceptions=True)
             if trim_task is not None:
                 trim_task.cancel()
                 await asyncio.gather(trim_task, return_exceptions=True)
@@ -213,12 +222,6 @@ def create_app(
             driver = getattr(app.state, "channel_driver", None)
             if driver is not None:
                 await driver.close()
-            dispatcher = getattr(app.state, "message_queue_dispatcher", None)
-            if dispatcher is not None:
-                await dispatcher.close()
-            if goal_task is not None:
-                goal_task.cancel()
-                await asyncio.gather(goal_task, return_exceptions=True)
             if usage_task is not None:
                 usage_task.cancel()
                 await asyncio.gather(usage_task, return_exceptions=True)
@@ -248,21 +251,18 @@ def create_app(
                 await app.state.rpc.close()
             finally:
                 try:
-                    await app.state.timeline_write_buffer.close()
+                    await app.state.terminal_broker.close()
                 finally:
                     try:
-                        await app.state.terminal_broker.close()
+                        await app.state.terminal_stream_hub.close()
                     finally:
                         try:
-                            await app.state.terminal_stream_hub.close()
+                            await app.state.timeline_broker.close()
                         finally:
                             try:
-                                await app.state.timeline_broker.close()
+                                await app.state.redis.close()
                             finally:
-                                try:
-                                    await app.state.redis.close()
-                                finally:
-                                    await app.state.store.close()
+                                await app.state.store.close()
 
     app = FastAPI(title="Agent Server", version="2.2.0", lifespan=lifespan)
     app.add_exception_handler(
@@ -334,30 +334,6 @@ def create_app(
     app.state.capability_refresh = ConnectorCapabilityRefresh(
         app.state.store, app.state.rpc, app.state.timeline_broker,
     )
-    app.state.timeline_write_buffer = TimelineWriteBuffer(
-        app.state.store,
-        app.state.timeline_broker,
-        app.state.redis,
-        presence=app.state.rpc,
-        flush_interval_seconds=float(
-            os.environ.get("AGENT_SERVER_TIMELINE_FLUSH_INTERVAL_SECONDS", "1")
-        ),
-        revision_lease_size=int(
-            os.environ.get("AGENT_SERVER_TIMELINE_REVISION_LEASE_SIZE", "4096")
-        ),
-        profile_hotpath=os.environ.get(
-            "AGENT_SERVER_TIMELINE_PROFILE", ""
-        ).strip().lower()
-        in {"1", "true", "yes"},
-        profile_min_ms=float(
-            os.environ.get("AGENT_SERVER_TIMELINE_PROFILE_MIN_MS", "0")
-        ),
-        single_instance=process_settings.single_instance,
-        lane_idle_seconds=float(
-            os.environ.get("AGENT_SERVER_TIMELINE_LANE_IDLE_SECONDS", "900")
-        ),
-        max_lanes=int(os.environ.get("AGENT_SERVER_TIMELINE_MAX_LANES", "4096")),
-    )
     app.state.session_runtime_state_cache = SessionRuntimeStateCache(app.state.redis)
     app.state.device_runtime_service = DeviceRuntimeService(
         app.state.store,
@@ -365,29 +341,17 @@ def create_app(
         app.state.timeline_broker,
         app.state.redis,
         app.state.session_runtime_state_cache,
-        timeline_write_buffer=app.state.timeline_write_buffer,
         terminal_broker=app.state.terminal_broker,
     )
     app.state.connector_deletion_recovery = ConnectorDeletionRecovery(
         app.state.store, app.state.rpc, app.state.terminal_broker,
-        app.state.timeline_write_buffer, app.state.session_runtime_state_cache, app.state.timeline_broker,
+        app.state.session_runtime_state_cache, app.state.timeline_broker,
     )
     app.state.usage_recorder = UsageRecorder(
         app.state.store,
         flush_interval_seconds=float(
             os.environ.get("AGENT_SERVER_USAGE_FLUSH_INTERVAL_SECONDS", "1")
         ),
-    )
-    from agent_server.deps import session_run_service_for
-    from agent_server.services.session_message_queue import MessageQueueDispatcher
-
-    app.state.message_queue_dispatcher = MessageQueueDispatcher(
-        app.state.store,
-        app.state.timeline_broker,
-        lambda: session_run_service_for(app.state),
-        coordinator=app.state.redis,
-        # Read through app state so a replaced RPC manager is used.
-        is_online=lambda connector_id: app.state.rpc.is_online(connector_id),
     )
     app.state.device_link = DeviceLinkService(
         app.state.store,

@@ -5,16 +5,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 from agent_server.app import create_app
-from agent_server.core.models import SessionRuntimeState, TimelineItemIn
+from agent_server.core.models import SessionRuntimeState
 from agent_server.core.utc import utc_now
 from agent_server.infra.db import connectors, projects, sessions
 from agent_server.infra.db import schema as db
-from agent_server.infra.redis_coordinator import RedisCoordinator
-from agent_server.infra.terminal_broker import TerminalBroker
-from agent_server.infra.timeline_broker import TimelineBroker
-from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 from conftest import ApiV2TestClient as TestClient
-from fakeredis import FakeAsyncRedis
 from sqlalchemy import insert, select, text, update
 from sqlalchemy.exc import IntegrityError
 
@@ -26,7 +21,7 @@ DEVICE_CHILD_TABLES = (
     db.connector_terminal_roots,
     db.fs_preview_tokens,
 )
-SESSION_CHILD_TABLES = (db.timeline_items, db.session_active_runs, db.session_shares)
+SESSION_CHILD_TABLES = (db.session_active_runs, db.session_shares)
 
 
 @pytest.fixture
@@ -86,32 +81,9 @@ def add_session(client, device, project, name, *, archived=False):
     return asyncio.run(create())
 
 
-def timeline_input(session, item_id="item"):
-    return TimelineItemIn.model_validate(
-        {
-            "id": item_id,
-            "sessionId": session,
-            "type": "message",
-            "status": "done",
-            "role": "assistant",
-            "content": {"text": "Device history", "format": "markdown"},
-            "source": {
-                "runtime": "codex",
-                "sessionId": "thread",
-                "itemId": item_id,
-                "itemType": "agentMessage",
-            },
-            "orderSeq": 1,
-            "revision": 1,
-            "contentHash": "sha256:history",
-        }
-    )
-
-
 async def add_related_data(store, device, session):
     now = utc_now()
     owner = (await store.get_connector(device)).userId
-    await store.upsert_timeline_item(session_id=session, item=timeline_input(session))
     rows = (
         (
             db.connector_runtime_types,
@@ -270,10 +242,6 @@ def test_device_deletion_physically_removes_all_related_data(api):
                     source_state="deleted",
                 )
             )
-        await client.app.state.timeline_write_buffer.accept(
-            session_id=active_session,
-            item=timeline_input(active_session, "pending"),
-        )
         await client.app.state.session_runtime_state_cache.put(
             SessionRuntimeState(
                 sessionId=active_session,
@@ -307,10 +275,6 @@ def test_device_deletion_physically_removes_all_related_data(api):
     for session in (active_session, archived_session, detached_session):
         assert (
             client.get(f"/sessions/{session}/meta", headers=headers).status_code == 404
-        )
-        assert (
-            client.get(f"/sessions/{session}/timeline", headers=headers).status_code
-            == 404
         )
     assert client.get(f"/public/shares/{active_session}").status_code == 404
 
@@ -351,13 +315,6 @@ def test_device_deletion_physically_removes_all_related_data(api):
             await client.app.state.session_runtime_state_cache.get(active_session)
             is None
         )
-        assert (
-            active_session
-            not in await client.app.state.timeline_write_buffer.dirty_session_ids()
-        )
-        # Flushing after deletion must not recreate any timeline data.
-        await client.app.state.timeline_write_buffer.flush_all()
-        assert await store.timeline.read(active_session) == []
         with pytest.raises(KeyError):
             await store.save_user_uploaded_file(
                 session_id=active_session,
@@ -512,7 +469,7 @@ def test_owner_can_physically_purge_a_legacy_revoked_device(api):
     client, headers = api
     device = create_device(client, headers)
     project = create_project(client, headers, device, "Legacy")
-    session = add_session(client, device, project, "legacy")
+    add_session(client, device, project, "legacy")
 
     async def mark_revoked():
         async with client.app.state.store.engine.begin() as conn:
@@ -527,69 +484,8 @@ def test_owner_can_physically_purge_a_legacy_revoked_device(api):
         async with client.app.state.store.engine.connect() as conn:
             for table in (connectors, projects, sessions):
                 assert list((await conn.execute(select(table))).all()) == []
-        assert await client.app.state.store.timeline.read(session) == []
 
     asyncio.run(check_rows())
-
-
-@pytest.mark.parametrize("distributed", [False, True])
-def test_deleted_session_clears_pending_timeline_and_revision_state(api, distributed):
-    client, headers = api
-    device = create_device(client, headers)
-    project = create_project(client, headers, device, "Deleted buffer")
-    session = add_session(client, device, project, "deleted buffer")
-    other_device = create_device(client, headers, "Other buffer")
-    other_project = create_project(client, headers, other_device, "Other buffer")
-    other_session = add_session(client, other_device, other_project, "other buffer")
-
-    async def scenario():
-        redis = FakeAsyncRedis(decode_responses=True) if distributed else None
-        coordinator = RedisCoordinator(client=redis, prefix="delete-test")
-        store = client.app.state.store
-        buffer = TimelineWriteBuffer(store, TimelineBroker(coordinator), coordinator)
-        terminals = TerminalBroker(coordinator)
-        try:
-            deleted_terminals = await add_terminals(terminals, device, session)
-            other_terminals = await add_terminals(
-                terminals, other_device, other_session
-            )
-            for session_id in (session, other_session):
-                await buffer.accept(
-                    session_id=session_id,
-                    item=timeline_input(session_id),
-                    source_observed_at=utc_now(),
-                    mark_read_on_change=True,
-                )
-            assert set(await buffer.dirty_session_ids()) == {session, other_session}
-            session_ids = await store.delete_connector(device)
-            assert session_ids == [session]
-            await terminals.remove_for_connector(device)
-            for terminal_id in deleted_terminals:
-                assert await terminals.get(terminal_id) is None
-            for terminal_id in other_terminals:
-                assert await terminals.get(terminal_id) is not None
-            await buffer.discard_session(session)
-            assert await buffer.dirty_session_ids() == [other_session]
-            assert await buffer._sequences.published_head(session) is None
-            if redis is not None:
-                assert (
-                    await redis.keys(f"delete-test:timeline-buffer:{session}:*") == []
-                )
-                assert (
-                    await redis.keys(f"delete-test:session-revision:{session}:*") == []
-                )
-            # Even a replay of the cached item must now fail and cannot resurrect it.
-            with pytest.raises(KeyError):
-                await buffer.accept(session_id=session, item=timeline_input(session))
-            await buffer.flush_all()
-            assert await store.timeline.read(session) == []
-            assert len(await store.timeline.read(other_session)) == 1
-        finally:
-            await buffer.close()
-            if redis is not None:
-                await redis.aclose()
-
-    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("existing_session", [False, True])

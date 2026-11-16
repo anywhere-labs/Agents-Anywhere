@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+import json
 from typing import Any
 
 from sqlalchemy import select
 
-from agent_server.infra.db import connectors, sessions
+from agent_server.infra.db import connectors, session_shares, sessions
 
 
 class AttachmentRepositoryMixin:
@@ -72,3 +73,20 @@ class AttachmentRepositoryMixin:
 
     async def delete_uploaded_file(self, *, session_id: str, file_id: str) -> None:
         await self.attachments.delete_file(session_id=session_id, file_id=file_id)
+
+    async def attachment_purge_plan(self) -> list[tuple[str, set[str]]]:
+        """Every session with the file ids its shares still expose (v2_60's attachment purge)."""
+
+        async with self._engine.connect() as conn:
+            session_ids = [str(row.id) for row in await conn.execute(select(sessions.c.id))]
+            shares = (
+                await conn.execute(select(session_shares.c.session_id, session_shares.c.allowed_file_ids_json))
+            ).all()
+        keep: dict[str, set[str]] = {}
+        for row in shares:
+            try:
+                ids = json.loads(row.allowed_file_ids_json or "[]")
+            except ValueError:
+                ids = []
+            keep.setdefault(str(row.session_id), set()).update(str(item) for item in ids if isinstance(item, str))
+        return [(session_id, keep.get(session_id, set())) for session_id in session_ids]

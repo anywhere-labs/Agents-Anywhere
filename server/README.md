@@ -100,7 +100,6 @@ curl http://127.0.0.1:8000/api/v2/health/ready
 | `AGENT_SERVER_REDIS_PREFIX` | Redis key/channel prefix. Defaults to `agents-anywhere`. |
 | `AGENT_SERVER_REDIS_CONNECT_TIMEOUT` | Redis connection timeout in seconds. Defaults to `5`. |
 | `AGENT_SERVER_REDIS_HEALTH_CHECK_INTERVAL` | Redis connection health-check interval in seconds. Defaults to `30`. |
-| `AGENT_SERVER_TIMELINE_REVISION_LEASE_SIZE` | Number of Timeline revisions reserved from PostgreSQL per Redis sequence lease. Defaults to `4096`. Larger leases reduce database writes but leave larger unused sequence gaps after Redis state loss. |
 | `AGENT_SERVER_INSTANCE_ID` | Optional Server instance ID for Connector RPC routing. With multiple workers the process ID is appended, so workers do not claim the same RPC route. A random ID is generated when unset. |
 | `AGENT_SERVER_FILES_BACKEND` | File storage backend. Use `local` or `s3`. Defaults to `local`. |
 | `AGENT_SERVER_FILES_LOCAL_ROOT` | Local attachment/file root. Defaults next to the database. |

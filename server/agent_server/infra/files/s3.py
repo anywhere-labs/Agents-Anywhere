@@ -101,6 +101,20 @@ class S3FileStorage(FileStorage):
             for item in objects:
                 await self._client.delete_object(self._bucket, item.key)
 
+    async def delete_session_except(self, session_id: str, keep: set[str]) -> None:
+        if not keep:
+            await self.delete_session(session_id)
+            return
+        self._validate_session_id(session_id)
+        prefix = self._key(session_id, "")
+        # One page per call (see ``delete_session``): stop once a page holds only kept files.
+        while objects := await self._client.list_objects(self._bucket, prefix=prefix):
+            doomed = [item.key for item in objects if item.key[len(prefix):].split(".", 1)[0] not in keep]
+            if not doomed:
+                return
+            for key in doomed:
+                await self._client.delete_object(self._bucket, key)
+
     async def metadata(self, session_id: str, file_id: str) -> dict[str, Any]:
         try:
             raw = await self._client.get_object(
