@@ -39,7 +39,7 @@
   - 加密设备上的会话暂不支持改名，会提示原因；
   - 会话列表和会话详情在手机上解密并显示标题和工作目录，暂时解不开的显示「加密中，设备上线后显示」，完成配对或设备发来新密钥后自动重试；设备自己发现的会话会按工作目录自动归入同一设备上的对应项目。
 
-  （[#719](https://github.com/anywhere-labs/Agents-Anywhere/pull/719)、[#726](https://github.com/anywhere-labs/Agents-Anywhere/pull/726)、PR_LINK）
+  （[#719](https://github.com/anywhere-labs/Agents-Anywhere/pull/719)、[#726](https://github.com/anywhere-labs/Agents-Anywhere/pull/726)、[#767](https://github.com/anywhere-labs/Agents-Anywhere/pull/767)）
 
 ### iOS
 
