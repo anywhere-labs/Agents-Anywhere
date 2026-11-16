@@ -1,8 +1,9 @@
-// 工作区：文件、Shell 任务、端口发现与附件（终端在单独的模块里）。
+// 工作区：文件、Shell 任务、终端（node-pty）、端口发现与附件。
 
 import { FileOps } from './files.js'
 import type { Params } from './params.js'
 import { ShellOps } from './shell.js'
+import type { Terminals } from './terminals.js'
 
 export { AttachmentCache, safeFileName, type AttachmentSource, type FetchFile, type LocalAttachment } from './attachments.js'
 export { WorkspaceError, fsError } from './errors.js'
@@ -18,8 +19,19 @@ export type WorkspaceHandler = (params: Params) => Promise<unknown>
  * The v2 workspace methods by name (`fs.readDir`, `shell.exec`, ...), for whichever transport serves them. Their
  * request and response bodies are unchanged from v2; device-meshcall 1.0 does not name them yet.
  */
-export function workspaceMethods(files: FileOps, shell: ShellOps): Readonly<Record<string, WorkspaceHandler>> {
+export function workspaceMethods(files: FileOps, shell: ShellOps, terminals?: Terminals): Readonly<Record<string, WorkspaceHandler>> {
   return {
+    ...(terminals === undefined ? {} : {
+      'terminal.create': (params: Params) => terminals.create(params),
+      'terminal.write': (params: Params) => terminals.write(params),
+      'terminal.resize': (params: Params) => terminals.resize(params),
+      'terminal.close': (params: Params) => terminals.close(params),
+      'terminal.rename': (params: Params) => terminals.rename(params),
+      'terminal.setPersistent': (params: Params) => terminals.setPersistent(params),
+      'terminal.list': (params: Params) => terminals.list(params),
+      'terminal.release': (params: Params) => terminals.release(params),
+      'terminal.snapshot': (params: Params) => terminals.snapshot(params),
+    }),
     'fs.readDir': params => files.readDir(params),
     'fs.readText': params => files.readText(params),
     'fs.writeFile': params => files.writeFile(params),
@@ -29,3 +41,13 @@ export function workspaceMethods(files: FileOps, shell: ShellOps): Readonly<Reco
     'shell.task.cancel': params => shell.taskCancel(params),
   }
 }
+export {
+  TERMINAL_SCROLLBACK_MAX_BYTES,
+  Terminals,
+  ensurePtyHelper,
+  nodePtySpawner,
+  type Pty,
+  type SpawnPty,
+  type TerminalOptions,
+  type TerminalSink,
+} from './terminals.js'

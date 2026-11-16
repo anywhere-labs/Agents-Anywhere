@@ -15,6 +15,9 @@
     "contracts:generate": "node scripts/generate-contract-types.mjs",
     "contracts:check": "node scripts/generate-contract-types.mjs --check"
   },
+  "dependencies": {
+    "node-pty": "^1.1.0"
+  },
   "devDependencies": {
     "@types/node": "^22.15.0",
     "json-schema-to-typescript": "^15.0.4",
