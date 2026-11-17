@@ -277,6 +277,57 @@ def test_legacy_repeated_messages_have_distinct_stable_identities(tmp_path):
     assert len({item["id"] for item in items}) == len(items) == 4
 
 
+def test_thinking_blocks_project_as_reasoning(tmp_path):
+    path = history_file(tmp_path, tmp_path)
+    entry = {
+        "type": "message",
+        "id": "assistant-thought",
+        "parentId": "user1",
+        "message": {
+            "role": "assistant",
+            "content": [
+                {"type": "thinking", "thinking": "weighing the options"},
+                {"type": "text", "text": "final answer"},
+            ],
+        },
+    }
+    with path.open("a") as output:
+        output.write(json.dumps(entry) + "\n")
+    items = timeline(read_history(path, (tmp_path,)), "platform")
+    reasoning, answer = items[-2], items[-1]
+    assert reasoning["type"] == "system"
+    assert reasoning["role"] == "system"
+    assert reasoning["content"]["kind"] == "reasoning"
+    assert reasoning["content"]["format"] == "markdown"
+    assert reasoning["content"]["text"] == "weighing the options"
+    assert "isThinking" not in reasoning["content"]
+    assert answer["type"] == "message"
+    assert answer["role"] == "assistant"
+    assert answer["content"]["kind"] == "markdown"
+    assert answer["content"]["text"] == "final answer"
+
+
+def test_thinking_projection_keeps_item_identity(tmp_path):
+    from connector.runtimes.acp.domain.definitions import fingerprint
+
+    path = history_file(tmp_path, tmp_path)
+    entry = {
+        "type": "message",
+        "id": "assistant-thought",
+        "parentId": "user1",
+        "message": {
+            "role": "assistant",
+            "content": [{"type": "thinking", "thinking": "weighing the options"}],
+        },
+    }
+    with path.open("a") as output:
+        output.write(json.dumps(entry) + "\n")
+    item = timeline(read_history(path, (tmp_path,)), "platform")[-1]
+    # Identity is derived from the source entry and block index only, so a
+    # projection change re-upserts the same timeline item instead of adding one.
+    assert item["id"] == fingerprint(["platform", "pi", "assistant-thought", 0])
+
+
 def test_native_user_correlation_survives_canonical_projection(tmp_path):
     path = history_file(tmp_path, tmp_path)
     entry = {

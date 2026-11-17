@@ -289,9 +289,8 @@ def timeline(
                     if block.get("type") in {"text", "thinking", "image"}:
                         thinking = block["type"] == "thinking"
                         content = {
-                            "kind": "markdown",
+                            "kind": "reasoning" if thinking else "markdown",
                             "format": "markdown",
-                            "isThinking": thinking,
                             "text": block.get(
                                 "thinking" if thinking else "text",
                                 "[图片]" if block["type"] == "image" else "",
@@ -304,8 +303,12 @@ def timeline(
                         add(
                             entry,
                             index,
-                            "message",
-                            "user" if role == "user" else "assistant",
+                            "system" if thinking else "message",
+                            "system"
+                            if thinking
+                            else "user"
+                            if role == "user"
+                            else "assistant",
                             content,
                             "failed"
                             if message.get("stopReason") == "error"
