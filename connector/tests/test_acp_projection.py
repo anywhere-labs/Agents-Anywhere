@@ -123,19 +123,31 @@ def test_native_update_between_thought_deltas_keeps_the_active_thought_identity(
     assert second["content"]["text"] == "first second"
 
 
-def test_unverified_message_ids_keep_one_contiguous_thought_run():
+def test_unverified_message_ids_still_split_thought_runs():
     projection = Projection("session", "epoch", runtime_type="hermes")
 
     first = projection.apply(thought("a", message_id="untrusted-1"))
     first_delta = projection.apply(thought("b", message_id="untrusted-1"))
     second = projection.apply(thought("c", message_id="untrusted-2"))
 
-    # An unstable ID must not segment: one reasoning item per delta would be
-    # the failure mode, so every unverified delta joins the same run.
+    # ACP v1: one messageId per message, and a change starts a new one. An ID
+    # that is merely unverified for replay still carries that boundary.
     assert first_delta["id"] == first["id"]
     assert first_delta["content"]["text"] == "ab"
-    assert second["id"] == first["id"]
-    assert second["content"]["text"] == "abc"
+    assert second["id"] != first["id"]
+    assert second["content"]["text"] == "c"
+
+
+def test_unverified_thought_keys_stay_on_epoch_and_message_index():
+    projection = Projection("session", "epoch", runtime_type="hermes")
+
+    item = projection.apply(thought("a", message_id="untrusted-1"))
+
+    # Boundary identity may use the connection-local ID, but the persisted key
+    # must not: it has to survive a replay where the ID may differ.
+    assert item["id"] == fingerprint(
+        ["session", "epoch", "agent_thought_chunk", 1]
+    )
 
 
 def test_missing_message_id_keeps_the_existing_fallback_grouping():

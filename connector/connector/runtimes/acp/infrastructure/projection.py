@@ -102,21 +102,28 @@ class Projection:
                 return None
 
             message_id = update.get("messageId")
-            verified_message_id = (
+            usable_message_id = (
                 message_id
-                if is_thought
-                and update.get("aaProjectionVerified")
-                and isinstance(message_id, str)
-                and message_id
+                if is_thought and isinstance(message_id, str) and message_id
                 else None
             )
-            # Unverified IDs are not stable across deltas (that is what makes
-            # them unverified), so segmenting on them can emit one reasoning
-            # item per token. Merging two runs that should stay apart only
-            # costs readability; splitting on every delta is unusable.
+            verified_message_id = (
+                usable_message_id
+                if usable_message_id is not None
+                and update.get("aaProjectionVerified")
+                else None
+            )
+            # ACP v1: every chunk of one message shares messageId, and a change
+            # means a new message started. That holds inside one connection
+            # whether or not the Runtime also promises the ID survives a replay,
+            # so an unverified ID still marks a segment boundary. Only key
+            # generation needs the replay-stable form; unverified IDs fall back
+            # to epoch and message index there.
             thought_identity = (
                 ("verified", verified_message_id)
                 if verified_message_id is not None
+                else ("message", usable_message_id)
+                if is_thought and usable_message_id is not None
                 else ("fallback", None)
             )
             new_kind = self.current_kind != kind
