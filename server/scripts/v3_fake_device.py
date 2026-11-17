@@ -171,6 +171,8 @@ class FakeDeviceState:
             collections.deque
         )
         self.client_subscriptions: list[dict[str, Any]] = []
+        # How many ``Client/subscribe`` streams are open now per terminal.
+        self.client_subscribers: collections.Counter[str] = collections.Counter()
 
     def session(self, session_id: str) -> FakeSession:
         if session_id not in self.sessions:
@@ -599,14 +601,18 @@ def _make_services(state: FakeDeviceState, *, mode: str = "off") -> list[object]
                     details={"source": "device", "aaCode": "terminal_not_found"},
                 )
             queue = state.client_terminal_items[terminalId]
-            while True:
-                if queue:
-                    item = TerminalStreamItem.model_validate(queue.popleft())
-                    yield item
-                    if item.type == "exit":
-                        return
-                else:
-                    await asyncio.sleep(POLL_SECONDS)
+            state.client_subscribers[terminalId] += 1
+            try:
+                while True:
+                    if queue:
+                        item = TerminalStreamItem.model_validate(queue.popleft())
+                        yield item
+                        if item.type == "exit":
+                            return
+                    else:
+                        await asyncio.sleep(POLL_SECONDS)
+            finally:
+                state.client_subscribers[terminalId] -= 1
 
     async def run_command(
         method: str, commandId: str, deadline: str, inputDigest: str | None, p: dict[str, Any]

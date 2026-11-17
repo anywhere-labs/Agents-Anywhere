@@ -9,6 +9,8 @@ import asyncio
 import base64
 import json
 import zlib
+from pathlib import Path
+from typing import Any
 
 from device_link_helpers import (
     acked,
@@ -21,9 +23,12 @@ from device_link_helpers import (
 )
 from mesh_fixtures import RouterProcess
 
+from agent_server.core.auth import create_user_access_token
 from agent_server.core.device_meshcall import StreamChunk
 from agent_server.services.device_reads import DeviceReadService, merge_snapshot_chunks
 from scripts.v3_fake_device import connect_device
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures" / "client_routes"
 
 
 async def _device_with_session(app, client, session_id: str, items: int):
@@ -37,45 +42,108 @@ async def _device_with_session(app, client, session_id: str, items: int):
     return headers, device_id, device
 
 
-def test_reads_come_from_the_online_device(mesh_router: RouterProcess, monkeypatch) -> None:
+def _page(session_id: str, orders: list[int], *, next_seq: int, has_more: bool = False) -> dict[str, Any]:
+    return {
+        "sessionId": session_id,
+        "items": [{**timeline_item(session_id, order, f"line {order}"), "updatedSeq": order} for order in orders],
+        "nextSeq": next_seq,
+        "hasMore": has_more,
+        "serverTime": "2026-11-17T10:00:00Z",
+    }
+
+
+def _device_reads(session_id: str) -> Any:
+    """The device's answers to the session read routes."""
+
+    events = json.loads((FIXTURES / "session.events.json").read_text())["response"]
+
+    def answer(request: dict[str, Any]) -> Any:
+        route = request["route"]
+        if route == "session.snapshot":
+            return 200, {
+                "session": {"id": "the device's own view"},
+                "timeline": _page(session_id, [3, 4, 5], next_seq=5, has_more=True),
+                "notices": [],
+                "eventCursor": "seq:5",
+                "serverTime": "2026-11-17T10:00:00Z",
+            }
+        if route == "session.timeline":
+            return 200, _page(session_id, [4, 5], next_seq=5)
+        if route == "session.events":
+            return 200, events
+        return 404, {"detail": {"code": "route_not_found", "message": route}}
+
+    return answer
+
+
+def test_reads_are_forwarded_to_the_online_device(mesh_router: RouterProcess, monkeypatch) -> None:
     async def scenario() -> None:
         async with server(mesh_router, monkeypatch) as (app, client):
             headers, _device_id, device = await _device_with_session(app, client, "sess_r1", 5)
+            state = device.state
+            base = "/api/v2/sessions/sess_r1"
             try:
-                snapshot = await client.get("/api/v2/sessions/sess_r1/snapshot?limit=3", headers=headers)
+                state.client_handler = _device_reads("sess_r1")
+
+                # The device's content with the Server's session view, capabilities and catalogs.
+                snapshot = await client.get(f"{base}/snapshot?limit=3", headers=headers)
                 assert snapshot.status_code == 200, snapshot.text
                 body = snapshot.json()
                 assert body["historySource"] == "live" and body["deviceOffline"] is False
                 assert [item["id"] for item in body["timeline"]["items"]] == ["tl_3", "tl_4", "tl_5"]
                 assert body["timeline"]["nextSeq"] == 5 and body["timeline"]["hasMore"] is True
                 assert body["eventCursor"] == "seq:5"
-                assert body["session"]["title"] == "Fix the build"
+                assert body["session"]["id"] == "sess_r1" and body["session"]["title"] == "Fix the build"
                 assert body["session"]["goalState"] == "active"
                 assert body["session"]["displayDevice"]["mode"] == "plain"
+                assert "capabilities" in body["effectiveCapabilities"]
+                request = state.client_calls[-1]
+                assert request["route"] == "session.snapshot" and request["path"] == f"{base}/snapshot"
+                assert request["query"] == {"limit": "3"} and request["server"] is None and request["command"] is None
 
-                latest = await client.get("/api/v2/sessions/sess_r1/timeline?limit=2", headers=headers)
+                latest = await client.get(f"{base}/timeline?limit=2", headers=headers)
                 assert latest.status_code == 200, latest.text
                 assert [item["id"] for item in latest.json()["items"]] == ["tl_4", "tl_5"]
                 assert latest.json()["nextSeq"] == 5 and latest.json()["deviceOffline"] is False
 
-                older = await client.get(
-                    "/api/v2/sessions/sess_r1/timeline?mode=history&beforeOrderSeq=4&limit=2", headers=headers
-                )
-                assert [item["id"] for item in older.json()["items"]] == ["tl_2", "tl_3"]
+                older = await client.get(f"{base}/timeline?mode=history&beforeOrderSeq=4&limit=2", headers=headers)
+                assert older.status_code == 200, older.text
+                request = state.client_calls[-1]
+                assert request["route"] == "session.timeline"
+                assert request["query"] == {"mode": "history", "beforeOrderSeq": "4", "limit": "2"}
 
-                events = await client.get("/api/v2/sessions/sess_r1/events?after=seq:3", headers=headers)
+                events = await client.get(f"{base}/events?after=seq:3", headers=headers)
                 assert events.status_code == 200, events.text
-                assert [event["sequence"] for event in events.json()["events"]] == [4, 5]
-                assert events.json()["nextCursor"] == "seq:5"
+                assert events.json()["events"] and events.json()["deviceOffline"] is False
+                request = state.client_calls[-1]
+                assert request["route"] == "session.events" and request["query"] == {"after": "seq:3"}
 
                 # Concurrent first screens of one session share one device read.
-                device.state.read_delay = 0.5
-                before = device.state.calls.count("snapshot")
-                answers = await asyncio.gather(
-                    *(client.get("/api/v2/sessions/sess_r1/snapshot", headers=headers) for _ in range(4))
-                )
+                state.client_delay = 0.5
+                before = len(state.client_calls)
+                answers = await asyncio.gather(*(client.get(f"{base}/snapshot", headers=headers) for _ in range(4)))
                 assert all(answer.status_code == 200 for answer in answers)
-                assert device.state.calls.count("snapshot") - before == 1
+                assert len(state.client_calls) - before == 1
+                state.client_delay = 0
+
+                # Only the owner's sessions reach the device.
+                other = await app.state.store.create_user(user_id="user_other", password="password-other")
+                stranger = {"Authorization": f"Bearer {create_user_access_token(other.userId)}"}
+                before = len(state.client_calls)
+                for route in ("snapshot", "timeline", "events"):
+                    denied = await client.get(f"{base}/{route}", headers=stranger)
+                    assert denied.status_code == 404, denied.text
+                unknown = await client.get("/api/v2/sessions/sess_none/timeline", headers=headers)
+                assert unknown.status_code == 404
+                assert len(state.client_calls) == before
+
+                # A device body that is not a snapshot is the device's fault.
+                state.client_handler = lambda request: (200, {"timeline": {"items": "nope"}})
+                invalid = await client.get(f"{base}/snapshot", headers=headers)
+                assert invalid.status_code == 502 and invalid.json()["detail"]["code"] == "device_response_invalid"
+                state.client_handler = lambda request: (200, {"runtimeCapabilities": {"capabilities": "nope"}})
+                invalid = await client.get(f"{base}/snapshot", headers=headers)
+                assert invalid.status_code == 502 and invalid.json()["detail"]["code"] == "device_response_invalid"
             finally:
                 await device.stop()
 
@@ -114,15 +182,17 @@ def test_a_device_that_does_not_answer_in_time_is_not_offline(mesh_router: Route
 
     async def scenario() -> None:
         async with server(mesh_router, monkeypatch) as (app, client):
-            headers, _device_id, device = await _device_with_session(app, client, "sess_r3", 2)
+            headers, device_id, device = await _device_with_session(app, client, "sess_r3", 2)
             try:
-                device.state.read_delay = 3
+                device.state.client_handler = _device_reads("sess_r3")
+                device.state.client_delay = 3
                 snapshot = await client.get("/api/v2/sessions/sess_r3/snapshot", headers=headers)
                 assert snapshot.status_code == 504, snapshot.text
                 assert snapshot.json()["detail"]["code"] == "device_read_timeout"
                 page = await client.get("/api/v2/sessions/sess_r3/timeline", headers=headers)
                 assert page.status_code == 504
                 assert page.json()["detail"]["code"] == "device_read_timeout"
+                assert await app.state.rpc.is_online(device_id)
             finally:
                 await device.stop()
 

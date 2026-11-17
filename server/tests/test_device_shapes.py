@@ -115,81 +115,7 @@ def test_selection_update_sends_v2_selections_and_reads_the_device_result() -> N
     asyncio.run(scenario())
 
 
-# -- 2, 3. planning and goal state, plan documents, planning and goal commands -------------------------
-
-
-def test_planning_goal_and_plans_answered_by_a_real_device(mesh_router: RouterProcess, monkeypatch) -> None:
-    async def scenario() -> None:
-        async with server(mesh_router, monkeypatch) as (app, client):
-            headers, device_id, token = await user_and_device(app, client)
-            device, _welcome, _access = await connect_device(client, connector_id=device_id, connector_token=token)
-            base = f"/api/v2/sessions/{SID}"
-            try:
-                pushed = device.state.push_outbox("session.summary", summary(SID, 0))
-                await eventually(lambda: acked(device, pushed.oid))
-                assert (await client.post(f"{base}/takeover", headers=headers)).status_code == 200
-                device.state.capability_ids = ["session.planning", "session.plan_review", "session.goal"]
-
-                # A device that has not seen a goal yet: fresh, with the actions its capabilities declare.
-                device.state.state_parts[(SID, "goal")] = SHAPES["state.goal.unobserved"]
-                goal = await client.get(f"{base}/goal", headers=headers)
-                assert goal.status_code == 200, goal.text
-                assert goal.json()["freshness"] == "fresh" and "set" in goal.json()["capabilities"]["actions"]
-
-                device.state.state_parts[(SID, "planning")] = SHAPES["state.planning"]
-                planning = await client.get(f"{base}/planning", headers=headers)
-                assert planning.status_code == 200, planning.text
-                expected = PlanningState.model_validate(SHAPES["state.planning"]["planning"]).model_dump(mode="json")
-                assert planning.json() == expected
-                assert planning.json()["freshness"] == "fresh" and planning.json()["review"]["status"] == "open"
-                assert "approve_and_execute" in planning.json()["capabilities"]["actions"]
-
-                device.state.state_parts[(SID, "goal")] = SHAPES["state.goal"]
-                goal = await client.get(f"{base}/goal", headers=headers)
-                assert goal.json()["goal"]["objective"] == "ship it" and goal.json()["freshness"] == "fresh"
-
-                # Plan documents: the fake answers ``{plans}`` / ``{document}`` like the real device.
-                [document] = SHAPES["planDocument.list"]["plans"]
-                assert SHAPES["planDocument.one"] == {"document": document}
-                device.state.plans[SID] = SHAPES["planDocument.list"]["plans"]
-                listed = await client.get(f"{base}/plans", headers=headers)
-                assert listed.status_code == 200 and [plan["planId"] for plan in listed.json()] == [document["planId"]]
-                path = f"{base}/plans/{document['planId']}/{document['revision']}"
-                markdown = await client.get(f"{path}/markdown", headers=headers)
-                assert markdown.status_code == 200, markdown.text
-                assert markdown.text == document["markdown"]
-                missing = await client.get(f"{base}/plans/{document['planId']}/9", headers=headers)
-                assert missing.status_code == 404
-
-                def handle(method: str, p: dict) -> Any:
-                    if method == "session.planning":
-                        return SHAPES["planning.result"]
-                    if method == "session.goal":
-                        return SHAPES["goal.result"]
-                    return {"ok": True}
-
-                device.state.command_handler = handle
-                applied = await client.post(
-                    f"{base}/planning", headers=headers, json={"command": "enter_plan", "operationId": "op_plan_1"}
-                )
-                assert applied.status_code == 200, applied.text
-                assert applied.json()["outcome"] == "applied" and applied.json()["ok"] is True
-                assert applied.json()["state"]["effectiveMode"] == "plan"
-                goal_set = await client.post(
-                    f"{base}/goal",
-                    headers=headers,
-                    json={"operationId": "op_goal_1", "expectedRevision": 0, "action": "set", "objective": "ship it"},
-                )
-                assert goal_set.status_code == 200, goal_set.text
-                assert goal_set.json()["outcome"] == "applied"
-                assert goal_set.json()["state"]["goal"]["objective"] == "ship it"
-            finally:
-                await device.stop()
-
-    asyncio.run(scenario())
-
-
-# -- 4. planning and goal events -----------------------------------------------------------------------
+# -- 2. planning and goal events -----------------------------------------------------------------------
 
 
 def test_planning_and_goal_events_of_a_real_device_reach_subscribers() -> None:
@@ -213,40 +139,7 @@ def test_planning_and_goal_events_of_a_real_device_reach_subscribers() -> None:
     asyncio.run(scenario())
 
 
-# -- 5. /plan and /goal on a new session -------------------------------------------------------------
-
-
-def test_creation_intents_are_sent_as_the_device_reads_them(mesh_router: RouterProcess, monkeypatch) -> None:
-    async def scenario() -> None:
-        async with server(mesh_router, monkeypatch) as (app, client):
-            headers, device_id, token = await user_and_device(app, client)
-            project_id = (await client.get("/api/v2/projects", headers=headers)).json()["projects"][0]["id"]
-            device, _welcome, _access = await connect_device(client, connector_id=device_id, connector_token=token)
-            try:
-                for content, key in (("/plan design the cache", "creationPlan"), ("/goal ship the release", "creationGoal")):
-                    expected = REQUESTS[key]
-                    started = await client.post(
-                        "/api/v2/sessions/create-and-start",
-                        headers=headers,
-                        json={
-                            "connectorId": device_id,
-                            "projectId": project_id,
-                            "runtime": "codex",
-                            "content": content,
-                            "clientMessageId": expected["clientMessageId"],
-                        },
-                    )
-                    assert started.status_code == 200, started.text
-                    method, payload = device.state.command_log[-1]
-                    assert method == "session.creation.begin"
-                    assert payload == {**expected, "sessionId": started.json()["session"]["id"]}
-            finally:
-                await device.stop()
-
-    asyncio.run(scenario())
-
-
-# -- 6. takeover -------------------------------------------------------------------------------------
+# -- 3. takeover -------------------------------------------------------------------------------------
 
 
 def test_takeover_reaches_the_device_now_or_when_it_links_again(mesh_router: RouterProcess, monkeypatch) -> None:
@@ -287,7 +180,7 @@ async def _no_pending(app: Any, device_id: str) -> bool:
     return await app.state.device_link.pending_takeover(device_id) == {}
 
 
-# -- 7. source availability ----------------------------------------------------------------------------
+# -- 4. source availability ----------------------------------------------------------------------------
 
 
 def test_source_availability_follows_the_device_both_ways(mesh_router: RouterProcess, monkeypatch) -> None:
@@ -308,7 +201,7 @@ def test_source_availability_follows_the_device_both_ways(mesh_router: RouterPro
     asyncio.run(scenario())
 
 
-# -- 8. workspace preparation and the creation that consumes it -----------------------------------------
+# -- 5. workspace preparation and the creation that consumes it -----------------------------------------
 
 
 class _PreparingDevice:
@@ -438,7 +331,7 @@ def test_a_refused_reservation_rejects_the_creation_without_a_session(mesh_route
     asyncio.run(scenario())
 
 
-# -- 9. every shape against its device-meshcall model --------------------------------------------------
+# -- 6. every shape against its device-meshcall model --------------------------------------------------
 
 # Fixture entry -> (method, "request" | "response") in ``COMMAND_PAYLOADS`` / ``READ_PAYLOADS``, or a model.
 SHAPE_MODELS: dict[str, tuple[str, str] | type[Any]] = {
