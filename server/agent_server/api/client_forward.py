@@ -38,11 +38,15 @@ from agent_server.services.client_forward import (
 RAW_BODY: Any = object()
 
 
-def forwarder_of(conn: Request) -> ClientForwarder | None:
+def forwarder_of(conn: Request | None) -> ClientForwarder | None:
+    """None without a request (a handler called directly) or without a forwarder."""
+
+    if conn is None:
+        return None
     return getattr(conn.app.state, "client_forwarder", None)
 
 
-def forwarding(conn: Request, route_id: str) -> bool:
+def forwarding(conn: Request | None, route_id: str) -> bool:
     """Whether ``route_id`` goes through ``Client/call`` (cheap: no I/O)."""
 
     forwarder = forwarder_of(conn)

@@ -109,7 +109,6 @@ def _normalize_terminal_v2_view(
 
 @router.post("/{connector_id}/terminals", response_model=TerminalResponse)
 async def connector_terminal_create(
-    request: Request,
     connector_id: str,
     payload: TerminalCreateRequest,
     root: str = Query(..., min_length=1),
@@ -117,6 +116,7 @@ async def connector_terminal_create(
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
     terminal_service: TerminalService = Depends(get_terminal_service),
+    request: Request = None,  # type: ignore[assignment]
 ) -> TerminalResponse:
     if (forwarded := await forward_connector(
         request, "connector.terminalsV1.create", user_id=user_id, connector_id=connector_id, response_model=TerminalResponse
@@ -131,7 +131,6 @@ async def connector_terminal_create(
 
 @router.post("/{connector_id}/terminals-v2", response_model=RpcResponsePayload)
 async def connector_terminal_create_v2(
-    request: Request,
     connector_id: str,
     payload: TerminalCreateRequest,
     root: str = Query(..., min_length=1),
@@ -139,6 +138,7 @@ async def connector_terminal_create_v2(
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
     terminal_roots: TerminalRootStore = Depends(get_terminal_roots),
+    request: Request = None,  # type: ignore[assignment]
 ) -> RpcResponsePayload:
     if (forwarded := await forward_connector(
         request, "connector.terminals.create", user_id=user_id, connector_id=connector_id, response_model=RpcResponsePayload
@@ -193,11 +193,11 @@ async def connector_terminal_create_v2(
 
 @router.get("/{connector_id}/terminals", response_model=TerminalListResponse)
 async def connector_terminal_list(
-    request: Request,
     connector_id: str,
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     terminal_service: TerminalService = Depends(get_terminal_service),
+    request: Request = None,  # type: ignore[assignment]
 ) -> TerminalListResponse:
     if (forwarded := await forward_connector(
         request, "connector.terminalsV1.list", user_id=user_id, connector_id=connector_id, response_model=TerminalListResponse
@@ -212,12 +212,12 @@ async def connector_terminal_list(
 
 @router.get("/{connector_id}/terminals-v2", response_model=RpcResponsePayload)
 async def connector_terminal_list_v2(
-    request: Request,
     connector_id: str,
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
     terminal_roots: TerminalRootStore = Depends(get_terminal_roots),
+    request: Request = None,  # type: ignore[assignment]
 ) -> RpcResponsePayload:
     if (forwarded := await forward_connector(
         request, "connector.terminals.list", user_id=user_id, connector_id=connector_id, response_model=RpcResponsePayload
@@ -268,13 +268,13 @@ async def connector_terminal_list_v2(
     "/{connector_id}/terminals/{terminal_id}", response_model=TerminalResponse
 )
 async def connector_terminal_rename(
-    request: Request,
     connector_id: str,
     terminal_id: str,
     payload: TerminalPatchRequest,
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     terminal_service: TerminalService = Depends(get_terminal_service),
+    request: Request = None,  # type: ignore[assignment]
 ) -> TerminalResponse:
     if (forwarded := await forward_connector(
         request, "connector.terminalsV1.rename", user_id=user_id, connector_id=connector_id, response_model=TerminalResponse
@@ -293,7 +293,6 @@ async def connector_terminal_rename(
     "/{connector_id}/terminals-v2/{terminal_id}", response_model=RpcResponsePayload
 )
 async def connector_terminal_rename_v2(
-    request: Request,
     connector_id: str,
     terminal_id: str,
     payload: TerminalPatchRequest,
@@ -301,6 +300,7 @@ async def connector_terminal_rename_v2(
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
     terminal_roots: TerminalRootStore = Depends(get_terminal_roots),
+    request: Request = None,  # type: ignore[assignment]
 ) -> RpcResponsePayload:
     if (forwarded := await forward_connector(
         request, "connector.terminals.rename", user_id=user_id, connector_id=connector_id, response_model=RpcResponsePayload
@@ -339,7 +339,6 @@ async def connector_terminal_rename_v2(
     response_model=RpcResponsePayload,
 )
 async def connector_terminal_set_persistence_v2(
-    request: Request,
     connector_id: str,
     terminal_id: str,
     payload: TerminalPersistenceRequest,
@@ -347,6 +346,7 @@ async def connector_terminal_set_persistence_v2(
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
     terminal_roots: TerminalRootStore = Depends(get_terminal_roots),
+    request: Request = None,  # type: ignore[assignment]
 ) -> RpcResponsePayload:
     if (forwarded := await forward_connector(
         request, "connector.terminals.persistence", user_id=user_id, connector_id=connector_id, response_model=RpcResponsePayload
@@ -393,13 +393,13 @@ async def connector_terminal_set_persistence_v2(
     "/{connector_id}/terminals/{terminal_id}", response_model=TerminalResponse
 )
 async def connector_terminal_close(
-    request: Request,
     connector_id: str,
     terminal_id: str,
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
     terminal_service: TerminalService = Depends(get_terminal_service),
+    request: Request = None,  # type: ignore[assignment]
 ) -> TerminalResponse:
     if (forwarded := await forward_connector(
         request, "connector.terminalsV1.close", user_id=user_id, connector_id=connector_id, response_model=TerminalResponse
@@ -416,7 +416,6 @@ async def connector_terminal_close(
     "/{connector_id}/terminals-v2/{terminal_id}", response_model=RpcResponsePayload
 )
 async def connector_terminal_close_v2(
-    request: Request,
     connector_id: str,
     terminal_id: str,
     user_id: str = Depends(current_user_id),
@@ -424,6 +423,7 @@ async def connector_terminal_close_v2(
     manager: ConnectorRpcManager = Depends(get_rpc),
     terminal_roots: TerminalRootStore = Depends(get_terminal_roots),
     broker: TerminalBroker = Depends(get_terminal_broker),
+    request: Request = None,  # type: ignore[assignment]
 ) -> RpcResponsePayload:
     if (forwarded := await forward_connector(
         request, "connector.terminals.close", user_id=user_id, connector_id=connector_id, response_model=RpcResponsePayload
@@ -453,7 +453,6 @@ async def connector_terminal_close_v2(
     "/{connector_id}/terminals/{terminal_id}/resize", response_model=TerminalResponse
 )
 async def connector_terminal_resize(
-    request: Request,
     connector_id: str,
     terminal_id: str,
     payload: TerminalResizeRequest,
@@ -461,6 +460,7 @@ async def connector_terminal_resize(
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
     terminal_service: TerminalService = Depends(get_terminal_service),
+    request: Request = None,  # type: ignore[assignment]
 ) -> TerminalResponse:
     if (forwarded := await forward_connector(
         request, "connector.terminalsV1.resize", user_id=user_id, connector_id=connector_id, response_model=TerminalResponse
@@ -480,7 +480,6 @@ async def connector_terminal_resize(
     response_model=RpcResponsePayload,
 )
 async def connector_terminal_resize_v2(
-    request: Request,
     connector_id: str,
     terminal_id: str,
     payload: TerminalResizeRequest,
@@ -489,6 +488,7 @@ async def connector_terminal_resize_v2(
     manager: ConnectorRpcManager = Depends(get_rpc),
     relay: TerminalRelayService = Depends(get_terminal_relay_service),
     reads: DeviceReadService = Depends(get_device_reads),
+    request: Request = None,  # type: ignore[assignment]
 ) -> RpcResponsePayload:
     if (forwarded := await forward_connector(
         request, "connector.terminals.resize", user_id=user_id, connector_id=connector_id, response_model=RpcResponsePayload
@@ -512,7 +512,6 @@ async def connector_terminal_resize_v2(
     response_model=RpcResponsePayload,
 )
 async def connector_terminal_write_v2(
-    request: Request,
     connector_id: str,
     terminal_id: str,
     payload: dict[str, Any] = Body(default_factory=dict),
@@ -521,6 +520,7 @@ async def connector_terminal_write_v2(
     manager: ConnectorRpcManager = Depends(get_rpc),
     relay: TerminalRelayService = Depends(get_terminal_relay_service),
     reads: DeviceReadService = Depends(get_device_reads),
+    request: Request = None,  # type: ignore[assignment]
 ) -> RpcResponsePayload:
     if (forwarded := await forward_connector(
         request, "connector.terminals.write", user_id=user_id, connector_id=connector_id, response_model=RpcResponsePayload
@@ -547,7 +547,6 @@ async def connector_terminal_write_v2(
     response_model=RpcResponsePayload,
 )
 async def connector_terminal_snapshot_v2(
-    request: Request,
     connector_id: str,
     terminal_id: str,
     fromSeq: int = Query(default=0, ge=0),
@@ -557,6 +556,7 @@ async def connector_terminal_snapshot_v2(
     terminal_roots: TerminalRootStore = Depends(get_terminal_roots),
     relay: TerminalRelayService = Depends(get_terminal_relay_service),
     reads: DeviceReadService = Depends(get_device_reads),
+    request: Request = None,  # type: ignore[assignment]
 ) -> RpcResponsePayload:
     if (forwarded := await forward_connector(
         request, "connector.terminals.snapshot", user_id=user_id, connector_id=connector_id, response_model=RpcResponsePayload
