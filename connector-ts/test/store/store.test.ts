@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -155,6 +155,96 @@ describe('byte budget', () => {
     expect((await store.blobs.read(item.blobRefs![1]!.blobId))!.byteLength).toBe(3000)
     // The same draft again is unchanged: slimming is deterministic.
     expect((await store.timeline.apply('sess_1', { upserts: [draft], at: now() })).changed).toEqual([])
+  })
+})
+
+describe('blob lifecycle', () => {
+  const tool = (id: string, output: string, status: TimelineDraft['status'], order = 1): TimelineDraft => ({
+    id, type: 'tool', status, role: null, orderSeq: order, source: { runtime: 'codex' }, createdAt: 't', content: { output },
+  })
+  /** Finished blob files on disk (temporary files excluded). */
+  const blobFiles = (): string[] => {
+    const root = join(dir, 'blobs')
+    return readdirSync(root).flatMap(shard => readdirSync(join(root, shard)).filter(name => /^[0-9a-f]{64}$/u.test(name)))
+  }
+  const blobRows = (): number => Number((new DatabaseSync(join(dir, 'store.sqlite'), { readOnly: true }).prepare('SELECT COUNT(*) AS n FROM blobs').get() as { n: number }).n)
+
+  it('writes no blob while a long output streams, and one when it finishes', async () => {
+    await createSession()
+    let text = ''
+    for (let i = 0; i < 40; i++) {
+      text += `line ${i} `.padEnd(64 * 1024 - 16, '.') + `end ${i}`.padEnd(16)
+      const commit = await store.timeline.apply('sess_1', { upserts: [tool('t1', text, 'running')], at: now() })
+      const item = commit.changed[0]!
+      expect(item.blobRefs).toBeUndefined()
+      expect(String(item.content.output)).toContain('输出进行中')
+    }
+    expect(blobFiles()).toEqual([])
+    const done = (await store.timeline.apply('sess_1', { upserts: [tool('t1', text, 'done')], at: now() })).changed[0]!
+    expect(done.blobRefs).toHaveLength(1)
+    expect(Buffer.from((await store.blobs.read(done.blobRefs![0]!.blobId))!).toString('utf8')).toBe(text)
+    expect(blobFiles()).toHaveLength(1)
+  })
+
+  it('deletes a blob and its file once no item points at it, and keeps one another item still uses', async () => {
+    await createSession()
+    const a = 'a'.repeat(STRING_MAX + 1)
+    const b = 'b'.repeat(STRING_MAX + 1)
+    const first = (await store.timeline.apply('sess_1', { upserts: [tool('t1', a, 'done', 1), tool('t2', a, 'done', 2)], at: now() })).changed
+    expect(first[0]!.blobRefs![0]!.blobId).toBe(first[1]!.blobRefs![0]!.blobId)
+    expect(blobFiles()).toHaveLength(1)
+    // t1 gets new content: the shared blob stays for t2.
+    await store.timeline.apply('sess_1', { upserts: [tool('t1', b, 'done', 1)], at: now() })
+    expect(blobFiles()).toHaveLength(2)
+    // t2 is deleted: nothing points at the first blob any more.
+    await store.timeline.apply('sess_1', { upserts: [], deletes: ['t2'], at: now() })
+    expect(blobFiles()).toHaveLength(1)
+    expect(await store.blobs.read(first[1]!.blobRefs![0]!.blobId)).toBeNull()
+    // A full replace without t1 drops the last one.
+    await store.timeline.apply('sess_1', { upserts: [], replace: {}, at: now() })
+    expect(blobFiles()).toEqual([])
+    expect(blobRows()).toBe(0)
+  })
+
+  it('keeps blobs put through the repository, and sweeps orphans and stray files at open', async () => {
+    await createSession()
+    const kept = await store.blobs.put(new Uint8Array([1, 2, 3]), { mediaType: null, origin: 'upload', at: 't' })
+    await store.timeline.apply('sess_1', { upserts: [tool('t1', 'z'.repeat(STRING_MAX + 1), 'done')], at: now() })
+    await store.close()
+    const raw = new DatabaseSync(join(dir, 'store.sqlite'))
+    // A crash between a blob write and its item: a timeline blob row nothing points at.
+    raw.exec("DELETE FROM blob_refs")
+    raw.close()
+    const root = join(dir, 'blobs')
+    const old = new Date(Date.now() - 2 * 60 * 60 * 1000)
+    mkdirSync(join(root, 'ab'), { recursive: true })
+    const stray = join(root, 'ab', `ab${'0'.repeat(62)}`)
+    const tmp = join(root, 'ab', `ab${'1'.repeat(62)}.tmp-1-abcd`)
+    const young = join(root, 'ab', `ab${'2'.repeat(62)}`)
+    for (const file of [stray, tmp, young]) writeFileSync(file, 'x')
+    utimesSync(stray, old, old)
+    utimesSync(tmp, old, old)
+    sync = openSqliteStore({ dataDir: dir, durability: 'normal', now })
+    store = inProcessStore(sync)
+    expect(existsSync(stray)).toBe(false)
+    expect(existsSync(tmp)).toBe(false)
+    expect(existsSync(young)).toBe(true)
+    expect(Array.from((await store.blobs.read(kept.blobId))!)).toEqual([1, 2, 3])
+    expect(blobRows()).toBe(1)
+  })
+
+  it('fills the references of items stored before the reference table', async () => {
+    await createSession()
+    const item = (await store.timeline.apply('sess_1', { upserts: [tool('t1', 'q'.repeat(STRING_MAX + 1), 'done')], at: now() })).changed[0]!
+    await store.close()
+    const raw = new DatabaseSync(join(dir, 'store.sqlite'))
+    raw.exec("DROP TABLE blob_refs; UPDATE meta SET value = '4' WHERE key = 'schema_version'")
+    raw.close()
+    sync = openSqliteStore({ dataDir: dir, durability: 'normal', now })
+    store = inProcessStore(sync)
+    expect(Buffer.from((await store.blobs.read(item.blobRefs![0]!.blobId))!).toString('utf8')).toHaveLength(STRING_MAX + 1)
+    await store.timeline.apply('sess_1', { upserts: [], deletes: ['t1'], at: now() })
+    expect(blobFiles()).toEqual([])
   })
 })
 

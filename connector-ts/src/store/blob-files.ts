@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readSync, renameSync, statSync, writeSync } from 'node:fs'
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync, writeSync } from 'node:fs'
 import { join } from 'node:path'
 
 /**
@@ -64,5 +64,41 @@ export class BlobFiles {
 
   public exists(sha256: string): boolean {
     return existsSync(this.pathOf(sha256))
+  }
+
+  /** Deletes a blob file; a missing one is fine. */
+  public remove(sha256: string): void {
+    rmSync(this.pathOf(sha256), { force: true })
+  }
+
+  /**
+   * Every file under the root with its age: `sha256` for a finished blob, null for anything else (a temporary
+   * file a crash left behind).
+   */
+  public entries(nowMs: number): Array<{ path: string; sha256: string | null; ageMs: number }> {
+    const out: Array<{ path: string; sha256: string | null; ageMs: number }> = []
+    for (const shard of readdirSync(this.root)) {
+      const dir = join(this.root, shard)
+      let names: string[]
+      try {
+        if (!statSync(dir).isDirectory()) continue
+        names = readdirSync(dir)
+      } catch {
+        continue
+      }
+      for (const name of names) {
+        const path = join(dir, name)
+        try {
+          out.push({ path, sha256: /^[0-9a-f]{64}$/u.test(name) && name.startsWith(shard) ? name : null, ageMs: nowMs - statSync(path).mtimeMs })
+        } catch {
+          // gone meanwhile
+        }
+      }
+    }
+    return out
+  }
+
+  public removePath(path: string): void {
+    rmSync(path, { force: true })
   }
 }

@@ -13,7 +13,7 @@
 //   2. fitItem — one item on the wire within a byte budget, cutting harder on a copy if it must.
 //   3. fitPage — a page of items within a budget: the newest that fit, the rest reachable by paging (hasMore).
 
-import type { BlobRef, JsonObject, TimelineDraft, TimelineItem } from '../domain/conversation/index.js'
+import { TERMINAL_ITEM_STATUSES, type BlobRef, type JsonObject, type TimelineDraft, type TimelineItem } from '../domain/conversation/index.js'
 
 export { PAGE_BUDGET, PAGE_LIMIT_MAX, SNAPSHOT_LIMIT } from '../domain/conversation/index.js'
 
@@ -54,6 +54,10 @@ function pointer(parent: string, key: string | number): string {
   return `${parent}/${String(key).replace(/~/gu, '~0').replace(/\//gu, '~1')}`
 }
 
+function runningPreview(text: string, head: number, tail: number, total: number): string {
+  return `${text.slice(0, head)}\n…（输出进行中，中间省略 ${kb(total - head - tail)}，已有 ${kb(total)}，完成后可展开查看）…\n${text.slice(-tail)}`
+}
+
 function preview(text: string, head: number, tail: number, total: number): string {
   return `${text.slice(0, head)}\n…（中间省略 ${kb(total - head - tail)}，完整内容 ${kb(total)}，可展开查看）…\n${text.slice(-tail)}`
 }
@@ -64,6 +68,13 @@ interface SlimContext {
   readonly refs: BlobRef[]
   /** Paths already replaced by a preview in an earlier tier: never move a preview again. */
   readonly moved: ReadonlySet<string>
+  /**
+   * The item is still in progress (streaming): long text is cut to a preview without writing a blob. A growing
+   * field is committed every ~100 ms, and writing each version as its own blob left hundreds of copies of one
+   * output behind; the full text is written once, when the item finishes. Media and base64 move at once (they
+   * arrive whole).
+   */
+  readonly deferText: boolean
 }
 
 function moveString(value: string, path: string, context: SlimContext): string {
@@ -82,10 +93,11 @@ function moveString(value: string, path: string, context: SlimContext): string {
     return `[二进制数据，约 ${kb(stored.bytes)}，已存到本机，可展开查看]`
   }
   const encoded = Buffer.from(value, 'utf8')
-  const stored = context.sink(encoded, 'text/plain; charset=utf-8')
-  context.refs.push({ path, blobId: stored.blobId, bytes: stored.bytes, mediaType: 'text/plain; charset=utf-8' })
   const head = Math.min(PREVIEW_HEAD, Math.floor(context.stringMax * 0.75))
   const tail = Math.min(PREVIEW_TAIL, Math.floor(context.stringMax * 0.2))
+  if (context.deferText) return runningPreview(value, head, tail, encoded.length)
+  const stored = context.sink(encoded, 'text/plain; charset=utf-8')
+  context.refs.push({ path, blobId: stored.blobId, bytes: stored.bytes, mediaType: 'text/plain; charset=utf-8' })
   return preview(value, head, tail, encoded.length)
 }
 
@@ -142,14 +154,15 @@ export function slimDraft(draft: TimelineDraft, sink: BlobSink): TimelineDraft {
   let content = draft.content
   const refs: BlobRef[] = []
   for (const stringMax of [STRING_MAX, 8 * 1024, 1024]) {
-    const context: SlimContext = { sink, stringMax, refs, moved: new Set(refs.map(ref => ref.path)) }
+    const context: SlimContext = { sink, stringMax, refs, moved: new Set(refs.map(ref => ref.path)), deferText: !TERMINAL_ITEM_STATUSES.has(draft.status) }
     content = slimValue(content, '', context, 0) as JsonObject
     if (jsonBytes(content) <= ITEM_PAYLOAD_MAX) break
   }
   if (refs.length === 0) {
-    if (draft.blobRefs === undefined) return draft
+    // Nothing moved out; text of an item still in progress may have been cut to a preview.
+    if (content === draft.content && draft.blobRefs === undefined) return draft
     const { blobRefs: _drop, ...rest } = draft
-    return rest
+    return { ...rest, content }
   }
   return { ...draft, content, blobRefs: refs }
 }

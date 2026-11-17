@@ -192,6 +192,26 @@ CREATE TABLE runtime_kv (
     breaksPrevious: false,
     sql: 'CREATE TABLE IF NOT EXISTS seq_floors (session_id TEXT PRIMARY KEY, seq_floor INTEGER NOT NULL);',
   },
+  {
+    // Which timeline items point at which blob (the item's `blobRefs`), so a blob nothing points at any more
+    // (an older version of an edited or replaced item, a deleted item) is deleted with its file. Filled from the
+    // items already stored.
+    version: 5,
+    breaksPrevious: false,
+    sql: `
+CREATE TABLE IF NOT EXISTS blob_refs (
+  session_id TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  blob_id TEXT NOT NULL,
+  PRIMARY KEY (session_id, item_id, blob_id)
+);
+CREATE INDEX IF NOT EXISTS blob_refs_blob ON blob_refs(blob_id);
+INSERT OR IGNORE INTO blob_refs(session_id, item_id, blob_id)
+  SELECT t.session_id, t.item_id, json_extract(r.value, '$.blobId')
+  FROM timeline_items t, json_each(t.payload_json, '$.blobRefs') r
+  WHERE json_type(t.payload_json, '$.blobRefs') = 'array' AND json_extract(r.value, '$.blobId') IS NOT NULL;
+`,
+  },
 ]
 
 export const SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]?.version ?? 0

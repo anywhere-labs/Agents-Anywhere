@@ -93,6 +93,8 @@ export interface OpenStoreOptions {
 type Row = Record<string, SQLInputValue>
 
 const STATUS_DEFAULT_LIMIT = 100
+/** Blob files younger than this are never swept (see `sweepBlobs`). */
+const BLOB_SWEEP_MIN_AGE_MS = 60 * 60 * 1000
 
 function json(value: unknown): string {
   return JSON.stringify(value)
@@ -155,6 +157,8 @@ export function openSqliteStore(options: OpenStoreOptions): SyncStore {
   }
 
   let depth = 0
+  /** File deletions that must wait until the transaction that dropped the last reference has committed. */
+  let afterCommit: Array<() => void> = []
   function tx<T>(work: () => T): T {
     if (readOnly) throw new StoreError('store_read_only', 'the local store was written by a newer Connector and is read-only')
     if (depth > 0) {
@@ -167,12 +171,23 @@ export function openSqliteStore(options: OpenStoreOptions): SyncStore {
     }
     db.exec('BEGIN IMMEDIATE')
     depth = 1
+    afterCommit = []
     try {
       const result = work()
       db.exec('COMMIT')
+      const pending = afterCommit
+      afterCommit = []
+      for (const task of pending) {
+        try {
+          task()
+        } catch {
+          // A file left behind is removed by the next sweep.
+        }
+      }
       return result
     } catch (error) {
       db.exec('ROLLBACK')
+      afterCommit = []
       throw error
     } finally {
       depth = 0
@@ -258,6 +273,35 @@ export function openSqliteStore(options: OpenStoreOptions): SyncStore {
       item.source.clientMessageId ?? null, item.createdAt, payload, Buffer.byteLength(payload, 'utf8'),
     )
     run('DELETE FROM timeline_tombstones WHERE session_id = ? AND item_id = ?', item.sessionId, item.id)
+    setBlobRefs(item.sessionId, item.id, (item.blobRefs ?? []).map(ref => ref.blobId))
+  }
+
+  /**
+   * Points an item at exactly these blobs. A timeline blob that loses its last reference is deleted, its file
+   * once the transaction has committed (content-addressed: another item with the same content keeps it).
+   */
+  function setBlobRefs(sessionId: string, itemId: string, blobIds: readonly string[]): void {
+    const before = all('SELECT blob_id FROM blob_refs WHERE session_id = ? AND item_id = ?', sessionId, itemId).map(row => String(row.blob_id))
+    const after = new Set(blobIds)
+    for (const blobId of before) {
+      if (after.has(blobId)) continue
+      run('DELETE FROM blob_refs WHERE session_id = ? AND item_id = ? AND blob_id = ?', sessionId, itemId, blobId)
+      dropIfUnreferenced(blobId)
+    }
+    for (const blobId of after) run('INSERT OR IGNORE INTO blob_refs(session_id, item_id, blob_id) VALUES (?, ?, ?)', sessionId, itemId, blobId)
+  }
+
+  /** Only blobs the timeline wrote; blobs put through the repository belong to whoever put them. */
+  function dropIfUnreferenced(blobId: string): void {
+    if (get('SELECT 1 AS hit FROM blob_refs WHERE blob_id = ? LIMIT 1', blobId) !== undefined) return
+    const row = get("SELECT sha256 FROM blobs WHERE blob_id = ? AND origin = 'timeline'", blobId)
+    if (row === undefined) return
+    run('DELETE FROM blobs WHERE blob_id = ?', blobId)
+    const sha256 = String(row.sha256)
+    afterCommit.push(() => {
+      // Written again meanwhile (same content in a later transaction): keep the file.
+      if (get('SELECT 1 AS hit FROM blobs WHERE sha256 = ? LIMIT 1', sha256) === undefined) blobs.remove(sha256)
+    })
   }
 
   function getItem(sessionId: string, itemId: string): TimelineItem | null {
@@ -416,6 +460,7 @@ export function openSqliteStore(options: OpenStoreOptions): SyncStore {
     }
     const remove = (itemId: string): void => {
       if (run('DELETE FROM timeline_items WHERE session_id = ? AND item_id = ?', sessionId, itemId).changes === 0) return
+      setBlobRefs(sessionId, itemId, [])
       run('INSERT INTO timeline_tombstones(session_id, item_id, updated_seq) VALUES (?, ?, ?) ON CONFLICT(session_id, item_id) DO UPDATE SET updated_seq = excluded.updated_seq', sessionId, itemId, stamp())
       deleted.push(itemId)
     }
@@ -926,6 +971,32 @@ export function openSqliteStore(options: OpenStoreOptions): SyncStore {
         run('DELETE FROM runtime_kv WHERE runtime_id = ? AND key = ?', runtimeId, key)
       })
     },
+  }
+
+  /**
+   * At open: timeline blobs no item points at (left by a crash between a blob write and its item, or by stores
+   * from before `blob_refs`), files no blob row names, and temporary files of interrupted writes. Files younger
+   * than an hour are left alone (a write in flight elsewhere, a clock that went back).
+   */
+  function sweepBlobs(): void {
+    tx(() => {
+      for (const row of all("SELECT b.blob_id FROM blobs b WHERE b.origin = 'timeline' AND NOT EXISTS (SELECT 1 FROM blob_refs r WHERE r.blob_id = b.blob_id)")) {
+        dropIfUnreferenced(String(row.blob_id))
+      }
+    })
+    const known = new Set(all('SELECT sha256 FROM blobs').map(row => String(row.sha256)))
+    for (const entry of blobs.entries(Date.now())) {
+      if (entry.ageMs < BLOB_SWEEP_MIN_AGE_MS) continue
+      if (entry.sha256 !== null && known.has(entry.sha256)) continue
+      blobs.removePath(entry.path)
+    }
+  }
+  if (!readOnly) {
+    try {
+      sweepBlobs()
+    } catch {
+      // Cleaning up is never a reason not to open the store.
+    }
   }
 
   return {
