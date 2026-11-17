@@ -4,27 +4,42 @@ import asyncio
 from typing import Any
 
 import pytest
-from test_backend_mvp import auth_headers, create_connector_and_session, make_client
+from conftest import ApiV2TestClient as TestClient
+from test_runtime_config import _auth_headers
 
+from agent_server.app import create_app
 from agent_server.core.device_settings import (
-    DEVICE_SETTINGS_APPLY_METHOD,
+    DEVICE_SETTINGS_COMMAND,
     ConnectorDeviceSettings,
     ConnectorDeviceSettingsPatch,
+    device_settings_command_payload,
     device_settings_from_stored,
 )
 from agent_server.core.models import ConnectorView
-from agent_server.infra.connector_rpc import ConnectorOfflineError
 from agent_server.services.connector_device_settings import (
-    deliver_stored_device_settings,
     get_device_settings,
     update_device_settings,
 )
+from agent_server.services.device_commands import (
+    CommandOutcome,
+    DeviceCommandOffline,
+    DeviceCommandOutcomeUnknown,
+    DeviceCommandRejected,
+)
+
+V3_CONTRACT = "device-meshcall/1.0"
 
 
 class FakeStore:
-    def __init__(self, stored: dict[str, Any] | None = None, owner: str = "user") -> None:
+    def __init__(
+        self,
+        stored: dict[str, Any] | None = None,
+        owner: str = "user",
+        link_contract: str | None = V3_CONTRACT,
+    ) -> None:
         self.stored = stored if stored is not None else {}
         self.owner = owner
+        self.link_contract = link_contract
         self.writes: list[dict[str, Any]] = []
 
     async def get_connector(self, connector_id: str) -> ConnectorView:
@@ -48,18 +63,27 @@ class FakeStore:
         self.writes.append(dict(settings))
         return settings
 
+    async def connector_link_contract(self, connector_id: str) -> str | None:
+        return self.link_contract
 
-class FakeRequester:
+
+class FakeCommands:
+    """``DeviceCommandService.send`` answering with ``result`` or raising ``error``."""
+
     def __init__(self, result: Any = None, error: Exception | None = None) -> None:
         self.result = {"applied": True} if result is None else result
         self.error = error
-        self.calls: list[tuple[str, str, dict[str, Any]]] = []
+        self.sent: list[tuple[str, str, dict[str, Any]]] = []
 
-    async def request(self, connector_id, method, params, *, timeout=30):
-        self.calls.append((connector_id, method, params))
+    async def send(self, *, user_id, device_id, kind, command_id, payload, **_kwargs) -> CommandOutcome:
+        self.sent.append((device_id, kind, payload))
         if self.error is not None:
             raise self.error
-        return self.result
+        return CommandOutcome(command_id=command_id, result=self.result, replayed=False)
+
+
+def _update(store: FakeStore, commands: FakeCommands, patch: ConnectorDeviceSettingsPatch):
+    return asyncio.run(update_device_settings(store, commands, "conn", patch, user_id="user"))
 
 
 def test_stored_settings_default_and_ignore_invalid_values() -> None:
@@ -75,56 +99,47 @@ def test_patch_rejects_unknown_fields() -> None:
         ConnectorDeviceSettingsPatch.model_validate({"blockShutdown": True})
 
 
-def test_update_stores_then_delivers_to_online_connector() -> None:
+def test_update_stores_then_delivers_to_a_v3_device() -> None:
     store = FakeStore()
-    requester = FakeRequester()
+    commands = FakeCommands()
 
-    settings, delivered = asyncio.run(
-        update_device_settings(
-            store,
-            requester,
-            "conn",
-            ConnectorDeviceSettingsPatch(confirmQuitOnShutdown=True),
-            user_id="user",
-        )
-    )
+    settings, delivered = _update(store, commands, ConnectorDeviceSettingsPatch(confirmQuitOnShutdown=True))
 
     assert settings.confirmQuitOnShutdown is True
     assert delivered is True
     assert store.writes == [{"confirmQuitOnShutdown": True}]
-    assert requester.calls == [
-        ("conn", DEVICE_SETTINGS_APPLY_METHOD, {"settings": {"confirmQuitOnShutdown": True}})
-    ]
+    assert commands.sent == [("conn", DEVICE_SETTINGS_COMMAND, device_settings_command_payload(settings))]
 
 
-def test_update_keeps_change_when_connector_is_offline_or_too_old() -> None:
-    for requester in (
-        FakeRequester(error=ConnectorOfflineError("connector is offline")),
-        FakeRequester(error=RuntimeError("unsupported connector method")),
-        FakeRequester(result={"unexpected": True}),
+def test_update_keeps_change_when_the_device_does_not_apply_it() -> None:
+    for commands in (
+        FakeCommands(error=DeviceCommandOffline()),
+        FakeCommands(error=DeviceCommandOutcomeUnknown(None)),
+        FakeCommands(error=DeviceCommandRejected("unsupported", "not supported", None)),
+        FakeCommands(result={"unexpected": True}),
     ):
         store = FakeStore()
-        settings, delivered = asyncio.run(
-            update_device_settings(
-                store,
-                requester,
-                "conn",
-                ConnectorDeviceSettingsPatch(confirmQuitOnShutdown=True),
-                user_id="user",
-            )
-        )
+        settings, delivered = _update(store, commands, ConnectorDeviceSettingsPatch(confirmQuitOnShutdown=True))
         assert settings.confirmQuitOnShutdown is True
         assert delivered is False
         assert store.stored == {"confirmQuitOnShutdown": True}
 
 
+def test_a_v2_connector_only_stores_the_change() -> None:
+    store = FakeStore(link_contract=None)
+    commands = FakeCommands()
+
+    settings, delivered = _update(store, commands, ConnectorDeviceSettingsPatch(confirmQuitOnShutdown=True))
+
+    assert settings.confirmQuitOnShutdown is True
+    assert delivered is False
+    assert store.stored == {"confirmQuitOnShutdown": True}
+    assert commands.sent == []
+
+
 def test_omitted_fields_keep_their_value() -> None:
     store = FakeStore({"confirmQuitOnShutdown": True})
-    settings, _ = asyncio.run(
-        update_device_settings(
-            store, FakeRequester(), "conn", ConnectorDeviceSettingsPatch(), user_id="user"
-        )
-    )
+    settings, _ = _update(store, FakeCommands(), ConnectorDeviceSettingsPatch())
     assert settings.confirmQuitOnShutdown is True
 
 
@@ -133,17 +148,12 @@ def test_settings_of_another_user_are_not_found() -> None:
         asyncio.run(get_device_settings(FakeStore(owner="other"), "conn", user_id="user"))
 
 
-def test_connect_delivers_stored_settings() -> None:
-    requester = FakeRequester()
-    assert asyncio.run(
-        deliver_stored_device_settings(FakeStore({"confirmQuitOnShutdown": True}), requester, "conn")
-    )
-    assert requester.calls[0][2] == {"settings": {"confirmQuitOnShutdown": True}}
-
-
 def test_device_settings_api_round_trip(tmp_path) -> None:
-    client = make_client(tmp_path)
-    connector_id, _access_token, _session_id, headers = create_connector_and_session(client)
+    client = TestClient(create_app())
+    headers = _auth_headers(client)
+    created = client.post("/connectors", headers=headers, json={"name": "dev"})
+    assert created.status_code == 200, created.text
+    connector_id = created.json()["connector"]["id"]
     path = f"/connectors/{connector_id}/device-settings"
 
     initial = client.get(path, headers=headers)
@@ -154,12 +164,18 @@ def test_device_settings_api_round_trip(tmp_path) -> None:
     changed = client.patch(path, headers=headers, json={"confirmQuitOnShutdown": True})
     assert changed.status_code == 200, changed.text
     assert changed.json()["settings"] == {"confirmQuitOnShutdown": True}
-    # No connector socket is open in this test, so the change waits for it.
+    # The device has never linked, so the change waits for it.
     assert changed.json()["delivered"] is False
     assert client.get(path, headers=headers).json()["settings"] == {"confirmQuitOnShutdown": True}
 
     assert client.patch(path, headers=headers, json={"unknown": True}).status_code == 422
 
-    other = auth_headers(client, user_id="user2")
+    client.patch("/admin/settings", headers=headers, json={"registrationOpen": True}).raise_for_status()
+    registered = client.post(
+        "/auth/register",
+        json={"email": "other@example.com", "displayName": "Other", "password": "secret"},
+    )
+    assert registered.status_code == 200, registered.text
+    other = {"Authorization": f"Bearer {registered.json()['accessToken']}"}
     assert client.get(path, headers=other).status_code == 404
     assert client.patch(path, headers=other, json={"confirmQuitOnShutdown": False}).status_code == 404

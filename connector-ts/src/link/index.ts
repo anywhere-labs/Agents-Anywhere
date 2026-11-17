@@ -59,16 +59,11 @@ export {
   TERMINAL_OUTPUT_ITEM_BYTES,
   TERMINAL_POLL_MS,
   TerminalWatchers,
-  WORKSPACE_METHODS,
-  workspaceCall,
+  uploadPreparedDownload,
   type TerminalEventSink,
   type TerminalOutputItem,
   type TerminalOutputRequest,
   type TerminalSource,
-  type WorkspaceCallRequest,
-  type WorkspaceCallResponse,
-  type WorkspaceHandler,
-  type WorkspaceMethod,
   type WorkspaceServiceDeps,
 } from './workspace.js'
 export { CLIENT_SERVICE, DEFAULT_CLIENT_LIMITS, clientCall, clientRoute, clientSubscribe, type ClientLimits } from './client-call.js'

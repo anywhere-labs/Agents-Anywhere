@@ -12,10 +12,10 @@ from agent_server.core.device_meshcall import (
     REQUEST_METHODS,
     CommandAck,
     CommandCall,
+    CommandStatusRequest,
+    CommandStatusResponse,
     LinkAttachItem,
     LinkAttachRequest,
-    StoreReadRequest,
-    StoreReadResponse,
     classify_mesh_error,
     command_route,
 )
@@ -28,8 +28,8 @@ from agent_server.infra.device_mesh import (
 )
 from scripts.v3_fake_device import FakeDevice
 
-READ = REQUEST_METHODS["store.read"]
-SEND = command_route("session.sendMessage")
+READ = REQUEST_METHODS["command.status"]
+SEND = command_route("session.sync")
 
 
 def run(coro):
@@ -64,7 +64,7 @@ def test_router_down_never_blocks_and_reads_as_not_delivered() -> None:
         health = await mesh.check(timeout=1)
         assert health["status"] == "error"
         with pytest.raises(DeviceCallError) as failure:
-            await mesh.unary("dev_1", READ, StoreReadRequest(sessionId="s", mode="latest"), StoreReadResponse)
+            await mesh.unary("dev_1", READ, CommandStatusRequest(commandId="c_0"), CommandStatusResponse)
         assert failure.value.not_delivered
         await mesh.close()
 
@@ -86,7 +86,7 @@ def test_server_calls_a_registered_device_and_classifies_failures(mesh_router: R
 
         # Nobody registered: not delivered (offline), not unknown.
         with pytest.raises(DeviceCallError) as offline:
-            await mesh.unary("dev_1", READ, StoreReadRequest(sessionId="s", mode="latest"), StoreReadResponse)
+            await mesh.unary("dev_1", READ, CommandStatusRequest(commandId="c_0"), CommandStatusResponse)
         assert offline.value.not_delivered
 
         token = await mesh.issue_device_token("dev_1")
@@ -97,15 +97,15 @@ def test_server_calls_a_registered_device_and_classifies_failures(mesh_router: R
                 "aa.device.v1.Link",
                 "aa.device.v1.Commands",
             }
-            page = await mesh.unary(
-                "dev_1", READ, StoreReadRequest(sessionId="s", mode="latest"), StoreReadResponse
+            status = await mesh.unary(
+                "dev_1", READ, CommandStatusRequest(commandId="c_0"), CommandStatusResponse
             )
-            assert page.items == [] and page.headSeq == 0
+            assert status.commandId == "c_0" and status.known is False
 
             ack = await mesh.unary(
                 "dev_1",
                 SEND,
-                CommandCall(commandId="c_1", deadline="2099-01-01T00:00:00Z", p={"content": "hi"}),
+                CommandCall(commandId="c_1", deadline="2099-01-01T00:00:00Z", p={"sessionId": "s", "takeover": True}),
                 CommandAck,
                 idempotency_key="c_1",
                 timeout=5,
@@ -163,7 +163,7 @@ def test_token_registers_only_its_own_device_and_revocation_disconnects(mesh_rou
             await stream.aclose()
             with pytest.raises(DeviceCallError) as offline:
                 await mesh.unary(
-                    "dev_a", READ, StoreReadRequest(sessionId="s", mode="latest"), StoreReadResponse
+                    "dev_a", READ, CommandStatusRequest(commandId="c_0"), CommandStatusResponse
                 )
             assert offline.value.not_delivered
         finally:

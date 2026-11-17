@@ -318,9 +318,6 @@ class ConnectorRepositoryMixin:
             # Runtime configuration, catalogs and preview tokens all reference
             # the connector with ON DELETE CASCADE.
             await conn.execute(delete(connectors_t).where(connectors_t.c.id == connector_id))
-            # Terminal roots live in Redis. Clear them before the commit so a
-            # failure keeps the deletion pending for a retry.
-            await self.terminal_roots.forget_connector_terminal_roots(connector_id)
             # Keep the rows discoverable for a retry if storage cleanup fails.
             # Files cannot be rolled back, so run this after all SQL deletions.
             for session_id in session_ids:

@@ -17,7 +17,7 @@ from mesh_fixtures import RouterProcess
 from scripts.v3_fake_device import connect_device
 
 
-def test_device_link_handshake_presence_outbox_and_bridge(mesh_router: RouterProcess, monkeypatch) -> None:
+def test_device_link_handshake_presence_and_outbox(mesh_router: RouterProcess, monkeypatch) -> None:
     async def scenario() -> None:
         async with server(mesh_router, monkeypatch) as (app, client):
             _headers, device_id, token = await user_and_device(app, client)
@@ -48,16 +48,6 @@ def test_device_link_handshake_presence_outbox_and_bridge(mesh_router: RouterPro
                 stale = device.state.push_outbox("session.summary", summary("sess_v3a", 5, title="old"))
                 await eventually(lambda: _acked(device, stale.oid))
                 assert (await app.state.store.session_directory_fields("sess_v3a"))["headSeq"] == 12
-
-                # v2 code paths reach the device through the bridge.
-                notices = await rpc.request(device_id, "session.notices", {"sessionId": "sess_v3a"})
-                assert notices == {"notices": []}
-                result = await rpc.request(
-                    device_id, "session.send_message", {"sessionId": "sess_v3a", "clientMessageId": "m_1"}
-                )
-                assert result == {"ok": True}
-                assert device.state.command_log[-1][0] == "session.sendMessage"
-                assert "c_" not in device.state.receipts and "m_1" in device.state.receipts
 
                 # ready with a stale generation is refused.
                 stale_ready = await client.post(
@@ -100,14 +90,7 @@ def test_device_goes_offline_when_its_link_dies(mesh_router: RouterProcess, monk
             assert await app.state.rpc.is_online(device_id)
             await device.stop()
             await eventually(lambda: _offline(app.state.rpc, device_id))
-            from agent_server.infra.connector_rpc import ConnectorOfflineError
-
-            try:
-                await app.state.rpc.request(device_id, "session.notices", {"sessionId": "s"})
-            except ConnectorOfflineError:
-                pass
-            else:
-                raise AssertionError("an offline device answered")
+            assert await app.state.device_link_hub.current_connection(device_id) is None
 
     asyncio.run(scenario())
 

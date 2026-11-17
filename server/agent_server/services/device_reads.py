@@ -1,41 +1,20 @@
-"""Read-through to v3 devices: snapshot, timeline pages and events (D1).
+"""Which devices speak device-meshcall, and the reads the Server itself makes of them.
 
-The Server keeps no session content. Reads for a session on a v3 device go to
-the device over MeshCall and the client-shaped body is passed through.
+Client reads of session content go to the device with ``Client/call`` (``services.client_forward``). The
+Server still reads workflow progress (``read_method``), blobs and share exports (``services.device_blobs``):
 
-- Device offline (not delivered): ``None``; the API answers 200 with
-  ``deviceOffline: true`` and empty lists.
-- Opened and then failed or timed out (outcome unknown): ``DeviceReadTimeout``,
-  reported as ``device_read_timeout``; never as offline.
-- Concurrent identical snapshot reads in one worker share one device call
-  (single flight; normal mode only, E2EE content never reaches here).
+- Device offline (not delivered): ``None``.
+- Opened and then failed or timed out (outcome unknown): ``DeviceReadTimeout`` (``device_read_timeout``).
+- The device's own error: ``DeviceReadError`` with its code.
 """
 
 from __future__ import annotations
 
-import asyncio
-import base64
-import json
-import zlib
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
-from typing import Any, TypeVar
+from typing import Any
 
-from agent_server.core.device_meshcall import (
-    DEFAULT_BYTE_BUDGET,
-    REQUEST_METHODS,
-    ChangesSinceRequest,
-    ChangesSinceResponse,
-    ClientSnapshotRequest,
-    MethodPayload,
-    StoreReadRequest,
-    StoreReadResponse,
-    StreamChunk,
-)
+from agent_server.core.device_meshcall import REQUEST_METHODS, MethodPayload
 from agent_server.infra.device_link import DeviceLinkHub
 from agent_server.infra.device_mesh import DeviceCallError, DeviceMesh
-
-T = TypeVar("T")
 
 
 class DeviceReadTimeout(Exception):
@@ -57,188 +36,24 @@ class DeviceReadError(Exception):
         self.message = message
 
 
-def merge_snapshot_chunks(chunks: list[StreamChunk]) -> dict[str, Any]:
-    """Join ``Sessions/snapshot`` chunks into one client-shaped body.
-
-    A chunk is a JSON object, or a base64 deflate string of one (``encoding: deflate``). When every chunk is a
-    string and they join, in order, into one JSON object, that object is the body (the TS Connector slices the
-    JSON text under the frame limit). Timeline items are concatenated in chunk order; other keys take the last value.
-    """
-
-    ordered = sorted(chunks, key=lambda value: value.seq)
-    if ordered and all(isinstance(chunk.chunk, str) for chunk in ordered):
-        try:
-            whole = json.loads("".join(str(chunk.chunk) for chunk in ordered))
-        except ValueError:
-            whole = None
-        if isinstance(whole, dict):
-            ordered = [StreamChunk(seq=0, chunk=whole, end=True)]
-    body: dict[str, Any] = {}
-    items: list[Any] = []
-    for chunk in ordered:
-        part = chunk.chunk
-        if isinstance(part, str):
-            part = json.loads(zlib.decompress(base64.b64decode(part)))
-        if not isinstance(part, dict):
-            continue
-        timeline = part.get("timeline")
-        if isinstance(timeline, dict) and isinstance(timeline.get("items"), list):
-            items.extend(timeline["items"])
-        for key, value in part.items():
-            if key == "timeline" and isinstance(value, dict):
-                merged = dict(body.get("timeline") or {})
-                merged.update({k: v for k, v in value.items() if k != "items"})
-                body["timeline"] = merged
-            else:
-                body[key] = value
-    if "timeline" in body or items:
-        body.setdefault("timeline", {})["items"] = items
-    return body
-
-
-@dataclass
-class _Flight:
-    """One shared device read and how many callers wait for it."""
-
-    task: asyncio.Task[Any]
-    waiters: int = 0
-
-
 class DeviceReadService:
-    def __init__(self, store: Any, mesh: DeviceMesh, hub: DeviceLinkHub) -> None:
+    def __init__(self, store: Any, mesh: DeviceMesh | None = None, hub: DeviceLinkHub | None = None) -> None:
         self._store = store
         self._mesh = mesh
         self._hub = hub
-        self._flights: dict[tuple[Any, ...], _Flight] = {}
 
     async def is_v3_device(self, connector_id: str) -> bool:
+        """Whether the connector last linked as a device-meshcall device rather than over the v2 socket."""
+
         return bool(await self._store.connector_link_contract(connector_id))
 
-    async def _single_flight(self, key: tuple[Any, ...], work: Callable[[], Awaitable[T]]) -> T:
-        """Run ``work`` once for every concurrent caller with the same ``key``.
-
-        The device read runs as its own task. A caller that is cancelled (the client went away)
-        stops waiting for it without failing the others; the read is cancelled only once nobody
-        waits for it any more, and a later caller then starts a new one.
-        """
-
-        flight = self._flights.get(key)
-        if flight is None:
-            flight = _Flight(asyncio.create_task(work(), name=f"device-read-{key[0]}"))
-            self._flights[key] = flight
-            flight.task.add_done_callback(lambda task, key=key, flight=flight: self._land(key, flight, task))
-        flight.waiters += 1
-        try:
-            return await asyncio.shield(flight.task)
-        finally:
-            flight.waiters -= 1
-            if flight.waiters == 0 and not flight.task.done():
-                self._drop(key, flight)
-                flight.task.cancel()
-
-    def _drop(self, key: tuple[Any, ...], flight: _Flight) -> None:
-        if self._flights.get(key) is flight:
-            del self._flights[key]
-
-    def _land(self, key: tuple[Any, ...], flight: _Flight, task: asyncio.Task[Any]) -> None:
-        self._drop(key, flight)
-        if not task.cancelled():
-            task.exception()  # observed: the waiters re-raise it, and nobody may be left to
-
-    def _fail(self, exc: DeviceCallError) -> Exception | None:
-        if exc.not_delivered:
-            return None
-        if exc.outcome_unknown:
-            return DeviceReadTimeout(exc.message or "the device did not answer in time")
-        # The device's own error code (``details.aaCode``) wins over the MeshCall status.
-        aa_code = exc.details.get("aaCode") if isinstance(exc.details, dict) else None
-        code = aa_code if isinstance(aa_code, str) and aa_code else exc.code
-        return DeviceReadError(code, exc.message or code)
-
-    async def _connection(self, device_id: str) -> str | None:
-        return await self._hub.current_connection(device_id)
-
-    async def snapshot(
-        self, device_id: str, session_id: str, *, limit: int = 100, byte_budget: int = DEFAULT_BYTE_BUDGET
-    ) -> dict[str, Any] | None:
-        """The client-shaped snapshot body, or None when the device is offline."""
-
-        connection_id = await self._connection(device_id)
-        if connection_id is None:
-            return None
-
-        async def read() -> dict[str, Any] | None:
-            try:
-                chunks = [
-                    chunk
-                    async for chunk in self._mesh.stream(
-                        device_id,
-                        REQUEST_METHODS["client.snapshot"],
-                        ClientSnapshotRequest(sessionId=session_id, limit=limit, byteBudget=byte_budget),
-                        StreamChunk,
-                        connection_id=connection_id,
-                        timeout=self._mesh.settings.read_timeout_seconds,
-                    )
-                ]
-            except DeviceCallError as exc:
-                failure = self._fail(exc)
-                if failure is None:
-                    return None
-                raise failure from exc
-            return merge_snapshot_chunks(chunks)
-
-        return await self._single_flight(("snapshot", device_id, session_id, limit, byte_budget), read)
-
-    async def read_page(
-        self,
-        device_id: str,
-        session_id: str,
-        *,
-        mode: str,
-        cursor: int | None = None,
-        limit: int = 100,
-    ) -> StoreReadResponse | None:
-        connection_id = await self._connection(device_id)
-        if connection_id is None:
-            return None
-        try:
-            return await self._mesh.unary(
-                device_id,
-                REQUEST_METHODS["store.read"],
-                StoreReadRequest(sessionId=session_id, mode=mode, cursor=cursor, limit=limit),
-                StoreReadResponse,
-                connection_id=connection_id,
-            )
-        except DeviceCallError as exc:
-            failure = self._fail(exc)
-            if failure is None:
-                return None
-            raise failure from exc
-
-    async def changes_since(
-        self, device_id: str, session_id: str, *, after_seq: int, limit: int = 500
-    ) -> ChangesSinceResponse | None:
-        connection_id = await self._connection(device_id)
-        if connection_id is None:
-            return None
-        try:
-            return await self._mesh.unary(
-                device_id,
-                REQUEST_METHODS["store.changesSince"],
-                ChangesSinceRequest(sessionId=session_id, afterSeq=after_seq, limit=limit),
-                ChangesSinceResponse,
-                connection_id=connection_id,
-            )
-        except DeviceCallError as exc:
-            failure = self._fail(exc)
-            if failure is None:
-                return None
-            raise failure from exc
-
     async def read_method(self, device_id: str, method: str, params: dict[str, Any]) -> dict[str, Any] | None:
-        """A small read (``session.queue``, ``session.notices``...): the device's body, None when offline."""
+        """A small read (``workspace.preparation.get``, ``session.creation.get``): the device's body, None when
+        the device is offline."""
 
-        connection_id = await self._connection(device_id)
+        if self._mesh is None or self._hub is None:
+            raise RuntimeError("this DeviceReadService has no device link")
+        connection_id = await self._hub.current_connection(device_id)
         if connection_id is None:
             return None
         try:
@@ -248,10 +63,15 @@ class DeviceReadService:
                 MethodPayload(**params),
                 MethodPayload,
                 connection_id=connection_id,
+                timeout=self._mesh.settings.read_timeout_seconds,
             )
         except DeviceCallError as exc:
-            failure = self._fail(exc)
-            if failure is None:
+            if exc.not_delivered:
                 return None
-            raise failure from exc
+            if exc.outcome_unknown:
+                raise DeviceReadTimeout(exc.message or "the device did not answer in time") from exc
+            # The device's own error code (``details.aaCode``) wins over the MeshCall status.
+            aa_code = exc.details.get("aaCode") if isinstance(exc.details, dict) else None
+            code = aa_code if isinstance(aa_code, str) and aa_code else exc.code
+            raise DeviceReadError(code, exc.message or code) from exc
         return result.model_dump(mode="json")

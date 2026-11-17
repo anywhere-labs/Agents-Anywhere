@@ -1,7 +1,7 @@
 // The device-side dependencies of the client API (`DeviceTunnelApi`) that the composition root assembles from the
 // Runtime registry, the device link and the workspace service.
 import type { RuntimeRegistry } from '../application/index.js'
-import { workspaceCall, type WorkspaceServiceDeps } from '../link/index.js'
+import { uploadPreparedDownload, type WorkspaceServiceDeps } from '../link/index.js'
 import type { RuntimeCatalogs } from '../sync/index.js'
 
 /**
@@ -21,9 +21,9 @@ export function instanceCatalogs(registry: Pick<RuntimeRegistry, 'spec' | 'start
 }
 
 /**
- * `POST fs/read`: the prepared download goes to the Server's transfer relay through `fs.uploadPreparedDownload`, the
- * same handler `Workspace/call` runs (the file is checked against the roots, the bytes are sent in the background).
+ * `POST fs/read`: the prepared download goes to the Server's transfer relay through `fs.uploadPreparedDownload` (the
+ * file is checked against the roots, the bytes are sent in the background).
  */
 export function preparedDownloadUpload(workspace: WorkspaceServiceDeps): (params: Record<string, unknown>) => Promise<unknown> {
-  return async params => (await workspaceCall(workspace, { method: 'fs.uploadPreparedDownload', params })).result
+  return async params => uploadPreparedDownload(workspace, params)
 }

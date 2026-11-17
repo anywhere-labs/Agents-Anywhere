@@ -12,7 +12,6 @@ from agent_server.services.repository_ports import UserDeletionRepository
 
 if TYPE_CHECKING:
     from agent_server.infra.connector_rpc import ConnectorRpcManager
-    from agent_server.infra.terminal_broker import TerminalBroker
     from agent_server.services.session_runtime_state_cache import (
         SessionRuntimeStateCache,
     )
@@ -26,7 +25,6 @@ async def delete_user_account(
     user_id: str,
     store: UserDeletionRepository,
     manager: ConnectorRpcManager,
-    terminals: TerminalBroker,
     runtime_state_cache: SessionRuntimeStateCache,
     device_link: DeviceLinkRevoker,
 ) -> None:
@@ -51,7 +49,6 @@ async def delete_user_account(
                 user_id,
                 store,
                 manager,
-                terminals,
                 runtime_state_cache,
                 device_link,
             )

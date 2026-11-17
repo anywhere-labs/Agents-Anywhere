@@ -6,10 +6,13 @@ from typing import Any
 import pytest
 
 from agent_server.app import create_app
+from agent_server.core.device_runtime import RuntimeDiscoveryResponse
 from agent_server.infra.db import device_runtimes
+from agent_server.services.device_commands import CommandOutcome
 from agent_server.services.device_runtimes import (
-    DeviceRuntimeStartingError,
     DeviceRuntimeService,
+    DeviceRuntimeStartingError,
+    DeviceRuntimeUpgradeRequiredError,
 )
 from conftest import ApiV2TestClient as TestClient
 from sqlalchemy import insert
@@ -18,74 +21,33 @@ ADMIN_USER = "user1"
 ADMIN_PASSWORD = "secret"
 
 
-class FakeRuntimeRpc:
-    async def set_runtime_ingress_enabled(self, connector_id, runtime_id, enabled):
-        pass
+class FakeDevice:
+    """A v3 device: presence where the RPC manager sits and ``DeviceCommandService.send``."""
 
     def __init__(self, discovery: dict[str, Any]) -> None:
         self.discovery = discovery
         self.online = True
-        self.start_result: dict[str, Any] = {"ok": True}
+        self.start_result: dict[str, Any] = {"status": "running"}
         self.requests: list[tuple[str, str, dict[str, Any]]] = []
-        self.session_create_result: dict[str, Any] | None = None
 
     async def is_online(self, _connector_id: str) -> bool:
         return self.online
 
-    async def request(
-        self,
-        connector_id: str,
-        method: str,
-        params: dict[str, Any],
-        **_: Any,
-    ) -> dict[str, Any]:
-        self.requests.append((connector_id, method, params))
-        if method == "runtime.start":
-            return self.start_result
-        if method == "runtime.discover":
-            return self.discovery
-        if method == "runtime.capabilities":
-            return {"capabilitySet": {"revision": 1, "capabilities": []}}
-        if method == "runtime.modelCatalog":
-            return {
-                "catalog": {
-                    "runtime": params["runtime"],
-                    "revision": 1,
-                    "models": [],
-                }
-            }
-        if method == "runtime.permissionCatalog":
-            return {
-                "catalog": {
-                    "runtime": params["runtime"],
-                    "revision": 1,
-                    "permissions": [],
-                }
-            }
-        if method == "runtime.commands":
-            return {"commands": []}
-        if method == "session.create" and self.session_create_result is not None:
-            return self.session_create_result
-        return {"ok": True}
-
-    async def request_bound(
-        self,
-        connector_id: str,
-        method: str,
-        params: dict[str, Any],
-        **kwargs: Any,
-    ) -> tuple[dict[str, Any], str]:
-        return (
-            await self.request(connector_id, method, params, **kwargs),
-            "fake-connection",
-        )
-
-    async def is_connection_id_current(
-        self,
-        _connector_id: str,
-        connection_id: str,
-    ) -> bool:
+    async def is_connection_id_current(self, _connector_id: str, connection_id: str) -> bool:
         return connection_id == "fake-connection" and self.online
+
+    async def send(self, *, user_id, device_id, kind, command_id, payload, **_kwargs) -> CommandOutcome:
+        self.requests.append((device_id, kind, payload))
+        result = dict(self.start_result) if payload["active"] else {"status": "stopped"}
+        return CommandOutcome(command_id=command_id, result=result, replayed=False)
+
+
+def _applied(device: FakeDevice) -> list[tuple[str, bool]]:
+    return [(kind, payload["active"]) for _, kind, payload in device.requests]
+
+
+def _starts(device: FakeDevice) -> int:
+    return sum(1 for _, _, payload in device.requests if payload["active"])
 
 
 def _auth_headers(client: TestClient) -> dict[str, str]:
@@ -105,20 +67,23 @@ def _auth_headers(client: TestClient) -> dict[str, str]:
 def _make_client(
     tmp_path: Any,
     discovery: dict[str, Any],
-) -> tuple[TestClient, FakeRuntimeRpc, str, dict[str, str]]:
+) -> tuple[TestClient, FakeDevice, str, dict[str, str]]:
     app = create_app()
     client = TestClient(app)
     headers = _auth_headers(client)
     created = client.post("/connectors", headers=headers, json={"name": "dev"})
     assert created.status_code == 200, created.text
     connector_id = created.json()["connector"]["id"]
-    rpc = FakeRuntimeRpc(discovery)
+    rpc = FakeDevice(discovery)
     app.state.rpc = rpc
-    app.state.device_runtime_service = DeviceRuntimeService(
+    service = DeviceRuntimeService(
         app.state.store,
         rpc,
         app.state.timeline_broker,
     )
+    service.device_commands = rpc
+    app.state.device_runtime_service = service
+    asyncio.run(app.state.store.set_connector_link_contract(connector_id, "device-meshcall/1.0"))
     return client, rpc, connector_id, headers
 
 
@@ -196,7 +161,17 @@ def _discover_types(
     client: TestClient,
     connector_id: str,
     headers: dict[str, str],
+    discovery: dict[str, Any] | None = None,
 ) -> Any:
+    """What the device's ``runtime.types`` report stores, then the listing a client gets."""
+
+    if discovery is None:
+        discovery = client.app.state.rpc.discovery
+    asyncio.run(
+        client.app.state.device_runtime_service.ingest_runtime_types(
+            connector_id, RuntimeDiscoveryResponse.model_validate(discovery)
+        )
+    )
     response = client.post(
         f"/connectors/{connector_id}/runtime-types/discover",
         headers=headers,
@@ -205,7 +180,7 @@ def _discover_types(
     return response
 
 
-def test_v2_discovery_persists_types_without_creating_instances(tmp_path: Any) -> None:
+def test_reported_types_persist_without_creating_instances(tmp_path: Any) -> None:
     client, rpc, connector_id, headers = _make_client(
         tmp_path,
         _v2_discovery(implementation_type=None),
@@ -213,13 +188,7 @@ def test_v2_discovery_persists_types_without_creating_instances(tmp_path: Any) -
 
     response = _discover_types(client, connector_id, headers)
 
-    assert rpc.requests == [
-        (
-            connector_id,
-            "runtime.discover",
-            {},
-        )
-    ]
+    assert rpc.requests == []
     runtime_type = response.json()["runtimeTypes"][0]
     assert runtime_type == {
         "connectorId": connector_id,
@@ -274,7 +243,7 @@ def test_v2_discovery_persists_types_without_creating_instances(tmp_path: Any) -
     )
 
 
-def test_v2_create_and_rename_enforce_identity_and_name_invariants(
+def test_create_and_rename_enforce_identity_and_name_invariants(
     tmp_path: Any,
 ) -> None:
     client, rpc, connector_id, headers = _make_client(tmp_path, _v2_discovery())
@@ -308,7 +277,8 @@ def test_v2_create_and_rename_enforce_identity_and_name_invariants(
     assert runtime["defaults"] == {"home": "/tmp/codex"}
     assert runtime["capabilities"] == {"modelCatalog": True}
     assert runtime["createdAt"]
-    assert rpc.requests[0][1] == "runtime.validateConfig"
+    # An inactive instance sends nothing; the device validates its configuration in runtime.apply.
+    assert rpc.requests == []
 
     renamed = client.patch(
         f"/connectors/{connector_id}/runtimes/{runtime_id}",
@@ -353,7 +323,7 @@ def test_v2_create_and_rename_enforce_identity_and_name_invariants(
     assert detail.json()["runtimeId"] == runtime_id
 
 
-def test_v2_create_requires_config_and_does_not_persist_an_instance(
+def test_create_requires_config_and_does_not_persist_an_instance(
     tmp_path: Any,
 ) -> None:
     discovery = _v2_discovery()
@@ -376,7 +346,7 @@ def test_v2_create_requires_config_and_does_not_persist_an_instance(
     assert listed.json()["runtimes"] == []
 
 
-def test_v2_unavailable_type_can_be_created_configured_and_started(
+def test_unavailable_type_can_be_created_configured_and_started(
     tmp_path: Any,
 ) -> None:
     client, rpc, connector_id, headers = _make_client(
@@ -405,16 +375,12 @@ def test_v2_unavailable_type_can_be_created_configured_and_started(
     assert created.json()["configured"] is True
     assert created.json()["active"] is True
     assert created.json()["status"] == "running"
-    assert [request[1] for request in rpc.requests] == [
-        "runtime.validateConfig",
-        "runtime.start",
-    ]
-    assert rpc.requests[-1][1] == "runtime.start"
-    assert rpc.requests[-1][2]["runtime"] == "codex"
+    assert _applied(rpc) == [("runtime.apply", True)]
+    assert rpc.requests[-1][2]["runtimeType"] == "codex"
     assert rpc.requests[-1][2]["runtimeId"] == runtime_id
 
 
-def test_v2_create_active_requires_valid_config(tmp_path: Any) -> None:
+def test_create_active_requires_valid_config(tmp_path: Any) -> None:
     client, rpc, connector_id, headers = _make_client(tmp_path, _v2_discovery())
     _discover_types(client, connector_id, headers)
     rpc.requests.clear()
@@ -447,7 +413,7 @@ def test_v2_create_active_requires_valid_config(tmp_path: Any) -> None:
     assert listed.json()["runtimes"] == []
 
 
-def test_v2_named_instance_enforces_discovered_required_fields(
+def test_named_instance_enforces_discovered_required_fields(
     tmp_path: Any,
 ) -> None:
     discovery = _v2_discovery()
@@ -530,7 +496,7 @@ def test_v2_named_instance_enforces_discovered_required_fields(
     )
 
     assert created.status_code == 201, created.text
-    assert rpc.requests[-1][1] == "runtime.validateConfig"
+    assert rpc.requests == []
     runtime_id = created.json()["runtimeId"]
     rpc.requests.clear()
     rejected_update = client.put(
@@ -542,7 +508,7 @@ def test_v2_named_instance_enforces_discovered_required_fields(
     assert rpc.requests == []
 
 
-def test_v2_codex_named_instance_allows_optional_home_and_enforces_single_policy(
+def test_codex_named_instance_allows_optional_home_and_enforces_single_policy(
     tmp_path: Any,
 ) -> None:
     discovery = _v2_discovery(instance_policy="single", max_instances=1)
@@ -589,7 +555,7 @@ def test_v2_codex_named_instance_allows_optional_home_and_enforces_single_policy
     assert second.json()["detail"]["message"] == "runtime instance limit reached"
 
 
-def test_v2_create_enforces_runtime_type_instance_limit(tmp_path: Any) -> None:
+def test_create_enforces_runtime_type_instance_limit(tmp_path: Any) -> None:
     client, _, connector_id, headers = _make_client(
         tmp_path,
         _v2_discovery(max_instances=2),
@@ -626,7 +592,7 @@ def test_v2_create_enforces_runtime_type_instance_limit(tmp_path: Any) -> None:
     }
 
 
-def test_v2_lifecycle_sends_instance_identity_and_manual_delete_retires_it(
+def test_lifecycle_sends_instance_identity_and_manual_delete_retires_it(
     tmp_path: Any,
 ) -> None:
     client, rpc, connector_id, headers = _make_client(tmp_path, _v2_discovery())
@@ -646,18 +612,14 @@ def test_v2_lifecycle_sends_instance_identity_and_manual_delete_retires_it(
     assert created.status_code == 201, created.text
     runtime = created.json()
     runtime_id = runtime["runtimeId"]
-    assert [request[1] for request in rpc.requests] == [
-        "runtime.validateConfig",
-        "runtime.start",
-    ]
-    for _, _, params in rpc.requests:
-        assert params["runtime"] == "codex"
-        assert params["runtimeId"] == runtime_id
-        assert params["name"] == "Work Codex"
-        assert params["config"] == {"home": "/work/codex"}
-        assert isinstance(params["configRevision"], int)
-        assert 0 <= params["configRevision"] <= 9_007_199_254_740_991
-        assert "runtimeType" not in params
+    assert _applied(rpc) == [("runtime.apply", True)]
+    params = rpc.requests[0][2]
+    assert params["runtimeType"] == "codex"
+    assert params["runtimeId"] == runtime_id
+    assert params["name"] == "Work Codex"
+    assert params["config"] == {"home": "/work/codex"}
+    assert isinstance(params["revision"], int)
+    assert 0 <= params["revision"] <= 9_007_199_254_740_991
 
     rpc.requests.clear()
     renamed = client.patch(
@@ -674,13 +636,8 @@ def test_v2_lifecycle_sends_instance_identity_and_manual_delete_retires_it(
         headers=headers,
     )
     assert cleared.status_code == 200, cleared.text
-    assert rpc.requests == [
-        (
-            connector_id,
-            "runtime.stop",
-            {"runtime": "codex", "runtimeId": runtime_id},
-        )
-    ]
+    assert _applied(rpc) == [("runtime.apply", False)]
+    assert rpc.requests[0][2]["runtimeId"] == runtime_id
     cleared_runtime = cleared.json()
     assert cleared_runtime["runtimeId"] == runtime_id
     assert cleared_runtime["name"] == "Renamed Codex"
@@ -715,94 +672,6 @@ def test_v2_lifecycle_sends_instance_identity_and_manual_delete_retires_it(
         "code": "runtime_conflict",
         "message": "runtime type is not currently present on the connector",
     }
-
-
-def test_v2_runtime_read_rpcs_resolve_named_instance_dual_identity(
-    tmp_path: Any,
-) -> None:
-    client, rpc, connector_id, headers = _make_client(tmp_path, _v2_discovery())
-    _discover_types(client, connector_id, headers)
-    created = client.post(
-        f"/connectors/{connector_id}/runtimes",
-        headers=headers,
-        json={
-            "runtimeType": "codex",
-            "name": "Read APIs",
-            "config": {"home": "/read/apis"},
-            "active": True,
-        },
-    )
-    assert created.status_code == 201, created.text
-    runtime_id = created.json()["runtimeId"]
-    rpc.requests.clear()
-
-    paths = [
-        ("capabilities", "runtime.capabilities", None),
-        ("catalogs/model", "runtime.modelCatalog", 200),
-        ("catalogs/permission", "runtime.permissionCatalog", 200),
-        ("commands", "runtime.commands", 100),
-    ]
-    for path, _, _ in paths:
-        response = client.get(
-            f"/connectors/{connector_id}/runtimes/{runtime_id}/{path}",
-            headers=headers,
-        )
-        assert response.status_code == 200, response.text
-
-    assert [request[1] for request in rpc.requests] == [
-        method for _, method, _ in paths
-    ]
-    for (_, _, limit), (_, _, params) in zip(paths, rpc.requests, strict=True):
-        expected: dict[str, Any] = {
-            "runtime": "codex",
-            "runtimeId": runtime_id,
-        }
-        if limit is not None:
-            expected["limit"] = limit
-        assert params == expected
-
-
-def test_invalid_v2_discovery_is_not_accepted_as_legacy(tmp_path: Any) -> None:
-    invalid = _v2_discovery()
-    invalid["runtimes"] = _legacy_discovery()["runtimes"]
-    client, _, connector_id, headers = _make_client(tmp_path, invalid)
-
-    response = client.post(
-        f"/connectors/{connector_id}/runtime-types/discover",
-        headers=headers,
-    )
-
-    assert response.status_code == 502, response.text
-    assert response.json()["detail"]["code"] == "invalid_runtime_discovery"
-    assert (
-        client.get(
-            f"/connectors/{connector_id}/runtimes",
-            headers=headers,
-        ).json()["runtimes"]
-        == []
-    )
-
-
-def test_v2_discovery_requires_contract_nullable_fields(tmp_path: Any) -> None:
-    missing_runtime_types: dict[str, Any] = {}
-    client, rpc, connector_id, headers = _make_client(tmp_path, missing_runtime_types)
-
-    response = client.post(
-        f"/connectors/{connector_id}/runtime-types/discover",
-        headers=headers,
-    )
-    assert response.status_code == 502, response.text
-    assert response.json()["detail"]["code"] == "invalid_runtime_discovery"
-
-    missing_nullable_field = _v2_discovery()
-    del missing_nullable_field["runtimeTypes"][0]["reason"]
-    rpc.discovery = missing_nullable_field
-    response = client.post(
-        f"/connectors/{connector_id}/runtime-types/discover",
-        headers=headers,
-    )
-    assert response.status_code == 502, response.text
-    assert response.json()["detail"]["code"] == "invalid_runtime_discovery"
 
 
 def test_dashboard_snapshot_pushes_runtime_lifecycle(tmp_path: Any) -> None:
@@ -920,7 +789,7 @@ def test_starting_phase_is_exposed_and_blocks_restart_until_running(tmp_path):
     assert syncing["reason"] == phase["message"]
     assert syncing["available"] is False
     runtime_id = syncing["runtimeId"]
-    starts_before = sum(1 for _, method, _ in rpc.requests if method == "runtime.start")
+    starts_before = _starts(rpc)
 
     # A session operation while syncing must not restart the runtime.
     service = client.app.state.device_runtime_service
@@ -930,7 +799,7 @@ def test_starting_phase_is_exposed_and_blocks_restart_until_running(tmp_path):
     assert excinfo.value.detail["code"] == "runtime_starting"
     assert excinfo.value.detail["retryable"] is True
     assert excinfo.value.detail["phase"] == phase
-    assert sum(1 for _, method, _ in rpc.requests if method == "runtime.start") == starts_before
+    assert _starts(rpc) == starts_before
 
     # The connector keeps reporting progress, then finishes.
     later = asyncio.run(service.apply_status(
@@ -954,7 +823,7 @@ def test_starting_phase_is_exposed_and_blocks_restart_until_running(tmp_path):
 
 
 def test_starting_without_phase_still_retries_start(tmp_path):
-    """Older connectors report a bare `starting`; keep re-issuing runtime.start for them."""
+    """A bare `starting` without a phase does not block another runtime.apply."""
 
     client, rpc, connector_id, headers = _make_client(
         tmp_path, _v2_discovery(runtime_type="dsh"),
@@ -967,9 +836,40 @@ def test_starting_without_phase_still_retries_start(tmp_path):
     )
     assert created.status_code == 201, created.text
     runtime_id = created.json()["runtimeId"]
-    starts_before = sum(1 for _, method, _ in rpc.requests if method == "runtime.start")
+    starts_before = _starts(rpc)
     rpc.start_result = {"status": "running"}
     service = client.app.state.device_runtime_service
     result = asyncio.run(service.ensure_active_running(connector_id, runtime_id, user_id=None))
     assert result.status == "running"
-    assert sum(1 for _, method, _ in rpc.requests if method == "runtime.start") == starts_before + 1
+    assert _starts(rpc) == starts_before + 1
+
+
+def test_v2_connector_instance_management_needs_an_upgrade(tmp_path: Any) -> None:
+    client, rpc, connector_id, headers = _make_client(tmp_path, _v2_discovery())
+    _discover_types(client, connector_id, headers)
+    created = client.post(
+        f"/connectors/{connector_id}/runtimes",
+        headers=headers,
+        json={"runtimeType": "codex", "name": "Work Codex", "config": {"home": "/work"}, "active": False},
+    )
+    assert created.status_code == 201, created.text
+    runtime_id = created.json()["runtimeId"]
+    store = client.app.state.store
+    service = client.app.state.device_runtime_service
+    # The same device linking again over the v2 socket keeps only its metadata.
+    asyncio.run(store.set_connector_link_contract(connector_id, None))
+
+    user_id = asyncio.run(store.get_connector(connector_id)).userId
+    for attempt in (
+        lambda: service.set_active(connector_id, runtime_id, True, user_id=user_id),
+        lambda: service.put_config(connector_id, runtime_id, {"home": "/other"}, user_id=user_id),
+        lambda: service.rename_runtime(connector_id, runtime_id, "Other", user_id=user_id),
+        lambda: service.delete_config(connector_id, runtime_id, user_id=user_id),
+    ):
+        with pytest.raises(DeviceRuntimeUpgradeRequiredError) as excinfo:
+            asyncio.run(attempt())
+        assert excinfo.value.status_code == 409
+        assert excinfo.value.detail["code"] == "device_upgrade_required"
+    assert rpc.requests == []
+    stored = asyncio.run(store.get_device_runtime(connector_id, runtime_id))
+    assert stored["config"] == {"home": "/work"}

@@ -1,8 +1,8 @@
 """Read, change and deliver user-chosen device settings.
 
-The server is the source of truth: a change is stored first and then handed to
-the connector if it is online. A connector that connects later receives the
-stored settings once its socket is ready, so offline changes are not lost.
+The server is the source of truth: a change is stored first and then handed to a v3 device with
+``device.settings.apply`` if it is online. A device that links later receives the stored settings in
+``LinkWelcome.desired``, so offline changes are not lost. v2 Connectors keep the stored value only (D4).
 """
 
 from __future__ import annotations
@@ -14,7 +14,6 @@ from typing import Any, Protocol
 from loguru import logger
 
 from agent_server.core.device_settings import (
-    DEVICE_SETTINGS_APPLY_METHOD,
     DEVICE_SETTINGS_COMMAND,
     ConnectorDeviceSettings,
     ConnectorDeviceSettingsPatch,
@@ -23,7 +22,6 @@ from agent_server.core.device_settings import (
     device_settings_from_stored,
 )
 from agent_server.core.models import ConnectorView
-from agent_server.services.device_runtimes import device_commands_of
 
 # Delivery is a courtesy on top of the stored value; never hold a client
 # request or a connection's startup on a slow device for long.
@@ -42,17 +40,6 @@ class ConnectorDeviceSettingsRepository(Protocol):
     ) -> dict[str, Any]: ...
 
 
-class DeviceSettingsRequester(Protocol):
-    async def request(
-        self,
-        connector_id: str,
-        method: str,
-        params: dict[str, Any],
-        *,
-        timeout: float = 30,
-    ) -> Any: ...
-
-
 async def get_device_settings(
     store: ConnectorDeviceSettingsRepository,
     connector_id: str,
@@ -68,39 +55,35 @@ async def get_device_settings(
 
 async def update_device_settings(
     store: ConnectorDeviceSettingsRepository,
-    requester: DeviceSettingsRequester,
+    commands: Any,
     connector_id: str,
     patch: ConnectorDeviceSettingsPatch,
     *,
     user_id: str,
 ) -> tuple[ConnectorDeviceSettings, bool]:
-    """Store the change, then try to deliver it; returns the settings and delivery."""
+    """Store the change, then try to deliver it to a v3 device; returns the settings and delivery.
+
+    ``commands``: the ``DeviceCommandService``.
+    """
     current = await get_device_settings(store, connector_id, user_id=user_id)
     settings = apply_device_settings_patch(current, patch)
     await store.update_connector_device_settings(connector_id, settings.model_dump())
     link_contract = getattr(store, "connector_link_contract", None)
-    if link_contract is not None and await link_contract(connector_id):
-        delivered = await deliver_device_settings_v3(requester, connector_id, settings)
-    else:
-        delivered = await deliver_device_settings(requester, connector_id, settings)
-    return settings, delivered
+    if link_contract is None or not await link_contract(connector_id):
+        return settings, False
+    return settings, await deliver_device_settings_v3(commands, connector_id, settings)
 
 
 async def deliver_device_settings_v3(
-    requester: Any,
+    commands: Any,
     connector_id: str,
     settings: ConnectorDeviceSettings,
-    *,
-    commands: Any | None = None,
 ) -> bool:
     """v3 devices: the ``device.settings.apply`` command.
 
     Offline (or the outcome unknown), the stored value still reaches the device in
     ``LinkWelcome.desired.deviceSettings`` when it links again, so the change is never lost.
     """
-    commands = commands or device_commands_of(requester)
-    if commands is None:
-        return False
     try:
         outcome = await commands.send(
             user_id=None,
@@ -120,43 +103,3 @@ async def deliver_device_settings_v3(
         )
         return False
     return isinstance(outcome.result, dict) and outcome.result.get("applied") is True
-
-
-async def deliver_stored_device_settings(
-    store: ConnectorDeviceSettingsRepository,
-    requester: DeviceSettingsRequester,
-    connector_id: str,
-) -> bool:
-    """Hand the stored settings to a connector that has just connected."""
-    try:
-        stored = await store.get_connector_device_settings(connector_id)
-    except KeyError:
-        return False
-    return await deliver_device_settings(
-        requester, connector_id, device_settings_from_stored(stored)
-    )
-
-
-async def deliver_device_settings(
-    requester: DeviceSettingsRequester,
-    connector_id: str,
-    settings: ConnectorDeviceSettings,
-) -> bool:
-    """Return whether the connector confirmed; offline or older connectors do not."""
-    try:
-        result = await requester.request(
-            connector_id,
-            DEVICE_SETTINGS_APPLY_METHOD,
-            {"settings": settings.model_dump()},
-            timeout=DELIVERY_TIMEOUT_SECONDS,
-        )
-    except asyncio.CancelledError:
-        raise
-    except Exception as exc:  # noqa: BLE001 - offline, timeout or an older connector
-        logger.info(
-            "device settings not delivered connector_id={} error={}",
-            connector_id,
-            str(exc) or exc.__class__.__name__,
-        )
-        return False
-    return isinstance(result, dict) and result.get("applied") is True

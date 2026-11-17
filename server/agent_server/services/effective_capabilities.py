@@ -32,7 +32,6 @@ from agent_server.core.capabilities import (
 from agent_server.core.message_queue import MESSAGE_QUEUE_MAX_ITEMS
 from agent_server.core.models import SessionView
 from agent_server.core.protocol import ProtocolCapability, ProtocolCapabilitySet
-from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.services.connector_presence import (
     ConnectorPresencePort,
     with_effective_session_connector_status,
@@ -91,51 +90,6 @@ class SessionCapabilityRepository(Protocol):
 
 class SessionCapabilityPublisher(Protocol):
     async def publish(self, session_id: str, payload: dict[str, Any]) -> None: ...
-
-
-async def read_runtime_capability_facts(
-    manager: ConnectorRpcManager,
-    connector_id: str,
-    *,
-    runtime: str,
-    runtime_id: str,
-) -> ProtocolCapabilitySet:
-    """Read current instance facts before admitting a new session."""
-    result = await manager.request(
-        connector_id, "runtime.capabilities",
-        {"runtime": runtime, "runtimeId": runtime_id}, timeout=10,
-    )
-    if not isinstance(result, dict) or not isinstance(result.get("capabilitySet"), dict):
-        raise TypeError("connector did not return a runtime capability set")
-    try:
-        return ProtocolCapabilitySet.model_validate(result["capabilitySet"])
-    except ValueError as exc:
-        raise ValueError("connector returned an invalid runtime capability set") from exc
-
-
-async def read_session_capability_facts(
-    manager: ConnectorRpcManager,
-    session: SessionView,
-    *,
-    runtime_id: str,
-) -> ProtocolCapabilitySet:
-    """Use the same live facts for displayed capabilities and action admission."""
-    params: dict[str, Any] = {
-        "sessionId": session.id,
-        "runtime": session.runtime,
-        "runtimeId": runtime_id,
-    }
-    if session.externalSessionId:
-        params["externalSessionId"] = session.externalSessionId
-    result = await manager.request(
-        session.connectorId, "session.capabilities", params, timeout=10,
-    )
-    if not isinstance(result, dict) or not isinstance(result.get("capabilitySet"), dict):
-        raise ValueError("connector did not return a capability set")
-    try:
-        return ProtocolCapabilitySet.model_validate(result["capabilitySet"])
-    except ValueError as exc:
-        raise ValueError("connector returned an invalid capability set") from exc
 
 
 async def project_session_capabilities(

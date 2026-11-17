@@ -10,23 +10,18 @@ from starlette.requests import HTTPConnection
 from agent_server.core.auth import verify_user_access_claims
 from agent_server.core.e2ee_settings import E2eeSettings
 from agent_server.core.models import UserView
-from agent_server.infra.connector_gateway import ConnectorGateway
 from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.infra.device_mesh import DeviceMesh
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.session_watch import SessionWatchHub
-from agent_server.infra.terminal_broker import TerminalBroker
-from agent_server.infra.terminal_roots import TerminalRootStore
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.services.attachments import AttachmentService
 from agent_server.services.catalogs import CatalogService
 from agent_server.services.client_forward import ClientForwarder
-from agent_server.services.connector_files import ConnectorFileService
 from agent_server.services.connector_ingest import ConnectorIngestService
 from agent_server.services.connector_notifications import ConnectorNotificationService
-from agent_server.services.connector_realtime import ConnectorRealtimeService
-from agent_server.services.connector_shell import ConnectorShellService
+from agent_server.services.device_commands import DeviceCommandService
 from agent_server.services.device_reads import DeviceReadService
 from agent_server.services.device_runtimes import (
     DeviceRuntimeError,
@@ -41,8 +36,6 @@ from agent_server.services.model_channels import (
 from agent_server.services.model_config import ModelConfigError, ModelConfigService
 from agent_server.services.session_run import SessionRunConflictError, SessionRunService
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
-from agent_server.services.terminal import TerminalService
-from agent_server.services.terminal_relay import TerminalRelayService
 from agent_server.services.tokens_link import TokensLinkError, TokensLinkService
 from agent_server.services.usage_events import UsageRecorder
 
@@ -60,12 +53,10 @@ def get_catalog_service(conn: HTTPConnection) -> CatalogService:
 
 
 def get_connector_ingest_service(conn: HTTPConnection) -> ConnectorIngestService:
-    realtime = get_connector_realtime_service(conn)
     return ConnectorIngestService(
         conn.app.state.store,
         ConnectorNotificationService(
             conn.app.state.store,
-            realtime,
             usage_recorder=get_usage_recorder(conn),
             e2ee_settings=lambda: get_e2ee_settings(conn),
         ),
@@ -80,28 +71,6 @@ def get_connector_ingest_service(conn: HTTPConnection) -> ConnectorIngestService
 
 def get_usage_recorder(conn: HTTPConnection) -> UsageRecorder:
     return conn.app.state.usage_recorder
-
-
-def get_connector_realtime_service(conn: HTTPConnection) -> ConnectorRealtimeService:
-    return ConnectorRealtimeService(
-        conn.app.state.shell_tasks,
-        conn.app.state.terminal_broker,
-        conn.app.state.terminal_stream_hub,
-    )
-
-
-def get_connector_shell_service(conn: HTTPConnection) -> ConnectorShellService:
-    return ConnectorShellService(
-        ConnectorGateway(conn.app.state.rpc),
-        conn.app.state.shell_tasks,
-    )
-
-
-def get_connector_file_service(conn: HTTPConnection) -> ConnectorFileService:
-    return ConnectorFileService(
-        ConnectorGateway(conn.app.state.rpc),
-        conn.app.state.fs_downloads,
-    )
 
 
 def get_session_run_service(conn: HTTPConnection) -> SessionRunService:
@@ -128,7 +97,6 @@ def session_run_service_for(state: Any) -> SessionRunService:
 
     return SessionRunService(
         state.store,
-        state.rpc,
         state.device_runtime_service,
         usage_recorder=state.usage_recorder,
         prepare_model_channel=prepare_channel,
@@ -200,26 +168,6 @@ def get_model_config_service(conn: HTTPConnection) -> ModelConfigService:
     return get_tokens_link_service(conn).model_config
 
 
-def get_terminal_service(conn: HTTPConnection) -> TerminalService:
-    return TerminalService(
-        conn.app.state.store,
-        conn.app.state.rpc,
-        conn.app.state.terminal_broker,
-    )
-
-
-def get_terminal_roots(conn: HTTPConnection) -> TerminalRootStore:
-    return conn.app.state.terminal_roots
-
-
-def get_terminal_relay_service(conn: HTTPConnection) -> TerminalRelayService:
-    return TerminalRelayService(
-        conn.app.state.terminal_roots,
-        conn.app.state.rpc,
-        conn.app.state.terminal_broker,
-    )
-
-
 def get_rpc(conn: HTTPConnection) -> ConnectorRpcManager:
     return conn.app.state.rpc
 
@@ -230,6 +178,10 @@ def get_device_mesh(conn: HTTPConnection) -> DeviceMesh:
 
 def get_device_reads(conn: HTTPConnection) -> DeviceReadService:
     return conn.app.state.device_reads
+
+
+def get_device_commands(conn: HTTPConnection) -> DeviceCommandService:
+    return conn.app.state.device_commands
 
 
 def get_client_forwarder(conn: HTTPConnection) -> ClientForwarder:
@@ -244,10 +196,6 @@ def get_device_planning(conn: HTTPConnection) -> Any:
 
 def get_session_watch(conn: HTTPConnection) -> SessionWatchHub:
     return conn.app.state.session_watch
-
-
-def get_terminal_broker(conn: HTTPConnection) -> TerminalBroker:
-    return conn.app.state.terminal_broker
 
 
 def get_fs_downloads(conn: HTTPConnection) -> FsDownloadRelayManager:
@@ -334,4 +282,9 @@ def require_admin(user: UserView = Depends(current_user)) -> UserView:
 
 def get_runtime_workflow_service(conn: HTTPConnection):
     from agent_server.services.runtime_workflows import RuntimeWorkflowService
-    return RuntimeWorkflowService(conn.app.state.store, conn.app.state.rpc, conn.app.state.device_runtime_service)
+    return RuntimeWorkflowService(
+        conn.app.state.store,
+        conn.app.state.device_runtime_service,
+        conn.app.state.device_commands,
+        conn.app.state.device_reads,
+    )

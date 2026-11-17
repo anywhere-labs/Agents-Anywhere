@@ -10,11 +10,6 @@ export const REGISTERED_SERVICES = {
     ],
     "aa.device.v1.Commands": [
       "status",
-      "sessionSendMessage",
-      "sessionSteer",
-      "sessionInterrupt",
-      "sessionRespondNotice",
-      "sessionSelect",
       "sessionCreationBegin",
       "sessionCreationRespond",
       "sessionCreationCancel",
@@ -22,15 +17,6 @@ export const REGISTERED_SERVICES = {
       "workspacePreparationReserve",
       "workspacePreparationRespond",
       "workspacePreparationCancel",
-      "sessionPlanning",
-      "sessionGoal",
-      "sessionQueueUpdate",
-      "sessionQueueDelete",
-      "sessionQueueRetry",
-      "sessionQueueSendNow",
-      "sessionQueueResume",
-      "sessionQueueReorder",
-      "sessionQueueClear",
       "sessionSync",
       "runtimeApply",
       "deviceSettingsApply",
@@ -43,29 +29,14 @@ export const REGISTERED_SERVICES = {
       "outbox",
       "ackOutbox"
     ],
-    "aa.device.v1.Runtime": [
-      "catalogs"
-    ],
     "aa.device.v1.Sessions": [
-      "snapshot",
       "watch",
-      "notices",
-      "state",
-      "capabilities",
-      "queue",
       "creationGet",
       "workspacePreparationGet"
     ],
     "aa.device.v1.Store": [
-      "read",
-      "changesSince",
       "readBlob",
-      "exportShare",
-      "planDocument"
-    ],
-    "aa.device.v1.Workspace": [
-      "call",
-      "terminalOutput"
+      "exportShare"
     ]
   },
   "required": {

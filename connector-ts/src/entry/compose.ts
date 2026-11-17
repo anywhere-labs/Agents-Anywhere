@@ -221,9 +221,8 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
         const readers = new DeviceReaders(store, clock.nowIso, facts, history, prepared)
         const watch = { store, feed, now: clock.nowIso }
         const workspace = workspaceMethods(files, new ShellOps(policy), terminals ?? undefined)
-        // `aa.device.v1.Workspace` in normal mode; its prepared-download upload also serves `POST fs/read` of the client API.
+        // Terminal readers of `Client/subscribe` and the prepared-download upload behind `POST fs/read`.
         const workspaceService: WorkspaceServiceDeps = {
-          methods: workspace,
           ...(terminals !== null ? { terminals } : {}),
           preparedFile: params => files.preparedFile(params),
           upload: deviceTransferUploader(settings.serverUrl, handshake, egress),
@@ -284,7 +283,6 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
             ...(deviceTrust !== null ? { secure: deviceTrust.secure } : {}),
             // Normal mode: the client API the secure channel answers, as `aa.device.v1.Client`.
             client: tunnel,
-            sessionCommands: sessionId => sessionCommands.get(sessionId),
           },
           egress,
           logger,

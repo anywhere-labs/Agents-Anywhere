@@ -1,7 +1,7 @@
 {
   "$id": "urn:agents-anywhere:device-meshcall:1.0:stream-chunk",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "One item of a large read (``Sessions/snapshot``, ``Store/readBlob``...).",
+  "description": "One item of a large read (``Store/readBlob``, ``Store/exportShare``, ``Client/call``).",
   "properties": {
     "chunk": {
       "anyOf": [

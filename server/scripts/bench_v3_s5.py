@@ -5,7 +5,7 @@ Two measurements, both against a real MeshCall Router (``9334405``):
 ``firstscreen``
     2.x baseline: ``GET /api/v2/sessions/{id}/snapshot`` on a session with N
     timeline items, served from PostgreSQL (the v2 read path). v3 read-through:
-    the same items fetched from a fake device with ``Sessions/snapshot`` through
+    the same items fetched from a fake device with ``Client/call`` (``GET /snapshot``) through
     the Router, with the device's home link simulated by a delay proxy
     (one-way latency + uplink bandwidth). The client's 4G leg is identical for
     both and is added as a model (RTT + bytes / downlink).
@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import base64
 import contextlib
 import hashlib
 import json
@@ -40,7 +39,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import zlib
 from pathlib import Path
 from typing import Any
 
@@ -381,10 +379,8 @@ async def v2_snapshot_baseline(items_count: int, runs: int) -> dict[str, Any]:
     return results
 
 
-async def v3_read_through(
-    items_count: int, runs: int, link: dict[str, float], *, deflate: bool = False
-) -> dict[str, Any]:
-    from agent_server.core.device_meshcall import ClientSnapshotRequest, StreamChunk
+async def v3_read_through(items_count: int, runs: int, link: dict[str, float]) -> dict[str, Any]:
+    from agent_server.core.device_meshcall import ClientCallItem, ClientCallRequest
     from scripts.v3_fake_device import FakeDevice
 
     router = RouterProcess()
@@ -399,28 +395,35 @@ async def v3_read_through(
         session = device.state.session("sess_bench")
         session.items = timeline_items("sess_bench", items_count)
         session.head_seq = items_count
+
+        def snapshot(request: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+            items = session.items[-100:]
+            return 200, {
+                "timeline": {"items": items, "nextSeq": session.head_seq, "hasMore": len(session.items) > 100},
+                "notices": [],
+                "eventCursor": f"seq:{session.head_seq}",
+            }
+
+        device.state.client_handler = snapshot
+        request = ClientCallRequest(
+            route="session.snapshot",
+            method="GET",
+            path="/api/v2/sessions/sess_bench/snapshot",
+            query={"limit": "100"},
+            caller={"userId": "usr_bench"},
+        )
         samples: list[float] = []
         size = 0
         for _ in range(runs + 3):
             start = time.perf_counter()
             stream = mesh.call_server_stream(
-                "aa.device.v1.Sessions",
-                "snapshot",
-                ClientSnapshotRequest(sessionId="sess_bench", limit=100, encoding="deflate" if deflate else None),
-                StreamChunk,
-                instance="dev_bench",
-                timeout=10,
+                "aa.device.v1.Client", "call", request, ClientCallItem, instance="dev_bench", timeout=10
             )
-            chunks = [chunk async for chunk in stream]
-            if deflate:
-                wire = len(chunks[0].chunk)
-                body = zlib.decompress(base64.b64decode(chunks[0].chunk)).decode()
-            else:
-                body = json.dumps(chunks[0].chunk)
-                wire = len(body)
+            items = [item.root async for item in stream]
+            body = "".join(str(item.chunk) for item in items if item.kind == "chunk")
             samples.append((time.perf_counter() - start) * 1000)
             size = len(body)
-        return {"bytes": size, "wireBytes": wire, **summary(samples[3:])}
+        return {"bytes": size, "wireBytes": size, **summary(samples[3:])}
     finally:
         await device.stop()
         await mesh.close()
@@ -440,8 +443,6 @@ async def firstscreen(args: argparse.Namespace) -> dict[str, Any]:
         "home_slow": {"one_way_ms": args.home_one_way_ms * 2, "up_mbps": args.home_up_mbps / 4, "down_mbps": 50},
     }
     v3 = {name: await v3_read_through(args.items, args.runs, link) for name, link in links.items()}
-    for name in ("home_broadband", "home_slow"):
-        v3[f"{name}_deflate"] = await v3_read_through(args.items, args.runs, links[name], deflate=True)
     full = v2[f"items_{args.items}"]
     empty = v2["items_0"]
     # v3 keeps everything the v2 snapshot does except the timeline read; the device leg replaces it.
@@ -494,13 +495,13 @@ def device_worker_main() -> None:
 async def capacity(args: argparse.Namespace) -> dict[str, Any]:
     from agent_server.core.device_meshcall import (
         ChangesEvent,
+        CommandStatusRequest,
+        CommandStatusResponse,
         LinkAttachItem,
         LinkAttachRequest,
         OutboxItem,
         OutboxOpenRequest,
         SessionWatchRequest,
-        StoreReadRequest,
-        StoreReadResponse,
     )
 
     router = RouterProcess(
@@ -612,10 +613,10 @@ async def capacity(args: argparse.Namespace) -> dict[str, Any]:
             device_id = random.choice(ids)
             t = time.perf_counter()
             await mesh.call_unary(
-                "aa.device.v1.Store",
-                "read",
-                StoreReadRequest(sessionId="sess_x", mode="latest"),
-                StoreReadResponse,
+                "aa.device.v1.Commands",
+                "status",
+                CommandStatusRequest(commandId="cmd_bench"),
+                CommandStatusResponse,
                 instance=device_id,
                 timeout=10,
             )

@@ -23,7 +23,7 @@ Design rules encoded here:
 
 from __future__ import annotations
 
-from typing import Annotated, Any, ClassVar, Literal, NamedTuple, get_args
+from typing import Annotated, Any, ClassVar, Literal, NamedTuple
 
 from pydantic import (
     BaseModel,
@@ -47,7 +47,6 @@ from agent_server.core.goal.models import (
 from agent_server.core.message_queue import SessionQueueState
 from agent_server.core.models import NoticeIn
 from agent_server.core.planning.models import (
-    PlanDocument,
     PlanningCreationIntent,
     PlanningRequest,
     PlanningResponse,
@@ -251,7 +250,7 @@ class PendingCommand(CommandCall):
 
 
 class StreamChunk(DeviceModel):
-    """One item of a large read (``Sessions/snapshot``, ``Store/readBlob``...)."""
+    """One item of a large read (``Store/readBlob``, ``Store/exportShare``, ``Client/call``)."""
 
     seq: Seq
     chunk: dict[str, Any] | str
@@ -660,43 +659,6 @@ class UsageReportOut(DeviceModel):
 # ---------------------------------------------------------------------------
 
 
-class ClientSnapshotRequest(DeviceModel):
-    sessionId: NonEmpty
-    limit: int = Field(default=100, ge=1, le=500)
-    byteBudget: int = Field(default=1024 * 1024, ge=4096)
-
-
-class StoreReadRequest(DeviceModel):
-    sessionId: NonEmpty
-    mode: Literal["latest", "before", "after"]
-    cursor: Seq | None = None
-    limit: int = Field(default=100, ge=1, le=500)
-    byteBudget: int = Field(default=1024 * 1024, ge=4096)
-
-
-class StoreReadResponse(DeviceModel):
-    items: list[dict[str, Any]] = Field(default_factory=list)
-    headSeq: Seq
-    resetSeq: Seq
-    hasMore: bool
-    oldestOrderSeq: int | None = None
-
-
-class ChangesSinceRequest(DeviceModel):
-    sessionId: NonEmpty
-    afterSeq: Seq
-    limit: int = Field(default=500, ge=1, le=2000)
-    byteBudget: int = Field(default=1024 * 1024, ge=4096)
-
-
-class ChangesSinceResponse(DeviceModel):
-    events: list[ProtocolEventEnvelope] = Field(default_factory=list)
-    toSeq: Seq
-    resetSeq: Seq
-    complete: bool
-    snapshotRequired: bool = False
-
-
 class CommandStatusRequest(DeviceModel):
     commandId: NonEmpty
 
@@ -707,59 +669,6 @@ class CommandStatusResponse(DeviceModel):
     outcome: CommandOutcome | None = None
     r: dict[str, Any] | None = None
     e: LinkError | None = None
-
-
-class SessionRequest(DeviceModel):
-    """Request of a read scoped to one session (``Sessions/notices``, ``capabilities``, ``queue``, …)."""
-
-    sessionId: NonEmpty
-
-
-class SessionStateRequest(SessionRequest):
-    """``Sessions/state``: the runtime state with both parts, or only ``part``."""
-
-    part: Literal["planning", "goal"] | None = None
-
-
-class SessionNoticesResponse(DeviceModel):
-    sessionId: NonEmpty
-    notices: list[NoticeIn] = Field(default_factory=list)
-
-
-class SessionStateResponse(DeviceModel):
-    """``{state, planning, goal}`` without ``part``; ``{planning}`` or ``{goal}`` with it."""
-
-    state: SessionRuntimeState | None = None
-    planning: PlanningState | None = None
-    goal: GoalState | None = None
-
-
-class SessionCapabilitiesResponse(DeviceModel):
-    sessionId: NonEmpty
-    capabilitySet: ProtocolCapabilitySet | None = None
-
-
-class SessionQueueResponse(DeviceModel):
-    queue: SessionQueueState
-
-
-class RuntimeCatalogsResponse(DeviceModel):
-    """``Runtime/catalogs``: ``catalogs`` is empty while the session is not open on the device."""
-
-    sessionId: NonEmpty
-    catalogs: SessionCatalogs = Field(default_factory=SessionCatalogs)
-
-
-class PlanDocumentRequest(SessionRequest):
-    """Without ``planId``: every revision (``{plans}``); with ``planId`` and ``revision``: that one (``{document}``)."""
-
-    planId: str | None = None
-    revision: int | None = Field(default=None, ge=1)
-
-
-class PlanDocumentResponse(DeviceModel):
-    plans: list[PlanDocument] | None = None
-    document: PlanDocument | None = None
 
 
 class WorkflowTarget(DeviceModel):
@@ -1143,82 +1052,8 @@ class PreviewCloseResult(DeviceModel):
     closed: bool
 
 
-# ---------------------------------------------------------------------------
-# Workspace (normal mode only): the device's files, terminals and shell
-# ---------------------------------------------------------------------------
-#
-# ``Workspace/call`` carries the v2 workspace methods with their v2 params and results unchanged
-# (v2 ``connector/connector/server/local_rpc.py``), so the Server's v2 routes forward them as they are.
-# Terminal output is ``Workspace/terminalOutput``; file bytes never travel on MeshCall: a download is
-# ``fs.prepareDownload`` then ``fs.uploadPreparedDownload``, on which the device ``PUT``s the file to
-# ``/api/v3/device/transfers/{transferId}`` (the relay ``Store/readBlob`` uses). In E2EE ``required``
-# mode the service is not registered: the same methods run inside ``Secure/channel``.
-
-WorkspaceMethod = Literal[
-    "fs.readDir",
-    "fs.readText",
-    "fs.writeFile",
-    "fs.prepareDownload",
-    "fs.uploadPreparedDownload",
-    "terminal.create",
-    "terminal.list",
-    "terminal.rename",
-    "terminal.setPersistent",
-    "terminal.close",
-    "terminal.write",
-    "terminal.resize",
-    "terminal.snapshot",
-    "shell.exec",
-]
-#: What ``Workspace/call`` accepts; the device refuses anything else with ``invalid_argument``.
-#: ``shell.task.*`` stays out: its completion was a v2 notification that has no v3 carrier yet.
-WORKSPACE_METHODS: tuple[str, ...] = get_args(WorkspaceMethod)
-#: Methods that only read: an unknown outcome is ``device_read_timeout``; for the others it is
-#: ``command_outcome_unknown`` and the Server never retries them.
-WORKSPACE_READ_METHODS: frozenset[str] = frozenset(
-    {"fs.readDir", "fs.readText", "fs.prepareDownload", "terminal.list", "terminal.snapshot"}
-)
-#: Where a device ``PUT``s relayed bytes (``Store/readBlob``, ``fs.uploadPreparedDownload``); a path on the Server.
+#: Where a device ``PUT``s relayed bytes (``Store/readBlob``, ``Client/call`` ``fs/read``); a path on the Server.
 DEVICE_TRANSFER_PATH = "/api/v3/device/transfers/{transfer_id}"
-
-
-class WorkspaceCallRequest(DeviceModel):
-    """``Workspace/call``: one v2 workspace method; ``params`` is its v2 params object."""
-
-    method: WorkspaceMethod
-    params: dict[str, Any] = Field(default_factory=dict)
-
-
-class WorkspaceCallResponse(DeviceModel):
-    """The v2 result object of the method, unchanged."""
-
-    result: dict[str, Any] = Field(default_factory=dict)
-
-
-class TerminalOutputRequest(DeviceModel):
-    """``Workspace/terminalOutput``: opening subscribes to a terminal's output, cancelling unsubscribes.
-
-    ``sessionId`` is the scope the terminal was created in (``terminal.create``'s ``sessionId``).
-    """
-
-    terminalId: NonEmpty
-    sessionId: NonEmpty
-    fromSeq: Seq = 0
-
-
-class TerminalOutputItem(DeviceModel):
-    """Item of ``Workspace/terminalOutput`` (the v2 terminal relay frames).
-
-    * ``terminal.replay`` ``{terminalId, seq, dataBase64, terminal}``: the scrollback (up to 512 KiB)
-      ending at ``seq``. Always the first item; sent again when the reader fell behind the scrollback,
-      and the client then redraws from it.
-    * ``terminal.output`` ``{terminalId, seq, dataBase64}``: output after the previous item, in order.
-    * ``terminal.exited`` ``{terminalId, exitCode, reason}``: the process exited (``exit``), the
-      terminal was closed (``closed``) or expired; the stream ends after it.
-    """
-
-    m: Literal["terminal.replay", "terminal.output", "terminal.exited"]
-    p: dict[str, Any] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -1364,32 +1199,26 @@ def _r(service: str, method: str, shape: MeshShape = "unary") -> MeshRoute:
 
 
 # Business method -> MeshCall route. Server and Connector must agree.
+# Business method -> MeshCall route, for what the Server calls on a device. Server and Connector must agree.
+# Client reads of session content (snapshot, timeline, notices, state, queue, catalogs, plans) and the device's
+# files, terminals and shell are client API routes the device serves through ``Client/call``.
 REQUEST_METHODS: dict[str, MeshRoute] = {
-    "client.snapshot": _r("Sessions", "snapshot", "server_stream"),
     "session.watch": _r("Sessions", "watch", "server_stream"),
-    "session.notices": _r("Sessions", "notices"),
-    "session.state": _r("Sessions", "state"),
-    "session.capabilities": _r("Sessions", "capabilities"),
-    "session.queue": _r("Sessions", "queue"),
-    "store.read": _r("Store", "read"),
-    "store.changesSince": _r("Store", "changesSince"),
     "store.readBlob": _r("Store", "readBlob", "server_stream"),
     "store.exportShare": _r("Store", "exportShare", "server_stream"),
-    "store.planDocument": _r("Store", "planDocument"),
-    "runtime.catalogs": _r("Runtime", "catalogs"),
     "command.status": _r("Commands", "status"),
-    # v2 critical-channel reads (#484): creation and workspace preparation progress.
+    # Creation and workspace preparation progress (critical lane).
     "session.creation.get": _r("Sessions", "creationGet"),
     "workspace.preparation.get": _r("Sessions", "workspacePreparationGet"),
-    # Normal mode only (not in ``E2EE_REQUEST_METHODS``): files, terminals and shell.
-    "workspace.call": _r("Workspace", "call"),
-    "workspace.terminalOutput": _r("Workspace", "terminalOutput", "server_stream"),
     # Normal mode only: the client API routes the device serves (``core.client_routes``).
     "client.call": _r("Client", "call", "server_stream"),
     "client.subscribe": _r("Client", "subscribe", "server_stream"),
 }
 
-COMMAND_METHODS: tuple[str, ...] = (
+# Commands the device's inbox runs (``CommandCall`` in, ``CommandAck`` out, a durable receipt by ``commandId``).
+# The client API reaches the inbox through ``Client/call`` and ``Secure/channel``; ``COMMAND_METHODS`` are the
+# ones the Server itself sends as ``Commands/*``.
+DEVICE_COMMANDS: tuple[str, ...] = (
     "session.sendMessage",
     "session.steer",
     "session.interrupt",
@@ -1419,6 +1248,26 @@ COMMAND_METHODS: tuple[str, ...] = (
     "preview.open",
     "preview.close",
 )
+
+# Commands the Server sends over MeshCall (``Commands/*``), the only ones a device registers there.
+COMMAND_METHODS: tuple[str, ...] = (
+    # Workspace preparation and the creation that consumes it (runtime workflows the Server keeps).
+    "session.creation.begin",
+    "session.creation.respond",
+    "session.creation.cancel",
+    "workspace.prepare",
+    "workspace.preparation.reserve",
+    "workspace.preparation.respond",
+    "workspace.preparation.cancel",
+    # Takeover pushed by the Server.
+    "session.sync",
+    "runtime.apply",
+    "device.settings.apply",
+    "channel.switch",
+    "preview.open",
+    "preview.close",
+)
+assert set(COMMAND_METHODS) <= set(DEVICE_COMMANDS)
 
 # Commands the device may receive late: a receipt still unsettled when the device says hello is
 # replayed in ``LinkWelcome.pendingCommands`` (desired state, not conversation). Only their receipts
@@ -1507,20 +1356,6 @@ def command_route(method: str) -> MeshRoute:
     return _r("Commands", name)
 
 
-# The v2 critical channel (#484, ``connector/server/rpc.py`` CRITICAL_RPC_METHODS): the device
-# serves these from a reserved lane so long reads cannot starve approvals and creation prompts.
-# ``interaction.respond`` is ``session.respondNotice`` here.
-CRITICAL_METHODS: tuple[str, ...] = (
-    "session.respondNotice",
-    "session.notices",
-    "session.creation.get",
-    "session.creation.respond",
-    "session.creation.cancel",
-    "workspace.preparation.get",
-    "workspace.preparation.respond",
-    "workspace.preparation.cancel",
-)
-
 LINK_ROUTES: dict[str, MeshRoute] = {
     "link.attach": _r("Link", "attach", "server_stream"),
     "link.outbox": _r("Link", "outbox", "server_stream"),
@@ -1591,26 +1426,15 @@ COMMAND_PAYLOADS: dict[str, MethodPayloads] = {
     "preview.open": MethodPayloads(PreviewOpenCommand, PreviewOpenResult),
     "preview.close": MethodPayloads(PreviewCloseCommand, PreviewCloseResult),
 }
-assert set(COMMAND_PAYLOADS) == set(COMMAND_METHODS)
+assert set(COMMAND_PAYLOADS) == set(DEVICE_COMMANDS)
 
 READ_PAYLOADS: dict[str, MethodPayloads] = {
-    "client.snapshot": MethodPayloads(ClientSnapshotRequest, StreamChunk),
     "session.watch": MethodPayloads(SessionWatchRequest, ChangesEvent),
-    "session.notices": MethodPayloads(SessionRequest, SessionNoticesResponse),
-    "session.state": MethodPayloads(SessionStateRequest, SessionStateResponse),
-    "session.capabilities": MethodPayloads(SessionRequest, SessionCapabilitiesResponse),
-    "session.queue": MethodPayloads(SessionRequest, SessionQueueResponse),
-    "store.read": MethodPayloads(StoreReadRequest, StoreReadResponse),
-    "store.changesSince": MethodPayloads(ChangesSinceRequest, ChangesSinceResponse),
     "store.readBlob": MethodPayloads(ReadBlobRequest, ReadBlobChunk),
     "store.exportShare": MethodPayloads(ExportShareRequest, ExportShareChunk),
-    "store.planDocument": MethodPayloads(PlanDocumentRequest, PlanDocumentResponse),
-    "runtime.catalogs": MethodPayloads(SessionRequest, RuntimeCatalogsResponse),
     "command.status": MethodPayloads(CommandStatusRequest, CommandStatusResponse),
     "session.creation.get": MethodPayloads(CreationGetRequest, WorkflowState),
     "workspace.preparation.get": MethodPayloads(PreparationGetRequest, WorkflowState),
-    "workspace.call": MethodPayloads(WorkspaceCallRequest, WorkspaceCallResponse),
-    "workspace.terminalOutput": MethodPayloads(TerminalOutputRequest, TerminalOutputItem),
     "client.call": MethodPayloads(ClientCallRequest, ClientCallItem),
     "client.subscribe": MethodPayloads(ClientSubscribeRequest, TerminalStreamItem),
 }

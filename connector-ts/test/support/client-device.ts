@@ -11,7 +11,7 @@ import { ConversationService } from '../../src/application/index.js'
 import type { Catalogs, ConfigChange, ConfigOption, ConfigResult, RuntimeCapabilities, RuntimeHandle, RuntimeHandles, SessionCapabilities } from '../../src/application/ports/index.js'
 import type { TunnelApiResponse, TunnelCallContext } from '../../src/application/inbound/tunnel-api.js'
 import { capabilitySet } from '../../src/application/runtimes/capabilities.js'
-import { workspaceCall } from '../../src/link/index.js'
+import { uploadPreparedDownload } from '../../src/link/index.js'
 import { inProcessStore, openSqliteStore, type RemoteStore } from '../../src/store/index.js'
 import { SessionCommandCatalog } from '../../src/sync/client-api/commands.js'
 import { DeviceReaders, DeviceTunnelApi, MemoryChangeFeed } from '../../src/sync/index.js'
@@ -157,7 +157,7 @@ export async function testDevice(options: { platform?: NodeJS.Platform } = {}): 
     runtimes: { catalogs: async runtimeId => (runtimeId === RUNTIME ? { runtimeType: 'opencode', catalogs: catalogs() as Record<string, unknown> } : null) },
     transferUpload: async params => {
       uploads.push(params)
-      return workspaceCall({ methods, preparedFile: p => files.preparedFile(p), upload: async () => undefined }, { method: 'fs.uploadPreparedDownload', params })
+      return uploadPreparedDownload({ preparedFile: p => files.preparedFile(p), upload: async () => undefined }, params)
     },
     platform: options.platform ?? 'linux',
   })

@@ -2,8 +2,9 @@
 
 ``tests/fixtures/device_shapes.json`` is shared with ``connector-ts/test/application/server-shapes.test.ts``:
 
-- ``requests.*`` are the payloads the Server sends; the tests here check the Server still sends them, the
-  Connector test feeds them to the real command inbox.
+- ``requests.*`` are the command payloads the device's inbox takes (from the Server, or from a client through
+  ``Client/call``); the tests here check the Server still sends its own, the Connector test feeds them all to
+  the real command inbox.
 - every other entry is what the real Connector code answers or emits; the Connector test checks it still
   produces them exactly, the tests here feed them to the Server (through the fake device or a service).
 - every entry is also checked against its device-meshcall model (``SHAPE_MODELS``) here and against the
@@ -16,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -36,17 +38,14 @@ from agent_server.core.device_meshcall import (
     RuntimeStatusEvent,
 )
 from agent_server.core.goal.models import GoalState
-from agent_server.core.models import SessionSelectionPatchRequest, SessionView
-from agent_server.core.planning.models import PlanningState
+from agent_server.core.planning.models import PlanDocument, PlanningState
 from agent_server.core.protocol import ProtocolCapabilitySet
 from agent_server.core.runtime_workflows import (
     BeginCreationRequest,
     PrepareWorkspaceRequest,
 )
-from agent_server.infra.device_link import V2_COMMAND_METHODS, _device_payload
 from agent_server.services.device_link import DeviceLinkService
 from agent_server.services.runtime_workflows import RuntimeWorkflowService
-from agent_server.services.session_run import SessionRunService
 from scripts.v3_fake_device import connect_device
 
 SHAPES: dict[str, Any] = json.loads((Path(__file__).parent / "fixtures" / "device_shapes.json").read_text())
@@ -54,68 +53,7 @@ REQUESTS: dict[str, dict[str, Any]] = SHAPES["requests"]
 SID = "sess_shape"
 
 
-def _session_view(**extra: Any) -> SessionView:
-    return SessionView.model_validate(
-        {
-            "id": SID,
-            "connectorId": "conn_shape",
-            "connectorStatus": "online",
-            "runtime": "codex",
-            "runtimeId": "codex",
-            "externalSessionId": f"thr_{SID}",
-            "status": "idle",
-            "takeover": True,
-            "updatedSeq": 3,
-            **extra,
-        }
-    )
-
-
-# -- 1. selections -------------------------------------------------------------------------------
-
-
-def test_selection_update_sends_v2_selections_and_reads_the_device_result() -> None:
-    """``PATCH runtime/selections`` -> ``session.select {selections}``; the device's v2 result becomes the state."""
-
-    sent: list[tuple[str, str, dict[str, Any]]] = []
-
-    class Manager:
-        async def is_online(self, device_id: str) -> bool:
-            return True
-
-        async def request(self, device_id: str, method: str, params: dict[str, Any], *, timeout: float) -> Any:
-            sent.append((device_id, method, params))
-            return SHAPES["select.result"]
-
-    class Store:
-        async def get_session(self, session_id: str, *, user_id: str | None = None) -> SessionView:
-            return _session_view()
-
-    async def scenario() -> None:
-        service = SessionRunService(Store(), Manager(), SimpleNamespace())  # type: ignore[arg-type]
-
-        async def allowed(*_args: Any, **_kwargs: Any) -> None:
-            return None
-
-        service._require_session_capability = allowed  # type: ignore[method-assign]
-        service._ensure_session_runtime_running = allowed  # type: ignore[method-assign]
-        selections = REQUESTS["select"]["selections"]
-        state, result = await service.update_session_selections(
-            SID, SessionSelectionPatchRequest(selections=selections), user_id="user_shape"
-        )
-        [(device_id, method, params)] = sent
-        assert device_id == "conn_shape" and method == "session.selections.update"
-        # What reaches the device: the bridge renames the method and passes the parameters through.
-        assert V2_COMMAND_METHODS[method] == "session.select"
-        assert _device_payload(method, params, "cmd_1") == REQUESTS["select"]
-        assert result == SHAPES["select.result"]
-        assert state.selections == SHAPES["select.result"]["state"]["selections"]
-        assert state.status == "idle" and state.externalSessionId == f"thr_{SID}"
-
-    asyncio.run(scenario())
-
-
-# -- 2. planning and goal events -----------------------------------------------------------------------
+# -- 1. planning and goal events -----------------------------------------------------------------------
 
 
 def test_planning_and_goal_events_of_a_real_device_reach_subscribers() -> None:
@@ -139,7 +77,7 @@ def test_planning_and_goal_events_of_a_real_device_reach_subscribers() -> None:
     asyncio.run(scenario())
 
 
-# -- 3. takeover -------------------------------------------------------------------------------------
+# -- 2. takeover -------------------------------------------------------------------------------------
 
 
 def test_takeover_reaches_the_device_now_or_when_it_links_again(mesh_router: RouterProcess, monkeypatch) -> None:
@@ -180,7 +118,7 @@ async def _no_pending(app: Any, device_id: str) -> bool:
     return await app.state.device_link.pending_takeover(device_id) == {}
 
 
-# -- 4. source availability ----------------------------------------------------------------------------
+# -- 3. source availability ----------------------------------------------------------------------------
 
 
 def test_source_availability_follows_the_device_both_ways(mesh_router: RouterProcess, monkeypatch) -> None:
@@ -201,11 +139,12 @@ def test_source_availability_follows_the_device_both_ways(mesh_router: RouterPro
     asyncio.run(scenario())
 
 
-# -- 5. workspace preparation and the creation that consumes it -----------------------------------------
+# -- 4. workspace preparation and the creation that consumes it -----------------------------------------
 
 
 class _PreparingDevice:
-    """Answers the workflow methods with what the real device answered (``workspacePrepare.result`` and the rest)."""
+    """Answers the workflow commands and reads with what the real device answered (``workspacePrepare.result`` and
+    the rest), as ``DeviceCommandService.send`` and ``DeviceReadService.read_method`` would."""
 
     def __init__(self, reserve: str = "workspacePreparationReserve.result") -> None:
         self.sent: list[tuple[str, dict[str, Any]]] = []
@@ -217,7 +156,14 @@ class _PreparingDevice:
             "session.creation.get": SHAPES["creationPrepared.accepted"],
         }
 
-    async def request(self, device_id: str, method: str, params: dict[str, Any], *, timeout: float = 0) -> Any:
+    async def send(self, *, kind: str, payload: dict[str, Any], **_ignored: Any) -> Any:
+        self.sent.append((kind, payload))
+        return SimpleNamespace(result=self.answers[kind])
+
+    async def is_v3_device(self, connector_id: str) -> bool:
+        return True
+
+    async def read_method(self, device_id: str, method: str, params: dict[str, Any]) -> dict[str, Any]:
         self.sent.append((method, params))
         return self.answers[method]
 
@@ -243,7 +189,7 @@ def test_a_prepared_creation_is_sent_as_the_device_reads_it(mesh_router: RouterP
             headers, device_id, _token = await user_and_device(app, client)
             project_id = (await client.get("/api/v2/projects", headers=headers)).json()["projects"][0]["id"]
             device = _PreparingDevice()
-            workflows = RuntimeWorkflowService(app.state.store, device, _Runtimes())  # type: ignore[arg-type]
+            workflows = RuntimeWorkflowService(app.state.store, _Runtimes(), device, device)  # type: ignore[arg-type]
             prepare = REQUESTS["workspacePrepare"]
             opening = await workflows.prepare(
                 PrepareWorkspaceRequest(
@@ -309,7 +255,7 @@ def test_a_refused_reservation_rejects_the_creation_without_a_session(mesh_route
             headers, device_id, _token = await user_and_device(app, client)
             project_id = (await client.get("/api/v2/projects", headers=headers)).json()["projects"][0]["id"]
             device = _PreparingDevice(reserve="workspacePreparationReserve.stale")
-            workflows = RuntimeWorkflowService(app.state.store, device, _Runtimes())  # type: ignore[arg-type]
+            workflows = RuntimeWorkflowService(app.state.store, _Runtimes(), device, device)  # type: ignore[arg-type]
             opening = await workflows.prepare(
                 PrepareWorkspaceRequest(
                     connectorId=device_id, runtimeId="rti_shape", projectId=project_id, clientPreparationId="client_stale"
@@ -331,10 +277,24 @@ def test_a_refused_reservation_rejects_the_creation_without_a_session(mesh_route
     asyncio.run(scenario())
 
 
-# -- 6. every shape against its device-meshcall model --------------------------------------------------
+# -- 5. every shape against its device-meshcall model --------------------------------------------------
 
-# Fixture entry -> (method, "request" | "response") in ``COMMAND_PAYLOADS`` / ``READ_PAYLOADS``, or a model.
-SHAPE_MODELS: dict[str, tuple[str, str] | type[Any]] = {
+@dataclass(frozen=True)
+class _Body:
+    """A client API body (``Client/call``): ``model`` is the protocol model of what it holds under ``key``."""
+
+    model: type[Any]
+    key: str
+    first: bool = False
+
+    def value(self, body: dict[str, Any]) -> Any:
+        inner = body[self.key]
+        return inner[0] if self.first else inner
+
+
+# Fixture entry -> (method, "request" | "response") in ``COMMAND_PAYLOADS`` / ``READ_PAYLOADS``, a model, or a
+# client API body.
+SHAPE_MODELS: dict[str, tuple[str, str] | type[Any] | _Body] = {
     "requests.select": ("session.select", "request"),
     "requests.creationPlan": ("session.creation.begin", "request"),
     "requests.creationGoal": ("session.creation.begin", "request"),
@@ -342,9 +302,9 @@ SHAPE_MODELS: dict[str, tuple[str, str] | type[Any]] = {
     "requests.workspacePreparationReserve": ("workspace.preparation.reserve", "request"),
     "requests.creationPrepared": ("session.creation.begin", "request"),
     "select.result": ("session.select", "response"),
-    "state.goal.unobserved": ("session.state", "response"),
-    "state.planning": ("session.state", "response"),
-    "state.goal": ("session.state", "response"),
+    "state.goal.unobserved": _Body(GoalState, "goal"),
+    "state.planning": _Body(PlanningState, "planning"),
+    "state.goal": _Body(GoalState, "goal"),
     "planning.result": ("session.planning", "response"),
     "goal.result": ("session.goal", "response"),
     "event.planning": RuntimeStatusEvent,
@@ -354,8 +314,8 @@ SHAPE_MODELS: dict[str, tuple[str, str] | type[Any]] = {
     "event.usage": RuntimeStatusEvent,
     "event.background": RuntimeStatusEvent,
     "event.capabilities": RuntimeStatusEvent,
-    "planDocument.list": ("store.planDocument", "response"),
-    "planDocument.one": ("store.planDocument", "response"),
+    "planDocument.list": _Body(PlanDocument, "plans", first=True),
+    "planDocument.one": _Body(PlanDocument, "document"),
     "runtime.capabilities.prepared": ProtocolCapabilitySet,
     "workspacePrepare.result": ("workspace.prepare", "response"),
     "workspacePreparation.ready": ("workspace.preparation.get", "response"),
@@ -372,12 +332,16 @@ def _shape(name: str) -> Any:
     return SHAPES[name]
 
 
-def _model(entry: tuple[str, str] | type[Any]) -> type[Any]:
+def _validate(entry: tuple[str, str] | type[Any] | _Body, value: Any) -> None:
+    if isinstance(entry, _Body):
+        entry.model.model_validate(entry.value(value))
+        return
     if not isinstance(entry, tuple):
-        return entry
+        entry.model_validate(value)
+        return
     method, part = entry
     payloads = COMMAND_PAYLOADS.get(method) or READ_PAYLOADS[method]
-    return payloads.request if part == "request" else payloads.response
+    (payloads.request if part == "request" else payloads.response).model_validate(value)
 
 
 def test_every_shape_is_its_contract_model() -> None:
@@ -387,7 +351,7 @@ def test_every_shape_is_its_contract_model() -> None:
     names = {f"requests.{key}" for key in REQUESTS} | {key for key in SHAPES if key != "requests"}
     assert names == set(SHAPE_MODELS), "every fixture entry needs its contract model"
     for name, entry in SHAPE_MODELS.items():
-        _model(entry).model_validate(_shape(name))
+        _validate(entry, _shape(name))
 
 
 def test_the_server_refuses_a_payload_that_breaks_the_contract() -> None:

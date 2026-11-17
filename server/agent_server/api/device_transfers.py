@@ -10,10 +10,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, R
 from fastapi.responses import FileResponse
 from starlette.requests import HTTPConnection
 
-from agent_server.api.connector_ingress import (
-    _require_active_connector,
-    _safe_header_value,
-)
+from agent_server.api.connector_ingress import _require_active_connector
 from agent_server.api.device_link import V3_DEVICE_PREFIX
 from agent_server.deps import get_attachment_service, get_fs_downloads, get_store
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
@@ -22,6 +19,11 @@ from agent_server.services.attachments import AttachmentService
 from agent_server.services.device_blobs import DeviceBlobService
 
 router = APIRouter(prefix=V3_DEVICE_PREFIX, tags=["device-transfers"])
+
+
+def _safe_header_value(value: str) -> str:
+    # HTTP header values must be latin-1; the device already knows the canonical name.
+    return value.encode("latin-1", errors="replace").decode("latin-1")
 
 
 def get_device_blobs(conn: HTTPConnection) -> DeviceBlobService:

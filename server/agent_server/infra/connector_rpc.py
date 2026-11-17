@@ -1,3 +1,9 @@
+"""Presence of v2 Connectors (their ``/connector/ws`` socket) and of v3 devices (their ``Link/attach`` lease).
+
+The Server sends a v2 Connector no requests (D4): it only keeps the socket's presence lease, applies the metadata
+the Connector pushes and closes the socket on revoke or deletion, from any worker.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -5,7 +11,7 @@ import json
 import secrets
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from fastapi import WebSocket
@@ -23,25 +29,12 @@ class DuplicateConnectorConnectionError(RuntimeError):
     pass
 
 
-class ConnectorOutcomeUnknownError(TimeoutError):
-    """A v3 device call opened and then failed: it may have run. Never reported as offline."""
-
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
-        self.message = message
-
-
 class MeshLinkPort(Protocol):
-    """The v3 device link (``infra.device_link``) as seen by the v2 RPC manager."""
+    """The v3 device link (``infra.device_link.DeviceLinkHub``): where a device's ``Link/attach`` is held."""
 
     def local_connection(self, device_id: str) -> str | None: ...
 
     async def current_connection(self, device_id: str) -> str | None: ...
-
-    async def request(
-        self, device_id: str, connection_id: str, method: str, params: dict[str, Any], *, timeout: float
-    ) -> Any: ...
 
 
 class ConnectorRpcError(RuntimeError):
@@ -63,9 +56,6 @@ class ConnectorConnection:
     invalidated: bool = False
     abort_notifications: Callable[[], Awaitable[None]] | None = None
     drain_notifications: Callable[[], Awaitable[None]] | None = None
-    set_runtime_ingress_enabled: Callable[[str, bool], Awaitable[None]] | None = None
-    pending: dict[str, asyncio.Future[dict[str, Any]]] = field(default_factory=dict)
-    send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 class ConnectorRpcManager:
@@ -100,19 +90,18 @@ class ConnectorRpcManager:
         )
 
     async def _invalidate(self, connection: ConnectorConnection, reason: str) -> None:
+        del reason
         connection.invalidated = True
-        self._fail_pending(connection, reason)
         if connection.abort_notifications is not None:
             await connection.abort_notifications()
 
     async def begin_drain(self, connection: ConnectorConnection) -> bool:
-        """Keep the lease until accepted work finishes, but stop routing RPCs."""
+        """Keep the lease until accepted notifications are applied, but report the Connector offline."""
         if not self.accepts_notifications(connection):
             await self._invalidate(connection, "connector ownership was lost")
             return False
         previous = self._lease_value(connection)
         connection.draining = True
-        self._fail_pending(connection, "connector disconnected")
         if self._coordinator.distributed and not await self._coordinator.replace_if_value(
             self._lease_key(connection.connector_id), previous, self._lease_value(connection),
             ttl_seconds=self._heartbeat_timeout_seconds,
@@ -129,7 +118,7 @@ class ConnectorRpcManager:
         await self._pubsub.subscribe(self._instance_channel(self.instance_id))
         self._listener_task = asyncio.create_task(
             self._listen(),
-            name=f"connector-rpc-{self.instance_id}",
+            name=f"connector-routes-{self.instance_id}",
         )
 
     async def close(self) -> list[ConnectorConnection]:
@@ -159,7 +148,7 @@ class ConnectorRpcManager:
         return released
 
     def attach_mesh_link(self, link: MeshLinkPort) -> None:
-        """v3 devices: presence is their ``Link/attach`` lease, calls go over MeshCall."""
+        """v3 devices: presence is their ``Link/attach`` lease."""
 
         self._mesh_link = link
 
@@ -330,20 +319,6 @@ class ConnectorRpcManager:
         )
         return bool(result)
 
-    async def set_runtime_ingress_enabled(self, connector_id: str, runtime_id: str, enabled: bool) -> None:
-        connection = self._connections.get(connector_id)
-        if connection is not None:
-            if connection.set_runtime_ingress_enabled is not None:
-                await connection.set_runtime_ingress_enabled(runtime_id, enabled)
-            return
-        if self._coordinator.distributed:
-            lease = await self._get_lease(connector_id)
-            if lease is not None:
-                await self._route(lease, {
-                    "type": "runtimeIngress", "connectorId": connector_id,
-                    "runtimeId": runtime_id, "enabled": enabled,
-                }, timeout=10)
-
     async def touch(
         self,
         connector_id: str,
@@ -383,87 +358,6 @@ class ConnectorRpcManager:
             stale.append(connection)
         return stale
 
-    async def request(
-        self,
-        connector_id: str,
-        method: str,
-        params: dict[str, Any],
-        *,
-        timeout: float = 30,
-    ) -> Any:
-        result, _ = await self.request_bound(
-            connector_id,
-            method,
-            params,
-            timeout=timeout,
-        )
-        return result
-
-    async def request_bound(
-        self,
-        connector_id: str,
-        method: str,
-        params: dict[str, Any],
-        *,
-        timeout: float = 30,
-    ) -> tuple[Any, str]:
-        connection = self._connections.get(connector_id)
-        if connection is not None and self._is_local_online(connection):
-            result = await self._request_local(
-                connection,
-                method,
-                params,
-                timeout=timeout,
-            )
-            return result, connection.connection_id
-        mesh_connection = await self._mesh_connection(connector_id)
-        if mesh_connection is not None and self._mesh_link is not None:
-            result = await self._mesh_link.request(
-                connector_id, mesh_connection, method, params, timeout=timeout
-            )
-            return result, mesh_connection
-        if not self._coordinator.distributed:
-            raise ConnectorOfflineError("connector is offline")
-        lease = await self._get_lease(connector_id)
-        if lease is None or not lease.ready:
-            raise ConnectorOfflineError("connector is offline")
-        if lease.transport == "mesh":
-            if self._mesh_link is None:
-                raise ConnectorOfflineError("v3 device link is not available on this server")
-            result = await self._mesh_link.request(
-                connector_id, lease.connection_id, method, params, timeout=timeout
-            )
-            return result, lease.connection_id
-        result = await self._route(
-            lease,
-            {
-                "type": "request",
-                "connectorId": connector_id,
-                "method": method,
-                "params": params,
-                "timeout": timeout,
-            },
-            timeout=timeout,
-        )
-        return result, lease.connection_id
-
-    async def request_on_connection(
-        self,
-        connection: ConnectorConnection,
-        method: str,
-        params: dict[str, Any],
-        *,
-        timeout: float = 30,
-    ) -> Any:
-        if self._connections.get(connection.connector_id) is not connection:
-            raise ConnectorOfflineError("connector connection was replaced")
-        return await self._request_local(
-            connection,
-            method,
-            params,
-            timeout=timeout,
-        )
-
     async def is_connection_id_current(
         self,
         connector_id: str,
@@ -487,82 +381,6 @@ class ConnectorRpcManager:
         lease = await self._get_lease(connector_id)
         return (
             lease is not None and lease.ready and lease.connection_id == connection_id
-        )
-
-    def resolve_response(
-        self,
-        connector_id: str,
-        message: dict[str, Any],
-    ) -> None:
-        connection = self._connections.get(connector_id)
-        if connection is None:
-            return None
-        request_id = message.get("id")
-        if not isinstance(request_id, str):
-            return None
-        future = connection.pending.get(request_id)
-        if future is not None and not future.done():
-            future.set_result(message)
-        return None
-
-    async def _request_local(
-        self,
-        connection: ConnectorConnection,
-        method: str,
-        params: dict[str, Any],
-        *,
-        timeout: float,
-    ) -> Any:
-        connector_id = connection.connector_id
-        request_id = f"rpc_{secrets.token_urlsafe(10)}"
-        request_started_at = time.monotonic()
-        future: asyncio.Future[dict[str, Any]] = (
-            asyncio.get_running_loop().create_future()
-        )
-        connection.pending[request_id] = future
-        try:
-            async with connection.send_lock:
-                if self._connections.get(
-                    connector_id
-                ) is not connection or not self._is_local_online(connection):
-                    raise ConnectorOfflineError("connector is offline")
-                try:
-                    await connection.websocket.send_json(
-                        {
-                            "id": request_id,
-                            "type": "request",
-                            "method": method,
-                            "params": params,
-                        }
-                    )
-                    logger.info(
-                        "connector rpc request sent connector_id={} method={} request_id={}",
-                        connector_id,
-                        method,
-                        request_id,
-                    )
-                except (RuntimeError, OSError) as exc:
-                    await self.unregister(connector_id, connection)
-                    if future.done():
-                        future.exception()
-                    raise ConnectorOfflineError("connector disconnected") from exc
-            response = await asyncio.wait_for(future, timeout=timeout)
-            logger.info(
-                "connector rpc response received connector_id={} method={} request_id={} elapsed_ms={:.1f}",
-                connector_id,
-                method,
-                request_id,
-                (time.monotonic() - request_started_at) * 1000,
-            )
-        finally:
-            connection.pending.pop(request_id, None)
-
-        if response.get("ok") is True:
-            return response.get("result")
-        error = response.get("error") or {}
-        raise ConnectorRpcError(
-            error.get("code", "connector_error"),
-            error.get("message", "connector error"),
         )
 
     async def _route(
@@ -597,7 +415,7 @@ class ConnectorRpcManager:
             return response.get("result")
         error = response.get("error") or {}
         error_type = error.get("type")
-        message = error.get("message") or "connector RPC routing failed"
+        message = error.get("message") or "connector routing failed"
         if error_type == "offline":
             raise ConnectorOfflineError(message)
         if error_type == "timeout":
@@ -637,31 +455,12 @@ class ConnectorRpcManager:
             if connection is None or connection.connection_id != connection_id:
                 raise ConnectorOfflineError("connector ownership changed")
 
+            # The only routed operation: close a v2 socket another worker holds (revoke, deletion).
             if payload.get("type") == "disconnect":
                 result = await self._disconnect_local(
                     connector_id,
                     reason=str(payload.get("reason") or "connector disconnected"),
                     expected_connection_id=connection_id,
-                )
-            elif payload.get("type") == "runtimeIngress":
-                runtime_id, enabled = payload.get("runtimeId"), payload.get("enabled")
-                if not isinstance(runtime_id, str) or type(enabled) is not bool:
-                    raise ConnectorRpcError("invalid_route", "invalid runtime ingress state")
-                if connection.set_runtime_ingress_enabled is not None:
-                    await connection.set_runtime_ingress_enabled(runtime_id, enabled)
-                result = True
-            elif payload.get("type") == "request":
-                method = payload.get("method")
-                params = payload.get("params")
-                if not isinstance(method, str) or not isinstance(params, dict):
-                    raise ConnectorRpcError(
-                        "invalid_route", "invalid routed RPC request"
-                    )
-                result = await self._request_local(
-                    connection,
-                    method,
-                    params,
-                    timeout=float(payload.get("timeout") or 30),
                 )
             else:
                 raise ConnectorRpcError("invalid_route", "unsupported routed operation")
@@ -675,21 +474,17 @@ class ConnectorRpcManager:
             response = self._route_error(
                 request_id, "offline", "connector_offline", str(exc)
             )
-        except TimeoutError:
-            response = self._route_error(
-                request_id, "timeout", "connector_timeout", "connector RPC timed out"
-            )
         except ConnectorRpcError as exc:
             response = self._route_error(request_id, "rpc", exc.code, exc.message)
         except Exception:  # noqa: BLE001 - isolate malformed cross-instance requests
             logger.exception(
-                "failed to handle routed connector RPC request_id={}", request_id
+                "failed to handle routed connector operation request_id={}", request_id
             )
             response = self._route_error(
                 request_id,
                 "rpc",
                 "routing_error",
-                "connector RPC routing failed",
+                "connector routing failed",
             )
         await self._coordinator.client.publish(
             self._instance_channel(source_instance_id),
@@ -817,11 +612,6 @@ class ConnectorRpcManager:
         if isinstance(value, bytes):
             return value.decode("utf-8")
         return str(value)
-
-    def _fail_pending(self, connection: ConnectorConnection, message: str) -> None:
-        for future in connection.pending.values():
-            if not future.done():
-                future.set_exception(ConnectorOfflineError(message))
 
     def _fail_routed_pending(self, message: str) -> None:
         for future in self._routed_pending.values():

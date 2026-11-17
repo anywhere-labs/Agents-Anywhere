@@ -9,7 +9,6 @@ durable receipts). It is not a Connector: content lives in memory.
 from __future__ import annotations
 
 import asyncio
-import base64
 import collections
 import contextlib
 import hashlib
@@ -18,7 +17,6 @@ import json
 import re
 import threading
 import time
-import zlib
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
@@ -43,9 +41,7 @@ from agent_server.core.device_meshcall import (
     CONNECTION_ID_METADATA,
     MAX_CHUNK_BYTES,
     MESH_MAX_FRAME_BYTES,
-    WORKSPACE_METHODS,
     ChangesEvent,
-    ChangesSinceResponse,
     ClientCallItem,
     CommandAck,
     CommandStatusResponse,
@@ -53,11 +49,8 @@ from agent_server.core.device_meshcall import (
     LinkError,
     OutboxItem,
     SecureChannelItem,
-    StoreReadResponse,
     StreamChunk,
-    TerminalOutputItem,
     TerminalStreamItem,
-    WorkspaceCallResponse,
     command_route,
     registered_services,
 )
@@ -129,32 +122,10 @@ class FakeDeviceState:
         # Blobs the device holds (fileId -> bytes, name, media type) and how it uploads them:
         # ``blob_uploader(transfer, data)`` returns a concurrent future (the test's loop does the PUT).
         self.blobs: dict[str, tuple[bytes, str, str]] = {}
-        # sessionId -> SessionQueueState the device reports on Sessions/queue.
-        self.queues: dict[str, dict[str, Any]] = {}
-        # (sessionId, part) -> the body of ``Sessions/state`` with ``part`` ("planning", "goal").
-        self.state_parts: dict[tuple[str, str], dict[str, Any]] = {}
-        # Session capabilities ``Sessions/capabilities`` reports as supported.
-        self.capability_ids: list[str] = []
-        # sessionId -> plan documents, newest first (``Store/planDocument``).
-        self.plans: dict[str, list[dict[str, Any]]] = {}
         self.blob_uploader: Callable[[dict[str, Any], bytes], Any] | None = None
         self.attach_opened = threading.Event()
         self.outbox_opened = threading.Event()
-        self.read_delay = 0.0
         self.calls: list[str] = []
-        # sessionId -> ``catalogs`` of ``Runtime/catalogs`` (``commands`` is the slash command catalog).
-        self.catalogs: dict[str, dict[str, Any]] = {}
-        # ``Workspace/call``: every (method, params) received, and what answers it. The handler returns
-        # the v2 result (or raises ``MeshCallError``); without one the device echoes the request.
-        self.workspace_calls: list[tuple[str, dict[str, Any]]] = []
-        self.workspace_handler: Callable[[str, dict[str, Any]], Any] | None = None
-        # ``Workspace/terminalOutput``: items to send per terminal, the requests seen, and how many
-        # streams are open now (opening subscribes, cancelling unsubscribes).
-        self.terminal_items: dict[str, collections.deque[TerminalOutputItem]] = collections.defaultdict(
-            collections.deque
-        )
-        self.terminal_requests: list[dict[str, Any]] = []
-        self.terminal_subscribers: collections.Counter[str] = collections.Counter()
         # ``Client/call``: every request received (``ClientCallRequest`` as a dict) and what answers it.
         # ``client_handler(request)`` returns ``(status, body)``, a ``ClientAnswer`` dict
         # (``{"status", "body", "command", "contentType", "chunks"}``), a ``LinkError`` (a 409 answer that rejects
@@ -241,37 +212,7 @@ def _make_services(state: FakeDeviceState, *, mode: str = "off") -> list[object]
 
     @service(f"{SERVICE_PREFIX}.Sessions", targeted=True)
     class Sessions:
-        """Client-shaped reads and watch streams."""
-
-        @stream
-        async def snapshot(
-            self,
-            sessionId: str,
-            ctx: RpcContext,
-            limit: int = 100,
-            byteBudget: int = 1024 * 1024,
-            encoding: str | None = None,
-        ) -> AsyncIterator[StreamChunk]:
-            """Snapshot body in chunks."""
-            state.calls.append("snapshot")
-            if state.read_delay:
-                await asyncio.sleep(state.read_delay)
-            session = state.session(sessionId)
-            items = session.items[-limit:]
-            body = {
-                "timeline": {
-                    "items": items,
-                    "nextSeq": session.head_seq,
-                    "hasMore": len(session.items) > limit,
-                },
-                "notices": [],
-                "eventCursor": f"seq:{session.head_seq}",
-            }
-            if encoding == "deflate":
-                packed = base64.b64encode(zlib.compress(json.dumps(body).encode(), 6)).decode()
-                yield StreamChunk(seq=0, chunk=packed, end=True)
-                return
-            yield StreamChunk(seq=0, chunk=body, end=True)
+        """Per-session change streams."""
 
         @stream
         async def watch(self, sessionId: str, afterSeq: int, ctx: RpcContext) -> AsyncIterator[ChangesEvent]:
@@ -289,52 +230,9 @@ def _make_services(state: FakeDeviceState, *, mode: str = "off") -> list[object]
             finally:
                 session.watchers.pop(id(queue), None)
 
-        @query
-        async def notices(self, sessionId: str) -> Payload:
-            """Pending notices."""
-            return Payload(notices=[])
-
-        @query
-        async def state(self, sessionId: str, part: str | None = None) -> Payload:
-            """Runtime state, or one part of it (``planning``, ``goal``)."""
-            if part is not None:
-                return Payload(**state.state_parts.get((sessionId, part), {}))
-            return Payload(status="idle")
-
-        @query
-        async def capabilities(
-            self, sessionId: str, runtime: str | None = None, runtimeId: str | None = None,
-            externalSessionId: str | None = None,
-        ) -> Payload:
-            """Session capabilities: every id in ``state.capability_ids`` is supported and allowed."""
-            return Payload(
-                capabilities={},
-                capabilitySet={
-                    "revision": 1,
-                    "capabilities": [
-                        {
-                            "capabilityId": capability_id,
-                            "scope": "session",
-                            "runtime": runtime or "codex",
-                            "sessionId": sessionId,
-                            "supported": True,
-                            "available": True,
-                            "allowed": True,
-                        }
-                        for capability_id in state.capability_ids
-                    ],
-                },
-            )
-
-        @query
-        async def queue(self, sessionId: str) -> Payload:
-            """Queued messages."""
-            # The TS Connector's shape: the state under ``queue`` (``DeviceReaders.queue``).
-            return Payload(queue=state.queues.get(sessionId, {"sessionId": sessionId, "revision": 0, "items": []}))
-
     @service(f"{SERVICE_PREFIX}.Store", targeted=True)
     class Store:
-        """Timeline reads, blobs and share exports."""
+        """Blobs and share exports."""
 
         @stream
         async def readBlob(
@@ -372,130 +270,6 @@ def _make_services(state: FakeDeviceState, *, mode: str = "off") -> list[object]
                 items = [item for item in items if item["id"] in wanted]
             files = sorted(set(re.findall(r'"fileId":\s*"(file_[^"]+)"', json.dumps(items))))
             yield StreamChunk(seq=0, chunk={"items": items, "attachments": files}, end=True)
-
-        @query
-        async def planDocument(self, sessionId: str, planId: str | None = None, revision: int | None = None) -> Payload:
-            """Plan documents: all of them, or one revision."""
-            state.calls.append("planDocument")
-            plans = state.plans.get(sessionId, [])
-            if planId is None:
-                return Payload(plans=plans)
-            for plan in plans:
-                if plan["planId"] == planId and plan["revision"] == revision:
-                    return Payload(document=plan)
-            raise MeshCallError(
-                "not_found", "no such plan", details={"source": "device", "aaCode": "plan_document_not_found"}
-            )
-
-        @query
-        async def read(
-            self,
-            sessionId: str,
-            mode: str,
-            cursor: int | None = None,
-            limit: int = 100,
-            byteBudget: int = 1024 * 1024,
-        ) -> StoreReadResponse:
-            """Read a page."""
-            state.calls.append("read")
-            if state.read_delay:
-                await asyncio.sleep(state.read_delay)
-            session = state.session(sessionId)
-            items = session.items
-            if mode == "before" and cursor is not None:
-                items = [item for item in items if item.get("orderSeq", 0) < cursor]
-            page = items[-limit:]
-            return StoreReadResponse(
-                items=page,
-                headSeq=session.head_seq,
-                resetSeq=session.reset_seq,
-                hasMore=len(items) > len(page),
-                oldestOrderSeq=page[0].get("orderSeq") if page else None,
-            )
-
-        @query
-        async def changesSince(
-            self, sessionId: str, afterSeq: int, limit: int = 500, byteBudget: int = 1024 * 1024
-        ) -> ChangesSinceResponse:
-            """Changes after a cursor."""
-            state.calls.append("changesSince")
-            session = state.session(sessionId)
-            if afterSeq < session.reset_seq:
-                return ChangesSinceResponse(
-                    toSeq=session.head_seq, resetSeq=session.reset_seq, complete=False, snapshotRequired=True
-                )
-            changed = [item for item in session.items if item.get("updatedSeq", 0) > afterSeq][:limit]
-            events = [
-                protocol_event(
-                    sessionId, sequence=item["updatedSeq"], event_type="timeline.item_updated", payload={"item": item}
-                )
-                for item in changed
-            ]
-            return ChangesSinceResponse(
-                events=events,
-                toSeq=changed[-1]["updatedSeq"] if changed else max(afterSeq, session.head_seq),
-                resetSeq=session.reset_seq,
-                complete=True,
-            )
-
-    @service(f"{SERVICE_PREFIX}.Runtime", targeted=True)
-    class Runtime:
-        """Runtime catalogs."""
-
-        @query
-        async def catalogs(self, sessionId: str) -> Payload:
-            """Model, permission and slash command catalogs of a session."""
-            state.calls.append("catalogs")
-            return Payload(sessionId=sessionId, catalogs=state.catalogs.get(sessionId, {}))
-
-    @service(f"{SERVICE_PREFIX}.Workspace", targeted=True)
-    class Workspace:
-        """Files, terminals and shell (normal mode only)."""
-
-        @mutates(reason="writes files, types into terminals and runs shell commands")
-        async def call(
-            self, method: str, ctx: RpcContext, params: dict[str, Any] | None = None
-        ) -> WorkspaceCallResponse:
-            """One v2 workspace method from ``WORKSPACE_METHODS``."""
-            state.check_connection(ctx)
-            state.calls.append(f"workspace:{method}")
-            if method not in WORKSPACE_METHODS:
-                raise MeshCallError(
-                    "invalid_argument", f"{method} is not a workspace method", details={"source": "device"}
-                )
-            params = params or {}
-            state.workspace_calls.append((method, params))
-            result: Any = {"method": method, "params": params}
-            if state.workspace_handler is not None:
-                result = state.workspace_handler(method, params)
-                if asyncio.iscoroutine(result):
-                    result = await result
-            return WorkspaceCallResponse(result=result)
-
-        @stream
-        async def terminalOutput(
-            self, terminalId: str, sessionId: str, ctx: RpcContext, fromSeq: int = 0
-        ) -> AsyncIterator[TerminalOutputItem]:
-            """Items queued in ``terminal_items``; ends after ``terminal.exited``."""
-            state.check_connection(ctx)
-            state.terminal_requests.append({"terminalId": terminalId, "sessionId": sessionId, "fromSeq": fromSeq})
-            if terminalId not in state.terminal_items:
-                raise MeshCallError(
-                    "terminal_not_found", f"terminal not found: {terminalId}", details={"source": "device"}
-                )
-            queue = state.terminal_items[terminalId]
-            state.terminal_subscribers[terminalId] += 1
-            try:
-                while True:
-                    if queue:
-                        item = queue.popleft()
-                        yield item
-                        if item.m == "terminal.exited":
-                            return
-                    else:
-                        await asyncio.sleep(POLL_SECONDS)
-            finally:
-                state.terminal_subscribers[terminalId] -= 1
 
     def client_answer(request: dict[str, Any]) -> dict[str, Any]:
         """Run the handler once; a command's answer is kept as its receipt."""
@@ -700,9 +474,7 @@ def _make_services(state: FakeDeviceState, *, mode: str = "off") -> list[object]
         f"{SERVICE_PREFIX}.Link": Link,
         f"{SERVICE_PREFIX}.Sessions": Sessions,
         f"{SERVICE_PREFIX}.Store": Store,
-        f"{SERVICE_PREFIX}.Runtime": Runtime,
         f"{SERVICE_PREFIX}.Commands": commands,
-        f"{SERVICE_PREFIX}.Workspace": Workspace,
         f"{SERVICE_PREFIX}.Client": Client,
         f"{SERVICE_PREFIX}.Secure": Secure,
     }

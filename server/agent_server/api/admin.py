@@ -17,12 +17,10 @@ from agent_server.deps import (
     get_rpc,
     get_session_runtime_state_cache,
     get_store,
-    get_terminal_broker,
     require_admin,
 )
 from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.infra.repositories.facade import Store
-from agent_server.infra.terminal_broker import TerminalBroker
 from agent_server.services.device_link import DeviceLinkService
 from agent_server.services.email_delivery import (
     get_email_settings,
@@ -152,7 +150,6 @@ async def delete_user(
     db: Store = Depends(get_store),
     admin: UserView = Depends(require_admin),
     manager: ConnectorRpcManager = Depends(get_rpc),
-    terminals: TerminalBroker = Depends(get_terminal_broker),
     runtime_state_cache: SessionRuntimeStateCache = Depends(get_session_runtime_state_cache),
     links: DeviceLinkService = Depends(get_device_link_service),
 ) -> None:
@@ -161,7 +158,7 @@ async def delete_user(
         raise HTTPException(status_code=409, detail="cannot delete yourself")
     try:
         await delete_user_account(
-            target, db, manager, terminals, runtime_state_cache, links
+            target, db, manager, runtime_state_cache, links
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="user not found") from None

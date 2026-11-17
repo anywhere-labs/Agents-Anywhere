@@ -1,57 +1,21 @@
-// aa.device.v1.Workspace (normal mode): the 2.x workspace methods (files, terminals, shell) run through
-// Workspace/call, and terminal output is pushed to the Server through Workspace/terminalOutput. The handlers share
-// the same workspace implementation as the secure channel (sync/tunnel-api).
+// The device's terminal output readers (`Client/subscribe`) and the prepared-download upload behind the client
+// API's `POST fs/read`.
 import { MeshCallError } from 'meshcall'
 
 import type { BlobTransfer, TransferUpload, UploadFile } from './device-files.js'
 
-/**
- * `WORKSPACE_METHODS` of contracts/device-meshcall/1.0 (server/agent_server/core/device_meshcall.py), declared here
- * until the generated contract types carry it: what `Workspace/call` runs; anything else is `invalid_argument`.
- */
-export const WORKSPACE_METHODS = [
-  'fs.readDir',
-  'fs.readText',
-  'fs.writeFile',
-  'fs.prepareDownload',
-  'fs.uploadPreparedDownload',
-  'terminal.create',
-  'terminal.list',
-  'terminal.rename',
-  'terminal.setPersistent',
-  'terminal.close',
-  'terminal.write',
-  'terminal.resize',
-  'terminal.snapshot',
-  'shell.exec',
-] as const
-
-export type WorkspaceMethod = (typeof WORKSPACE_METHODS)[number]
-
-/** `WorkspaceCallRequest` / `WorkspaceCallResponse` of the contract. */
-export interface WorkspaceCallRequest {
-  readonly method: string
-  readonly params?: Record<string, unknown>
-}
-
-export interface WorkspaceCallResponse {
-  readonly result: Record<string, unknown>
-}
-
-/** `TerminalOutputRequest` / `TerminalOutputItem` of the contract. */
+/** Which terminal to read, and from which scrollback seq. */
 export interface TerminalOutputRequest {
   readonly terminalId: string
   readonly sessionId: string
   readonly fromSeq?: number
 }
 
+/** One item of a terminal's output: a scrollback replay, output in order, then the exit. */
 export interface TerminalOutputItem {
   readonly m: 'terminal.replay' | 'terminal.output' | 'terminal.exited'
   readonly p: Record<string, unknown>
 }
-
-/** A workspace handler by 2.x method name (the same ones `sync/tunnel-api` serves through a secure channel). */
-export type WorkspaceHandler = (params: Record<string, unknown>) => Promise<unknown>
 
 /** Terminal events routed to one sink (`Terminals.attach`). */
 export type TerminalEventSink = (method: 'terminal.output' | 'terminal.exited', params: Record<string, unknown>) => void
@@ -64,13 +28,11 @@ export interface TerminalSource {
 }
 
 export interface WorkspaceServiceDeps {
-  /** 2.x workspace handlers by method name (`workspaceMethods`); a method the device lacks is `unimplemented`. */
-  readonly methods: Readonly<Record<string, WorkspaceHandler>>
-  /** Terminals (node-pty); absent: `terminalOutput` answers `unimplemented`. */
+  /** Terminals (node-pty); absent: `Client/subscribe` answers `unimplemented`. */
   readonly terminals?: TerminalSource
   /** `fs.uploadPreparedDownload`: the checked local file of a prepared download, without hashing it again. */
   readonly preparedFile?: (params: Record<string, unknown>) => Promise<UploadFile>
-  /** The transfer upload `Store/readBlob` uses (`deviceTransferUploader`). */
+  /** The transfer upload (`deviceTransferUploader`). */
   readonly upload?: TransferUpload
   readonly onUploadError?: (transferId: string, error: unknown) => void
 }
@@ -89,27 +51,12 @@ function text(value: unknown, field: string): string {
   return value
 }
 
-function isWorkspaceMethod(method: string): method is WorkspaceMethod {
-  return (WORKSPACE_METHODS as readonly string[]).includes(method)
-}
-
-/** `Workspace/call`: one whitelisted 2.x method, its 2.x params in and its 2.x result out. */
-export async function workspaceCall(deps: WorkspaceServiceDeps, request: WorkspaceCallRequest): Promise<WorkspaceCallResponse> {
-  const method = typeof request.method === 'string' ? request.method : ''
-  if (!isWorkspaceMethod(method)) throw new MeshCallError('invalid_argument', `${method || '(none)'} is not a workspace method`)
-  const params = record(request.params)
-  if (method === 'fs.uploadPreparedDownload') return { result: await uploadPreparedDownload(deps, params) }
-  const handler = deps.methods[method]
-  if (handler === undefined) throw new MeshCallError('unimplemented', `${method} is not available on this device`)
-  return { result: record(await handler(params)) }
-}
-
 /**
  * `fs.uploadPreparedDownload`: answers at once and sends the file in the background, so the Server can start
  * streaming the relay to its client. The bytes go to `uploadUrl`, a path on the Server
  * (`/api/v3/device/transfers/{transferId}`); another origin is refused.
  */
-async function uploadPreparedDownload(deps: WorkspaceServiceDeps, params: Record<string, unknown>): Promise<Record<string, unknown>> {
+export async function uploadPreparedDownload(deps: WorkspaceServiceDeps, params: Record<string, unknown>): Promise<Record<string, unknown>> {
   const transferId = text(params.transferId, 'transferId')
   const token = text(params.token, 'token')
   const uploadUrl = typeof params.uploadUrl === 'string' && params.uploadUrl !== '' ? params.uploadUrl : `/api/v3/device/transfers/${encodeURIComponent(transferId)}`

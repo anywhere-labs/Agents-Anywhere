@@ -6,10 +6,7 @@ from typing import Any
 
 import pytest
 
-from agent_server.api.connector_ingress import (
-    _ConnectorNotificationPump,
-    _read_connector_messages,
-)
+from agent_server.api.connector_ingress import _ConnectorNotificationPump
 from agent_server.infra.connector_rpc import ConnectorRpcManager
 
 
@@ -40,88 +37,6 @@ class RecordingIngestService:
     ) -> None:
         self.methods.append(method)
         self.connection_ids.append(connection_id)
-
-
-def test_rpc_response_bypasses_blocked_notification_handler() -> None:
-    class BlockingIngestService(RecordingIngestService):
-        def __init__(self) -> None:
-            super().__init__()
-            self.started = asyncio.Event()
-            self.release = asyncio.Event()
-
-        async def handle_notification_message(
-            self,
-            *,
-            connector_id: str,
-            method: str,
-            params: dict[str, Any],
-            connection_id: str | None = None,
-        ) -> None:
-            await super().handle_notification_message(
-                connector_id=connector_id,
-                method=method,
-                params=params,
-                connection_id=connection_id,
-            )
-            self.started.set()
-            await self.release.wait()
-
-    async def exercise() -> None:
-        connector_id = "conn_1"
-        websocket = FakeWebSocket()
-        manager = ConnectorRpcManager()
-        connection = await manager.register(
-            connector_id,
-            websocket,  # type: ignore[arg-type]
-        )
-        ingest = BlockingIngestService()
-        pump = _ConnectorNotificationPump(
-            connector_id,
-            ingest,  # type: ignore[arg-type]
-        )
-        pump.start()
-        reader = asyncio.create_task(
-            _read_connector_messages(
-                websocket,  # type: ignore[arg-type]
-                connector_id,
-                connection,
-                manager,
-                pump,
-            )
-        )
-        try:
-            await websocket.inbound.put(
-                {
-                    "type": "notification",
-                    "method": "timeline.itemUpsert",
-                    "params": {"sessionId": "sess_running"},
-                }
-            )
-            await asyncio.wait_for(ingest.started.wait(), timeout=1)
-
-            request_task = asyncio.create_task(
-                manager.request(connector_id, "session.state", {})
-            )
-            request = await asyncio.wait_for(websocket.outbound.get(), timeout=1)
-            await websocket.inbound.put(
-                {
-                    "id": request["id"],
-                    "type": "response",
-                    "ok": True,
-                    "result": {"status": "idle"},
-                }
-            )
-
-            assert await asyncio.wait_for(request_task, timeout=1) == {"status": "idle"}
-            assert not ingest.release.is_set()
-        finally:
-            ingest.release.set()
-            reader.cancel()
-            await asyncio.gather(reader, return_exceptions=True)
-            await pump.close()
-            await manager.unregister(connector_id, connection)
-
-    asyncio.run(exercise())
 
 
 def test_notification_pump_preserves_fifo_order() -> None:

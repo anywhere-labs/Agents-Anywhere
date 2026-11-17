@@ -1,13 +1,13 @@
-"""Sessions on v2 Connectors under a v3 Server (D4, ``06-protocols.md`` §7).
+"""v2 Connectors under a v3 Server (D4, ``06-protocols.md`` §7).
 
-The Server no longer stores session content (D1, D8), and a v2 Connector can only
-push content into the Server. Its sessions therefore stay in the list with their
-title and live status, but everything that needs the conversation answers
-409 ``device_upgrade_required``: the client asks the user to upgrade Agents
-Anywhere on that device.
+The Server no longer stores session content (D1, D8) and sends a v2 Connector no requests: it only keeps the
+metadata the Connector pushes. Its sessions therefore stay in the list with their title and live status, but
+everything that needs the device answers 409 ``device_upgrade_required``: the client asks the user to upgrade
+Agents Anywhere on that device.
 
-What still works for them: list, meta (rename, pin, archive), read marks,
-takeover, runtime status and capabilities, terminals.
+What still works for them: the session list, online status, meta (rename, pin, archive), read marks, takeover,
+and the last known runtime status and capabilities. Conversations, terminals, files, shell and Runtime instance
+management need the upgrade.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from agent_server.services.device_reads import DeviceReadService
 
 UPGRADE_REQUIRED = {
     "code": "device_upgrade_required",
-    "message": "Upgrade Agents Anywhere on this device to open this session.",
+    "message": "Upgrade Agents Anywhere on this device to use this.",
 }
 
 
@@ -67,3 +67,22 @@ async def v3_session_only(
 
 
 V3_SESSION_ONLY = [Depends(v3_session_only)]
+
+
+async def v3_connector_only(
+    conn: HTTPConnection,
+    user_id: str = Depends(current_user_id),
+    db: Store = Depends(get_store),
+    reads: DeviceReadService = Depends(get_device_reads),
+) -> None:
+    """Route dependency: the device in the path must be a v3 device.
+
+    A device the caller does not own passes through; the handler answers 404.
+    """
+
+    connector_id = conn.path_params.get("connector_id")
+    if connector_id:
+        await require_v3_owned_connector(db, reads, connector_id, user_id)
+
+
+V3_CONNECTOR_ONLY = [Depends(v3_connector_only)]

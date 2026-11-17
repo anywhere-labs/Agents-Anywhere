@@ -139,8 +139,24 @@ def test_method_registries_are_disjoint() -> None:
     commands = set(dl.COMMAND_METHODS)
     requests = set(dl.REQUEST_METHODS)
     assert not commands & requests
-    assert "session.sendMessage" in commands and "client.snapshot" in requests
+    assert "session.sync" in commands and "client.call" in requests
     assert "changes" not in dl.EVENT_METHODS  # changes travel on Sessions/watch
+
+
+def test_client_api_methods_travel_only_over_client_call() -> None:
+    """User commands and session reads are client API routes the device serves through ``Client/call``; the
+    Server registers only its own commands and reads, while the inbox keeps every command payload."""
+
+    assert set(dl.COMMAND_METHODS) <= set(dl.DEVICE_COMMANDS) == set(dl.COMMAND_PAYLOADS)
+    for name in ("session.sendMessage", "session.steer", "session.interrupt", "session.respondNotice",
+                 "session.select", "session.planning", "session.goal", "session.queue.sendNow"):
+        assert name in dl.COMMAND_PAYLOADS and name not in dl.COMMAND_METHODS
+    for name in ("client.snapshot", "session.state", "session.queue", "store.read", "store.changesSince",
+                 "store.planDocument", "runtime.catalogs", "workspace.call", "workspace.terminalOutput"):
+        assert name not in dl.REQUEST_METHODS
+    services = dl.registered_services("off")
+    assert "aa.device.v1.Runtime" not in services and "aa.device.v1.Workspace" not in services
+    assert "sessionSendMessage" not in services["aa.device.v1.Commands"]
 
 
 def test_client_tunnel_frame_is_closed() -> None:

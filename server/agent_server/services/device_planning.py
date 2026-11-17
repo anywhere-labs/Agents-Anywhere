@@ -1,22 +1,11 @@
 """Plans and goals of sessions on v3 devices live on the device (``05-server.md`` §2, D1).
 
-The Server keeps only the two directory enums ``plan_state`` / ``goal_state`` (for
-lists and for offline display). Everything else goes to the device:
+The routes go to the device with ``Client/call``. The Server keeps only the two directory enums
+``plan_state`` / ``goal_state`` (for lists and for offline display) and the command receipts:
 
-- **State**: ``Sessions/state`` with ``{sessionId, part: "planning" | "goal"}``; the
-  device answers ``{planning: PlanningState}`` / ``{goal: GoalState}`` in the v2
-  client shapes (a device that ignores ``part`` answers both keys next to ``state``).
-  Offline, the Server answers a ``stale`` state built from the directory enum.
-- **Plan documents**: ``Store/planDocument`` with ``{sessionId}`` -> ``{plans: [...]}``
-  (newest first), or ``{sessionId, planId, revision}`` -> ``{document: PlanDocument}``
-  (the same body the secure channel's ``GET plans/{planId}/{revision}`` returns);
-  ``plan_document_not_found`` when there is none.
-- **Changes**: ``Commands/sessionPlanning`` / ``Commands/sessionGoal`` with the v2
-  request body plus ``sessionId``; ``commandId = operationId``. ``CommandAck.r`` is
-  the v2 response body (``PlanningResponse`` / ``GoalResponse`` fields).
-- **Operations**: ``GET .../operations/{operationId}`` reads the command receipt: the
-  outcome and error code only (the receipt keeps no ``r``, D1); the state is read
-  from the device.
+- **Offline**: the Server answers a ``stale`` state built from the directory enum.
+- **Operations**: ``GET .../operations/{operationId}`` reads the command receipt: the outcome and error code
+  only (the receipt keeps no ``r``, D1); the state after an applied operation is read from the device.
 """
 
 from __future__ import annotations
@@ -26,24 +15,12 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
-from agent_server.core.goal.models import GoalResponse, GoalState
-from agent_server.core.planning.models import (
-    PlanDocument,
-    PlanningResponse,
-    PlanningState,
-)
-from agent_server.services.device_commands import (
-    DeviceCommandError,
-    DeviceCommandOffline,
-    DeviceCommandOutcomeUnknown,
-    DeviceCommandService,
-    input_digest,
-)
-from agent_server.services.device_reads import DeviceReadError, DeviceReadService
+from agent_server.core.goal.models import GoalResponse
+from agent_server.core.planning.models import PlanningResponse
+from agent_server.services.device_commands import DeviceCommandService
+from agent_server.services.device_reads import DeviceReadError
 
 PLAN_MODE = {"planning": "plan", "awaiting_review": "plan"}
-# The device's code for a plan revision it does not have (also 404 through the secure channel).
-PLAN_NOT_FOUND = "plan_document_not_found"
 RESPONSE_MODELS: dict[str, type[BaseModel]] = {"session.planning": PlanningResponse, "session.goal": GoalResponse}
 
 
@@ -56,14 +33,6 @@ def _validated(model: type[BaseModel], body: dict[str, Any]) -> BaseModel:
         raise DeviceReadError(
             "device_response_invalid", f"the device answered an invalid {model.__name__}: {exc.errors()[:3]}"
         ) from exc
-
-
-class DevicePlanningUnavailable(Exception):
-    """Offline for a change (409 ``connector_offline``) or a document read."""
-
-
-class DevicePlanNotFound(KeyError):
-    pass
 
 
 def offline_planning_state(session: Any, plan_state: str | None) -> dict[str, Any]:
@@ -87,90 +56,9 @@ def offline_goal_state(session: Any) -> dict[str, Any]:
 
 
 class DevicePlanningService:
-    def __init__(self, store: Any, reads: DeviceReadService, commands: DeviceCommandService) -> None:
+    def __init__(self, store: Any, commands: DeviceCommandService) -> None:
         self._store = store
-        self._reads = reads
         self._commands = commands
-
-    async def _directory(self, session_id: str) -> dict[str, Any]:
-        return await self._store.session_directory_fields(session_id) or {}
-
-    # -- state ----------------------------------------------------------------------
-
-    async def planning_state(self, session: Any) -> BaseModel:
-        body = await self._reads.read_method(
-            session.connectorId, "session.state", {"sessionId": session.id, "part": "planning"}
-        )
-        if body is None:
-            state = offline_planning_state(session, (await self._directory(session.id)).get("planState"))
-        else:
-            state = body.get("planning")
-            if not isinstance(state, dict):
-                state = offline_planning_state(session, None)
-        return _validated(PlanningState, state)
-
-    async def goal_state(self, session: Any) -> BaseModel:
-        body = await self._reads.read_method(
-            session.connectorId, "session.state", {"sessionId": session.id, "part": "goal"}
-        )
-        state = body.get("goal") if body is not None else None
-        return _validated(GoalState, state if isinstance(state, dict) else offline_goal_state(session))
-
-    # -- plan documents ----------------------------------------------------------------
-
-    async def _plan_document(self, session: Any, params: dict[str, Any]) -> dict[str, Any]:
-        try:
-            body = await self._reads.read_method(
-                session.connectorId, "store.planDocument", {"sessionId": session.id, **params}
-            )
-        except DeviceReadError as exc:
-            if exc.code == PLAN_NOT_FOUND:
-                raise DevicePlanNotFound(params.get("planId")) from exc
-            raise
-        if body is None:
-            raise DevicePlanningUnavailable()
-        return body
-
-    async def plan_documents(self, session: Any) -> list[BaseModel]:
-        plans = (await self._plan_document(session, {})).get("plans")
-        if not isinstance(plans, list):
-            return []
-        return [_validated(PlanDocument, plan) for plan in plans if isinstance(plan, dict)]
-
-    async def plan_document(self, session: Any, plan_id: str, revision: int) -> BaseModel:
-        plan = (await self._plan_document(session, {"planId": plan_id, "revision": revision})).get("document")
-        if not isinstance(plan, dict):
-            raise DevicePlanNotFound(plan_id)
-        return _validated(PlanDocument, plan)
-
-    # -- changes ------------------------------------------------------------------------
-
-    async def execute(self, session: Any, kind: str, request: dict[str, Any], *, user_id: str) -> BaseModel:
-        """Run ``session.planning`` / ``session.goal``; returns the v2 response body."""
-
-        operation_id = request["operationId"]
-        payload = {"sessionId": session.id, **request}
-        try:
-            outcome = await self._commands.send(
-                user_id=user_id,
-                device_id=session.connectorId,
-                kind=kind,
-                command_id=operation_id,
-                payload=payload,
-                session_id=session.id,
-                digest=input_digest(kind, payload),
-            )
-        except DeviceCommandOffline as exc:
-            raise DevicePlanningUnavailable() from exc
-        except DeviceCommandOutcomeUnknown:
-            body = _response(
-                operation_id, "unknown", code="command_outcome_unknown", message="the device did not confirm the operation"
-            )
-        except DeviceCommandError as exc:
-            body = _response(operation_id, "rejected", code=exc.code, message=exc.message)
-        else:
-            body = _accepted(operation_id, outcome.result)
-        return _validated(RESPONSE_MODELS[kind], body)
 
     async def operation(
         self,
@@ -179,24 +67,24 @@ class DevicePlanningService:
         operation_id: str,
         *,
         user_id: str,
-        forwarded: str | None = None,
-        current_state: Callable[[], Awaitable[dict[str, Any]]] | None = None,
+        forwarded: str,
+        current_state: Callable[[], Awaitable[dict[str, Any]]],
     ) -> BaseModel | None:
         """The outcome of a planning or goal operation, from its receipt.
 
         ``forwarded``: the client route whose receipts ``Client/call`` leaves for the same operations
-        (``session.planning.execute``); ``current_state``: how the state after an applied operation is read then.
+        (``session.planning.execute``); ``current_state``: how the state after an applied operation is read.
         """
 
         receipt = await self._store.get_device_command(user_id, operation_id)
-        kinds = {kind} if forwarded is None else {kind, forwarded}
+        kinds = {kind, forwarded}
         if receipt is None or receipt["kind"] not in kinds or receipt.get("sessionId") != session.id:
             return None
         if receipt["state"] in ("pending", "unknown"):
             receipt = await self._commands.reconcile_one(receipt, settle_unseen=False) or receipt
         result = receipt.get("result") or {}
         if receipt["state"] == "accepted":
-            state = await current_state() if current_state is not None else await self._current_state(session, kind)
+            state = await current_state()
             body = _accepted(operation_id, {**(result.get("r") or {}), **state})
         elif receipt["state"] == "rejected":
             error = result.get("e") or {}
@@ -204,16 +92,6 @@ class DevicePlanningService:
         else:
             body = _response(operation_id, "pending" if receipt["state"] == "pending" else "unknown")
         return _validated(RESPONSE_MODELS[kind], body)
-
-    async def _current_state(self, session: Any, kind: str) -> dict[str, Any]:
-        """The state after an applied operation, read from the device (receipts keep none)."""
-
-        try:
-            if kind == "session.planning":
-                return {"state": (await self.planning_state(session)).model_dump(mode="json")}
-            return {"state": (await self.goal_state(session)).model_dump(mode="json")}
-        except DeviceReadError:
-            return {}
 
 
 def _response(operation_id: str, outcome: str, *, code: str | None = None, message: str | None = None) -> dict[str, Any]:

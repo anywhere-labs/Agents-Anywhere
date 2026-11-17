@@ -61,7 +61,7 @@
       "model": "StreamChunk",
       "path": "schemas/stream-chunk.schema.json",
       "pydanticMode": "validation",
-      "sha256": "50a26a6c2a3d4a884fb70dd647b357419a6a3486d860651ba64c61755f5db7e4",
+      "sha256": "7d5e2b57c953cd94ab3f15d9f29a71d38f415ab57ef106cb28aae1e30f13f2bd",
       "slug": "stream-chunk"
     },
     {
@@ -186,46 +186,6 @@
     },
     {
       "direction": "bidirectional",
-      "model": "ClientSnapshotRequest",
-      "path": "schemas/client-snapshot-request.schema.json",
-      "pydanticMode": "validation",
-      "sha256": "f59afa624abe301a7624084ee65b0f8464396da232141298dd87c30359325407",
-      "slug": "client-snapshot-request"
-    },
-    {
-      "direction": "bidirectional",
-      "model": "StoreReadRequest",
-      "path": "schemas/store-read-request.schema.json",
-      "pydanticMode": "validation",
-      "sha256": "22f5520bbe3f39399b19143430617b2af3f7ad237e45f91d616b38c075b18764",
-      "slug": "store-read-request"
-    },
-    {
-      "direction": "bidirectional",
-      "model": "StoreReadResponse",
-      "path": "schemas/store-read-response.schema.json",
-      "pydanticMode": "validation",
-      "sha256": "bb4041be5c60758ca5df931018268e7958f1f1fbecd48e74b7de61f3aa5a95c0",
-      "slug": "store-read-response"
-    },
-    {
-      "direction": "bidirectional",
-      "model": "ChangesSinceRequest",
-      "path": "schemas/changes-since-request.schema.json",
-      "pydanticMode": "validation",
-      "sha256": "7081c50a635faf5cbf4c68a3696476abc6a5d9c515ddb18f5ce679aee8f1fa2f",
-      "slug": "changes-since-request"
-    },
-    {
-      "direction": "bidirectional",
-      "model": "ChangesSinceResponse",
-      "path": "schemas/changes-since-response.schema.json",
-      "pydanticMode": "validation",
-      "sha256": "63c21be1a03567171429d8f6ba1c7ff365bced4a82dff48473a763aacf29a69d",
-      "slug": "changes-since-response"
-    },
-    {
-      "direction": "bidirectional",
       "model": "CommandStatusRequest",
       "path": "schemas/command-status-request.schema.json",
       "pydanticMode": "validation",
@@ -242,38 +202,6 @@
     },
     {
       "direction": "bidirectional",
-      "model": "WorkspaceCallRequest",
-      "path": "schemas/workspace-call-request.schema.json",
-      "pydanticMode": "validation",
-      "sha256": "49d48b91cd1385e40fbe3927e6c186a5e864200102a4b8d07d122efee12b37b8",
-      "slug": "workspace-call-request"
-    },
-    {
-      "direction": "bidirectional",
-      "model": "WorkspaceCallResponse",
-      "path": "schemas/workspace-call-response.schema.json",
-      "pydanticMode": "validation",
-      "sha256": "7ea19a39999cd893581483c221ca92eaff9959a00717abb91cdf2b4262fc6ea6",
-      "slug": "workspace-call-response"
-    },
-    {
-      "direction": "bidirectional",
-      "model": "TerminalOutputRequest",
-      "path": "schemas/terminal-output-request.schema.json",
-      "pydanticMode": "validation",
-      "sha256": "392d7c822aa9ce6375a1ccc3be30364cd7511c55da102e737a97a84d1e0dcce0",
-      "slug": "terminal-output-request"
-    },
-    {
-      "direction": "bidirectional",
-      "model": "TerminalOutputItem",
-      "path": "schemas/terminal-output-item.schema.json",
-      "pydanticMode": "validation",
-      "sha256": "274edb6d21cb44e241f05e7ebc211c32e80ca28f60de5a1f74f4040823ea0c88",
-      "slug": "terminal-output-item"
-    },
-    {
-      "direction": "bidirectional",
       "model": "RuntimeNoticeUpdatedEvent",
       "path": "schemas/runtime-notice-updated-event.schema.json",
       "pydanticMode": "validation",
@@ -287,78 +215,6 @@
       "pydanticMode": "validation",
       "sha256": "c78340982581b509a9e8689e4e151d7a4ec7eda8508510463a04db8df4abd2ee",
       "slug": "runtime-queue-updated-event"
-    },
-    {
-      "direction": "bidirectional",
-      "model": "SessionRequest",
-      "path": "schemas/session-request.schema.json",
-      "pydanticMode": "validation",
-      "sha256": "7724c6f7710510a87f00a76bc575b9cc9b1e6c2655708a0a1eee9df1cad2e0d1",
-      "slug": "session-request"
-    },
-    {
-      "direction": "bidirectional",
-      "model": "SessionStateRequest",
-      "path": "schemas/session-state-request.schema.json",
-      "pydanticMode": "validation",
-      "sha256": "1887ffe83c704fa0ae800c5fdcc437ed929579509e1a3ec1b7116bbcd1887c35",
-      "slug": "session-state-request"
-    },
-    {
-      "direction": "bidirectional",
-      "model": "SessionNoticesResponse",
-      "path": "schemas/session-notices-response.schema.json",
-      "pydanticMode": "validation",
-      "sha256": "4a6ecec2abf4c7c4fcf749f9bff8f5c36ba3cf066561fb0f663f4a0071d4f42e",
-      "slug": "session-notices-response"
-    },
-    {
-      "direction": "bidirectional",
-      "model": "SessionStateResponse",
-      "path": "schemas/session-state-response.schema.json",
-      "pydanticMode": "validation",
-      "sha256": "047e44733fded120d3f8be2228a338a60cd219601b5733f0d5d0e368477804cb",
-      "slug": "session-state-response"
-    },
-    {
-      "direction": "bidirectional",
-      "model": "SessionCapabilitiesResponse",
-      "path": "schemas/session-capabilities-response.schema.json",
-      "pydanticMode": "validation",
-      "sha256": "e9c2ecad8c8b1c97999889951426086552baef22bd737399ae6ebfd5ea65923a",
-      "slug": "session-capabilities-response"
-    },
-    {
-      "direction": "bidirectional",
-      "model": "SessionQueueResponse",
-      "path": "schemas/session-queue-response.schema.json",
-      "pydanticMode": "validation",
-      "sha256": "670d90cb1a3eda1df66f8f6f99a4ca76c48f01bf88868902fccb442ae5938ddb",
-      "slug": "session-queue-response"
-    },
-    {
-      "direction": "bidirectional",
-      "model": "RuntimeCatalogsResponse",
-      "path": "schemas/runtime-catalogs-response.schema.json",
-      "pydanticMode": "validation",
-      "sha256": "6f28601346c0df4533bdf86d36dd84fdd7583befd649c1f9253d326b362dd9bd",
-      "slug": "runtime-catalogs-response"
-    },
-    {
-      "direction": "bidirectional",
-      "model": "PlanDocumentRequest",
-      "path": "schemas/plan-document-request.schema.json",
-      "pydanticMode": "validation",
-      "sha256": "83e595d4b5ccc93ba2753ca4a5f9c5e37a32a77b355e96cd37865864e5fcffea",
-      "slug": "plan-document-request"
-    },
-    {
-      "direction": "bidirectional",
-      "model": "PlanDocumentResponse",
-      "path": "schemas/plan-document-response.schema.json",
-      "pydanticMode": "validation",
-      "sha256": "9548fab8f51ba05a9ca46826f2105f939a6ebf49be031f6446e3f5f30c7d75d1",
-      "slug": "plan-document-response"
     },
     {
       "direction": "bidirectional",
@@ -718,7 +574,7 @@
   "extras": [
     {
       "path": "device.meshcall.json",
-      "sha256": "084c34fc5e5115fc058349e275f4209274e7207cb9e158e18f7cd5b582f12f5d"
+      "sha256": "228d78a66ebcaf5f1d3453f30622760b2231ff2b64d7ad1b46034e4a4e6270f6"
     },
     {
       "path": "mesh-errors.json",
@@ -726,11 +582,11 @@
     },
     {
       "path": "e2ee-registration.json",
-      "sha256": "cfaaf45ff688727db8a279fb612c98670a80bf86bb2284615250547284d8efef"
+      "sha256": "5aaa9da2d9606524a65bdfbd8c8310e4f6c3dcf0450f9e2cb2d6d86f37d54cc5"
     },
     {
       "path": "payloads.json",
-      "sha256": "bf0851bcf38409486d1d797ae2e7b5632bcb3465e7b758db066014fcfc3fa08e"
+      "sha256": "5e763f9d1b3ba47f83b4d08c520de2d2f2cc7e71393b0b1635c7e672bfe5f500"
     },
     {
       "path": "client-routes.json",

@@ -20,7 +20,6 @@ from agent_server.core.device_runtime import (
     RuntimeTypeView,
     validate_config,
 )
-from agent_server.core.model_channel import managed_channel_runtime_id
 from agent_server.core.model_connection import (
     connection_digest,
     failed_report,
@@ -33,23 +32,13 @@ from agent_server.core.secret_fields import (
     secret_paths,
     secret_values,
 )
-from agent_server.core.utc import utc_now
-from agent_server.infra.connector_rpc import (
-    ConnectorConnection,
-    ConnectorOfflineError,
-    ConnectorRpcError,
-    ConnectorRpcManager,
-)
+from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.infra.redis_coordinator import RedisCoordinator
-from agent_server.infra.terminal_broker import TerminalBroker
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.device_commands import DeviceCommandError
 from agent_server.services.repository_ports import DeviceRuntimeRepository
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
-
-# The Connector gives the model endpoint 30 seconds to answer.
-MODEL_PROBE_RPC_TIMEOUT_SECONDS = 45.0
 
 # v3 devices (contracts/device-meshcall/1.0): desired state goes out as ``Commands/*``, facts come back
 # on ``Link/attach`` as ``runtime.status`` events (contracts/runtime-control/3.0).
@@ -71,20 +60,6 @@ _DEVICE_GATEWAY_PROTOCOLS = {
     "openai_chat": "openai-chat",
 }
 _CAPABILITY_CACHE_SECONDS = 7 * 24 * 3600
-
-
-def device_commands_of(manager: Any) -> Any | None:
-    """The ``DeviceCommandService`` that serves v3 devices behind ``ConnectorRpcManager``.
-
-    Prefers an explicitly attached ``device_commands``; otherwise the one the app attached to the
-    manager's v3 link (``DeviceRpcBridge.commands``).
-    """
-
-    explicit = getattr(manager, "device_commands", None)
-    if explicit is not None:
-        return explicit
-    link = getattr(manager, "_mesh_link", None)
-    return getattr(link, "commands", None)
 
 
 def device_model_gateway(
@@ -136,7 +111,7 @@ def device_runtime_entry(runtime: DeviceRuntimeView, *, active: bool | None = No
 
 
 def _runtime_rpc_timeout_seconds() -> float:
-    """Runtime RPCs can be slow on a large corpus; tests shorten this to fail fast."""
+    """How long ``runtime.apply`` may take on a large corpus; tests shorten this to fail fast."""
     try:
         return float(os.environ.get("AGENT_SERVER_RUNTIME_RPC_TIMEOUT_SECONDS", "90"))
     except ValueError:
@@ -186,6 +161,16 @@ class DeviceRuntimeOutcomeUnknownError(DeviceRuntimeError):
 
     status_code = 504
     code = "command_outcome_unknown"
+
+
+class DeviceRuntimeUpgradeRequiredError(DeviceRuntimeError):
+    """A v2 Connector: its Runtime instances need Agents Anywhere upgraded on that device (D4)."""
+
+    status_code = 409
+    code = "device_upgrade_required"
+
+    def __init__(self, message: str = "Upgrade Agents Anywhere on this device to manage its Runtimes.") -> None:
+        super().__init__(message)
 
 
 class DeviceRuntimeNotConfiguredError(DeviceRuntimeError):
@@ -253,19 +238,17 @@ class DeviceRuntimeService:
         timeline_broker: TimelineBroker | None = None,
         coordinator: RedisCoordinator | None = None,
         runtime_state_cache: SessionRuntimeStateCache | None = None,
-        terminal_broker: TerminalBroker | None = None,
     ) -> None:
         self._store = store
         self._manager = manager
         self._timeline_broker = timeline_broker
         self._coordinator = coordinator
         self._runtime_state_cache = runtime_state_cache
-        self._terminal_broker = terminal_broker
         self._locks: dict[tuple[str, str], asyncio.Lock] = {}
         self._locks_guard = asyncio.Lock()
-        # What each connected Connector declared it supports (e.g. switchFence).
+        # What each device declared it supports (e.g. channelReconcileFence) in its ``runtime.types`` report.
         self._features: dict[str, frozenset[str]] = {}
-        # v3 devices: the ``DeviceCommandService`` (else found through the manager, ``device_commands_of``).
+        # The ``DeviceCommandService`` the app attaches.
         self.device_commands: Any | None = None
         # v3: runtime-level capability sets and the device process id last reported, when Redis is not shared.
         self._capabilities: dict[tuple[str, str], dict[str, Any]] = {}
@@ -284,11 +267,16 @@ class DeviceRuntimeService:
         except KeyError:
             return False
 
+    async def _require_v3(self, connector_id: str) -> None:
+        """Instance management of a v2 Connector answers ``device_upgrade_required`` (D4)."""
+
+        if not await self.is_v3_device(connector_id):
+            raise DeviceRuntimeUpgradeRequiredError()
+
     def _device_commands(self) -> Any:
-        commands = self.device_commands or device_commands_of(self._manager)
-        if commands is None:
-            raise DeviceRuntimeOfflineError("v3 device link is not available on this server")
-        return commands
+        if self.device_commands is None:
+            raise DeviceRuntimeOfflineError("the device link is not available on this server")
+        return self.device_commands
 
     async def on_device_event(self, device_id: str, method: str, payload: dict[str, Any]) -> None:
         """``DeviceLinkService.event_listeners``: keep what a v3 device reports about its Runtimes.
@@ -459,30 +447,14 @@ class DeviceRuntimeService:
             await self._publish(connector_id, "runtime.types")
         return [RuntimeTypeView.model_validate(row) for row in rows]
 
-    async def discover_connection(
-        self,
-        connector_id: str,
-        connection: ConnectorConnection,
-    ) -> str:
-        return await self._discover(
-            connector_id,
-            connection=connection,
-        )
-
-    async def publish_discovery(self, connector_id: str, reason: str) -> None:
-        await self._publish(connector_id, reason)
-
     async def discover(
         self, connector_id: str, *, user_id: str
     ) -> list[DeviceRuntimeView]:
-        await self.list_runtimes(connector_id, user_id=user_id)
-        if await self.is_v3_device(connector_id):
-            # A v3 device reports its types on its own (``runtime.types``); there is nothing to ask.
-            return await self.list_runtimes(connector_id, user_id=user_id)
-        reason = await self._discover(connector_id)
-        await self.publish_discovery(connector_id, reason)
-        await self.reconcile_active(connector_id)
-        return await self.list_runtimes(connector_id, user_id=user_id)
+        """A device reports its types on its own (``runtime.types``); there is nothing to ask."""
+
+        runtimes = await self.list_runtimes(connector_id, user_id=user_id)
+        await self._require_v3(connector_id)
+        return runtimes
 
     async def discover_runtime_types(
         self,
@@ -490,84 +462,9 @@ class DeviceRuntimeService:
         *,
         user_id: str,
     ) -> list[RuntimeTypeView]:
-        await self.list_runtime_types(connector_id, user_id=user_id)
-        if await self.is_v3_device(connector_id):
-            return await self.list_runtime_types(connector_id, user_id=user_id)
-        reason = await self._discover(connector_id)
-        await self.publish_discovery(connector_id, reason)
-        await self.reconcile_active(connector_id)
-        return await self.list_runtime_types(connector_id, user_id=user_id)
-
-    async def _discover(
-        self,
-        connector_id: str,
-        *,
-        connection: ConnectorConnection | None = None,
-    ) -> str:
-        result, connection_id = await self._request_discovery(
-            connector_id,
-            connection=connection,
-        )
-        async with self._runtime_lock(connector_id, "@instances"):
-            if not await self._manager.is_connection_id_current(
-                connector_id,
-                connection_id,
-            ):
-                raise DeviceRuntimeOfflineError("connector connection was replaced")
-            return await self._ingest_discovery(connector_id, result)
-
-    async def _request_discovery(
-        self,
-        connector_id: str,
-        *,
-        connection: ConnectorConnection | None = None,
-    ) -> tuple[Any, str]:
-        if connection is None and not await self._manager.is_online(connector_id):
-            raise DeviceRuntimeOfflineError("connector is offline")
-        try:
-            params: dict[str, Any] = {}
-            if connection is None:
-                return await self._manager.request_bound(
-                    connector_id,
-                    "runtime.discover",
-                    params,
-                    timeout=_runtime_rpc_timeout_seconds(),
-                )
-            else:
-                result = await self._manager.request_on_connection(
-                    connection,
-                    "runtime.discover",
-                    params,
-                    timeout=_runtime_rpc_timeout_seconds(),
-                )
-                return result, connection.connection_id
-        except ConnectorOfflineError as exc:
-            raise DeviceRuntimeOfflineError(str(exc)) from exc
-        except ConnectorRpcError as exc:
-            raise DeviceRuntimeUpstreamError(
-                exc.message,
-                detail={"code": exc.code, "message": exc.message},
-            ) from exc
-
-    async def _ingest_discovery(
-        self,
-        connector_id: str,
-        result: Any,
-    ) -> str:
-        if not isinstance(result, dict):
-            raise DeviceRuntimeUpstreamError(
-                "connector returned an invalid runtime discovery response"
-            )
-        try:
-            response = RuntimeDiscoveryResponse.model_validate(result)
-            await self.ingest_runtime_types(connector_id, response, publish=False)
-            await self._remember_features(connector_id, response.features)
-            return "runtime.types"
-        except (ValidationError, ValueError) as exc:
-            raise DeviceRuntimeUpstreamError(
-                "connector returned an invalid runtime discovery response",
-                detail={"code": "invalid_runtime_discovery", "message": str(exc)},
-            ) from exc
+        runtime_types = await self.list_runtime_types(connector_id, user_id=user_id)
+        await self._require_v3(connector_id)
+        return runtime_types
 
     async def create_runtime(
         self,
@@ -582,6 +479,7 @@ class DeviceRuntimeService:
         managed_by: str | None = None,
         fence: dict[str, Any] | None = None,
     ) -> DeviceRuntimeView:
+        await self._require_v3(connector_id)
         async with self._runtime_lock(connector_id, "@instances"):
             try:
                 runtime_type_row = RuntimeTypeView.model_validate(
@@ -611,10 +509,6 @@ class DeviceRuntimeService:
                 ),
                 secrets=secrets,
             )
-            v3 = await self.is_v3_device(connector_id)
-            if not v3 and not await self._manager.is_online(connector_id):
-                raise DeviceRuntimeOfflineError("connector is offline")
-
             try:
                 runtime = DeviceRuntimeView.model_validate(
                     await self._store.create_device_runtime(
@@ -631,21 +525,7 @@ class DeviceRuntimeService:
             except ValueError as exc:
                 raise DeviceRuntimeConflictError(str(exc)) from exc
 
-            try:
-                await self._request_validate(runtime, config, secrets=secrets, fence=fence)
-            except DeviceRuntimeError as exc:
-                error = (
-                    exc.detail
-                    if isinstance(exc.detail, dict)
-                    else {"code": exc.code, "message": exc.message}
-                )
-                await self._store.set_device_runtime_status(
-                    connector_id,
-                    runtime.runtimeId,
-                    "error",
-                    error=error,
-                )
-                raise
+            # The device validates again in ``runtime.apply`` and rejects what it cannot run (422).
             if active:
                 runtime = await self._start_locked(runtime, fence=fence)
             await self._publish(connector_id, "runtime.created")
@@ -659,6 +539,7 @@ class DeviceRuntimeService:
         *,
         user_id: str,
     ) -> DeviceRuntimeView:
+        await self._require_v3(connector_id)
         async with self._runtime_lock(connector_id, runtime_id):
             await self._get_owned(
                 connector_id,
@@ -749,25 +630,8 @@ class DeviceRuntimeService:
             named=runtime.runtimeId != runtime.runtimeType,
         )
         self._validate(config, schema, secrets=secrets)
-        v3 = await self.is_v3_device(connector_id)
-        # A v3 device validates again in ``runtime.apply``; offline, the change waits in desired state.
-        if not v3 and not await self._manager.is_online(connector_id):
-            raise DeviceRuntimeOfflineError("connector is offline")
-        try:
-            await self._request_validate(runtime, config, secrets=secrets, fence=fence)
-        except DeviceRuntimeError as exc:
-            error = (
-                exc.detail
-                if isinstance(exc.detail, dict)
-                else {"code": exc.code, "message": exc.message}
-            )
-            await self._store.set_device_runtime_status(
-                connector_id,
-                runtime_id,
-                "error",
-                error=error,
-            )
-            raise
+        # The device validates again in ``runtime.apply``; offline, the change waits in desired state.
+        await self._require_v3(connector_id)
         if fence and fence.get("targetGeneration") is not None:
             owner = await self._store.channel_connector_owner(connector_id)
             async with self._store.channel_transaction(owner):
@@ -779,8 +643,6 @@ class DeviceRuntimeService:
         else:
             saved = await self._store.set_device_runtime_config(connector_id, runtime_id, config)
         runtime = DeviceRuntimeView.model_validate(saved)
-        if not v3:
-            await self._manager.set_runtime_ingress_enabled(connector_id, runtime_id, True)
         if runtime.active and not restart:
             # Saved for the next start; the running instance keeps going.
             pass
@@ -810,15 +672,13 @@ class DeviceRuntimeService:
     ) -> DeviceRuntimeView:
         async with self._runtime_lock(connector_id, runtime_id):
             runtime = await self._get_owned(connector_id, runtime_id, user_id=user_id)
+            await self._require_v3(connector_id)
             if active:
                 if not runtime.configured or runtime.config is None:
                     raise DeviceRuntimeNotConfiguredError(
                         "runtime must be configured before activation"
                     )
-                if not await self.is_v3_device(connector_id) and not await self._manager.is_online(connector_id):
-                    raise DeviceRuntimeOfflineError("connector is offline")
-                # Activation is the explicit start signal, so the connector
-                # performs the live availability check for the runtime type.
+                # Activation is the explicit start signal; offline, it waits in desired state.
                 await self._store.set_device_runtime_active(
                     connector_id, runtime_id, True
                 )
@@ -827,26 +687,9 @@ class DeviceRuntimeService:
                 await self._store.set_device_runtime_active(
                     connector_id, runtime_id, False
                 )
-                runtime = await self._stop_locked(runtime, allow_offline=True)
+                runtime = await self._stop_locked(runtime)
             await self._publish(connector_id, "runtime.active")
             return runtime
-
-    async def mark_reconnecting(self, connector_id: str) -> None:
-        """Persisted running state cannot authorize requests to a new process.
-
-        Called under connector lifecycle admission before the new connection is
-        ready. Reconciliation will replace this phase after runtime.start.
-        """
-        if await self.is_v3_device(connector_id):
-            # A v3 device applies ``LinkWelcome.desired`` itself and reports each instance.
-            return
-        for row in await self._store.list_device_runtimes(connector_id):
-            runtime = DeviceRuntimeView.model_validate(row)
-            if runtime.present and runtime.active and runtime.configured:
-                await self._store.set_device_runtime_status(
-                    connector_id, runtime.runtimeId, "starting",
-                    phase={"stage": "reconnecting"},
-                )
 
     async def ensure_active_running(
         self,
@@ -863,6 +706,7 @@ class DeviceRuntimeService:
                 raise DeviceRuntimeNotConfiguredError(
                     "runtime must be configured before use"
                 )
+            await self._require_v3(connector_id)
             if not await self._manager.is_online(connector_id):
                 raise DeviceRuntimeOfflineError("connector is offline")
 
@@ -872,8 +716,8 @@ class DeviceRuntimeService:
             if current.status == "running":
                 return current
             if current.status == "starting" and current.phase is not None:
-                # The connector is mid-start (e.g. syncing sessions); another
-                # runtime.start would restart it and throw that work away.
+                # The device is mid-start (e.g. syncing sessions); another
+                # runtime.apply would restart it and throw that work away.
                 phase = current.phase
                 message = phase.get("message")
                 text = message if isinstance(message, str) and message else "runtime is starting"
@@ -923,8 +767,8 @@ class DeviceRuntimeService:
         *,
         user_id: str,
     ) -> DeviceRuntimeView:
-        # A v3 device drops an instance that is no longer in its desired state when it links again.
-        v3 = await self.is_v3_device(connector_id)
+        # The device drops an instance that is no longer in its desired state when it links again.
+        await self._require_v3(connector_id)
         async with self._runtime_lock(connector_id, runtime_id):
             runtime = await self._get_owned(connector_id, runtime_id, user_id=user_id)
             if runtime.active or runtime.status in {
@@ -934,43 +778,24 @@ class DeviceRuntimeService:
                 "error",
                 "unknown",
             }:
-                if not v3 and not await self._manager.is_online(connector_id):
-                    raise DeviceRuntimeOfflineError(
-                        "connector must be online before deleting a running runtime"
-                    )
                 await self._store.set_device_runtime_active(
                     connector_id, runtime_id, False
                 )
-                runtime = await self._stop_locked(runtime, allow_offline=v3)
-        # Stop may await Connector HTTP ingestion. Acquire admission only after
-        # the RPC completes, then recheck under the normal lock order.
+                runtime = await self._stop_locked(runtime)
+        # Acquire admission only after the stop command completes, then recheck under the normal lock order.
         async with self._store.connector_lifecycle(connector_id), self._runtime_lock(connector_id, runtime_id):
             runtime = await self._get_owned(connector_id, runtime_id, user_id=user_id)
             if runtime.active or runtime.status in {"starting", "running", "stopping", "unknown"}:
                 raise DeviceRuntimeConflictError("runtime changed while deleting configuration; retry deletion")
-            if not v3:
-                await self._manager.set_runtime_ingress_enabled(connector_id, runtime_id, False)
-            try:
-                session_ids = await self._store.runtime_session_ids(connector_id, runtime_id)
-                # A storage failure leaves the database, terminals and cache
-                # available for the same deletion retry.
-                await self._store.delete_runtime_session_files(session_ids)
-                for session_id in session_ids:
-                    if self._terminal_broker is not None:
-                        for terminal in await self._terminal_broker.get_for_session(
-                            session_id
-                        ):
-                            await self._terminal_broker.remove(terminal.id)
-                    if self._runtime_state_cache is not None:
-                        await self._runtime_state_cache.discard(session_id)
-                await self._store.clear_device_runtime_config(
-                    connector_id, runtime_id, cleanup_files=False, retire=True,
-                )
-            except BaseException:
-                remaining = await self._get_owned(connector_id, runtime_id, user_id=user_id)
-                if not v3:
-                    await self._manager.set_runtime_ingress_enabled(connector_id, runtime_id, remaining.configured)
-                raise
+            session_ids = await self._store.runtime_session_ids(connector_id, runtime_id)
+            # A storage failure leaves the database and cache available for the same deletion retry.
+            await self._store.delete_runtime_session_files(session_ids)
+            for session_id in session_ids:
+                if self._runtime_state_cache is not None:
+                    await self._runtime_state_cache.discard(session_id)
+            await self._store.clear_device_runtime_config(
+                connector_id, runtime_id, cleanup_files=False, retire=True,
+            )
             # The row is gone; report its final state so clients drop it.
             runtime = runtime.model_copy(update={
                 "configured": False,
@@ -1063,188 +888,15 @@ class DeviceRuntimeService:
                 runtime.connectorId, runtime.runtimeId, report
             )
 
-    async def reconcile_active(
-        self,
-        connector_id: str,
-        *,
-        expected_connection_id: str | None = None,
-        connection: ConnectorConnection | None = None,
-    ) -> None:
-        if connection is not None:
-            if connection.connector_id != connector_id:
-                raise ValueError("runtime reconciliation connector mismatch")
-            if (
-                expected_connection_id is not None
-                and expected_connection_id != connection.connection_id
-            ):
-                raise ValueError("runtime reconciliation connection mismatch")
-            expected_connection_id = connection.connection_id
-        if (
-            expected_connection_id is not None
-            and not await self._manager.is_connection_id_current(
-                connector_id,
-                expected_connection_id,
-            )
-        ):
-            return
-        if connection is None and await self.is_v3_device(connector_id):
-            # A v3 device reconciles itself from ``LinkWelcome.desired`` and reports each instance.
-            return
-        try:
-            rows = await self._store.list_device_runtimes(connector_id)
-        except KeyError:
-            return
-        for row in rows:
-            runtime = DeviceRuntimeView.model_validate(row)
-            if not runtime.present:
-                continue
-            owner = await self._store.channel_connector_owner(connector_id)
-            if owner is not None:
-                syncs = await self._store.list_channel_sync(owner)
-                logical = [x["runtime_id"] for x in syncs if x["connector_id"] == connector_id and (
-                    x["runtime_id"] == runtime.runtimeId or managed_channel_runtime_id(connector_id, x["runtime_id"]) == runtime.runtimeId
-                    or (runtime.managedBy == "model-config" and not runtime.runtimeId.startswith("rti_channel_")
-                        and x["runtime_id"] == runtime.runtimeType))]
-                if await self._store.runtime_closed_for_switch(connector_id, logical or [runtime.runtimeId], now=utc_now()):
-                    continue
-            async with self._runtime_lock(connector_id, runtime.runtimeId):
-                if (
-                    expected_connection_id is not None
-                    and not await self._manager.is_connection_id_current(
-                        connector_id,
-                        expected_connection_id,
-                    )
-                ):
-                    return
-                current = DeviceRuntimeView.model_validate(
-                    await self._store.get_device_runtime(
-                        connector_id, runtime.runtimeId
-                    )
-                )
-                if not current.present:
-                    continue
-                if owner is not None and await self._store.runtime_closed_for_switch(
-                    connector_id, logical or [runtime.runtimeId], now=utc_now()):
-                    continue
-                if not current.active:
-                    if current.status in {"starting", "running", "stopping", "unknown"}:
-                        try:
-                            await self._stop_locked(
-                                current,
-                                allow_offline=True,
-                                connection=connection,
-                            )
-                        except DeviceRuntimeError:
-                            pass
-                    continue
-                if current.config is None:
-                    continue
-                try:
-                    await self._start_locked(current, connection=connection)
-                except DeviceRuntimeError as exc:
-                    logger.warning(
-                        "active runtime reconciliation failed "
-                        "connector_id={} runtime_id={} error_code={} error={}",
-                        connector_id,
-                        current.runtimeId,
-                        exc.code,
-                        exc.message,
-                    )
-                    continue
-        await self._publish(connector_id, "runtime.reconciled")
-
     async def _start_locked(
         self,
         runtime: DeviceRuntimeView,
         *,
-        connection: ConnectorConnection | None = None,
         fence: dict[str, Any] | None = None,
         started: dict[str, Any] | None = None,
     ) -> DeviceRuntimeView:
         assert runtime.config is not None
-        if connection is None and await self.is_v3_device(runtime.connectorId):
-            return await self._apply_v3(runtime, active=True, fence=fence, started=started)
-        await self._store.set_device_runtime_status(
-            runtime.connectorId, runtime.runtimeId, "starting"
-        )
-        params = {
-            "runtime": runtime.runtimeType,
-            "runtimeId": runtime.runtimeId,
-            "name": runtime.name,
-            "config": runtime.config,
-            "configRevision": _config_revision(runtime),
-            **(await self._fence_params(runtime.connectorId, fence)),
-        }
-        try:
-            if connection is None:
-                result = await self._manager.request(
-                    runtime.connectorId,
-                    "runtime.start",
-                    params,
-                    timeout=_runtime_rpc_timeout_seconds(),
-                )
-            else:
-                result = await self._manager.request_on_connection(
-                    connection,
-                    "runtime.start",
-                    params,
-                    timeout=_runtime_rpc_timeout_seconds(),
-                )
-        except ConnectorOfflineError as exc:
-            await self._store.set_device_runtime_status(
-                runtime.connectorId,
-                runtime.runtimeId,
-                "unknown",
-                error={"code": "connector_offline", "message": str(exc)},
-            )
-            raise DeviceRuntimeOfflineError(str(exc)) from exc
-        except ConnectorRpcError as exc:
-            digest = connection_digest(runtime.config, runtime.modelConnection)
-            if digest is not None:
-                await self._store.set_device_runtime_model_connection(
-                    runtime.connectorId,
-                    runtime.runtimeId,
-                    failed_report(exc.message or exc.code, digest=digest),
-                )
-            row = await self._store.set_device_runtime_status(
-                runtime.connectorId,
-                runtime.runtimeId,
-                "error",
-                error={"code": exc.code, "message": exc.message},
-            )
-            error_cls = (
-                DeviceRuntimeConflictError
-                if exc.code == "runtime_conflict"
-                else DeviceRuntimeUpstreamError
-            )
-            raise error_cls(exc.message, detail=row["error"]) from exc
-        if started is not None and isinstance(result, dict):
-            started.update(result)
-        # A local service may be waiting for its Bridge while the switch stays on.
-        # Older connectors omit status on successful starts.
-        status = result.get("status", "running")
-        if status not in {"starting", "running", "error"}:
-            status = "running"
-        error = result.get("error")
-        phase = result.get("phase")
-        # What the adapter did with the model connection, against the
-        # connection it was started with; older Connectors report nothing.
-        report = stored_report(
-            result.get("modelConnection"),
-            digest=connection_digest(runtime.config, runtime.modelConnection),
-        )
-        await self._store.set_device_runtime_model_connection(
-            runtime.connectorId, runtime.runtimeId, report
-        )
-        return DeviceRuntimeView.model_validate(
-            await self._store.set_device_runtime_status(
-                runtime.connectorId,
-                runtime.runtimeId,
-                status,
-                error=error if isinstance(error, dict) else None,
-                phase=_phase_payload(phase if isinstance(phase, dict) else None),
-            )
-        )
+        return await self._apply_v3(runtime, active=True, fence=fence, started=started)
 
     async def _apply_v3(
         self,
@@ -1305,21 +957,24 @@ class DeviceRuntimeService:
                     error={"code": exc.code, "message": exc.message},
                 )
                 raise DeviceRuntimeOutcomeUnknownError(exc.message) from exc
-            error = {"code": exc.code, "message": exc.message}
+            # The device may quote the configuration it rejected; never store or return its secrets.
+            message = scrub(
+                exc.message or exc.code,
+                secret_values(runtime.config or {}, secret_paths(runtime.schema_, runtime.uiSchema)),
+            )
+            error = {"code": exc.code, "message": message}
             if active:
                 digest = connection_digest(runtime.config, runtime.modelConnection)
                 if digest is not None:
                     await self._store.set_device_runtime_model_connection(
-                        connector_id, runtime_id, failed_report(exc.message or exc.code, digest=digest)
+                        connector_id, runtime_id, failed_report(message, digest=digest)
                     )
             row = await self._store.set_device_runtime_status(connector_id, runtime_id, "error", error=error)
             if exc.code in _DEVICE_INVALID_CONFIG_CODES:
-                message = scrub(exc.message or exc.code, secret_values(runtime.config or {}, secret_paths(
-                    runtime.schema_, runtime.uiSchema)))
-                raise DeviceRuntimeInvalidConfigError(message, detail={"code": exc.code, "message": message}) from exc
+                raise DeviceRuntimeInvalidConfigError(message, detail=error) from exc
             if exc.code in {"runtime_conflict", "switch_revision_stale"}:
-                raise DeviceRuntimeConflictError(exc.message, detail=row["error"]) from exc
-            raise DeviceRuntimeUpstreamError(exc.message, detail=row["error"]) from exc
+                raise DeviceRuntimeConflictError(message, detail=row["error"]) from exc
+            raise DeviceRuntimeUpstreamError(message, detail=row["error"]) from exc
         result = outcome.result if isinstance(outcome.result, dict) else {}
         capabilities = result.get("capabilities")
         if isinstance(capabilities, dict):
@@ -1362,8 +1017,6 @@ class DeviceRuntimeService:
         runtime: DeviceRuntimeView,
         *,
         fence: dict[str, Any] | None = None,
-        allow_offline: bool,
-        connection: ConnectorConnection | None = None,
     ) -> DeviceRuntimeView:
         if runtime.status == "stopped":
             await self._settle_runtime_sessions(runtime)
@@ -1374,76 +1027,7 @@ class DeviceRuntimeService:
                     "stopped",
                 )
             )
-        if connection is None and await self.is_v3_device(runtime.connectorId):
-            return await self._apply_v3(runtime, active=False, fence=fence, started=None)
-        if connection is None:
-            online = await self._manager.is_online(runtime.connectorId)
-        else:
-            online = await self._manager.is_connection_id_current(
-                runtime.connectorId,
-                connection.connection_id,
-            )
-        if not online:
-            if not allow_offline:
-                raise DeviceRuntimeOfflineError("connector is offline")
-            if connection is not None:
-                raise DeviceRuntimeOfflineError("connector connection was replaced")
-            return DeviceRuntimeView.model_validate(
-                await self._store.set_device_runtime_status(
-                    runtime.connectorId,
-                    runtime.runtimeId,
-                    "unknown",
-                )
-            )
-        await self._store.set_device_runtime_status(
-            runtime.connectorId, runtime.runtimeId, "stopping"
-        )
-        if fence is not None:
-            await self._store.assert_channel_execution()
-        params = {
-            **(await self._fence_params(runtime.connectorId, fence)),
-            "runtime": runtime.runtimeType,
-            "runtimeId": runtime.runtimeId,
-        }
-        try:
-            if connection is None:
-                await self._manager.request(
-                    runtime.connectorId,
-                    "runtime.stop",
-                    params,
-                    timeout=_runtime_rpc_timeout_seconds(),
-                )
-            else:
-                await self._manager.request_on_connection(
-                    connection,
-                    "runtime.stop",
-                    params,
-                    timeout=_runtime_rpc_timeout_seconds(),
-                )
-        except ConnectorOfflineError as exc:
-            await self._store.set_device_runtime_status(
-                runtime.connectorId, runtime.runtimeId, "unknown"
-            )
-            raise DeviceRuntimeOfflineError(str(exc)) from exc
-        except ConnectorRpcError as exc:
-            await self._store.set_device_runtime_status(
-                runtime.connectorId,
-                runtime.runtimeId,
-                "error",
-                error={"code": exc.code, "message": exc.message},
-            )
-            raise DeviceRuntimeUpstreamError(
-                exc.message,
-                detail={"code": exc.code, "message": exc.message},
-            ) from exc
-        await self._settle_runtime_sessions(runtime)
-        return DeviceRuntimeView.model_validate(
-            await self._store.set_device_runtime_status(
-                runtime.connectorId,
-                runtime.runtimeId,
-                "stopped",
-            )
-        )
+        return await self._apply_v3(runtime, active=False, fence=fence, started=None)
 
     async def _restart_locked(
         self,
@@ -1452,11 +1036,7 @@ class DeviceRuntimeService:
         fence: dict[str, Any] | None = None,
         started: dict[str, Any] | None = None,
     ) -> DeviceRuntimeView:
-        if await self.is_v3_device(runtime.connectorId):
-            # One command: the device replaces a running instance whose desired state changed.
-            return await self._start_locked(runtime, fence=fence, started=started)
-        if runtime.status in {"starting", "running", "stopping", "unknown"}:
-            runtime = await self._stop_locked(runtime, allow_offline=False, fence=fence)
+        # One command: the device replaces a running instance whose desired state changed.
         return await self._start_locked(runtime, fence=fence, started=started)
 
     async def _settle_runtime_sessions(self, runtime: DeviceRuntimeView) -> None:
@@ -1479,71 +1059,25 @@ class DeviceRuntimeService:
                     },
                 )
 
-    async def _request_validate(
-        self,
-        runtime: DeviceRuntimeView,
-        config: dict[str, Any],
-        *,
-        secrets: list[str] | None = None,
-        fence: dict[str, Any] | None = None,
-    ) -> None:
-        if await self.is_v3_device(runtime.connectorId):
-            # v3 has no separate validation call: the Server validated against the schema the device
-            # reported, and the device rejects what it cannot run in ``runtime.apply`` (422 below).
-            return
-        params = {
-            "runtime": runtime.runtimeType,
-            "runtimeId": runtime.runtimeId,
-            "name": runtime.name,
-            "config": config,
-            "configRevision": _config_revision(runtime),
-            **(await self._fence_params(runtime.connectorId, fence)),
-        }
-        try:
-            await self._manager.request(
-                runtime.connectorId,
-                "runtime.validateConfig",
-                params,
-                timeout=_runtime_rpc_timeout_seconds(),
-            )
-        except ConnectorOfflineError as exc:
-            raise DeviceRuntimeOfflineError(str(exc)) from exc
-        except ConnectorRpcError as exc:
-            status_code = (
-                422
-                if exc.code
-                in {"invalid_config", "runtime_config_invalid", "model_connection_unsupported"}
-                else 502
-            )
-            error_cls = (
-                DeviceRuntimeInvalidConfigError
-                if status_code == 422
-                else DeviceRuntimeUpstreamError
-            )
-            # The Connector's message may quote the submitted value.
-            message = scrub(exc.message or exc.code, secrets or [])
-            raise error_cls(
-                message,
-                detail={"code": exc.code, "message": message},
-            ) from exc
-
     async def _remember_features(self, connector_id: str, features: list[str]) -> None:
         self._features[connector_id] = frozenset(features)
         if self._coordinator is not None and self._coordinator.distributed:
-            # The Connector's socket lives on one worker; the others read it here.
+            # The device's link is held by one worker; the others read it here.
             await self._coordinator.client.set(
                 self._coordinator.key("connector-features", connector_id), ",".join(sorted(features)),
             )
 
     async def connector_supports(self, connector_id: str, feature: str) -> bool:
-        """Whether the Connector declared ``feature`` when it was last discovered."""
+        """Whether the device declared ``feature`` in its last ``runtime.types`` report (never a v2 Connector)."""
+        if not await self.is_v3_device(connector_id):
+            return False
         if self._coordinator is not None and self._coordinator.distributed:
             stored = await self._coordinator.client.get(self._coordinator.key("connector-features", connector_id))
             return feature in (stored or "").split(",")
         return feature in self._features.get(connector_id, frozenset())
 
     async def _fence_params(self, connector_id: str, fence: dict[str, Any] | None) -> dict[str, Any]:
-        # Older Connectors refuse unknown fields, so only send what they declared.
+        # Devices refuse unknown fields, so only send what they declared.
         if not fence:
             return {}
         await self._store.assert_channel_execution()
@@ -1551,59 +1085,21 @@ class DeviceRuntimeService:
             raise DeviceRuntimeConflictError("connector upgrade required for channel reconciliation")
         return {key: fence[key] for key in ("operationId", "switchRevision") if fence.get(key) is not None}
 
-    async def probe_model_connection(
-        self, connector_id: str, runtime_id: str, runtime_type: str,
-    ) -> dict[str, Any] | None:
-        """Have the running instance's model connection answer one minimal request.
-
-        Returns the Connector's ``{probe, configDigest, instanceId}``, or None
-        when the Connector cannot probe (it did not declare ``modelProbe``).
-        """
-        if not await self.connector_supports(connector_id, "modelProbe"):
-            return None
-        try:
-            result = await self._manager.request(
-                connector_id,
-                "runtime.probeModelConnection",
-                {"runtime": runtime_type, "runtimeId": runtime_id},
-                timeout=MODEL_PROBE_RPC_TIMEOUT_SECONDS,
-            )
-        except ConnectorOfflineError as exc:
-            raise DeviceRuntimeOfflineError(str(exc)) from exc
-        except ConnectorRpcError as exc:
-            raise DeviceRuntimeUpstreamError(
-                exc.message or exc.code, detail={"code": exc.code, "message": exc.message},
-            ) from exc
-        return result if isinstance(result, dict) else {}
-
     async def read_connector_config(self, connector_id: str, runtime_id: str, runtime_type: str) -> dict[str, Any] | None:
-        """The configuration the Connector is actually running, or None if it cannot say."""
-        if await self.is_v3_device(connector_id):
-            # A v3 device acknowledges ``runtime.apply`` only after it took the configuration, so the
-            # stored row is what it runs; offline it cannot say.
-            if not await self._manager.is_online(connector_id):
-                return None
-            try:
-                row = DeviceRuntimeView.model_validate(await self._store.get_device_runtime(connector_id, runtime_id))
-            except KeyError:
-                return None
-            return {"running": row.status == "running", "values": row.config,
-                    "instanceId": self._device_instances.get(connector_id)}
+        """The configuration the device is running, or None if it cannot say.
+
+        A device acknowledges ``runtime.apply`` only after it took the configuration, so the stored row is what it
+        runs; offline (or a v2 Connector) it cannot say.
+        """
+        del runtime_type
+        if not await self.is_v3_device(connector_id) or not await self._manager.is_online(connector_id):
+            return None
         try:
-            result = await self._manager.request(
-                connector_id,
-                "runtime.config",
-                {"runtime": runtime_type, "runtimeId": runtime_id},
-                timeout=_runtime_rpc_timeout_seconds(),
-            )
-        except (ConnectorOfflineError, ConnectorRpcError):
+            row = DeviceRuntimeView.model_validate(await self._store.get_device_runtime(connector_id, runtime_id))
+        except KeyError:
             return None
-        if not isinstance(result, dict):
-            return None
-        config = result.get("config")
-        values = config.get("values") if isinstance(config, dict) else None
-        return {"running": bool(result.get("running")), "values": values if isinstance(values, dict) else None,
-                "instanceId": result.get("instanceId")}
+        return {"running": row.status == "running", "values": row.config,
+                "instanceId": self._device_instances.get(connector_id)}
 
     async def _get_owned(
         self,
@@ -1687,7 +1183,7 @@ class LockedRuntime:
     def __init__(self, service: DeviceRuntimeService, runtime: DeviceRuntimeView) -> None:
         self._service = service
         self.runtime = runtime
-        # The Connector's reply to the last start through this handle.
+        # The device's reply to the last start through this handle.
         self.last_start: dict[str, Any] = {}
 
     async def refresh(self) -> DeviceRuntimeView:
@@ -1738,7 +1234,7 @@ class LockedRuntime:
             await service._store.set_device_runtime_active(
                 runtime.connectorId, runtime.runtimeId, False
             )
-            runtime = await service._stop_locked(runtime, allow_offline=True, fence=fence)
+            runtime = await service._stop_locked(runtime, fence=fence)
         await service._publish(runtime.connectorId, "runtime.active")
         self.runtime = runtime
         return runtime

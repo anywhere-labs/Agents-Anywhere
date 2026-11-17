@@ -5,7 +5,6 @@ import time
 from collections.abc import AsyncIterator
 from typing import Any
 
-from agent_server.infra.redis_coordinator import RedisCoordinator
 from agent_server.infra.repositories.active_runs_facade import ActiveRunRepositoryMixin
 from agent_server.infra.repositories.attachments import AttachmentRepositoryMixin
 from agent_server.infra.repositories.channel_reconciliation import (
@@ -19,6 +18,7 @@ from agent_server.infra.repositories.instance_settings_facade import (
     InstanceSettingsRepositoryMixin,
 )
 from agent_server.infra.repositories.oauth import OAuthRepositoryMixin
+from agent_server.infra.repositories.previews import PreviewRepositoryMixin
 from agent_server.infra.repositories.projects import ProjectRepositoryMixin
 from agent_server.infra.repositories.protocol_catalogs import (
     ProtocolCatalogRepositoryMixin,
@@ -26,11 +26,9 @@ from agent_server.infra.repositories.protocol_catalogs import (
 from agent_server.infra.repositories.sessions import SessionRepositoryMixin
 from agent_server.infra.repositories.shares import SessionShareRepositoryMixin
 from agent_server.infra.repositories.store_support import *
-from agent_server.infra.repositories.previews import PreviewRepositoryMixin
 from agent_server.infra.repositories.token_families import TokenFamilyRepositoryMixin
 from agent_server.infra.repositories.usage import UsageRepositoryMixin
 from agent_server.infra.repositories.users import UserRepositoryMixin
-from agent_server.infra.terminal_roots import TerminalRootStore
 
 _MAX_TRACKED_LOCKS = 4096
 _TRACKED_LOCK_IDLE_SECONDS = 900.0
@@ -81,17 +79,11 @@ class Store(
         self.instance_settings = InstanceSettingsRepository(engine)
         self.active_runs = ActiveRunRepository(engine)
         self.attachments = AttachmentService(self, self.files)
-        # Terminal roots are runtime state in Redis (``05-server.md`` §3.1). Until
-        # the app binds its coordinator they live in this process.
-        self.terminal_roots = TerminalRootStore(RedisCoordinator())
 
         self._lifecycle_locks: dict[str, asyncio.Lock] = {}
         self._lifecycle_locks_guard = asyncio.Lock()
         self._lifecycle_lock_used: dict[str, float] = {}
         self._connector_lifecycle_factory: Any | None = None
-
-    def bind_terminal_roots(self, terminal_roots: TerminalRootStore) -> None:
-        self.terminal_roots = terminal_roots
 
     def bind_connector_lifecycle(self, factory: Any) -> None:
         self._connector_lifecycle_factory = factory

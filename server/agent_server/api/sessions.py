@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from collections import deque
-from collections.abc import Mapping
 from contextlib import nullcontext
 from typing import Any
 
@@ -37,26 +35,14 @@ from agent_server.api.client_forward import (
 from agent_server.api.client_forward import (
     http_error as client_http_error,
 )
-from agent_server.api.connector_runtimes import (
-    parse_runtime_model_catalog_response,
-    parse_runtime_permission_catalog_response,
-)
 from agent_server.api.device_session_reads import (
     decorate_snapshot,
-    device_events,
-    device_snapshot,
-    device_timeline,
     offline_snapshot,
 )
 from agent_server.api.server_push_websocket import (
     run_server_push_until_disconnect,
 )
-from agent_server.api.v2_compat import V3_SESSION_ONLY, require_v3_owned_connector
-from agent_server.core.capabilities import (
-    SESSION_COMMANDS,
-    SESSION_INTERACTION_APPROVAL,
-    capability_is_usable,
-)
+from agent_server.api.v2_compat import V3_SESSION_ONLY
 from agent_server.core.device_meshcall import (
     AttachmentRef,
     ClientServerFacts,
@@ -74,8 +60,6 @@ from agent_server.core.models import (
     BulkArchiveResponse,
     InteractionRespondRequest,
     MessageCreateRequest,
-    NoticeIn,
-    RpcError,
     RpcResponsePayload,
     RuntimeNoticeListResponse,
     SessionCommandListResponse,
@@ -105,17 +89,11 @@ from agent_server.core.protocol_v1_2 import (
     ProtocolSessionSnapshotResponseV12,
     ProtocolTimelineResponseV12,
 )
-from agent_server.core.runtime_identity import (
-    SessionRuntimeBindingError,
-    resolve_session_runtime_binding,
-)
 from agent_server.core.utc import utc_now
 from agent_server.deps import (
     current_user_id,
     get_catalog_service,
-    get_device_planning,
     get_device_reads,
-    get_device_runtime_service,
     get_e2ee_settings,
     get_model_channel_service,
     get_rpc,
@@ -127,8 +105,6 @@ from agent_server.deps import (
     get_usage_recorder,
 )
 from agent_server.infra.connector_rpc import (
-    ConnectorOfflineError,
-    ConnectorRpcError,
     ConnectorRpcManager,
 )
 from agent_server.infra.event_preparation import EventPreparationCapacityError
@@ -144,13 +120,8 @@ from agent_server.services.connector_presence import (
 )
 from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.device_reads import DeviceReadService
-from agent_server.services.device_runtimes import (
-    DeviceRuntimeError,
-    DeviceRuntimeService,
-)
 from agent_server.services.effective_capabilities import (
     derive_session_effective_capabilities,
-    read_session_capability_facts,
 )
 from agent_server.services.model_channels import ModelChannelService
 from agent_server.services.session_meta_projection import (
@@ -204,24 +175,11 @@ async def _publish_session_protocol_update(
     session_id: str,
 ) -> None:
     session = await db.get_session(session_id)
-    runtime_state = await read_runtime_state_live(
-        db,
-        manager,
-        runtime_state_cache,
-        session,
-        None,
-    )
-    runtime_capabilities = await read_session_capabilities_with_fallback(
-        db,
-        manager,
-        session,
-        None,
+    runtime_state = await read_runtime_state_snapshot(db, runtime_state_cache, session, None)
+    runtime_capabilities = ProtocolCapabilitySet.model_validate(
+        await db.get_protocol_capabilities(session.connectorId, user_id=None)
     )
     next_seq = await db.get_session_seq(session_id)
-    session = await db.get_session(session_id)
-    # An event may have arrived while the RPC was in flight. Publish the
-    # latest cached state together with the current session revision.
-    runtime_state = await runtime_state_cache.get(session_id) or runtime_state
     session = session_with_runtime_state(session, runtime_state)
     session = await with_effective_session_connector_status(manager, session)
     effective_capabilities = derive_session_effective_capabilities(
@@ -260,56 +218,6 @@ async def _best_effort_publish_session_protocol_update(
         return
 
 
-def runtime_state_semantically_equal(
-    left: SessionRuntimeState | None,
-    right: SessionRuntimeState | None,
-) -> bool:
-    """Compare the runtime-owned facts a client can observe.
-
-    Volatile bookkeeping (revision, timestamps, observation metadata) must not
-    make a refresh publish-worthy on its own.
-    """
-
-    if left is None or right is None:
-        return left is right
-    return (
-        left.status == right.status
-        and left.selections == right.selections
-        and left.externalSessionId == right.externalSessionId
-        and left.statusReason == right.statusReason
-        and left.error == right.error
-        and left.metadata == right.metadata
-    )
-
-
-async def _publish_session_runtime_state_update(
-    db: Store,
-    broker: TimelineBroker,
-    manager: ConnectorRpcManager,
-    runtime_state_cache: SessionRuntimeStateCache,
-    session_id: str,
-    runtime_state: SessionRuntimeState,
-) -> None:
-    """Publish one already-read runtime state to session subscribers."""
-
-    next_seq = await db.get_session_seq(session_id)
-    session = await db.get_session(session_id)
-    # A live event may have arrived while the RPC was in flight. Publish the
-    # newest cached state together with the current session revision.
-    latest_state = await runtime_state_cache.get(session_id) or runtime_state
-    session = session_with_runtime_state(session, latest_state)
-    session = await with_effective_session_connector_status(manager, session)
-    await broker.publish(
-        session_id,
-        {
-            "sessionId": session_id,
-            "nextSeq": next_seq,
-            "session": session.model_dump(mode="json"),
-            "runtimeState": latest_state.model_dump(mode="json"),
-        },
-    )
-
-
 async def read_runtime_state_snapshot(
     db: Store,
     runtime_state_cache: SessionRuntimeStateCache,
@@ -330,60 +238,6 @@ async def read_runtime_state_snapshot(
     return await db.get_session_runtime_state(session.id, user_id=user_id)
 
 
-async def refresh_runtime_state_in_background(
-    *,
-    db: Store,
-    broker: TimelineBroker,
-    manager: ConnectorRpcManager,
-    runtime_state_cache: SessionRuntimeStateCache,
-    session_id: str,
-    previous_state: SessionRuntimeState,
-) -> None:
-    """Read the live runtime state and publish it only when it changed.
-
-    Side effects:
-    - may perform connector RPC to the owning runtime;
-    - persists the runtime-owned status and updates the shared runtime cache;
-    - publishes a protocol update to session subscribers on a real change.
-    """
-
-    try:
-        async with runtime_state_cache.refresh_guard(session_id) as acquired:
-            if not acquired:
-                return
-            session = await db.get_session(session_id)
-            if not await manager.is_online(session.connectorId):
-                return
-            state = await read_runtime_state_from_connector(manager, session)
-            if state is None:
-                return
-            persisted_session = await db.set_session_status(session.id, state.status)
-            state = state.model_copy(update={"updatedSeq": persisted_session.updatedSeq})
-            await runtime_state_cache.put(state)
-            if runtime_state_semantically_equal(previous_state, state):
-                return
-            await _publish_session_runtime_state_update(
-                db,
-                broker,
-                manager,
-                runtime_state_cache,
-                session_id,
-                state,
-            )
-    except Exception:
-        logger.opt(exception=True).debug(
-            "background runtime state refresh failed session_id={}", session_id
-        )
-
-
-def _session_rpc_timeout_seconds() -> float:
-    """Live session reads are best effort; tests shorten the wait for an absent runtime."""
-    try:
-        return float(os.environ.get("AGENT_SERVER_SESSION_RPC_TIMEOUT_SECONDS", "10"))
-    except ValueError:
-        return 10.0
-
-
 async def _forward_session_command(
     request: Request,
     route_id: str,
@@ -398,16 +252,14 @@ async def _forward_session_command(
     run_service: SessionRunService | None = None,
     attachments: str | None = None,
     usage: bool = False,
-) -> Response | None:
-    """A session command through ``Client/call`` (None: the route takes its existing path).
+) -> Response:
+    """A session command through ``Client/call``.
 
     The Server passes the facts it owns (takeover, its records of referenced attachments), admits the command
     like its own sends, records usage once per command id and broadcasts the session's state afterwards.
     """
 
-    session = await owned_session(request, route_id, user_id=user_id, session_id=session_id)
-    if session is None:
-        return None
+    session = await owned_session(request, user_id=user_id, session_id=session_id)
     body = await raw_body(request)
     refs = await attachment_facts(request, user_id=user_id, session=session, body=body, field=attachments) if (
         attachments
@@ -523,7 +375,6 @@ async def create_and_start_session(
     request: Request,
     payload: SessionCreateAndStartRequest,
     user_id: str = Depends(current_user_id),
-    reads: DeviceReadService = Depends(get_device_reads),
     run_service: SessionRunService = Depends(get_session_run_service),
     manager: ConnectorRpcManager = Depends(get_rpc),
     db: Store = Depends(get_store),
@@ -534,19 +385,13 @@ async def create_and_start_session(
 ) -> dict[str, Any]:
     # Starting a conversation on a v2 Connector would keep it on the Server (D4, D8). Adding a
     # directory entry for an existing session (``POST /sessions``) stays allowed.
-    await require_v3_owned_connector(db, reads, payload.connectorId, user_id)
-    if await owned_device(request, "session.createAndStart", user_id=user_id, connector_id=payload.connectorId):
-        forwarded, refused = await _forward_create_and_start(
-            request, payload, user_id=user_id, run_service=run_service, manager=manager
-        )
-        if refused is not None:
-            return refused  # type: ignore[return-value]
-        result = forwarded or {}
-    else:
-        try:
-            result = await run_service.create_and_start_session(payload, user_id=user_id)
-        except SessionRunError as exc:
-            _raise_session_run_error(exc)
+    await owned_device(request, user_id=user_id, connector_id=payload.connectorId)
+    forwarded, refused = await _forward_create_and_start(
+        request, payload, user_id=user_id, run_service=run_service, manager=manager
+    )
+    if refused is not None:
+        return refused  # type: ignore[return-value]
+    result = forwarded or {}
     session = result.get("session")
     if session is not None:
         result = {
@@ -835,38 +680,37 @@ async def mark_sessions_read(
 # - new: POST /sessions/read with a direct session id array
 
 
+async def _session_or_404(db: Store, session_id: str, user_id: str) -> SessionView:
+    try:
+        return await db.get_session(session_id, user_id=user_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="session not found") from None
+
+
 @router.get("/{session_id}/runtime/state", response_model=SessionRuntimeStateResponse)
 async def session_runtime_state(
     request: Request,
     session_id: str,
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
+    reads: DeviceReadService = Depends(get_device_reads),
     runtime_state_cache: SessionRuntimeStateCache = Depends(
         get_session_runtime_state_cache
     ),
-) -> SessionRuntimeStateResponse:
-    async def _offline_state(session: SessionView) -> dict[str, Any]:
-        state = await read_runtime_state_live(db, manager, runtime_state_cache, session, user_id)
+) -> Any:
+    """A v3 device answers; an offline one and a v2 Connector get the Server's last known state."""
+
+    async def _stored_state(session: SessionView) -> dict[str, Any]:
+        state = await read_runtime_state_snapshot(db, runtime_state_cache, session, user_id)
         return SessionRuntimeStateResponse(state=state, serverTime=utc_now()).model_dump(mode="json")
 
-    if (forwarded := await forward_session(
+    session = await _session_or_404(db, session_id, user_id)
+    if not await reads.is_v3_device(session.connectorId):
+        return await _stored_state(session)
+    return await forward_session(
         request, "session.runtime.state", user_id=user_id, session_id=session_id,
-        response_model=SessionRuntimeStateResponse, offline=_offline_state,
-    )) is not None:
-        return forwarded
-    try:
-        session = await db.get_session(session_id, user_id=user_id)
-        state = await read_runtime_state_live(
-            db,
-            manager,
-            runtime_state_cache,
-            session,
-            user_id,
-        )
-    except KeyError:
-        raise HTTPException(status_code=404, detail="session not found") from None
-    return SessionRuntimeStateResponse(state=state, serverTime=utc_now())
+        response_model=SessionRuntimeStateResponse, offline=_stored_state,
+    )
 
 
 @router.get("/{session_id}/runtime/capabilities", response_model=ProtocolCapabilitiesResponse)
@@ -875,37 +719,28 @@ async def session_runtime_capabilities(
     session_id: str,
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
+    reads: DeviceReadService = Depends(get_device_reads),
     manager: ConnectorRpcManager = Depends(get_rpc),
-) -> ProtocolCapabilitiesResponse:
-    async def _offline_capabilities(session: SessionView) -> dict[str, Any]:
+) -> Any:
+    """A v3 device answers; an offline one and a v2 Connector get the capabilities the Server derives from the
+    facts it stored."""
+
+    async def _derived(session: SessionView) -> dict[str, Any]:
         session = await with_effective_session_connector_status(manager, session)
-        capability_set = derive_session_effective_capabilities(session=session, runtime_capabilities=None)
+        stored = ProtocolCapabilitySet.model_validate(
+            await db.get_protocol_capabilities(session.connectorId, user_id=user_id)
+        )
+        capability_set = derive_session_effective_capabilities(session=session, runtime_capabilities=stored)
         return ProtocolCapabilitiesResponse(
             connectorId=session.connectorId, capabilitySet=capability_set, serverTime=utc_now()
         ).model_dump(mode="json")
 
-    if (forwarded := await forward_session(
+    session = await _session_or_404(db, session_id, user_id)
+    if not await reads.is_v3_device(session.connectorId):
+        return await _derived(session)
+    return await forward_session(
         request, "session.runtime.capabilities", user_id=user_id, session_id=session_id,
-        response_model=ProtocolCapabilitiesResponse, offline=_offline_capabilities,
-    )) is not None:
-        return forwarded
-    try:
-        session = await db.get_session(session_id, user_id=user_id)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="session not found") from None
-    session = await with_effective_session_connector_status(manager, session)
-    runtime_capabilities = await read_session_capabilities_from_connector(
-        manager,
-        session,
-    )
-    capability_set = derive_session_effective_capabilities(
-        session=session,
-        runtime_capabilities=runtime_capabilities,
-    )
-    return ProtocolCapabilitiesResponse(
-        connectorId=session.connectorId,
-        capabilitySet=capability_set,
-        serverTime=utc_now(),
+        response_model=ProtocolCapabilitiesResponse, offline=_derived,
     )
 
 
@@ -917,46 +752,21 @@ async def session_runtime_model_catalog(
     request: Request,
     session_id: str,
     user_id: str = Depends(current_user_id),
-    db: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
-    device_runtimes: DeviceRuntimeService = Depends(get_device_runtime_service),
     channels: ModelChannelService = Depends(get_model_channel_service),
-) -> ProtocolModelCatalogResponse:
-    if (session := await owned_session(
-        request, "session.runtime.catalogs.model", user_id=user_id, session_id=session_id
-    )) is not None:
-        async def _channel_overlay(body: Any) -> Any:
-            parsed = ProtocolModelCatalogResponse.model_validate(body)
-            catalog = await channels.channel_catalog(
-                session.connectorId, _session_runtime_id(session), parsed.catalog, user_id=user_id
-            )
-            return ProtocolModelCatalogResponse(catalog=catalog, serverTime=utc_now()).model_dump(mode="json")
+) -> Any:
+    session = await owned_session(request, user_id=user_id, session_id=session_id)
 
-        return to_response(await client_call(
-            request, "session.runtime.catalogs.model", user_id=user_id, device_id=session.connectorId,
-            session_id=session.id, response_model=ProtocolModelCatalogResponse, decorate=_channel_overlay,
-        ))
-    try:
-        session = await db.get_session(session_id, user_id=user_id)
-        await device_runtimes.ensure_active_running(
-            session.connectorId,
-            _session_runtime_id(session),
-            user_id=user_id,
+    async def _channel_overlay(body: Any) -> Any:
+        parsed = ProtocolModelCatalogResponse.model_validate(body)
+        catalog = await channels.channel_catalog(
+            session.connectorId, _session_runtime_id(session), parsed.catalog, user_id=user_id
         )
-    except KeyError:
-        raise HTTPException(status_code=404, detail="session not found") from None
-    except DeviceRuntimeError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-    result = await request_session_runtime_catalog(
-        manager,
-        session,
-        method="runtime.modelCatalog",
-        limit=200,
-    )
-    return ProtocolModelCatalogResponse(
-        catalog=await channels.channel_catalog(session.connectorId, _session_runtime_id(session), parse_runtime_model_catalog_response(result), user_id=user_id),
-        serverTime=utc_now(),
-    )
+        return ProtocolModelCatalogResponse(catalog=catalog, serverTime=utc_now()).model_dump(mode="json")
+
+    return to_response(await client_call(
+        request, "session.runtime.catalogs.model", user_id=user_id, device_id=session.connectorId,
+        session_id=session.id, response_model=ProtocolModelCatalogResponse, decorate=_channel_overlay,
+    ))
 
 
 @router.get(
@@ -967,35 +777,10 @@ async def session_runtime_permission_catalog(
     request: Request,
     session_id: str,
     user_id: str = Depends(current_user_id),
-    db: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
-    device_runtimes: DeviceRuntimeService = Depends(get_device_runtime_service),
-) -> ProtocolPermissionCatalogResponse:
-    if (forwarded := await forward_session(
+) -> Any:
+    return await forward_session(
         request, "session.runtime.catalogs.permission", user_id=user_id, session_id=session_id,
         response_model=ProtocolPermissionCatalogResponse,
-    )) is not None:
-        return forwarded
-    try:
-        session = await db.get_session(session_id, user_id=user_id)
-        await device_runtimes.ensure_active_running(
-            session.connectorId,
-            _session_runtime_id(session),
-            user_id=user_id,
-        )
-    except KeyError:
-        raise HTTPException(status_code=404, detail="session not found") from None
-    except DeviceRuntimeError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-    result = await request_session_runtime_catalog(
-        manager,
-        session,
-        method="runtime.permissionCatalog",
-        limit=200,
-    )
-    return ProtocolPermissionCatalogResponse(
-        catalog=parse_runtime_permission_catalog_response(result),
-        serverTime=utc_now(),
     )
 
 
@@ -1012,34 +797,10 @@ async def patch_session_selections(
     runtime_state_cache: SessionRuntimeStateCache = Depends(
         get_session_runtime_state_cache
     ),
-) -> SessionSelectionPatchResponse:
-    if (forwarded := await _forward_session_command(
+) -> Any:
+    return await _forward_session_command(
         request, "session.runtime.selections", user_id=user_id, session_id=session_id,
         response_model=SessionSelectionPatchResponse, run_service=run_service, db=db, broker=broker, manager=manager, runtime_state_cache=runtime_state_cache,
-    )) is not None:
-        return forwarded
-    try:
-        state, connector_result = await run_service.update_session_selections(
-            session_id,
-            payload,
-            user_id=user_id,
-        )
-    except SessionRunError as exc:
-        _raise_session_run_error(exc)
-    await runtime_state_cache.put(state)
-    await _best_effort_publish_session_protocol_update(
-        db,
-        broker,
-        manager,
-        runtime_state_cache,
-        session_id,
-        user_id=user_id,
-    )
-    return SessionSelectionPatchResponse(
-        ok=True,
-        state=state,
-        connectorResult=connector_result,
-        serverTime=utc_now(),
     )
 
 
@@ -1053,8 +814,7 @@ async def session_timeline(
     limit: int = Query(100, ge=1, le=500),
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
-    reads: DeviceReadService = Depends(get_device_reads),
-) -> ProtocolTimelineResponseV12:
+) -> Any:
     """The device holds the timeline (D1); v2 sessions never get here (``V3_SESSION_ONLY``)."""
 
     async def _offline_timeline(session: SessionView) -> dict[str, Any]:
@@ -1064,23 +824,9 @@ async def session_timeline(
             serverTime=utc_now(), historySource="unavailable", deviceOffline=True,
         ).model_dump(mode="json")
 
-    if (forwarded := await forward_session(
+    return await forward_session(
         request, "session.timeline", user_id=user_id, session_id=session_id,
         response_model=ProtocolTimelineResponseV12, offline=_offline_timeline,
-    )) is not None:
-        return forwarded
-    try:
-        session = await db.get_session(session_id, user_id=user_id)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="session not found") from None
-    return await device_timeline(
-        db=db,
-        reads=reads,
-        session=session,
-        mode=mode,
-        after_seq=after_seq,
-        before_order_seq=before_order_seq,
-        limit=limit,
     )
 
 
@@ -1091,56 +837,23 @@ async def session_timeline(
 # - new: GET /sessions/{session_id}/runtime/state for live runtime state
 
 
-async def _device_session_snapshot(
-    *,
-    db: Store,
-    manager: ConnectorRpcManager,
-    catalogs: CatalogService,
-    reads: DeviceReadService,
-    session: SessionView,
-    user_id: str,
-    limit: int,
-) -> ProtocolSessionSnapshotResponseV12:
-    """Snapshot of a session on a v3 device: directory facts here, content from the device."""
-
-    session = await with_effective_session_connector_status(manager, session)
-    # Stored facts only: the device body carries live capabilities when it has them, so
-    # first paint makes one device call, not two.
-    runtime_capabilities = ProtocolCapabilitySet.model_validate(
-        await db.get_protocol_capabilities(session.connectorId, user_id=user_id)
-    )
-    runtime_id = _session_runtime_id(session)
-    model_catalog = await catalogs.model_catalog(session.connectorId, runtime_id=runtime_id, user_id=user_id)
-    permission_catalog = await catalogs.permission_catalog(session.connectorId, runtime_id=runtime_id, user_id=user_id)
-    return await device_snapshot(
-        db=db,
-        reads=reads,
-        session=session,
-        limit=limit,
-        runtime_capabilities=runtime_capabilities,
-        effective_capabilities=derive_session_effective_capabilities(
-            session=session, runtime_capabilities=runtime_capabilities
-        ),
-        catalogs={
-            key: catalog.model_dump(mode="json")
-            for key, catalog in (("model", model_catalog), ("permission", permission_catalog))
-            if catalog is not None
-        },
-    )
-
-
-async def _forward_snapshot(
+@router.get("/{session_id}/snapshot", response_model=ProtocolSessionSnapshotResponseV12, dependencies=V3_SESSION_ONLY)
+async def session_snapshot(
     request: Request,
-    *,
-    db: Store,
-    manager: ConnectorRpcManager,
-    catalogs: CatalogService,
-    session: SessionView,
-    user_id: str,
-) -> Response:
+    session_id: str,
+    limit: int = Query(100, ge=1, le=500),
+    user_id: str = Depends(current_user_id),
+    db: Store = Depends(get_store),
+    manager: ConnectorRpcManager = Depends(get_rpc),
+    catalogs: CatalogService = Depends(get_catalog_service),
+    usage_recorder: UsageRecorder = Depends(get_usage_recorder),
+) -> Any:
     """The snapshot through ``Client/call``: content from the device, the session view, catalogs and effective
     capabilities from the Server; an offline device gets the Server's directory facts."""
 
+    session = await owned_session(request, user_id=user_id, session_id=session_id)
+    # Opening a session is platform usage; the recorder folds quick repeats.
+    await usage_recorder.touch_session_view(session, user_id=user_id)
     session = await with_effective_session_connector_status(manager, session)
     stored = ProtocolCapabilitySet.model_validate(
         await db.get_protocol_capabilities(session.connectorId, user_id=user_id)
@@ -1182,38 +895,6 @@ async def _forward_snapshot(
     return to_response(answer)
 
 
-@router.get("/{session_id}/snapshot", response_model=ProtocolSessionSnapshotResponseV12, dependencies=V3_SESSION_ONLY)
-async def session_snapshot(
-    request: Request,
-    session_id: str,
-    limit: int = Query(100, ge=1, le=500),
-    user_id: str = Depends(current_user_id),
-    db: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
-    catalogs: CatalogService = Depends(get_catalog_service),
-    usage_recorder: UsageRecorder = Depends(get_usage_recorder),
-    reads: DeviceReadService = Depends(get_device_reads),
-) -> ProtocolSessionSnapshotResponseV12:
-    try:
-        session = await db.get_session(session_id, user_id=user_id)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="session not found") from None
-    # Opening a session is platform usage; the recorder folds quick repeats.
-    await usage_recorder.touch_session_view(session, user_id=user_id)
-    if await owned_session(request, "session.snapshot", user_id=user_id, session_id=session_id) is not None:
-        return await _forward_snapshot(request, db=db, manager=manager, catalogs=catalogs, session=session,
-                                       user_id=user_id)
-    return await _device_session_snapshot(
-        db=db,
-        manager=manager,
-        catalogs=catalogs,
-        reads=reads,
-        session=session,
-        user_id=user_id,
-        limit=limit,
-    )
-
-
 # Removed migration route:
 # - old: GET /sessions/events/dashboard
 # - new: WS /dashboard/ws
@@ -1225,9 +906,7 @@ async def session_events(
     session_id: str,
     after: str = Query("seq:0"),
     user_id: str = Depends(current_user_id),
-    db: Store = Depends(get_store),
-    reads: DeviceReadService = Depends(get_device_reads),
-) -> ProtocolEventRecoveryResponseV12:
+) -> Any:
     async def _offline_events(session: SessionView) -> dict[str, Any]:
         try:
             cursor = parse_event_cursor(after)
@@ -1237,18 +916,10 @@ async def session_events(
             events=[], nextCursor=event_cursor(cursor), serverTime=utc_now(), deviceOffline=True
         ).model_dump(mode="json")
 
-    if (forwarded := await forward_session(
+    return await forward_session(
         request, "session.events", user_id=user_id, session_id=session_id,
         response_model=ProtocolEventRecoveryResponseV12, offline=_offline_events,
-    )) is not None:
-        return forwarded
-    try:
-        session = await db.get_session(session_id, user_id=user_id)
-        return await device_events(reads=reads, session=session, after_seq=parse_event_cursor(after))
-    except EventCursorError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except KeyError:
-        raise HTTPException(status_code=404, detail="session not found") from None
+    )
 
 
 @router.websocket("/{session_id}/ws")
@@ -1481,27 +1152,6 @@ async def disable_takeover(
 # Frontend performs fuzzy matching locally after reading the full runtime list.
 
 
-async def _require_session_action_capability(
-    db: Store,
-    manager: ConnectorRpcManager,
-    session: SessionView,
-    capability_id: str,
-    *,
-    user_id: str,
-) -> None:
-    effective_session = await with_effective_session_connector_status(manager, session)
-    runtime_capabilities = await read_session_capabilities_from_connector(manager, session)
-    effective = derive_session_effective_capabilities(
-        session=effective_session,
-        runtime_capabilities=runtime_capabilities,
-    )
-    if not capability_is_usable(effective, capability_id):
-        raise HTTPException(
-            status_code=409,
-            detail=f"session capability is unavailable: {capability_id}",
-        )
-
-
 @router.get("/{session_id}/runtime/commands", response_model=SessionCommandListResponse, dependencies=V3_SESSION_ONLY)
 async def list_session_runtime_commands(
     request: Request,
@@ -1509,59 +1159,11 @@ async def list_session_runtime_commands(
     query: str | None = Query(default=None, max_length=4096),
     limit: int = Query(default=100, ge=1, le=1000),
     user_id: str = Depends(current_user_id),
-    db: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
-) -> SessionCommandListResponse:
-    if (forwarded := await forward_session(
+) -> Any:
+    return await forward_session(
         request, "session.runtime.commands", user_id=user_id, session_id=session_id,
         response_model=SessionCommandListResponse,
-    )) is not None:
-        return forwarded
-    try:
-        session = await db.get_session(session_id, user_id=user_id)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="session not found") from None
-    await _require_session_action_capability(
-        db,
-        manager,
-        session,
-        SESSION_COMMANDS,
-        user_id=user_id,
     )
-    params: dict[str, Any] = {
-        "sessionId": session.id,
-        "runtime": session.runtime,
-        "runtimeId": _session_runtime_id(session),
-        "limit": limit,
-    }
-    if query is not None:
-        params["query"] = query
-    if session.externalSessionId:
-        params["externalSessionId"] = session.externalSessionId
-    try:
-        result = await manager.request(
-            session.connectorId,
-            "session.commands",
-            params,
-            timeout=30,
-        )
-    except ConnectorOfflineError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except ConnectorRpcError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail={"code": exc.code, "message": exc.message or exc.code},
-        ) from exc
-    commands = result.get("commands") if isinstance(result, dict) else None
-    if not isinstance(commands, list):
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "code": "invalid_command_catalog",
-                "message": "connector did not return a command list",
-            },
-        )
-    return SessionCommandListResponse(commands=commands, serverTime=utc_now())
 
 
 @router.post("/{session_id}/runtime/commands", response_model=SessionCommandResponse, dependencies=V3_SESSION_ONLY)
@@ -1572,106 +1174,11 @@ async def execute_session_command(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
-    device_planning: Any = Depends(get_device_planning),
-) -> SessionCommandResponse:
-    if (forwarded := await _forward_session_command(
+) -> Any:
+    return await _forward_session_command(
         request, "session.runtime.commands.execute", user_id=user_id, session_id=session_id,
         response_model=SessionCommandResponse, db=db, broker=request.app.state.timeline_broker, manager=manager,
         runtime_state_cache=request.app.state.session_runtime_state_cache,
-    )) is not None:
-        return forwarded
-    try:
-        session = await db.get_session(session_id, user_id=user_id)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="session not found") from None
-    if payload.command == "plan":
-        from uuid import uuid4
-
-        from agent_server.core.capabilities import SESSION_PLANNING
-        from agent_server.core.planning.commands import parse_plan_command
-        from agent_server.core.planning.models import PlanningRequest
-        from agent_server.services.device_planning import DevicePlanningUnavailable
-        await _require_session_action_capability(db, manager, session, SESSION_PLANNING, user_id=user_id)
-        intent = parse_plan_command(payload.raw if payload.raw is not None else "/plan" + (" " + " ".join(payload.args) if payload.args else ""))
-        if intent is None:
-            raise HTTPException(422, "raw must invoke /plan")
-        request = PlanningRequest(**intent, operationId=payload.operationId or str(uuid4()))
-        try:
-            result = await device_planning.execute(
-                session, "session.planning", request.model_dump(mode="json", exclude_none=True), user_id=user_id
-            )
-        except DevicePlanningUnavailable:
-            raise HTTPException(409, {"code": "connector_offline", "message": "the device is offline"}) from None
-        return SessionCommandResponse(command="plan", ok=result.ok, code=result.code, message=result.message,
-            result={"planning": result.model_dump(mode="json"), "executionState": "unknown" if result.outcome == "unknown" else "accepted" if result.ok else "completed", "retryable": False}, serverTime=utc_now())
-    await _require_session_action_capability(
-        db,
-        manager,
-        session,
-        SESSION_COMMANDS,
-        user_id=user_id,
-    )
-    params: dict[str, Any] = {
-        "sessionId": session.id,
-        "runtime": session.runtime,
-        "runtimeId": _session_runtime_id(session),
-        "command": payload.command,
-        "args": payload.args,
-    }
-    if session.externalSessionId:
-        params["externalSessionId"] = session.externalSessionId
-    if payload.raw is not None:
-        params["raw"] = payload.raw
-    try:
-        result = await manager.request(
-            session.connectorId,
-            "session.command.execute",
-            params,
-            timeout=30,
-        )
-    except (ConnectorOfflineError, TimeoutError):
-        return _unknown_command_result(payload.command)
-    except ConnectorRpcError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail={"code": exc.code, "message": exc.message or exc.code},
-        ) from exc
-    if (
-        not isinstance(result, dict)
-        or result.get("command") != payload.command
-        or type(result.get("ok")) is not bool
-        or not isinstance(result.get("result"), dict)
-        or (result.get("code") is not None and not isinstance(result["code"], str))
-        or (result.get("message") is not None and not isinstance(result["message"], str))
-    ):
-        return _unknown_command_result(payload.command)
-    execution = result["result"].get("executionState")
-    retryable = result["result"].get("retryable")
-    if (
-        (execution is not None and execution not in ("accepted", "completed", "unknown"))
-        or (retryable is not None and type(retryable) is not bool)
-        or (result.get("code") == "command_outcome_unknown" and execution != "unknown")
-        or (execution == "unknown" and (result["ok"] or retryable is not False))
-    ):
-        return _unknown_command_result(payload.command)
-    return SessionCommandResponse(
-        command=result["command"],
-        ok=result["ok"],
-        code=result.get("code"),
-        message=result.get("message"),
-        result=result["result"],
-        serverTime=utc_now(),
-    )
-
-
-def _unknown_command_result(command: str) -> SessionCommandResponse:
-    return SessionCommandResponse(
-        command=command,
-        ok=False,
-        code="command_outcome_unknown",
-        message="Command outcome is unknown. Refresh session state before taking further action.",
-        result={"executionState": "unknown", "retryable": False},
-        serverTime=utc_now(),
     )
 
 
@@ -1688,32 +1195,11 @@ async def send_message(
     runtime_state_cache: SessionRuntimeStateCache = Depends(
         get_session_runtime_state_cache
     ),
-) -> RpcResponsePayload:
-    if (forwarded := await _forward_session_command(
+) -> Any:
+    return await _forward_session_command(
         request, "session.runtime.messages", user_id=user_id, session_id=session_id,
         response_model=RpcResponsePayload, run_service=run_service, attachments="attachments", usage=True, db=db, broker=broker, manager=manager, runtime_state_cache=runtime_state_cache,
-    )) is not None:
-        return forwarded
-    try:
-        result = await run_service.send_message(session_id, payload, user_id=user_id)
-        await _publish_session_protocol_update(
-            db,
-            broker,
-            manager,
-            runtime_state_cache,
-            session_id,
-        )
-        return result
-    except SessionRunError as exc:
-        await _best_effort_publish_session_protocol_update(
-            db,
-            broker,
-            manager,
-            runtime_state_cache,
-            session_id,
-            user_id=user_id,
-        )
-        _raise_session_run_error(exc)
+    )
 
 
 @router.post("/{session_id}/runtime/interrupt", response_model=RpcResponsePayload, dependencies=V3_SESSION_ONLY)
@@ -1721,39 +1207,17 @@ async def interrupt_session(
     request: Request,
     session_id: str,
     user_id: str = Depends(current_user_id),
-    run_service: SessionRunService = Depends(get_session_run_service),
     db: Store = Depends(get_store),
     broker: TimelineBroker = Depends(get_timeline_broker),
     manager: ConnectorRpcManager = Depends(get_rpc),
     runtime_state_cache: SessionRuntimeStateCache = Depends(
         get_session_runtime_state_cache
     ),
-) -> RpcResponsePayload:
-    if (forwarded := await _forward_session_command(
+) -> Any:
+    return await _forward_session_command(
         request, "session.runtime.interrupt", user_id=user_id, session_id=session_id,
         response_model=RpcResponsePayload, db=db, broker=broker, manager=manager, runtime_state_cache=runtime_state_cache,
-    )) is not None:
-        return forwarded
-    try:
-        result = await run_service.interrupt_session(session_id, user_id=user_id)
-        await _publish_session_protocol_update(
-            db,
-            broker,
-            manager,
-            runtime_state_cache,
-            session_id,
-        )
-        return result
-    except SessionRunError as exc:
-        await _best_effort_publish_session_protocol_update(
-            db,
-            broker,
-            manager,
-            runtime_state_cache,
-            session_id,
-            user_id=user_id,
-        )
-        _raise_session_run_error(exc)
+    )
 
 
 @router.post("/{session_id}/runtime/steer", response_model=RpcResponsePayload, dependencies=V3_SESSION_ONLY)
@@ -1762,43 +1226,17 @@ async def steer_session(
     session_id: str,
     payload: SessionSteerRequest,
     user_id: str = Depends(current_user_id),
-    run_service: SessionRunService = Depends(get_session_run_service),
     db: Store = Depends(get_store),
     broker: TimelineBroker = Depends(get_timeline_broker),
     manager: ConnectorRpcManager = Depends(get_rpc),
     runtime_state_cache: SessionRuntimeStateCache = Depends(
         get_session_runtime_state_cache
     ),
-) -> RpcResponsePayload:
-    if (forwarded := await _forward_session_command(
+) -> Any:
+    return await _forward_session_command(
         request, "session.runtime.steer", user_id=user_id, session_id=session_id,
         response_model=RpcResponsePayload, attachments="attachments", usage=True, db=db, broker=broker, manager=manager, runtime_state_cache=runtime_state_cache,
-    )) is not None:
-        return forwarded
-    try:
-        result = await run_service.steer_session(
-            session_id,
-            payload,
-            user_id=user_id,
-        )
-        await _publish_session_protocol_update(
-            db,
-            broker,
-            manager,
-            runtime_state_cache,
-            session_id,
-        )
-        return result
-    except SessionRunError as exc:
-        await _best_effort_publish_session_protocol_update(
-            db,
-            broker,
-            manager,
-            runtime_state_cache,
-            session_id,
-            user_id=user_id,
-        )
-        _raise_session_run_error(exc)
+    )
 
 
 @router.get("/{session_id}/runtime/notices", response_model=RuntimeNoticeListResponse, dependencies=V3_SESSION_ONLY)
@@ -1806,22 +1244,10 @@ async def list_session_runtime_notices(
     request: Request,
     session_id: str,
     user_id: str = Depends(current_user_id),
-    db: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
-) -> RuntimeNoticeListResponse:
-    if (forwarded := await forward_session(
+) -> Any:
+    return await forward_session(
         request, "session.runtime.notices", user_id=user_id, session_id=session_id,
         response_model=RuntimeNoticeListResponse,
-    )) is not None:
-        return forwarded
-    try:
-        session = await db.get_session(session_id, user_id=user_id)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="session not found") from None
-    notices = await read_session_notices_from_connector(manager, session)
-    return RuntimeNoticeListResponse(
-        notices=notices,
-        serverTime=utc_now(),
     )
 
 
@@ -1838,82 +1264,11 @@ async def respond_interaction(
     runtime_state_cache: SessionRuntimeStateCache = Depends(
         get_session_runtime_state_cache
     ),
-) -> RpcResponsePayload:
-    if (forwarded := await _forward_session_command(
+) -> Any:
+    return await _forward_session_command(
         request, "session.runtime.notices.respond", user_id=user_id, session_id=session_id,
         response_model=RpcResponsePayload, db=db, broker=broker, manager=manager, runtime_state_cache=runtime_state_cache,
-    )) is not None:
-        return forwarded
-    try:
-        session = await db.get_session(session_id, user_id=user_id)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="session not found") from None
-    await _require_session_action_capability(
-        db,
-        manager,
-        session,
-        SESSION_INTERACTION_APPROVAL,
-        user_id=user_id,
     )
-    input_data = await interaction_input_with_runtime_notice_context(
-        manager=manager,
-        session=session,
-        notice_id=notice_id,
-        user_input=payload.input or {},
-    )
-    params: dict[str, Any] = {
-        "sessionId": session.id,
-        "runtime": session.runtime,
-        "runtimeId": _session_runtime_id(session),
-        "noticeId": notice_id,
-        "actionId": payload.actionId,
-        "inputData": input_data,
-    }
-    if session.externalSessionId:
-        params["externalSessionId"] = session.externalSessionId
-    try:
-        result = await manager.request(
-            session.connectorId,
-            "interaction.respond",
-            params,
-            timeout=30,
-        )
-    except ConnectorOfflineError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except ConnectorRpcError as exc:
-        if exc.code in {
-            "not_found",
-            "notice_not_found",
-            "interaction_not_found",
-            "request_not_found",
-            "approval_not_found",
-        }:
-            return RpcResponsePayload(
-                ok=False,
-                error=RpcError(code=exc.code, message=exc.message or exc.code),
-            )
-        if exc.code == "conflict":
-            raise HTTPException(
-                status_code=409,
-                detail={"code": exc.code, "message": exc.message or exc.code},
-            ) from exc
-        raise HTTPException(
-            status_code=502,
-            detail={"code": exc.code, "message": exc.message or exc.code},
-        ) from exc
-    await _best_effort_publish_session_protocol_update(
-        db,
-        broker,
-        manager,
-        runtime_state_cache,
-        session_id,
-        user_id=user_id,
-    )
-    if isinstance(result, dict) and result.get("ok") is False:
-        return RpcResponsePayload(ok=False, result=result, error=RpcError(
-            code=str(result.get("code") or "runtime_operation_failed"),
-            message=str(result.get("message") or "Runtime 未接受该回答。")))
-    return RpcResponsePayload(ok=True, result=result)
 
 
 @router.post("/{session_id}/sync", response_model=RpcResponsePayload, dependencies=V3_SESSION_ONLY)
@@ -1923,365 +1278,16 @@ async def sync_session(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
-    device_runtimes: DeviceRuntimeService = Depends(get_device_runtime_service),
-) -> RpcResponsePayload:
-    if (forwarded := await _forward_session_command(
+) -> Any:
+    return await _forward_session_command(
         request, "session.sync", user_id=user_id, session_id=session_id, response_model=RpcResponsePayload,
         db=db, broker=request.app.state.timeline_broker, manager=manager,
         runtime_state_cache=request.app.state.session_runtime_state_cache,
-    )) is not None:
-        return forwarded
-    try:
-        session = await db.get_session(session_id, user_id=user_id)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="session not found") from None
-    if not await manager.is_online(session.connectorId):
-        raise HTTPException(status_code=409, detail="connector is offline")
-    if not session.externalSessionId:
-        raise HTTPException(status_code=409, detail="session has no external runtime id")
-    try:
-        await device_runtimes.ensure_active_running(
-            session.connectorId,
-            _session_runtime_id(session),
-            user_id=user_id,
-        )
-    except DeviceRuntimeError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-    try:
-        result = await manager.request(
-            session.connectorId,
-            "session.sync",
-            {
-                "sessionId": session.id,
-                "runtime": session.runtime,
-                "runtimeId": _session_runtime_id(session),
-                "externalSessionId": session.externalSessionId,
-            },
-            timeout=60,
-        )
-    except ConnectorOfflineError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except ConnectorRpcError as exc:
-        raise HTTPException(status_code=502, detail=exc.message or exc.code) from exc
-    return RpcResponsePayload(ok=True, result=result)
-
-
-async def read_runtime_state_live(
-    db: Store,
-    manager: ConnectorRpcManager,
-    runtime_state_cache: SessionRuntimeStateCache,
-    session: SessionView,
-    user_id: str | None,
-) -> SessionRuntimeState:
-    """Read the latest runtime-owned session state.
-
-    Side effects:
-    - may perform connector RPC to the owning runtime;
-    - does not rely on DB status as the source of runtime truth.
-    """
-
-    if await manager.is_online(session.connectorId):
-        state = await read_runtime_state_from_connector(manager, session)
-        if state is not None:
-            persisted_session = await db.set_session_status(session.id, state.status)
-            state = state.model_copy(update={"updatedSeq": persisted_session.updatedSeq})
-            await runtime_state_cache.put(state)
-            return state
-    cached_state = await runtime_state_cache.get(session.id)
-    if cached_state is not None:
-        return cached_state
-    return await db.get_session_runtime_state(session.id, user_id=user_id)
-
-
-async def read_session_capabilities_with_fallback(
-    db: Store,
-    manager: ConnectorRpcManager,
-    session: SessionView,
-    user_id: str | None,
-) -> ProtocolCapabilitySet:
-    """Read the latest session capability facts when possible.
-
-    Side effects:
-    - may perform connector RPC to the owning runtime;
-    - falls back to persisted capability notifications for best-effort
-      snapshot and WebSocket publish paths.
-    """
-
-    if await manager.is_online(session.connectorId):
-        try:
-            return await read_session_capabilities_from_connector(manager, session)
-        except HTTPException:
-            pass
-    return ProtocolCapabilitySet.model_validate(
-        await db.get_protocol_capabilities(session.connectorId, user_id=user_id)
     )
-
-
-async def read_runtime_state_from_connector(
-    manager: ConnectorRpcManager,
-    session: SessionView,
-) -> SessionRuntimeState | None:
-    params: dict[str, Any] = {
-        "sessionId": session.id,
-        "runtime": session.runtime,
-        "runtimeId": _session_runtime_id(session),
-    }
-    if session.externalSessionId:
-        params["externalSessionId"] = session.externalSessionId
-    try:
-        result = await manager.request(
-            session.connectorId,
-            "session.state",
-            params,
-            timeout=_session_rpc_timeout_seconds(),
-        )
-    except (ConnectorOfflineError, ConnectorRpcError, TimeoutError):
-        return None
-    if not isinstance(result, dict):
-        return None
-    raw_state = result.get("state")
-    if not isinstance(raw_state, dict):
-        return None
-    try:
-        return runtime_state_from_rpc_payload(raw_state, session)
-    except SessionRuntimeBindingError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-
-async def read_session_capabilities_from_connector(
-    manager: ConnectorRpcManager,
-    session: SessionView,
-) -> ProtocolCapabilitySet:
-    try:
-        return await read_session_capability_facts(
-            manager, session, runtime_id=_session_runtime_id(session),
-        )
-    except ConnectorOfflineError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except TimeoutError as exc:
-        raise HTTPException(
-            status_code=504,
-            detail={
-                "code": "runtime_capabilities_timeout",
-                "message": "connector session capabilities request timed out",
-            },
-        ) from exc
-    except ConnectorRpcError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail={"code": exc.code, "message": exc.message or exc.code},
-        ) from exc
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "code": "invalid_capability_set",
-                "message": str(exc),
-            },
-        ) from exc
-
-
-async def request_session_runtime_catalog(
-    manager: ConnectorRpcManager,
-    session: SessionView,
-    method: str,
-    limit: int,
-) -> Any:
-    """Request a runtime-level catalog for an existing session.
-
-    Side effects:
-    - sends a connector RPC request to the session's owning runtime.
-    """
-
-    try:
-        return await manager.request(
-            session.connectorId,
-            method,
-            {
-                "runtime": session.runtime,
-                "runtimeId": _session_runtime_id(session),
-                "limit": limit,
-                "sessionId": session.id,
-            },
-            timeout=30,
-        )
-    except ConnectorOfflineError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except ConnectorRpcError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail={"code": exc.code, "message": exc.message or exc.code},
-        ) from exc
-
-
-async def read_session_notices_from_connector(
-    manager: ConnectorRpcManager,
-    session: SessionView,
-) -> list[NoticeIn]:
-    params: dict[str, Any] = {
-        "sessionId": session.id,
-        "runtime": session.runtime,
-        "runtimeId": _session_runtime_id(session),
-    }
-    if session.externalSessionId:
-        params["externalSessionId"] = session.externalSessionId
-    try:
-        result = await manager.request(
-            session.connectorId,
-            "session.notices",
-            params,
-            timeout=_session_rpc_timeout_seconds(),
-        )
-    except ConnectorOfflineError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except TimeoutError as exc:
-        raise HTTPException(
-            status_code=504,
-            detail={
-                "code": "runtime_notices_timeout",
-                "message": "connector session notices request timed out",
-            },
-        ) from exc
-    except ConnectorRpcError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail={"code": exc.code, "message": exc.message or exc.code},
-        ) from exc
-    raw_notices = result.get("notices") if isinstance(result, dict) else None
-    if not isinstance(raw_notices, list):
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "code": "invalid_runtime_notices",
-                "message": "connector did not return runtime notices",
-            },
-        )
-    try:
-        return [NoticeIn.model_validate(notice) for notice in raw_notices]
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail={"code": "invalid_runtime_notices", "message": str(exc)},
-        ) from exc
-
-
-async def interaction_input_with_runtime_notice_context(
-    manager: ConnectorRpcManager,
-    session: SessionView,
-    notice_id: str,
-    user_input: Mapping[str, Any],
-) -> dict[str, Any]:
-    notice_context = await best_effort_runtime_notice_context(
-        manager,
-        session,
-        notice_id,
-    )
-    return merge_interaction_input(
-        notice_context=notice_context,
-        user_input=user_input,
-    )
-
-
-async def best_effort_runtime_notice_context(
-    manager: ConnectorRpcManager,
-    session: SessionView,
-    notice_id: str,
-) -> dict[str, Any]:
-    params: dict[str, Any] = {
-        "sessionId": session.id,
-        "runtime": session.runtime,
-        "runtimeId": _session_runtime_id(session),
-    }
-    if session.externalSessionId:
-        params["externalSessionId"] = session.externalSessionId
-    try:
-        result = await manager.request(
-            session.connectorId,
-            "session.notices",
-            params,
-            timeout=_session_rpc_timeout_seconds(),
-        )
-    except (ConnectorOfflineError, ConnectorRpcError):
-        return {}
-    raw_notices = result.get("notices") if isinstance(result, dict) else None
-    if not isinstance(raw_notices, list):
-        return {}
-    for raw_notice in raw_notices:
-        try:
-            notice = NoticeIn.model_validate(raw_notice)
-        except ValueError:
-            continue
-        if notice.noticeId == notice_id:
-            return dict(notice.context)
-    return {}
-
-
-def merge_interaction_input(
-    notice_context: Mapping[str, Any],
-    user_input: Mapping[str, Any],
-) -> dict[str, Any]:
-    merged = {**notice_context, **user_input}
-    notice_approval_source = notice_context.get("approvalSource")
-    input_approval_source = user_input.get("approvalSource")
-    if isinstance(notice_approval_source, Mapping) and isinstance(
-        input_approval_source,
-        Mapping,
-    ):
-        merged["approvalSource"] = {
-            **notice_approval_source,
-            **input_approval_source,
-        }
-    return merged
-
-
-async def read_session_notices_for_snapshot(
-    manager: ConnectorRpcManager,
-    session: SessionView,
-) -> list[NoticeIn]:
-    try:
-        return await read_session_notices_from_connector(manager, session)
-    except HTTPException:
-        return []
 
 
 def _session_runtime_id(session: SessionView) -> str:
     return session.runtimeId or session.runtime
-
-
-def runtime_state_from_rpc_payload(
-    raw_state: dict[str, Any],
-    session: SessionView,
-) -> SessionRuntimeState:
-    now = utc_now()
-    session_id, runtime, runtime_id = resolve_session_runtime_binding(
-        raw_state,
-        session_id=session.id,
-        runtime_type=session.runtime,
-        runtime_id=_session_runtime_id(session),
-    )
-    return SessionRuntimeState.model_validate(
-        {
-            "sessionId": session_id,
-            "runtime": runtime,
-            "runtimeId": runtime_id,
-            "externalSessionId": raw_state.get("externalSessionId")
-            or session.externalSessionId,
-            "status": raw_state.get("status") or "idle",
-            "selections": raw_state.get("selections")
-            if isinstance(raw_state.get("selections"), dict)
-            else {},
-            "statusReason": raw_state.get("statusReason"),
-            "error": raw_state.get("error")
-            if isinstance(raw_state.get("error"), dict)
-            else None,
-            "metadata": raw_state.get("metadata")
-            if isinstance(raw_state.get("metadata"), dict)
-            else {},
-            "updatedSeq": session.updatedSeq,
-            "createdAt": now,
-            "updatedAt": now,
-        }
-    )
 
 
 def session_with_runtime_state(

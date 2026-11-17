@@ -32,7 +32,6 @@ describe('client API dependencies of the composition root', () => {
     const uploads: { transfer: BlobTransfer; file: UploadFile }[] = []
     const prepared: Record<string, unknown>[] = []
     const upload = preparedDownloadUpload({
-      methods: {},
       preparedFile: async params => {
         prepared.push(params)
         return { path: '/w/blob.bin', size: 3, mediaType: 'application/octet-stream' }
@@ -49,6 +48,6 @@ describe('client API dependencies of the composition root', () => {
   })
 
   it('transfer upload: a device without the relay upload refuses it', async () => {
-    await expect(preparedDownloadUpload({ methods: {} })({ transferId: 'tr_1', token: 'tok' })).rejects.toMatchObject({ code: 'unimplemented' })
+    await expect(preparedDownloadUpload({})({ transferId: 'tr_1', token: 'tok' })).rejects.toMatchObject({ code: 'unimplemented' })
   })
 })

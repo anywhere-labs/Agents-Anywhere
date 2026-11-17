@@ -199,7 +199,7 @@ describe.skipIf(binary === null)('aa.device.v1.Client over a real Router', () =>
         outbox: { outbox: store.outbox, sealer: plainSealer, signal: outboxSignal, pollMs: 100 },
         watch,
         readers,
-        workspace: { methods, terminals: source },
+        workspace: { terminals: source },
         client: tunnel,
         ...(options.limits !== undefined ? { limits: options.limits } : {}),
         ...(options.clientLimits !== undefined ? { clientLimits: options.clientLimits } : {}),

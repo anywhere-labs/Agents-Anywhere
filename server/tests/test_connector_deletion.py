@@ -172,34 +172,12 @@ async def add_related_data(store, device, session):
     async with store.engine.begin() as conn:
         for table, values in rows:
             await conn.execute(insert(table).values(**values))
-    await store.terminal_roots.record_connector_terminal_root(
-        connector_id=device, terminal_id="terminal", session_id=session, root="/work", cwd="/work"
-    )
     return await store.save_user_uploaded_file(
         session_id=session,
         user_id=owner,
         name="private.txt",
         data=b"private attachment",
     )
-
-
-async def add_terminals(broker, device, session):
-    terminal_ids = []
-    for mode, persistent in (("create", False), ("create", True), ("attach", True)):
-        terminal = await broker.register(
-            connector_id=device,
-            session_id=session,
-            label="Terminal",
-            cwd="/work",
-            shell="/bin/sh",
-            cols=80,
-            rows=24,
-            relay_mode=mode,
-            persistent=persistent,
-        )
-        await broker.on_output(terminal.id, data=b"private terminal output", seq=1)
-        terminal_ids.append(terminal.id)
-    return terminal_ids
 
 
 def test_device_deletion_physically_removes_all_related_data(api):
@@ -217,9 +195,6 @@ def test_device_deletion_physically_removes_all_related_data(api):
     store = client.app.state.store
     deleted_file = asyncio.run(add_related_data(store, device, active_session))
     other_file = asyncio.run(add_related_data(store, other, other_session))
-    terminals = client.app.state.terminal_broker
-    deleted_terminals = asyncio.run(add_terminals(terminals, device, active_session))
-    other_terminals = asyncio.run(add_terminals(terminals, other, other_session))
 
     async def prepare():
         # Historical sessions can have no project, or be hidden at their source.
@@ -296,14 +271,7 @@ def test_device_deletion_physically_removes_all_related_data(api):
                 ) == [other_session], table.name
         assert not await store.files.exists(active_session, deleted_file["fileId"])
         assert not (store.files.root / active_session).exists()
-        roots = client.app.state.terminal_roots
-        assert await roots.get_connector_terminal_root(connector_id=device, terminal_id="terminal") is None
-        assert await roots.get_connector_terminal_root(connector_id=other, terminal_id="terminal") is not None
         assert await store.files.exists(other_session, other_file["fileId"])
-        for terminal_id in deleted_terminals:
-            assert await terminals.get(terminal_id) is None
-        for terminal_id in other_terminals:
-            assert await terminals.get(terminal_id) is not None
         assert (
             await client.app.state.session_runtime_state_cache.get(active_session)
             is None
@@ -432,10 +400,6 @@ def test_failed_project_cleanup_rolls_back_all_database_deletions(api, request):
                     await connection.execute(select(table.c.session_id))
                 ).scalar_one() == session
         assert await client.app.state.store.files.exists(session, saved["fileId"])
-        # The Redis cleanup runs before the commit, so it never ran here.
-        assert await client.app.state.terminal_roots.get_connector_terminal_root(
-            connector_id=device, terminal_id="terminal"
-        ) == {"root": "/work", "cwd": "/work"}
 
     asyncio.run(check_rows())
 

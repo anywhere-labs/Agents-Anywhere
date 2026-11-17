@@ -4,12 +4,71 @@ import { GOAL_ACTIONS, goalWire, unobservedGoalState } from '../domain/goals/ind
 import { initialPlanning, planningCapabilities, planningWire, type PlanDocument } from '../domain/planning/index.js'
 import type { ReadMethod, ReadPayloads } from '../generated/device-meshcall/v1_0/payloads.js'
 import type { ProtocolCapabilitySet } from '../generated/protocol/v1_2/capability-set.js'
-import type { NoticeIn } from '../generated/device-meshcall/v1_0/session-notices-response.js'
+import type { NoticeIn } from '../generated/device-meshcall/v1_0/runtime-notice-updated-event.js'
+import type { ProtocolEventEnvelope } from '../generated/device-meshcall/v1_0/changes-event.js'
 import { timelineEvents } from './client-shape.js'
 
 /** The request and the response (a stream's item) of a Server-initiated read, as device-meshcall 1.0 types them. */
 export type ReadRequest<M extends ReadMethod> = ReadPayloads[M]['request']
 export type ReadResponse<M extends ReadMethod> = ReadPayloads[M]['response']
+
+/** A session read the client API serves (`Client/call`), keyed by session. */
+export interface SessionRead {
+  sessionId: string
+}
+
+/** A page of history by `orderSeq`, bounded by count and bytes. */
+export interface TimelineReadRequest extends SessionRead {
+  mode: 'latest' | 'before' | 'after'
+  cursor?: number | null
+  limit?: number
+  byteBudget?: number
+}
+
+export interface TimelinePage {
+  items: Record<string, unknown>[]
+  headSeq: number
+  resetSeq: number
+  hasMore: boolean
+  oldestOrderSeq?: number | null
+}
+
+/** Changes after a clock position, or `snapshotRequired`. */
+export interface ChangesSinceRequest extends SessionRead {
+  afterSeq: number
+  limit?: number
+  byteBudget?: number
+}
+
+export interface ChangesPage {
+  events: ProtocolEventEnvelope[]
+  toSeq: number
+  resetSeq: number
+  complete: boolean
+  snapshotRequired: boolean
+}
+
+/** `part` narrows the answer to `{planning}` or `{goal}`. */
+export interface SessionStateRequest extends SessionRead {
+  part?: 'planning' | 'goal' | null
+}
+
+export interface SessionStateBody {
+  state?: Record<string, unknown>
+  planning?: Record<string, unknown>
+  goal?: Record<string, unknown>
+}
+
+/** Without `planId`, every revision; with `planId` and `revision`, that revision. */
+export interface PlanDocumentRequest extends SessionRead {
+  planId?: string | null
+  revision?: number | null
+}
+
+export interface PlanDocumentBody {
+  plans?: PlanDocument[]
+  document?: PlanDocument
+}
 
 /** A body the domain's wire functions build untyped (planning, goal, runtime state, workflow views), as `T`. */
 function wire<T>(body: object): T {
@@ -73,7 +132,7 @@ export class DeviceReaders {
     return session
   }
 
-  /** `client.snapshot`: the device part of the v1.2 snapshot body (the Server adds the directory fields). */
+  /** The session snapshot (`GET .../snapshot`): the device part of the v1.2 snapshot body (the Server adds the directory fields). */
   public async snapshot(request: { sessionId: string; limit?: number; byteBudget?: number }): Promise<Record<string, unknown>> {
     await this.session(request.sessionId)
     await this.history?.ensureLatest(request.sessionId)
@@ -104,8 +163,8 @@ export class DeviceReaders {
     }
   }
 
-  /** `store.read`: paged history by `orderSeq`; paging back past what is stored projects older native history. */
-  public async read(request: ReadRequest<'store.read'>): Promise<ReadResponse<'store.read'>> {
+  /** Paged history (`GET .../timeline`) by `orderSeq`; paging back past what is stored projects older native history. */
+  public async read(request: TimelineReadRequest): Promise<TimelinePage> {
     await this.session(request.sessionId)
     const limit = request.limit ?? SNAPSHOT_LIMIT
     const cursor = request.cursor ?? null
@@ -125,16 +184,16 @@ export class DeviceReaders {
     }
   }
 
-  /** `store.changesSince`: the cursor-recovery path behind `/events?after=seq:N`. */
-  public async changesSince(request: ReadRequest<'store.changesSince'>): Promise<ReadResponse<'store.changesSince'>> {
+  /** The cursor-recovery path behind `/events?after=seq:N`. */
+  public async changesSince(request: ChangesSinceRequest): Promise<ChangesPage> {
     await this.session(request.sessionId)
     const page = await this.store.timeline.changesSince(request.sessionId, request.afterSeq, request.limit ?? 500, request.byteBudget ?? PAGE_BUDGET)
     if (page.snapshotRequired) return { events: [], toSeq: page.headSeq, resetSeq: page.resetSeq, complete: false, snapshotRequired: true }
     return { events: timelineEvents(request.sessionId, page.items, this.now()), toSeq: page.toSeq, resetSeq: page.resetSeq, complete: page.complete, snapshotRequired: false }
   }
 
-  /** `session.notices`: the current interactions, replacing whatever a reconnecting client holds. */
-  public async notices(request: ReadRequest<'session.notices'>): Promise<ReadResponse<'session.notices'>> {
+  /** The current interactions, replacing whatever a reconnecting client holds. */
+  public async notices(request: SessionRead): Promise<{ sessionId: string; notices: NoticeIn[] }> {
     await this.session(request.sessionId)
     return { sessionId: request.sessionId, notices: (await this.store.interactions.list(request.sessionId, true)).map(noticeOf) }
   }
@@ -184,10 +243,10 @@ export class DeviceReaders {
   }
 
   /**
-   * `Sessions/state`: `part: "planning"` answers `{planning}`, `part: "goal"` answers `{goal}` (the v2 client
+   * Session state: `part: "planning"` answers `{planning}`, `part: "goal"` answers `{goal}` (the v2 client
    * shapes the Server validates); without `part`, the runtime state `{state}` together with both parts.
    */
-  public async sessionState(request: ReadRequest<'session.state'>): Promise<ReadResponse<'session.state'>> {
+  public async sessionState(request: SessionStateRequest): Promise<SessionStateBody> {
     const session = await this.session(request.sessionId)
     if (request.part === 'planning') return { planning: wire(await this.planningState(session)) }
     if (request.part === 'goal') return { goal: wire(await this.goalState(session)) }
@@ -195,26 +254,26 @@ export class DeviceReaders {
     return { state: wire(this.state(session, selections)), planning: wire(planning), goal: wire(goal) }
   }
 
-  public async capabilities(request: ReadRequest<'session.capabilities'>): Promise<ReadResponse<'session.capabilities'>> {
+  public async capabilities(request: SessionRead): Promise<{ sessionId: string; capabilitySet: ProtocolCapabilitySet | null }> {
     await this.session(request.sessionId)
     return { sessionId: request.sessionId, capabilitySet: await this.facts.sessionCapabilities(request.sessionId) }
   }
 
-  public async queue(request: ReadRequest<'session.queue'>): Promise<ReadResponse<'session.queue'>> {
+  public async queue(request: SessionRead): Promise<{ queue: Record<string, unknown> }> {
     await this.session(request.sessionId)
     return { queue: wire(queueRules.queueState(await this.store.queues.get(request.sessionId))) }
   }
 
-  public async catalogs(request: ReadRequest<'runtime.catalogs'>): Promise<ReadResponse<'runtime.catalogs'>> {
+  public async catalogs(request: SessionRead): Promise<{ sessionId: string; catalogs: Record<string, unknown> }> {
     await this.session(request.sessionId)
     return { sessionId: request.sessionId, catalogs: wire((await this.facts.catalogs(request.sessionId)) ?? {}) }
   }
 
   /**
-   * `store.planDocument`: with `planId` and `revision`, that immutable revision as `{document}`; without
+   * Plan documents: with `planId` and `revision`, that immutable revision as `{document}`; without
    * `planId`, every revision as `{plans}`, newest first. A missing revision is `plan_document_not_found`.
    */
-  public async planDocument(request: ReadRequest<'store.planDocument'>): Promise<ReadResponse<'store.planDocument'>> {
+  public async planDocument(request: PlanDocumentRequest): Promise<PlanDocumentBody> {
     await this.session(request.sessionId)
     if (request.planId === undefined || request.planId === null || request.planId === '') {
       const state = await this.store.planning.load(request.sessionId)

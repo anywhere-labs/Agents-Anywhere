@@ -18,32 +18,64 @@ from agent_server.core.runtime_workflows import (
     is_reservation_rejection,
     reservation_rejection,
 )
-from agent_server.infra.connector_rpc import ConnectorRpcError
+from agent_server.services.device_commands import (
+    DeviceCommandError,
+    DeviceCommandOffline,
+    DeviceCommandOutcomeUnknown,
+)
+from agent_server.services.device_reads import DeviceReadError, DeviceReadTimeout
 from agent_server.services.device_runtimes import DeviceRuntimeService
 from agent_server.services.runtime_workflow_ports import WorkflowRepository
 
-# Errors a v3 device (or the v2 RPC bridge in front of it) gives for a method device-meshcall 1.0 does
-# not carry: a definite "not on this device", never an upstream failure.
+# Errors a device gives for a method it does not carry: a definite "not on this device", never an upstream failure.
 UNSUPPORTED_DEVICE_METHOD_CODES = frozenset(
     {"device_method_unsupported", "method_not_found", "unimplemented", "workflow_unsupported"}
 )
+# Workflow steps the Server sends as device commands. Their results are workflow views the receipt does not keep,
+# and the device makes each of them idempotent by its own identity (``preparationId``, ``createOperationId``):
+# every call gets a fresh ``commandId``, so a retry runs on the device and answers the current view.
+WORKFLOW_COMMANDS: frozenset[str] = frozenset({
+    "workspace.prepare",
+    "workspace.preparation.reserve",
+    "workspace.preparation.respond",
+    "workspace.preparation.cancel",
+    "session.creation.begin",
+    "session.creation.respond",
+    "session.creation.cancel",
+})
+# Workflow progress the Server reads from the device.
+WORKFLOW_READS: frozenset[str] = frozenset({"workspace.preparation.get", "session.creation.get"})
 
 
 class WorkflowError(RuntimeError):
-    def __init__(self, code: str, message: str, status: int = 409) -> None:
+    def __init__(self, code: str, message: str, status: int = 409, *, query_before_retry: bool = False) -> None:
         super().__init__(message)
         self.code, self.status = code, status
+        self.query_before_retry = query_before_retry
 
 
-class WorkflowRpc(Protocol):
-    async def request(
+class WorkflowCommands(Protocol):
+    """``services.device_commands.DeviceCommandService``."""
+
+    async def send(
         self,
-        connector_id: str,
-        method: str,
-        params: dict[str, Any],
         *,
-        timeout: float = 30,
+        user_id: str | None,
+        device_id: str,
+        kind: str,
+        command_id: str,
+        payload: dict[str, Any],
+        session_id: str | None = None,
+        timeout: float | None = None,
     ) -> Any: ...
+
+
+class WorkflowReads(Protocol):
+    """``services.device_reads.DeviceReadService``."""
+
+    async def is_v3_device(self, connector_id: str) -> bool: ...
+
+    async def read_method(self, device_id: str, method: str, params: dict[str, Any]) -> dict[str, Any] | None: ...
 
 
 def _usable(item: dict[str, Any]) -> bool:
@@ -74,13 +106,14 @@ class RuntimeWorkflowService:
     def __init__(
         self,
         store: WorkflowRepository,
-        rpc: WorkflowRpc,
         runtimes: DeviceRuntimeService,
+        commands: WorkflowCommands,
+        reads: WorkflowReads,
         *,
         prepare_model_channel: Callable[..., Awaitable[str]] | None = None,
         model_channel_catalog: Callable[..., Awaitable[ProtocolModelCatalog]] | None = None,
     ) -> None:
-        self.store, self.rpc, self.runtimes = store, rpc, runtimes
+        self.store, self.runtimes, self.commands, self.reads = store, runtimes, commands, reads
         self.prepare_model_channel = prepare_model_channel
         self.model_channel_catalog = model_channel_catalog
 
@@ -94,9 +127,7 @@ class RuntimeWorkflowService:
         )
         if runtime.status != "running":
             raise WorkflowError("runtime_not_running", "请先启动 Runtime。")
-        capabilities = await self._runtime_capabilities(
-            payload.connectorId, runtime.runtimeType, runtime.runtimeId
-        )
+        capabilities = await self._runtime_capabilities(payload.connectorId, runtime.runtimeId)
         if not any(
             item.get("capabilityId") == "runtime.workspace.prepare" and _usable(item)
             for item in capabilities.get("capabilitySet", {}).get("capabilities", [])
@@ -235,46 +266,14 @@ class RuntimeWorkflowService:
     async def session_action(
         self, session_id: str, method: str, values: dict[str, Any], *, user_id: str
     ) -> dict[str, Any]:
-        session = await self.store.get_session(session_id, user_id=user_id)
-        if (
-            method not in {"session.tree", "session.configuration.get"}
-            and not (method == "session.agent.operate" and values.get("operation") in {"authentication.status", "resources.get", "queue.get"})
-            and not session.takeover
-        ):
-            raise WorkflowError("takeover_required", "请先授权工作台控制此会话。")
-        row = {
-            "user_id": user_id,
-            "connector_id": session.connectorId,
-            "runtime_id": session.runtimeId or session.runtime,
-            "runtime_type": session.runtime,
-        }
-        capabilities = await self._call(
-            row, "session.capabilities", {"sessionId": session_id}
+        """Runtime session tree, position, configuration and Agent operations: device-meshcall carries none of
+        them, so they answer ``workflow_unsupported``."""
+
+        del method, values
+        await self.store.get_session(session_id, user_id=user_id)
+        raise WorkflowError(
+            "workflow_unsupported", "这台设备的 Connector 不支持该操作，请改用直接新建会话或升级设备。", 409
         )
-        required = {
-            "session.tree": "session.execution_position.read",
-            "session.position.select": "session.execution_position.select",
-            "session.close": "session.close",
-            "session.configuration.get": "session.configuration.read",
-            "session.configuration.update": "session.configuration.update",
-            "session.recover": "session.recover",
-            "session.agent.operate": {
-                "authentication.status": "session.authentication.read", "resources.get": "session.resources.read",
-                "resources.reload": "session.resources.update", "queue.get": "session.queue.read",
-                "queue.clear": "session.queue.update", "message.follow_up": "session.follow_up",
-                "session.rename": "session.rename", "session.fork": "session.fork",
-                "directories.add": "session.directories.update", "tools.set": "session.tools.update",
-            }.get(values.get("operation"), "unsupported"),
-        }[method]
-        if not any(
-            cap.get("capabilityId") == required
-            and cap.get("supported")
-            and (cap.get("available") or method in {"session.close", "session.recover"})
-            and cap.get("allowed")
-            for cap in capabilities.get("capabilitySet", {}).get("capabilities", [])
-        ):
-            raise WorkflowError("capability_unavailable", "该会话当前不能执行此操作。")
-        return await self._call(row, method, {"sessionId": session_id, **values})
 
     async def _call(
         self, row: dict[str, Any], method: str, values: dict[str, Any]
@@ -282,21 +281,11 @@ class RuntimeWorkflowService:
         await self.runtimes.get_runtime(
             row["connector_id"], row["runtime_id"], user_id=row["user_id"]
         )
-        try:
-            result = await self.rpc.request(
-                row["connector_id"],
-                method,
-                {"runtime": row["runtime_type"], "runtimeId": row["runtime_id"], **values},
-                timeout=20,
-            )
-        except ConnectorRpcError as error:
-            if error.code in UNSUPPORTED_DEVICE_METHOD_CODES:
-                raise WorkflowError(
-                    "workflow_unsupported",
-                    "这台设备的 Connector 不支持该操作，请改用直接新建会话或升级设备。",
-                    409,
-                ) from error
-            raise
+        params = {"runtime": row["runtime_type"], "runtimeId": row["runtime_id"], **values}
+        if method in WORKFLOW_READS:
+            result = await self._read(row["connector_id"], method, params)
+        else:
+            result = await self._command(row, method, params)
         if not isinstance(result, dict):
             raise WorkflowError(
                 "invalid_runtime_response", "Runtime 返回的操作结果无效。", 502
@@ -314,30 +303,48 @@ class RuntimeWorkflowService:
                 ) from error
         return result
 
-    async def _runtime_capabilities(
-        self, connector_id: str, runtime_type: str, runtime_id: str
-    ) -> dict[str, Any]:
-        """``{capabilitySet}`` of an instance.
+    async def _read(self, device_id: str, method: str, params: dict[str, Any]) -> Any:
+        try:
+            result = await self.reads.read_method(device_id, method, params)
+        except DeviceReadTimeout as error:
+            raise WorkflowError(error.code, error.message, 503, query_before_retry=True) from error
+        except DeviceReadError as error:
+            raise _device_error(error.code, error.message) from error
+        if result is None:
+            raise WorkflowError("connector_offline", "the device is offline", 503, query_before_retry=True)
+        return result
 
-        v3 devices have no ``runtime.capabilities`` method: the set is the one the device reported
-        (``DeviceRuntimeService.runtime_capabilities``), in protocol 1.2 where ``available`` and ``allowed``
-        default to true. A device that does not declare ``runtime.workspace.prepare`` there gets
-        ``workflow_unsupported`` and clients create directly.
-        """
+    async def _command(self, row: dict[str, Any], method: str, params: dict[str, Any]) -> Any:
+        assert method in WORKFLOW_COMMANDS, method
+        session_id = params.get("sessionId")
+        try:
+            outcome = await self.commands.send(
+                user_id=row["user_id"],
+                device_id=row["connector_id"],
+                kind=method,
+                command_id=f"wf_{secrets.token_urlsafe(16)}",
+                payload=params,
+                session_id=session_id if isinstance(session_id, str) else None,
+                timeout=20,
+            )
+        except (DeviceCommandOffline, DeviceCommandOutcomeUnknown) as error:
+            raise WorkflowError(error.code, error.message, 503, query_before_retry=True) from error
+        except DeviceCommandError as error:
+            raise _device_error(error.code, error.message) from error
+        return outcome.result
 
-        if await self.runtimes.is_v3_device(connector_id):
-            reported = await self.runtimes.runtime_capabilities(connector_id, runtime_id)
-            try:
-                normalized = ProtocolCapabilitySet.model_validate(reported).model_dump(mode="json")
-            except ValidationError:
-                normalized = {"revision": 0, "capabilities": []}
-            return {"capabilitySet": normalized}
-        result = await self.rpc.request(
-            connector_id,
-            "runtime.capabilities",
-            {"runtime": runtime_type, "runtimeId": runtime_id},
-        )
-        return result if isinstance(result, dict) else {}
+    async def _runtime_capabilities(self, connector_id: str, runtime_id: str) -> dict[str, Any]:
+        """``{capabilitySet}`` of an instance: the set the device reported (``DeviceRuntimeService
+        .runtime_capabilities``), in protocol 1.2 where ``available`` and ``allowed`` default to true. A device that
+        does not declare ``runtime.workspace.prepare`` there gets ``workflow_unsupported`` and clients create
+        directly."""
+
+        reported = await self.runtimes.runtime_capabilities(connector_id, runtime_id)
+        try:
+            normalized = ProtocolCapabilitySet.model_validate(reported).model_dump(mode="json")
+        except ValidationError:
+            normalized = {"revision": 0, "capabilities": []}
+        return {"capabilitySet": normalized}
 
     async def _refresh(
         self, row: dict[str, Any], *, user_id: str, begin: bool
@@ -354,9 +361,7 @@ class RuntimeWorkflowService:
                     request["preparationId"], user_id=user_id, kind="preparation"
                 )
                 if "planningIntent" in request:
-                    capabilities = await self._runtime_capabilities(
-                        row["connector_id"], row["runtime_type"], row["runtime_id"]
-                    )
+                    capabilities = await self._runtime_capabilities(row["connector_id"], row["runtime_id"])
                     if not any(
                         item.get("capabilityId") == "session.planning" and _usable(item) and _prepared_creation(item)
                         for item in capabilities.get("capabilitySet", {}).get("capabilities", [])
@@ -474,3 +479,14 @@ class RuntimeWorkflowService:
             else row["session_id"],
             state=state,
         )
+
+
+def _device_error(code: str, message: str) -> WorkflowError:
+    """The device's own refusal: ``workflow_unsupported`` for a method it does not carry, else its code (503, the
+    client reads the workflow again before it retries)."""
+
+    if code in UNSUPPORTED_DEVICE_METHOD_CODES:
+        return WorkflowError(
+            "workflow_unsupported", "这台设备的 Connector 不支持该操作，请改用直接新建会话或升级设备。", 409
+        )
+    return WorkflowError(code, message, 503, query_before_retry=True)

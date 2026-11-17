@@ -3,12 +3,9 @@
 
 import type { AttachmentConsumedOut } from "./attachment-consumed-out.js"
 import type { ChangesEvent } from "./changes-event.js"
-import type { ChangesSinceRequest } from "./changes-since-request.js"
-import type { ChangesSinceResponse } from "./changes-since-response.js"
 import type { ChannelSwitchCommand } from "./channel-switch-command.js"
 import type { ClientCallItem } from "./client-call-item.js"
 import type { ClientCallRequest } from "./client-call-request.js"
-import type { ClientSnapshotRequest } from "./client-snapshot-request.js"
 import type { ClientSubscribeRequest } from "./client-subscribe-request.js"
 import type { CommandResultOut } from "./command-result-out.js"
 import type { CommandStatusRequest } from "./command-status-request.js"
@@ -24,8 +21,6 @@ import type { ExportShareChunk } from "./export-share-chunk.js"
 import type { ExportShareRequest } from "./export-share-request.js"
 import type { GoalResponse } from "../../protocol/v1_2/goal-response.js"
 import type { InterruptResult } from "./interrupt-result.js"
-import type { PlanDocumentRequest } from "./plan-document-request.js"
-import type { PlanDocumentResponse } from "./plan-document-response.js"
 import type { PlanningResponse } from "../../protocol/v1_2/planning-response.js"
 import type { PortClosedEvent } from "../../preview/v1_0/port-closed-event.js"
 import type { PortListeningEvent } from "../../preview/v1_0/port-listening-event.js"
@@ -47,7 +42,6 @@ import type { RespondNoticeCommand } from "./respond-notice-command.js"
 import type { RespondNoticeResult } from "./respond-notice-result.js"
 import type { RuntimeApplyCommand } from "./runtime-apply-command.js"
 import type { RuntimeApplyResult } from "./runtime-apply-result.js"
-import type { RuntimeCatalogsResponse } from "./runtime-catalogs-response.js"
 import type { RuntimeNoticeUpdatedEvent } from "./runtime-notice-updated-event.js"
 import type { RuntimeQueueUpdatedEvent } from "./runtime-queue-updated-event.js"
 import type { RuntimeStatusEvent } from "./runtime-status-event.js"
@@ -55,32 +49,19 @@ import type { SelectCommand } from "./select-command.js"
 import type { SelectResult } from "./select-result.js"
 import type { SendMessageCommand } from "./send-message-command.js"
 import type { SendMessageResult } from "./send-message-result.js"
-import type { SessionCapabilitiesResponse } from "./session-capabilities-response.js"
 import type { SessionCommand } from "./session-command.js"
 import type { SessionGoalCommand } from "./session-goal-command.js"
 import type { SessionInventoryOut } from "./session-inventory-out.js"
-import type { SessionNoticesResponse } from "./session-notices-response.js"
 import type { SessionPlanningCommand } from "./session-planning-command.js"
-import type { SessionQueueResponse } from "./session-queue-response.js"
-import type { SessionRequest } from "./session-request.js"
-import type { SessionStateRequest } from "./session-state-request.js"
-import type { SessionStateResponse } from "./session-state-response.js"
 import type { SessionSummaryOut } from "./session-summary-out.js"
 import type { SessionSyncCommand } from "./session-sync-command.js"
 import type { SessionSyncResult } from "./session-sync-result.js"
 import type { SessionWatchRequest } from "./session-watch-request.js"
 import type { SteerCommand } from "./steer-command.js"
 import type { SteerResult } from "./steer-result.js"
-import type { StoreReadRequest } from "./store-read-request.js"
-import type { StoreReadResponse } from "./store-read-response.js"
-import type { StreamChunk } from "./stream-chunk.js"
-import type { TerminalOutputItem } from "./terminal-output-item.js"
-import type { TerminalOutputRequest } from "./terminal-output-request.js"
 import type { TerminalStreamItem } from "./terminal-stream-item.js"
 import type { UsageReportOut } from "./usage-report-out.js"
 import type { WorkflowState } from "./workflow-state.js"
-import type { WorkspaceCallRequest } from "./workspace-call-request.js"
-import type { WorkspaceCallResponse } from "./workspace-call-response.js"
 import type { WorkspacePrepareCommand } from "./workspace-prepare-command.js"
 
 /** `CommandCall.p` (request) and `CommandAck.r` (response) of every `aa.device.v1.Commands/*` method. */
@@ -117,24 +98,13 @@ export interface CommandPayloads {
 /** Request and response of every Server-initiated read; for a stream the response is its item. */
 export interface ReadPayloads {
   "client.call": { request: ClientCallRequest; response: ClientCallItem }
-  "client.snapshot": { request: ClientSnapshotRequest; response: StreamChunk }
   "client.subscribe": { request: ClientSubscribeRequest; response: TerminalStreamItem }
   "command.status": { request: CommandStatusRequest; response: CommandStatusResponse }
-  "runtime.catalogs": { request: SessionRequest; response: RuntimeCatalogsResponse }
-  "session.capabilities": { request: SessionRequest; response: SessionCapabilitiesResponse }
   "session.creation.get": { request: CreationGetRequest; response: WorkflowState }
-  "session.notices": { request: SessionRequest; response: SessionNoticesResponse }
-  "session.queue": { request: SessionRequest; response: SessionQueueResponse }
-  "session.state": { request: SessionStateRequest; response: SessionStateResponse }
   "session.watch": { request: SessionWatchRequest; response: ChangesEvent }
-  "store.changesSince": { request: ChangesSinceRequest; response: ChangesSinceResponse }
   "store.exportShare": { request: ExportShareRequest; response: ExportShareChunk }
-  "store.planDocument": { request: PlanDocumentRequest; response: PlanDocumentResponse }
-  "store.read": { request: StoreReadRequest; response: StoreReadResponse }
   "store.readBlob": { request: ReadBlobRequest; response: ReadBlobChunk }
-  "workspace.call": { request: WorkspaceCallRequest; response: WorkspaceCallResponse }
   "workspace.preparation.get": { request: PreparationGetRequest; response: WorkflowState }
-  "workspace.terminalOutput": { request: TerminalOutputRequest; response: TerminalOutputItem }
 }
 
 /** `LinkAttachItem.p` by `LinkAttachItem.m`. */
@@ -193,22 +163,11 @@ export const COMMAND_ROUTES = {
 
 export const READ_ROUTES = {
   "client.call": "aa.device.v1.Client/call",
-  "client.snapshot": "aa.device.v1.Sessions/snapshot",
   "client.subscribe": "aa.device.v1.Client/subscribe",
   "command.status": "aa.device.v1.Commands/status",
-  "runtime.catalogs": "aa.device.v1.Runtime/catalogs",
-  "session.capabilities": "aa.device.v1.Sessions/capabilities",
   "session.creation.get": "aa.device.v1.Sessions/creationGet",
-  "session.notices": "aa.device.v1.Sessions/notices",
-  "session.queue": "aa.device.v1.Sessions/queue",
-  "session.state": "aa.device.v1.Sessions/state",
   "session.watch": "aa.device.v1.Sessions/watch",
-  "store.changesSince": "aa.device.v1.Store/changesSince",
   "store.exportShare": "aa.device.v1.Store/exportShare",
-  "store.planDocument": "aa.device.v1.Store/planDocument",
-  "store.read": "aa.device.v1.Store/read",
   "store.readBlob": "aa.device.v1.Store/readBlob",
-  "workspace.call": "aa.device.v1.Workspace/call",
-  "workspace.preparation.get": "aa.device.v1.Sessions/workspacePreparationGet",
-  "workspace.terminalOutput": "aa.device.v1.Workspace/terminalOutput"
+  "workspace.preparation.get": "aa.device.v1.Sessions/workspacePreparationGet"
 } as const

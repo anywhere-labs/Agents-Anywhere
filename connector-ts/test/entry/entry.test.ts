@@ -248,18 +248,17 @@ describe.skipIf(binary === null)('entry: rpc, CLI and the composition root', () 
       const sessionId = codexStableSessionId(credential.deviceId, 'thr_1')
       expect(inventory.p).toMatchObject({ runtimeId: 'codex', complete: true })
       expect((inventory.p.sessions as { sessionId: string }[]).map(session => session.sessionId)).toEqual([sessionId])
-      // A client snapshot reads the projected history and the Runtime's facts.
-      const chunks = await server.stream<{ seq: number; chunk: string; end: boolean }>('aa.device.v1.Sessions', 'snapshot', { sessionId })
-      const snapshot = joinChunks(chunks) as { timeline: { items: { id: string }[] }; runtimeCapabilities: { revision: number; capabilities: { capabilityId: string }[] } }
-      expect(snapshot.timeline.items.map(item => item.id)).toEqual(['m1'])
-      expect(snapshot.runtimeCapabilities).toMatchObject({ revision: 3, capabilities: [{ capabilityId: 'runtime.steer', scope: 'runtime' }] })
-      expect(opened).toEqual([])
       // The client API answers with what the composition root wired: instance catalogs, session slash commands and
       // file downloads through the transfer relay.
       const clientCall = async (request: Record<string, unknown>): Promise<{ head: { status: number }; body: Record<string, unknown> }> => {
         const [head, ...chunks] = await server.stream<{ kind: string; status: number }>('aa.device.v1.Client', 'call', { caller: { userId: 'usr_1' }, ...request })
         return { head: head!, body: joinChunks(chunks as never) as Record<string, unknown> }
       }
+      // A client snapshot reads the projected history and the Runtime's facts.
+      const snapshot = (await clientCall({ route: 'session.snapshot', method: 'GET', path: `/api/v2/sessions/${sessionId}/snapshot` })).body as { timeline: { items: { id: string }[] }; runtimeCapabilities: { revision: number; capabilities: { capabilityId: string }[] } }
+      expect(snapshot.timeline.items.map(item => item.id)).toEqual(['m1'])
+      expect(snapshot.runtimeCapabilities).toMatchObject({ revision: 3, capabilities: [{ capabilityId: 'runtime.steer', scope: 'runtime' }] })
+      expect(opened).toEqual([])
       const dev = `/api/v2/connectors/${credential.deviceId}`
       const models = await clientCall({ route: 'connector.runtime.catalogs.model', method: 'GET', path: `${dev}/runtimes/codex/catalogs/model` })
       expect(models.head.status).toBe(200)

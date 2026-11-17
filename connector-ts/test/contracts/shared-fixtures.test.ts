@@ -75,6 +75,11 @@ function check(fixture: Record<string, Record<string, unknown> | unknown>, entri
 const req = (method: string): Target => ({ method, part: 'request' })
 const res = (method: string): Target => ({ method, part: 'response' })
 const STATUS_EVENT: Target = { id: 'urn:agents-anywhere:device-meshcall:1.0:runtime-status-event' }
+/** A client API body (`Client/call`), checked by the protocol 1.2 schema of the part it carries. */
+const protocol = (slug: string, wrap: (value: Record<string, unknown>) => unknown): Target => ({
+  id: `urn:agents-anywhere:protocol:1.2:${slug}`,
+  wrap: value => wrap(value as Record<string, unknown>),
+})
 
 describe('shared fixtures against device-meshcall 1.0', () => {
   it('maps every method to a MeshCall route', () => {
@@ -94,9 +99,9 @@ describe('shared fixtures against device-meshcall 1.0', () => {
       'requests.workspacePreparationReserve': req('workspace.preparation.reserve'),
       'requests.creationPrepared': req('session.creation.begin'),
       'select.result': res('session.select'),
-      'state.goal.unobserved': res('session.state'),
-      'state.planning': res('session.state'),
-      'state.goal': res('session.state'),
+      'state.goal.unobserved': protocol('goal-state', value => value.goal),
+      'state.planning': protocol('planning-state', value => value.planning),
+      'state.goal': protocol('goal-state', value => value.goal),
       'planning.result': res('session.planning'),
       'goal.result': res('session.goal'),
       'event.planning': STATUS_EVENT,
@@ -106,8 +111,8 @@ describe('shared fixtures against device-meshcall 1.0', () => {
       'event.usage': STATUS_EVENT,
       'event.background': STATUS_EVENT,
       'event.capabilities': STATUS_EVENT,
-      'planDocument.list': res('store.planDocument'),
-      'planDocument.one': res('store.planDocument'),
+      'planDocument.list': protocol('plan-document', value => (value.plans as unknown[])[0]),
+      'planDocument.one': protocol('plan-document', value => value.document),
       'runtime.capabilities.prepared': { id: 'urn:agents-anywhere:protocol:1.2:capability-set' },
       'workspacePrepare.result': res('workspace.prepare'),
       'workspacePreparation.ready': res('workspace.preparation.get'),

@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from agent_server.api.client_forward import call as client_call
 from agent_server.api.client_forward import forward_connector, owned_device, to_response
+from agent_server.api.v2_compat import V3_CONNECTOR_ONLY
 from agent_server.core.device_runtime import (
     DeviceRuntimeListResponse,
     DeviceRuntimeView,
@@ -20,14 +21,11 @@ from agent_server.core.device_runtime import (
 from agent_server.core.e2ee_settings import E2eeSettings
 from agent_server.core.models import (
     RuntimeCommandListResponse,
-    RuntimeCommandView,
 )
 from agent_server.core.protocol import (
     ProtocolCapabilitiesResponse,
     ProtocolCapabilitySet,
-    ProtocolModelCatalog,
     ProtocolModelCatalogResponse,
-    ProtocolPermissionCatalog,
     ProtocolPermissionCatalogResponse,
 )
 from agent_server.core.utc import utc_now
@@ -36,21 +34,15 @@ from agent_server.deps import (
     get_device_runtime_service,
     get_e2ee_settings,
     get_model_channel_service,
-    get_rpc,
-)
-from agent_server.infra.connector_rpc import (
-    ConnectorOfflineError,
-    ConnectorRpcError,
-    ConnectorRpcManager,
 )
 from agent_server.services.device_runtimes import (
     DeviceRuntimeError,
     DeviceRuntimeService,
 )
 from agent_server.services.model_channels import ModelChannelService
-from agent_server.services.model_config import ModelConfigError
 
-router = APIRouter(prefix="/connectors", tags=["connector-runtimes"])
+# Runtime instance management of a v2 Connector needs Agents Anywhere upgraded on that device (D4).
+router = APIRouter(prefix="/connectors", tags=["connector-runtimes"], dependencies=V3_CONNECTOR_ONLY)
 
 
 
@@ -282,32 +274,27 @@ async def get_connector_runtime_capabilities(
     connector_id: str,
     runtime_id: str,
     service: DeviceRuntimeService = Depends(get_device_runtime_service),
-    manager: ConnectorRpcManager = Depends(get_rpc),
     user_id: str = Depends(current_user_id),
     e2ee: E2eeSettings = Depends(get_e2ee_settings),
 ) -> ProtocolCapabilitiesResponse:
+    """The capability set the device reported with the instance (device-meshcall has no capability read)."""
+
     try:
         runtime = await service.ensure_active_running(
             connector_id, runtime_id, user_id=user_id
         )
-        if await service.is_v3_device(connector_id):
-            # device-meshcall has no capability read: the set the device reported with the instance.
-            reported = await service.runtime_capabilities(connector_id, runtime.runtimeId)
-            if e2ee.required:
-                reported = without_plaintext_workflows(reported)
-            result = {"capabilitySet": reported}
-        else:
-            result = await request_runtime_rpc(
-                manager,
-                connector_id,
-                "runtime.capabilities",
-                runtime=runtime.runtimeType,
-                runtime_id=runtime.runtimeId,
-                limit=None,
-            )
+        reported = await service.runtime_capabilities(connector_id, runtime.runtimeId)
     except DeviceRuntimeError as exc:
         _raise_device_runtime_error(exc)
-    capability_set = parse_runtime_capability_response(result)
+    if e2ee.required:
+        reported = without_plaintext_workflows(reported)
+    try:
+        capability_set = ProtocolCapabilitySet.model_validate(reported)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={"code": "invalid_runtime_capabilities", "message": str(exc)},
+        ) from exc
     return ProtocolCapabilitiesResponse(
         connectorId=connector_id,
         capabilitySet=capability_set,
@@ -323,42 +310,20 @@ async def get_connector_runtime_model_catalog(
     request: Request,
     connector_id: str,
     runtime_id: str,
-    service: DeviceRuntimeService = Depends(get_device_runtime_service),
-    manager: ConnectorRpcManager = Depends(get_rpc),
     user_id: str = Depends(current_user_id),
     channels: ModelChannelService = Depends(get_model_channel_service),
-) -> ProtocolModelCatalogResponse:
-    if await owned_device(request, "connector.runtime.catalogs.model", user_id=user_id, connector_id=connector_id):
-        async def _channel_overlay(body: Any) -> Any:
-            parsed = ProtocolModelCatalogResponse.model_validate(body)
-            catalog = await channels.channel_catalog(connector_id, runtime_id, parsed.catalog, user_id=user_id)
-            return ProtocolModelCatalogResponse(catalog=catalog, serverTime=utc_now()).model_dump(mode="json")
+) -> Any:
+    await owned_device(request, user_id=user_id, connector_id=connector_id)
 
-        return to_response(await client_call(
-            request, "connector.runtime.catalogs.model", user_id=user_id, device_id=connector_id,
-            response_model=ProtocolModelCatalogResponse, decorate=_channel_overlay,
-        ))
-    try:
-        runtime_id = await channels.prepare_runtime(connector_id, runtime_id, user_id=user_id)
-        runtime = await service.ensure_active_running(
-            connector_id, runtime_id, user_id=user_id
-        )
-        result = await request_runtime_rpc(
-            manager,
-            connector_id,
-            "runtime.modelCatalog",
-            runtime=runtime.runtimeType,
-            runtime_id=runtime.runtimeId,
-            limit=200,
-        )
-    except ModelConfigError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-    except DeviceRuntimeError as exc:
-        _raise_device_runtime_error(exc)
-    return ProtocolModelCatalogResponse(
-        catalog=await channels.channel_catalog(connector_id, runtime.runtimeId, parse_runtime_model_catalog_response(result), user_id=user_id),
-        serverTime=utc_now(),
-    )
+    async def _channel_overlay(body: Any) -> Any:
+        parsed = ProtocolModelCatalogResponse.model_validate(body)
+        catalog = await channels.channel_catalog(connector_id, runtime_id, parsed.catalog, user_id=user_id)
+        return ProtocolModelCatalogResponse(catalog=catalog, serverTime=utc_now()).model_dump(mode="json")
+
+    return to_response(await client_call(
+        request, "connector.runtime.catalogs.model", user_id=user_id, device_id=connector_id,
+        response_model=ProtocolModelCatalogResponse, decorate=_channel_overlay,
+    ))
 
 
 @router.get(
@@ -369,31 +334,11 @@ async def get_connector_runtime_permission_catalog(
     request: Request,
     connector_id: str,
     runtime_id: str,
-    service: DeviceRuntimeService = Depends(get_device_runtime_service),
-    manager: ConnectorRpcManager = Depends(get_rpc),
     user_id: str = Depends(current_user_id),
-) -> ProtocolPermissionCatalogResponse:
-    if (forwarded := await forward_connector(
-        request, "connector.runtime.catalogs.permission", user_id=user_id, connector_id=connector_id, response_model=ProtocolPermissionCatalogResponse
-    )) is not None:
-        return forwarded
-    try:
-        runtime = await service.ensure_active_running(
-            connector_id, runtime_id, user_id=user_id
-        )
-        result = await request_runtime_rpc(
-            manager,
-            connector_id,
-            "runtime.permissionCatalog",
-            runtime=runtime.runtimeType,
-            runtime_id=runtime.runtimeId,
-            limit=200,
-        )
-    except DeviceRuntimeError as exc:
-        _raise_device_runtime_error(exc)
-    return ProtocolPermissionCatalogResponse(
-        catalog=parse_runtime_permission_catalog_response(result),
-        serverTime=utc_now(),
+) -> Any:
+    return await forward_connector(
+        request, "connector.runtime.catalogs.permission", user_id=user_id, connector_id=connector_id,
+        response_model=ProtocolPermissionCatalogResponse,
     )
 
 
@@ -405,63 +350,16 @@ async def get_connector_runtime_commands(
     request: Request,
     connector_id: str,
     runtime_id: str,
-    service: DeviceRuntimeService = Depends(get_device_runtime_service),
-    manager: ConnectorRpcManager = Depends(get_rpc),
     user_id: str = Depends(current_user_id),
-) -> RuntimeCommandListResponse:
-    if (forwarded := await forward_connector(
-        request, "connector.runtime.commands", user_id=user_id, connector_id=connector_id, response_model=RuntimeCommandListResponse
-    )) is not None:
-        return forwarded
-    try:
-        runtime = await service.ensure_active_running(
-            connector_id, runtime_id, user_id=user_id
-        )
-        result = await request_runtime_rpc(
-            manager,
-            connector_id,
-            "runtime.commands",
-            runtime=runtime.runtimeType,
-            runtime_id=runtime.runtimeId,
-            limit=100,
-        )
-    except DeviceRuntimeError as exc:
-        _raise_device_runtime_error(exc)
-    commands = parse_runtime_commands_response(result)
-    return RuntimeCommandListResponse(commands=commands, serverTime=utc_now())
+) -> Any:
+    return await forward_connector(
+        request, "connector.runtime.commands", user_id=user_id, connector_id=connector_id,
+        response_model=RuntimeCommandListResponse,
+    )
 
 
 def _raise_device_runtime_error(exc: DeviceRuntimeError) -> None:
     raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-
-
-async def request_runtime_rpc(
-    manager: ConnectorRpcManager,
-    connector_id: str,
-    method: str,
-    *,
-    runtime: str,
-    runtime_id: str,
-    limit: int | None,
-) -> Any:
-    params: dict[str, Any] = {"runtime": runtime, "runtimeId": runtime_id}
-    if limit is not None:
-        params["limit"] = limit
-    try:
-        return await manager.request(connector_id, method, params, timeout=30)
-    except ConnectorOfflineError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except ConnectorRpcError as exc:
-        if exc.code == "device_method_unsupported":
-            # A v3 device has no runtime-level catalog or command list before a session exists.
-            raise HTTPException(
-                status_code=409,
-                detail={"code": exc.code, "message": exc.message or exc.code},
-            ) from exc
-        raise HTTPException(
-            status_code=502,
-            detail={"code": exc.code, "message": exc.message or exc.code},
-        ) from exc
 
 
 # Runtime workflows carry first messages, answers and paths, so required mode refuses them (``e2ee_settings``); a
@@ -478,67 +376,3 @@ def without_plaintext_workflows(capability_set: dict[str, Any]) -> dict[str, Any
         if not (isinstance(item, dict) and item.get("capabilityId") in PLAINTEXT_WORKFLOW_CAPABILITIES)
     ]
     return {**capability_set, "capabilities": kept}
-
-
-def parse_runtime_capability_response(result: Any) -> ProtocolCapabilitySet:
-    raw_capability_set = (
-        result.get("capabilitySet") if isinstance(result, dict) else None
-    )
-    if not isinstance(raw_capability_set, dict):
-        raise_invalid_runtime_response("invalid_runtime_capabilities")
-    try:
-        return ProtocolCapabilitySet.model_validate(raw_capability_set)
-    except ValidationError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail={"code": "invalid_runtime_capabilities", "message": str(exc)},
-        ) from exc
-
-
-def parse_runtime_model_catalog_response(result: Any) -> ProtocolModelCatalog:
-    raw_catalog = result.get("catalog") if isinstance(result, dict) else None
-    if not isinstance(raw_catalog, dict):
-        raise_invalid_runtime_response("invalid_runtime_catalog")
-    try:
-        return ProtocolModelCatalog.model_validate(raw_catalog)
-    except ValidationError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail={"code": "invalid_runtime_catalog", "message": str(exc)},
-        ) from exc
-
-
-def parse_runtime_permission_catalog_response(result: Any) -> ProtocolPermissionCatalog:
-    raw_catalog = result.get("catalog") if isinstance(result, dict) else None
-    if not isinstance(raw_catalog, dict):
-        raise_invalid_runtime_response("invalid_runtime_catalog")
-    try:
-        return ProtocolPermissionCatalog.model_validate(raw_catalog)
-    except ValidationError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail={"code": "invalid_runtime_catalog", "message": str(exc)},
-        ) from exc
-
-
-def parse_runtime_commands_response(result: Any) -> list[RuntimeCommandView]:
-    commands = result.get("commands") if isinstance(result, dict) else None
-    if not isinstance(commands, list):
-        raise_invalid_runtime_response("invalid_runtime_commands")
-    try:
-        return [RuntimeCommandView.model_validate(command) for command in commands]
-    except ValidationError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail={"code": "invalid_runtime_commands", "message": str(exc)},
-        ) from exc
-
-
-def raise_invalid_runtime_response(code: str) -> None:
-    raise HTTPException(
-        status_code=502,
-        detail={
-            "code": code,
-            "message": "connector returned an invalid runtime response",
-        },
-    )

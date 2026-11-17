@@ -10,7 +10,7 @@ from test_runtime_config import (
     _with_gateway_schema,
 )
 
-from agent_server.infra.connector_rpc import ConnectorRpcError
+from agent_server.services.device_commands import DeviceCommandRejected
 
 CAPABILITY = {
     "maturity": "beta",
@@ -79,7 +79,7 @@ def test_saved_connection_is_pending_until_the_runtime_reports_it(tmp_path):
     assert saved.status_code == 200, saved.text
     assert saved.json()["modelConnectionStatus"]["state"] == "saved_pending"
 
-    rpc.responses["runtime.start"] = {
+    rpc.responses["runtime.apply"] = {
         "runtimeId": "codex",
         "status": "running",
         "modelConnection": APPLIED,
@@ -92,7 +92,7 @@ def test_saved_connection_is_pending_until_the_runtime_reports_it(tmp_path):
 
 def test_changing_the_key_reads_as_a_saved_change(tmp_path):
     client, rpc, connector_id, headers = _client_with_capability(tmp_path)
-    rpc.responses["runtime.start"] = {
+    rpc.responses["runtime.apply"] = {
         "runtimeId": "codex",
         "status": "running",
         "modelConnection": APPLIED,
@@ -100,7 +100,7 @@ def test_changing_the_key_reads_as_a_saved_change(tmp_path):
     url = f"{_runtime_url(connector_id)}/config"
     assert client.put(url, headers=headers, json={"config": {"modelGateway": GATEWAY}}).status_code == 200
     _activate(client, connector_id, headers)
-    rpc.responses.pop("runtime.start")
+    rpc.responses.pop("runtime.apply")
 
     # A running runtime restarts with the new key, but this Connector does
     # not report the connection, so the change stays unconfirmed.
@@ -118,7 +118,7 @@ def test_a_failed_start_is_reported_as_failed(tmp_path):
     client, rpc, connector_id, headers = _client_with_capability(tmp_path)
     url = f"{_runtime_url(connector_id)}/config"
     assert client.put(url, headers=headers, json={"config": {"modelGateway": GATEWAY}}).status_code == 200
-    rpc.errors["runtime.start"] = ConnectorRpcError("runtime_upstream_error", "gateway refused")
+    rpc.errors["runtime.apply"] = DeviceCommandRejected("runtime_upstream_error", "gateway refused", None)
 
     response = client.put(
         f"{_runtime_url(connector_id)}/active", headers=headers, json={"active": True}
@@ -134,7 +134,7 @@ def test_externally_managed_connection_is_shown_as_such(tmp_path):
     client, rpc, connector_id, headers = _client_with_capability(tmp_path)
     url = f"{_runtime_url(connector_id)}/config"
     assert client.put(url, headers=headers, json={"config": {"modelGateway": GATEWAY}}).status_code == 200
-    rpc.responses["runtime.start"] = {
+    rpc.responses["runtime.apply"] = {
         "runtimeId": "codex",
         "status": "running",
         "modelConnection": {**APPLIED, "state": "managed_externally"},
@@ -148,8 +148,12 @@ def test_externally_managed_connection_is_shown_as_such(tmp_path):
 
 def test_unsupported_connection_is_rejected_with_422(tmp_path):
     client, rpc, connector_id, headers = _client_with_capability(tmp_path)
-    rpc.errors["runtime.validateConfig"] = ConnectorRpcError(
-        "model_connection_unsupported", "Local mode uses its own model settings."
+    # An inactive instance only stores its configuration; the device validates it when it applies one.
+    config_url = f"{_runtime_url(connector_id)}/config"
+    assert client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
+    _activate(client, connector_id, headers)
+    rpc.errors["runtime.apply"] = DeviceCommandRejected(
+        "model_connection_unsupported", "Local mode uses its own model settings.", None
     )
 
     response = client.put(
@@ -190,7 +194,7 @@ def test_a_later_report_from_the_started_connection_is_kept(tmp_path):
     url = f"{_runtime_url(connector_id)}/config"
     assert client.put(url, headers=headers, json={"config": {"modelGateway": GATEWAY}}).status_code == 200
     # Like DSH waiting for its Bridge: started, connection not applied yet.
-    rpc.responses["runtime.start"] = {
+    rpc.responses["runtime.apply"] = {
         "runtimeId": "codex",
         "status": "starting",
         "modelConnection": {"state": "not_configured"},

@@ -5,14 +5,13 @@ import type { TunnelApi } from '../application/inbound/tunnel-api.js'
 import type { OutboxStore } from '../application/ports/index.js'
 import type { CommandCall } from '../generated/device-meshcall/v1_0/command-call.js'
 import { REGISTERED_SERVICES } from '../generated/device-meshcall/v1_0/e2ee-registration.js'
-import { chunkJson, outboxStream, scrubForE2ee, watchSession, type DeviceReaders, type OutboxStreamOptions, type ReadRequest, type WatchDeps } from '../sync/index.js'
+import { outboxStream, scrubForE2ee, watchSession, type DeviceReaders, type OutboxStreamOptions, type WatchDeps } from '../sync/index.js'
 import { defineService, type MethodDef } from '../mesh/index.js'
 import type { AttachHub } from './attach.js'
 import type { LocalBlob } from './blobs.js'
 import { CLIENT_CALL_REQUEST, CLIENT_SERVICE, CLIENT_SUBSCRIBE_REQUEST, DEFAULT_CLIENT_LIMITS, clientCall, clientRoute, clientSubscribe, type ClientLimits } from './client-call.js'
 import type { BlobTransfer, TransferUpload } from './device-files.js'
-import type { SessionCommand } from './session-commands.js'
-import { TerminalWatchers, workspaceCall, type WorkspaceServiceDeps } from './workspace.js'
+import { TerminalWatchers, type WorkspaceServiceDeps } from './workspace.js'
 
 export const CONNECTION_METADATA = 'aa-connection-id'
 
@@ -41,13 +40,11 @@ export const DEFAULT_LIMITS: Readonly<Record<CallClass, number>> = {
 }
 
 /**
- * The Server's `CRITICAL_METHODS` (the critical channel: approvals, notices, session creation and workspace
- * preparation prompts), plus the link's own streams and receipt lookups. A `Client/call` takes the lane of its
- * route's `kind` instead (`client-routes.json`).
+ * The critical lane: session creation and workspace preparation prompts, the link's own streams and receipt
+ * lookups. A `Client/call` takes the lane of its route's `kind` instead (`client-routes.json`).
  */
 const CRITICAL = new Set([
-  'attach', 'outbox', 'ackOutbox', 'status', 'sessionInterrupt',
-  'sessionRespondNotice', 'notices', 'creationGet', 'sessionCreationRespond', 'sessionCreationCancel',
+  'attach', 'outbox', 'ackOutbox', 'status', 'creationGet', 'sessionCreationRespond', 'sessionCreationCancel',
   'workspacePreparationGet', 'workspacePreparationRespond', 'workspacePreparationCancel',
 ])
 
@@ -60,35 +57,13 @@ export function callClass(serviceName: string, methodName: string, request?: Rec
   if (CRITICAL.has(methodName)) return 'critical'
   if (serviceName === 'aa.device.v1.Secure') return 'secure'
   if (serviceName === 'aa.device.v1.Commands') return 'command'
-  if (['watch', 'snapshot', 'readBlob', 'exportShare', 'terminalOutput'].includes(methodName)) return 'stream'
+  if (['watch', 'readBlob', 'exportShare'].includes(methodName)) return 'stream'
   return 'read'
 }
 
 function sessionId(request: Record<string, unknown>): string {
   if (typeof request.sessionId !== 'string' || request.sessionId === '') throw new MeshCallError('invalid_argument', 'sessionId is required')
   return request.sessionId
-}
-
-/** A non-negative integer field, or null when it is absent. */
-function integer(value: unknown, field: string): number | null {
-  if (value === undefined || value === null) return null
-  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw new MeshCallError('invalid_argument', `${field} must be a non-negative integer`)
-  return value
-}
-
-function bounds(request: Record<string, unknown>): { limit?: number; byteBudget?: number } {
-  const limit = integer(request.limit, 'limit')
-  const byteBudget = integer(request.byteBudget, 'byteBudget')
-  return { ...(limit !== null ? { limit } : {}), ...(byteBudget !== null ? { byteBudget } : {}) }
-}
-
-const READ_MODES: readonly ReadRequest<'store.read'>['mode'][] = ['latest', 'before', 'after']
-
-function storeReadRequest(request: Record<string, unknown>): ReadRequest<'store.read'> {
-  const mode = READ_MODES.find(candidate => candidate === request.mode)
-  if (mode === undefined) throw new MeshCallError('invalid_argument', 'mode must be latest, before or after')
-  const cursor = integer(request.cursor, 'cursor')
-  return { sessionId: sessionId(request), mode, ...(cursor !== null ? { cursor } : {}), ...bounds(request) }
 }
 
 /** Secure/channel handler (F's `channel/`): runs one client's encrypted channel. */
@@ -103,8 +78,6 @@ export interface DeviceServicesDeps {
   readonly readers: DeviceReaders
   readonly inbox: CommandInbox
   readonly secure?: SecureChannelHandler
-  /** Largest `StreamChunk.chunk` in UTF-8 bytes; keep well under the 4 MiB frame (JSON escaping can double it). */
-  readonly chunkBytes?: number
   readonly limits?: Partial<Record<CallClass, number>>
   /** A command settled (its `command.result` is in the outbox). */
   readonly onCommand?: () => void
@@ -113,10 +86,8 @@ export interface DeviceServicesDeps {
     readonly find: (sessionId: string, blobRef: string) => Promise<LocalBlob | null>
     readonly upload: TransferUpload
   }
-  /** `aa.device.v1.Workspace` (normal mode): files, terminals and shell. Absent: not registered. */
+  /** Terminals `Client/subscribe` reads. Absent: it answers `unimplemented`. */
   readonly workspace?: WorkspaceServiceDeps
-  /** A session's slash commands for `Runtime/catalogs` (`catalogs.commands`); the link keeps them. */
-  readonly sessionCommands?: (sessionId: string) => readonly SessionCommand[]
   /** `aa.device.v1.Client` (normal mode): the client API the secure channel also answers through. Absent: not registered. */
   readonly client?: TunnelApi
   readonly clientLimits?: Partial<ClientLimits>
@@ -174,7 +145,7 @@ export class DeviceServices {
 
   public constructor(private readonly deps: DeviceServicesDeps) {
     this.limiter = new Limiter({ ...DEFAULT_LIMITS, ...deps.limits })
-    // One per device: every `Workspace/terminalOutput` reader of a terminal shares its attach.
+    // One per device: every `Client/subscribe` reader of a terminal shares its attach.
     this.terminalWatchers = deps.workspace?.terminals !== undefined ? new TerminalWatchers(deps.workspace.terminals) : null
   }
 
@@ -264,28 +235,11 @@ export class DeviceServices {
   private sessionsMethods(): MethodDef[] {
     const S = 'aa.device.v1.Sessions'
     const readers = this.deps.readers
-    const chunkBytes = this.deps.chunkBytes ?? 512 * 1024
     return [
-      this.stream(S, 'snapshot', 'Client-shaped snapshot body, in StreamChunk pieces under the frame limit.', async function* (request) {
-        const body = await readers.snapshot({
-          sessionId: sessionId(request),
-          ...(typeof request.limit === 'number' ? { limit: request.limit } : {}),
-          ...(typeof request.byteBudget === 'number' ? { byteBudget: request.byteBudget } : {}),
-        })
-        yield* chunkJson(body, chunkBytes)
-      }),
       this.stream(S, 'watch', 'Opening subscribes and cancelling unsubscribes; items are ChangesEvent.', (request, context) => {
         const afterSeq = Number(request.afterSeq ?? 0)
         return watchSession(this.deps.watch, { sessionId: sessionId(request), afterSeq: Number.isFinite(afterSeq) ? afterSeq : 0 }, context.signal)
       }),
-      this.unary(S, 'notices', 'The current notices of a session.', async request => readers.notices({ sessionId: sessionId(request) })),
-      this.unary(S, 'state', 'Runtime state of a session, or one part of it (`planning`, `goal`).', async request => {
-        const part = request.part
-        if (part !== undefined && part !== null && part !== 'planning' && part !== 'goal') throw new MeshCallError('invalid_argument', 'part must be planning or goal')
-        return readers.sessionState({ sessionId: sessionId(request), ...(part === 'planning' || part === 'goal' ? { part } : {}) })
-      }),
-      this.unary(S, 'capabilities', 'Effective capabilities of a session.', async request => readers.capabilities({ sessionId: sessionId(request) })),
-      this.unary(S, 'queue', 'Queued messages of a session.', async request => readers.queue({ sessionId: sessionId(request) })),
       this.unary(S, 'workspacePreparationGet', 'A workspace preparation: phase, model catalog, Agent options and open requests.', async request => {
         if (typeof request.preparationId !== 'string' || request.preparationId === '') throw new MeshCallError('invalid_argument', 'preparationId is required')
         return readers.workspacePreparation({ preparationId: request.preparationId })
@@ -299,23 +253,11 @@ export class DeviceServices {
 
   private storeMethods(): MethodDef[] {
     const S = 'aa.device.v1.Store'
-    const readers = this.deps.readers
     const unimplemented = (name: string) => this.stream(S, name, 'Large reads go through the HTTP relay (not available on this device yet).', async function* () {
       yield* []
       throw new MeshCallError('unimplemented', `${name} is not available on this device yet`)
     })
     return [
-      this.unary(S, 'read', 'Paged history by orderSeq, bounded by count and bytes.', async request => readers.read(storeReadRequest(request))),
-      this.unary(S, 'changesSince', 'Changes after a clock position, or snapshotRequired.', async request => readers.changesSince({
-        sessionId: sessionId(request),
-        afterSeq: integer(request.afterSeq, 'afterSeq') ?? 0,
-        ...bounds(request),
-      })),
-      this.unary(S, 'planDocument', 'An immutable plan revision.', async request => readers.planDocument({
-        sessionId: sessionId(request),
-        ...(typeof request.planId === 'string' ? { planId: request.planId } : {}),
-        ...(typeof request.revision === 'number' ? { revision: request.revision } : {}),
-      })),
       this.readBlobMethod(S, unimplemented),
       unimplemented('exportShare'),
     ]
@@ -344,36 +286,6 @@ export class DeviceServices {
       await blobs.upload(transfer, { path: blob.path, size: blob.size, mediaType: blob.mediaType }, context.signal)
       yield { seq: 1, chunk: { done: true }, end: true }
     }, { request })
-  }
-
-  private runtimeMethods(): MethodDef[] {
-    return [this.unary('aa.device.v1.Runtime', 'catalogs', 'Model, permission and slash command catalogs of a session.', async request => {
-      const result = await this.deps.readers.catalogs({ sessionId: sessionId(request) })
-      const commands = this.deps.sessionCommands
-      if (commands === undefined) return result
-      // `catalogs.commands`: the session's slash commands as the Runtime last reported them.
-      return { ...result, catalogs: { ...result.catalogs, commands: [...commands(result.sessionId)] } }
-    })]
-  }
-
-  /**
-   * `aa.device.v1.Workspace` (normal mode only; encrypted mode runs the same handlers inside `Secure/channel`):
-   * `call` runs a whitelisted workspace method, `terminalOutput` streams a terminal's output.
-   */
-  private workspaceMethods(): MethodDef[] {
-    const S = 'aa.device.v1.Workspace'
-    const deps = this.deps.workspace
-    if (deps === undefined) return []
-    const watchers = this.terminalWatchers
-    return [
-      this.unary(S, 'call', 'One v2 workspace method (files, terminals, shell) with its v2 params and result; never retried.',
-        async request => workspaceCall(deps, request as never),
-        { readOnly: false, idempotent: false, request: z.looseObject({ method: z.string().min(1), params: z.looseObject({}).optional() }) }),
-      this.stream(S, 'terminalOutput', 'Opening subscribes to a terminal, cancelling unsubscribes: a scrollback replay, output in order, then the exit.', (request, context) => {
-        if (watchers === null) throw new MeshCallError('unimplemented', 'terminals are not available on this device')
-        return watchers.stream(request as never, context.signal)
-      }, { request: z.looseObject({ terminalId: z.string().min(1), sessionId: z.string().min(1), fromSeq: z.number().int().min(0).optional() }) }),
-    ]
   }
 
   /**
@@ -447,9 +359,7 @@ export class DeviceServices {
       'aa.device.v1.Link': () => this.linkMethods(),
       'aa.device.v1.Sessions': () => this.sessionsMethods(),
       'aa.device.v1.Store': () => this.storeMethods(),
-      'aa.device.v1.Runtime': () => this.runtimeMethods(),
       'aa.device.v1.Commands': () => this.commandMethods(registration['aa.device.v1.Commands'] ?? []),
-      'aa.device.v1.Workspace': () => this.workspaceMethods(),
       [CLIENT_SERVICE]: () => this.clientMethods(),
       'aa.device.v1.Secure': () => this.secureMethods(),
     }

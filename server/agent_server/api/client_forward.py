@@ -1,14 +1,12 @@
 """Thin FastAPI side of ``services.client_forward``: one call per forwarded route handler.
 
 Every device-served route keeps its handler, request and response models (OpenAPI and 422 do not change). The
-handler first asks ``forward_session`` / ``forward_connector``: when the session's device speaks device-meshcall,
-the request goes to the device with ``Client/call`` and its answer is returned; otherwise (a v2 device, a session
-or device the caller does not own, a handler called without a request) they return None and the handler runs its
-own path.
+handler asks ``forward_session`` / ``forward_connector``, which send the request to the device with
+``Client/call`` and return its answer.
 
-The Server keeps what only it can do: ownership (a session or device the caller does not own is left to the
-handler, which answers 404), v2 devices (D4, the handler's own path), admission, usage, directory broadcasts and
-the facts it owns (``ClientServerFacts``).
+The Server keeps what only it can do: ownership (a session or device the caller does not own answers 404),
+v2 devices (D4: 409 ``device_upgrade_required``), admission, usage, directory broadcasts and the facts it owns
+(``ClientServerFacts``).
 """
 
 from __future__ import annotations
@@ -22,6 +20,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
+from agent_server.api.v2_compat import device_upgrade_required
 from agent_server.core.api_namespace import API_V2_PREFIX
 from agent_server.core.client_routes import MAX_REQUEST_BODY_BYTES
 from agent_server.core.device_meshcall import (
@@ -40,19 +39,8 @@ from agent_server.services.client_forward import (
 RAW_BODY: Any = object()
 
 
-def forwarder_of(conn: Request | None) -> ClientForwarder | None:
-    """None without a request (a handler called directly) or without a forwarder."""
-
-    if conn is None:
-        return None
-    return getattr(conn.app.state, "client_forwarder", None)
-
-
-def forwarding(conn: Request | None, route_id: str) -> bool:
-    """Whether ``route_id`` can go through ``Client/call`` (cheap: no I/O): a request with a forwarder."""
-
-    del route_id
-    return forwarder_of(conn) is not None
+def forwarder_of(conn: Request) -> ClientForwarder:
+    return conn.app.state.client_forwarder
 
 
 def caller_of(conn: Request, user_id: str) -> ClientCaller:
@@ -118,7 +106,6 @@ async def call(
     """
 
     forwarder = forwarder_of(conn)
-    assert forwarder is not None
     if body is RAW_BODY:
         body = await raw_body(conn)
     try:
@@ -145,32 +132,29 @@ async def call(
     return answer
 
 
-async def owned_session(conn: Request, route_id: str, *, user_id: str, session_id: str) -> SessionView | None:
-    """The caller's session when ``route_id`` is forwarded and its device speaks device-meshcall, else None."""
+async def owned_session(conn: Request, *, user_id: str, session_id: str) -> SessionView:
+    """The caller's session: 404 when it is not the caller's, 409 ``device_upgrade_required`` on a v2 device."""
 
-    if not forwarding(conn, route_id):
-        return None
     try:
         session = await conn.app.state.store.get_session(session_id, user_id=user_id)
     except KeyError:
-        return None
+        raise HTTPException(status_code=404, detail="session not found") from None
     if not await conn.app.state.device_reads.is_v3_device(session.connectorId):
-        return None
+        raise device_upgrade_required()
     return session
 
 
-async def owned_device(conn: Request, route_id: str, *, user_id: str, connector_id: str) -> bool:
-    """Whether ``route_id`` is forwarded to the caller's v3 device ``connector_id``."""
+async def owned_device(conn: Request, *, user_id: str, connector_id: str) -> None:
+    """The caller's device: 404 when it is not the caller's, 409 ``device_upgrade_required`` on a v2 device."""
 
-    if not forwarding(conn, route_id):
-        return False
     try:
         connector = await conn.app.state.store.get_connector(connector_id)
     except KeyError:
-        return False
+        raise HTTPException(status_code=404, detail="connector not found") from None
     if connector.userId != user_id:
-        return False
-    return await conn.app.state.device_reads.is_v3_device(connector_id)
+        raise HTTPException(status_code=404, detail="connector not found")
+    if not await conn.app.state.device_reads.is_v3_device(connector_id):
+        raise device_upgrade_required()
 
 
 async def forward_session(
@@ -183,12 +167,10 @@ async def forward_session(
     offline: Callable[[SessionView], Awaitable[Any]] | None = None,
     server: Callable[[SessionView], Awaitable[ClientServerFacts | None]] | None = None,
     headers: dict[str, str] | None = None,
-) -> Response | None:
-    """Forward a route under ``/sessions/{session_id}``; None when it takes its existing path."""
+) -> Response:
+    """Forward a route under ``/sessions/{session_id}``."""
 
-    session = await owned_session(conn, route_id, user_id=user_id, session_id=session_id)
-    if session is None:
-        return None
+    session = await owned_session(conn, user_id=user_id, session_id=session_id)
     answer = await call(
         conn,
         route_id,
@@ -213,14 +195,13 @@ async def forward_connector(
     path: str | None = None,
     query: dict[str, str] | None = None,
     server: ClientServerFacts | None = None,
-) -> Response | None:
-    """Forward a route under ``/connectors/{connector_id}``; None when it takes its existing path.
+) -> Response:
+    """Forward a route under ``/connectors/{connector_id}``.
 
     ``body``, ``path`` and ``query`` replace the request's own (a preview read forwarded as the device's route).
     """
 
-    if not await owned_device(conn, route_id, user_id=user_id, connector_id=connector_id):
-        return None
+    await owned_device(conn, user_id=user_id, connector_id=connector_id)
     answer = await call(
         conn,
         route_id,

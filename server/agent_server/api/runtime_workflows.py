@@ -17,10 +17,8 @@ from agent_server.core.runtime_workflows import (
     WorkflowView,
 )
 from agent_server.deps import current_user_id, get_runtime_workflow_service
-from agent_server.infra.connector_rpc import ConnectorOfflineError, ConnectorRpcError
 from agent_server.services.device_runtimes import DeviceRuntimeError
 from agent_server.services.runtime_workflows import (
-    UNSUPPORTED_DEVICE_METHOD_CODES,
     RuntimeWorkflowService,
     WorkflowError,
 )
@@ -40,34 +38,16 @@ async def invoke(awaitable):
     except KeyError:
         raise HTTPException(404, "操作不存在。") from None
     except (ValueError, WorkflowError) as error:
-        raise HTTPException(
-            getattr(error, "status", 409),
-            {
-                "code": getattr(error, "code", "operation_conflict"),
-                "message": str(error),
-            },
-        ) from error
+        detail = {
+            "code": getattr(error, "code", "operation_conflict"),
+            "message": str(error),
+        }
+        if getattr(error, "query_before_retry", False):
+            # Offline, an unknown outcome or the device's own failure: read the workflow before retrying.
+            detail["queryBeforeRetry"] = True
+        raise HTTPException(getattr(error, "status", 409), detail) from error
     except DeviceRuntimeError as error:
         raise HTTPException(error.status_code, error.detail) from error
-    except ConnectorRpcError as error:
-        if error.code in UNSUPPORTED_DEVICE_METHOD_CODES:
-            # The device does not carry this method (a v3 device): a definite answer, not a retry.
-            raise HTTPException(
-                409, {"code": "workflow_unsupported", "message": str(error)}
-            ) from error
-        raise HTTPException(
-            503,
-            {"code": error.code, "message": str(error), "queryBeforeRetry": True},
-        ) from error
-    except (ConnectorOfflineError, TimeoutError) as error:
-        raise HTTPException(
-            503,
-            {
-                "code": getattr(error, "code", "outcome_unknown"),
-                "message": str(error),
-                "queryBeforeRetry": True,
-            },
-        ) from error
 
 
 @router.post("/preparations", response_model=WorkflowView, status_code=202)

@@ -4,15 +4,14 @@ import asyncio
 from typing import Any
 
 import pytest
+from fakeredis import FakeServer
+from fakeredis.aioredis import FakeRedis
+
 from agent_server.infra.connector_rpc import (
-    ConnectorOfflineError,
-    ConnectorRpcError,
     ConnectorRpcManager,
     DuplicateConnectorConnectionError,
 )
 from agent_server.infra.redis_coordinator import RedisCoordinator
-from fakeredis import FakeServer
-from fakeredis.aioredis import FakeRedis
 
 
 class FakeWebSocket:
@@ -145,37 +144,6 @@ def test_connector_rpc_manager_replaces_stale_connection() -> None:
     asyncio.run(exercise())
 
 
-def test_concurrent_responses_are_bound_to_the_exact_request_id() -> None:
-    async def exercise() -> None:
-        websocket = FakeWebSocket()
-        manager = ConnectorRpcManager()
-        connection = await manager.register("conn_1", websocket)
-        tasks = []
-        requests = []
-        for _ in range(2):
-            tasks.append(
-                asyncio.create_task(
-                    manager.request_on_connection(connection, "runtime.discover", {})
-                )
-            )
-            requests.append(await asyncio.wait_for(websocket.sent.get(), timeout=1))
-        for index in (1, 0):
-            manager.resolve_response(
-                "conn_1",
-                {
-                    "id": requests[index]["id"],
-                    "type": "response",
-                    "ok": True,
-                    "result": {"index": index},
-                },
-            )
-        assert await asyncio.gather(*tasks) == [{"index": 0}, {"index": 1}]
-        assert connection.pending == {}
-        assert await manager.unregister("conn_1", connection)
-
-    asyncio.run(exercise())
-
-
 def test_distributed_lease_rejects_duplicate_connector() -> None:
     async def exercise() -> None:
         fake_server = FakeServer()
@@ -197,7 +165,7 @@ def test_distributed_lease_rejects_duplicate_connector() -> None:
     asyncio.run(exercise())
 
 
-def test_distributed_reserved_connection_is_not_online_or_routable() -> None:
+def test_distributed_reserved_connection_is_not_online() -> None:
     async def exercise() -> None:
         fake_server = FakeServer()
         owner = ConnectorRpcManager(_coordinator(fake_server), instance_id="server-a")
@@ -210,8 +178,6 @@ def test_distributed_reserved_connection_is_not_online_or_routable() -> None:
 
         assert not await owner.is_online("conn_1")
         assert not await other.is_online("conn_1")
-        with pytest.raises(ConnectorOfflineError):
-            await other.request("conn_1", "runtime.discover", {})
         with pytest.raises(DuplicateConnectorConnectionError):
             await other.register(
                 "conn_1",
@@ -328,61 +294,6 @@ def test_failed_heartbeat_does_not_remove_replacement_connection() -> None:
         assert not await heartbeat
         assert manager._connections.get("conn_1") is replacement
         assert await manager.unregister("conn_1", replacement)
-
-    asyncio.run(exercise())
-
-
-def test_rpc_request_routes_to_connector_owner() -> None:
-    async def exercise() -> None:
-        fake_server = FakeServer()
-        owner = ConnectorRpcManager(_coordinator(fake_server), instance_id="server-a")
-        requester = ConnectorRpcManager(
-            _coordinator(fake_server), instance_id="server-b"
-        )
-        websocket = FakeWebSocket()
-        await owner.start()
-        await requester.start()
-        await owner.register("conn_1", websocket)  # type: ignore[arg-type]
-        try:
-            request_task = asyncio.create_task(
-                requester.request("conn_1", "runtime.discover", {"refresh": True})
-            )
-            sent = await asyncio.wait_for(websocket.sent.get(), timeout=1)
-            assert sent["method"] == "runtime.discover"
-            assert sent["params"] == {"refresh": True}
-
-            owner.resolve_response(
-                "conn_1",
-                {
-                    "id": sent["id"],
-                    "type": "response",
-                    "ok": True,
-                    "result": {"runtimes": ["codex"]},
-                },
-            )
-            assert await asyncio.wait_for(request_task, timeout=1) == {
-                "runtimes": ["codex"]
-            }
-
-            error_task = asyncio.create_task(
-                requester.request("conn_1", "runtime.start", {"runtimeId": "codex"})
-            )
-            sent = await asyncio.wait_for(websocket.sent.get(), timeout=1)
-            owner.resolve_response(
-                "conn_1",
-                {
-                    "id": sent["id"],
-                    "type": "response",
-                    "ok": False,
-                    "error": {"code": "start_failed", "message": "runtime failed"},
-                },
-            )
-            with pytest.raises(ConnectorRpcError, match="runtime failed") as exc_info:
-                await asyncio.wait_for(error_task, timeout=1)
-            assert exc_info.value.code == "start_failed"
-        finally:
-            await owner.close()
-            await requester.close()
 
     asyncio.run(exercise())
 

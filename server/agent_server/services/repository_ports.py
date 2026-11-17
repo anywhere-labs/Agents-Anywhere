@@ -579,16 +579,3 @@ class UsageMaintenanceRepository(Protocol):
     ) -> None: ...
 
     async def delete_usage_events_before(self, cutoff_hour_bucket: str) -> int: ...
-
-
-class ConnectorTerminalRepository(Protocol):
-    async def get_connector_terminal_root(
-        self,
-        *,
-        connector_id: str,
-        terminal_id: str,
-    ) -> dict[str, str] | None: ...
-
-
-TerminalRepository = SessionLookupRepository
-WorkspaceRepository = SessionLookupRepository

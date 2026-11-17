@@ -8,6 +8,7 @@ import pytest
 from runtime_fixtures import describe_inventory
 from test_runtime_config import _make_client, _runtime_url
 
+from agent_server.services.device_commands import DeviceCommandRejected
 from agent_server.services.model_channels import ChannelDriver, ChannelWakeIndex
 
 PROFILE_KEY = "sk-profile-secret-5678"
@@ -80,25 +81,8 @@ CONNECTOR_FEATURES = ["switchFence", "modelProbe", "channelReconcileFence"]
 
 
 def _act_as_current_connector(client, rpc, connector_id: str) -> None:
-    """Declare the features of a current Connector and report what each instance runs."""
+    """Declare the features a current device reports with its Runtime types."""
     asyncio.run(client.app.state.device_runtime_service._remember_features(connector_id, CONNECTOR_FEATURES))
-    running: dict[str, dict[str, Any]] = {}
-    request = rpc.request
-
-    async def answering(target: str, method: str, params: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
-        if method == "runtime.config" and "runtime.config" not in rpc.errors and "runtime.config" not in rpc.responses:
-            rpc.requests.append((target, method, params))
-            values = running.get(params.get("runtimeId", ""))
-            return {"running": values is not None, "config": {"values": values or {}}}
-        result = await request(target, method, params, **kwargs)
-        if method == "runtime.start" and (result or {}).get("status") != "error":
-            running[params["runtimeId"]] = params["config"]
-        elif method == "runtime.stop":
-            running.pop(params.get("runtimeId", ""), None)
-        return result
-
-    rpc.request = answering
-    rpc.running = running
 
 
 def _profile(
@@ -239,10 +223,8 @@ def test_choosing_a_channel_writes_and_verifies_it(tmp_path, server_secret):
     assert runtime["config"]["modelGateway"] == {"baseUrl": RELAY}
     assert runtime["secretFields"]["modelGateway.apiKey"]["hint"] == "sk-prof…5678"
     assert runtime["active"] is True and runtime["status"] == "running"
-    # Verification reads back what the instance runs; it never calls the model.
-    assert [request[1] for request in rpc.requests] == [
-        "runtime.validateConfig", "runtime.stop", "runtime.start", "runtime.config",
-    ]
+    # One fenced command; verification reads back what the instance reported, never the model.
+    assert [request[1] for request in rpc.requests] == ["channel.switch"]
     [assignment] = _overview(client, headers)["assignments"]
     assert assignment["status"] == "applied"
     assert _overview(client, headers)["channel"]["channel"] == profile["id"]
@@ -320,10 +302,11 @@ def test_a_switch_does_not_wait_for_running_tasks(tmp_path, server_secret, apply
 
     item = _runtime_state(_set_channel(client, headers, profile["id"]))
 
-    # Whatever the apply mode, the instance is rebuilt now and its task is interrupted.
+    # Whatever the apply mode, the instance is rebuilt now; the device interrupts the task and reports
+    # the session status itself, so the Server leaves it as it was.
     assert item["state"] == "applied"
     assert _runtimes(client, connector_id, headers)["codex"]["config"]["modelGateway"] == {"baseUrl": RELAY}
-    assert asyncio.run(client.app.state.store.get_session(session_id)).status == "idle"
+    assert asyncio.run(client.app.state.store.get_session(session_id)).status == "running"
 
 
 def test_a_runtime_event_resumes_a_switch_waiting_for_its_device(tmp_path, server_secret):
@@ -345,24 +328,21 @@ def test_a_runtime_event_resumes_a_switch_waiting_for_its_device(tmp_path, serve
 
 
 def test_a_failed_start_puts_the_previous_connection_back(tmp_path, server_secret):
-    from agent_server.infra.connector_rpc import ConnectorRpcError
-
     client, rpc, connector_id, headers = _client(tmp_path, CODEX_LIKE)
     _save_config(client, connector_id, headers, {"modelGateway": {"baseUrl": "https://old.example/v1", "apiKey": OLD_KEY}})
     _activate(client, connector_id, headers)
     profile = _profile(client, headers)
     calls = {"start": 0}
-    original = rpc.request
+    original = rpc.send
 
-    async def first_start_fails(connector_id, method, params, **kwargs):
-        if method == "runtime.start":
+    async def first_start_fails(**kwargs):
+        if kwargs["payload"]["active"]:
             calls["start"] += 1
             if calls["start"] == 1:
-                rpc.requests.append((connector_id, method, params))
-                raise ConnectorRpcError("start_failed", "the gateway refused the key")
-        return await original(connector_id, method, params, **kwargs)
+                raise DeviceCommandRejected("start_failed", "the gateway refused the key", None)
+        return await original(**kwargs)
 
-    rpc.request = first_start_fails
+    rpc.send = first_start_fails
     item = _runtime_state(_set_channel(client, headers, profile["id"]))
 
     assert item["state"] == "restored"
@@ -386,35 +366,34 @@ def test_a_start_that_reports_an_error_is_not_counted_as_applied(tmp_path, serve
     _save_config(client, connector_id, headers, {})
     _activate(client, connector_id, headers)
     profile = _profile(client, headers)
-    rpc.responses["runtime.start"] = {"status": "error", "error": {"code": "boom", "message": "exited"}}
+    failed = {"runtimeId": "codex", "status": "error", "error": {"code": "boom", "message": "exited"}}
+    rpc.responses["channel.switch"] = rpc.responses["runtime.apply"] = failed
 
     item = _runtime_state(_set_channel(client, headers, profile["id"]))
 
     # The rollback start reports an error too, so nothing could be put back.
     assert item["state"] == "failed"
     assert item["reason"] == "rollback_failed"
-    rpc.responses.pop("runtime.start")
+    rpc.responses.clear()
     retried = _runtime_state(client.post("/model-config/channel/retry", headers=headers, json={}).json())
     assert retried["state"] == "applied"
 
 
 def test_a_newer_switch_on_the_connector_is_not_overwritten(tmp_path, server_secret):
-    from agent_server.infra.connector_rpc import ConnectorRpcError
-
     client, rpc, connector_id, headers = _client(tmp_path, CODEX_LIKE)
     _save_config(client, connector_id, headers, {})
     _activate(client, connector_id, headers)
     profile = _profile(client, headers)
-    original = rpc.request
+    original = rpc.send
     seen: list[dict[str, Any]] = []
 
-    async def stale(connector_id, method, params, **kwargs):
-        if method == "runtime.validateConfig":
-            seen.append(params)
-            raise ConnectorRpcError("switch_revision_stale", "a newer switch was accepted")
-        return await original(connector_id, method, params, **kwargs)
+    async def stale(**kwargs):
+        if kwargs["kind"] == "channel.switch" and not seen:
+            seen.append(kwargs["payload"])
+            raise DeviceCommandRejected("switch_revision_stale", "a newer switch was accepted", None)
+        return await original(**kwargs)
 
-    rpc.request = stale
+    rpc.send = stale
     item = _runtime_state(_set_channel(client, headers, profile["id"]))
 
     assert seen and seen[0]["switchRevision"] >= 1 and seen[0]["operationId"].startswith("chs_")

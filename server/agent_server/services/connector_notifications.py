@@ -25,7 +25,6 @@ from agent_server.core.protocol import (
 )
 from agent_server.core.runtime_identity import RuntimeIdentity, RuntimeIdentityError
 from agent_server.infra.repositories.projects import MissingWorkspaceError
-from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.ingest_effects import IngestEffect
 from agent_server.services.repository_ports import ConnectorNotificationRepository
 from agent_server.services.usage_events import (
@@ -48,6 +47,10 @@ V2_CONTENT_NOTIFICATIONS = frozenset(
         # Turn ends moved the v2 timeline clock; v3 devices report ``latestTurnEndSeq`` instead.
         "session.turnEnded",
     }
+)
+# Terminal output and shell task progress of a v2 Connector: acknowledged and dropped (D4).
+V2_WORKSPACE_NOTIFICATIONS = frozenset(
+    {"terminal.output", "terminal.exited", "shell.task.started", "shell.task.completed"}
 )
 
 TIMELINE_SYNC_PUSH_LIMIT = 100
@@ -88,12 +91,10 @@ class ConnectorNotificationService:
     def __init__(
         self,
         store: ConnectorNotificationRepository,
-        realtime: ConnectorRealtimeService,
         *,
         usage_recorder: UsageRecorder | NullUsageRecorder | None = None,
         e2ee_settings: Callable[[], E2eeSettings] = E2eeSettings,
     ) -> None:
-        self._realtime = realtime
         self._e2ee_settings = e2ee_settings
         usage = usage_recorder or NullUsageRecorder()
         self._handlers = (
@@ -136,11 +137,8 @@ class ConnectorNotificationService:
             # Server must not store them (they would undo clearing the directory). Without a
             # ``cwd`` a session the Server does not know yet is not created.
             params = _without_plaintext_display(params)
-        if await self._realtime.apply(
-            connector_id=connector_id,
-            method=method,
-            params=params,
-        ):
+        if method in V2_WORKSPACE_NOTIFICATIONS:
+            # Terminals and shell tasks of a v2 Connector need an upgrade (D4); their output is dropped.
             return IngestEffect()
         for handler in self._handlers:
             effect = await handler.apply(

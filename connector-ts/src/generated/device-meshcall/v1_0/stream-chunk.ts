@@ -10,7 +10,7 @@ export type End = boolean
 export type Seq = number
 
 /**
- * One item of a large read (``Sessions/snapshot``, ``Store/readBlob``...).
+ * One item of a large read (``Store/readBlob``, ``Store/exportShare``, ``Client/call``).
  */
 export interface StreamChunk {
   chunk: Chunk

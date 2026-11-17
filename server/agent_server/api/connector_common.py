@@ -5,25 +5,6 @@ from fastapi import HTTPException
 from agent_server.core.models import ConnectorView
 from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.infra.repositories.facade import Store
-from agent_server.services.connector_rpc import (
-    ConnectorProtocolError,
-    ConnectorRequestTimeoutError,
-    ConnectorServiceError,
-    ConnectorUnavailableError,
-    ConnectorUpstreamError,
-)
-
-
-def raise_connector_service_error(exc: ConnectorServiceError) -> None:
-    if isinstance(exc, ConnectorUnavailableError):
-        status_code = 409
-    elif isinstance(exc, ConnectorRequestTimeoutError):
-        status_code = 504
-    elif isinstance(exc, (ConnectorUpstreamError, ConnectorProtocolError)):
-        status_code = 502
-    else:
-        status_code = 500
-    raise HTTPException(status_code=status_code, detail=exc.detail) from exc
 
 
 async def require_owned_connector(
@@ -50,7 +31,3 @@ async def require_owned_online_connector(
     if not await manager.is_online(connector_id):
         raise HTTPException(status_code=409, detail="connector is offline")
     return connector
-
-
-def connector_scope_id(connector_id: str) -> str:
-    return f"browse_{connector_id}"

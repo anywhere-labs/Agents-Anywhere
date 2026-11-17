@@ -10,13 +10,10 @@ from fastapi.responses import StreamingResponse
 from agent_server.api.client_forward import call as client_call
 from agent_server.api.client_forward import (
     forward_connector,
-    forwarding,
     owned_device,
     to_response,
 )
 from agent_server.api.connector_common import (
-    connector_scope_id,
-    raise_connector_service_error,
     require_owned_connector,
     require_owned_online_connector,
 )
@@ -44,10 +41,10 @@ from agent_server.core.models import (
     RpcResponsePayload,
 )
 from agent_server.core.utc import utc_now
+from agent_server.core.workspace_paths import resolve_workspace_path
 from agent_server.deps import (
     authenticate_access_token,
     current_user_id,
-    get_connector_file_service,
     get_fs_downloads,
     get_rpc,
     get_store,
@@ -55,9 +52,6 @@ from agent_server.deps import (
 from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.infra.repositories.facade import Store
-from agent_server.services.connector_files import ConnectorFileService
-from agent_server.services.connector_rpc import ConnectorServiceError
-from agent_server.services.workspace import request_connector, resolve_workspace_path
 
 router = APIRouter(prefix="/connectors", tags=["connector-files"])
 
@@ -138,39 +132,10 @@ async def connector_fs_list(
     payload: dict[str, Any] = Body(default_factory=dict),
     root: str | None = Query(default=None, min_length=1),
     user_id: str = Depends(current_user_id),
-    store: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
-) -> RpcResponsePayload:
-    if (forwarded := await forward_connector(
+) -> Any:
+    return await forward_connector(
         request, "connector.fs.list", user_id=user_id, connector_id=connector_id, response_model=RpcResponsePayload
-    )) is not None:
-        return forwarded
-    connector = await require_owned_online_connector(
-        connector_id, user_id, store, manager
     )
-    root_value = root or payload.get("root")
-    if not isinstance(root_value, str) or not root_value.strip():
-        raise HTTPException(status_code=422, detail="root is required")
-    raw_path = payload.get("path", ".")
-    if not isinstance(raw_path, str):
-        raise HTTPException(status_code=422, detail="path must be a string")
-    path = (
-        ""
-        if connector.deviceOs == "windows" and raw_path == ""
-        else resolve_workspace_path(root_value, raw_path)
-    )
-    result = await request_connector(
-        manager,
-        connector_id,
-        "fs.readDir",
-        {
-            "sessionId": connector_scope_id(connector_id),
-            "root": root_value,
-            "path": path,
-        },
-        timeout=30,
-    )
-    return RpcResponsePayload(ok=True, result=result)
 
 
 @router.post("/{connector_id}/fs/read", response_model=RpcResponsePayload)
@@ -180,36 +145,12 @@ async def connector_fs_read(
     payload: FsReadRequest,
     root: str = Query(..., min_length=1),
     user_id: str = Depends(current_user_id),
-    store: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
-    files: ConnectorFileService = Depends(get_connector_file_service),
-) -> RpcResponsePayload:
-    if await owned_device(request, "connector.fs.read", user_id=user_id, connector_id=connector_id):
-        return await _forward_fs_read(
-            request, route_id="connector.fs.read", user_id=user_id, connector_id=connector_id, root=root,
-            path=payload.path, downloads=request.app.state.fs_downloads,
-        )
-    await require_owned_online_connector(connector_id, user_id, store, manager)
-    path = resolve_workspace_path(root, payload.path)
-    try:
-        prepared = await files.prepare_download(
-            connector_id=connector_id,
-            scope_id=connector_scope_id(connector_id),
-            root=root,
-            path=path,
-        )
-    except ConnectorServiceError as exc:
-        raise_connector_service_error(exc)
-    result = prepared.result
-    transfer = prepared.transfer
-    return RpcResponsePayload(
-        ok=True,
-        result={
-            **result,
-            "transferId": transfer.transfer_id,
-            "token": transfer.token,
-            "downloadUrl": f"{api_v2_path(f'/connectors/{connector_id}/fs/transfers/{transfer.transfer_id}')}?token={transfer.token}",
-        },
+    downloads: FsDownloadRelayManager = Depends(get_fs_downloads),
+) -> Any:
+    await owned_device(request, user_id=user_id, connector_id=connector_id)
+    return await _forward_fs_read(
+        request, route_id="connector.fs.read", user_id=user_id, connector_id=connector_id, root=root,
+        path=payload.path, downloads=downloads,
     )
 
 
@@ -303,84 +244,32 @@ async def create_connector_fs_preview_session(
 async def connector_fs_preview_read_text(
     request: Request,
     payload: FsPreviewReadTextRequest,
-    store: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
-) -> FsReadTextResponse:
+) -> Any:
     preview = _fs_preview_access_payload(payload.previewAccessToken)
     connector_id = preview["connector_id"]
     root = preview["root"]
     path = preview["path"]
-    if forwarding(request, "connector.fs.preview.readText") and (forwarded := await forward_connector(
+    return await forward_connector(
         request, "connector.fs.readText", user_id=preview["user_id"], connector_id=connector_id,
         response_model=FsReadTextResponse, body={"path": path, "maxBytes": payload.maxBytes},
         path=api_v2_path(f"/connectors/{connector_id}/fs/readText"), query={"root": root},
         server=ClientServerFacts(preview=ClientPreview(root=root, path=path)),
-    )) is not None:
-        return forwarded
-    await require_owned_online_connector(
-        connector_id, preview["user_id"], store, manager
     )
-    result = await request_connector(
-        manager,
-        connector_id,
-        "fs.readText",
-        {
-            "sessionId": connector_scope_id(connector_id),
-            "root": root,
-            "path": path,
-            "maxBytes": payload.maxBytes,
-        },
-        timeout=30,
-    )
-    return FsReadTextResponse(**result, serverTime=utc_now())
 
 
 @router.post("/fs/preview/read", response_model=RpcResponsePayload)
 async def connector_fs_preview_read(
     request: Request,
     payload: FsPreviewReadRequest,
-    store: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
-    files: ConnectorFileService = Depends(get_connector_file_service),
-) -> RpcResponsePayload:
+    downloads: FsDownloadRelayManager = Depends(get_fs_downloads),
+) -> Any:
     preview = _fs_preview_access_payload(payload.previewAccessToken)
     connector_id = preview["connector_id"]
-    root = preview["root"]
-    path = preview["path"]
-    if forwarding(request, "connector.fs.preview.read") and await owned_device(
-        request, "connector.fs.read", user_id=preview["user_id"], connector_id=connector_id
-    ):
-        return await _forward_fs_read(
-            request, route_id="connector.fs.read", user_id=preview["user_id"], connector_id=connector_id, root=root,
-            path=path, downloads=request.app.state.fs_downloads, preview_access_token=payload.previewAccessToken,
-        )
-    await require_owned_online_connector(
-        connector_id, preview["user_id"], store, manager
-    )
-    try:
-        prepared = await files.prepare_download(
-            connector_id=connector_id,
-            scope_id=connector_scope_id(connector_id),
-            root=root,
-            path=path,
-        )
-    except ConnectorServiceError as exc:
-        raise_connector_service_error(exc)
-    result = prepared.result
-    transfer = prepared.transfer
-    return RpcResponsePayload(
-        ok=True,
-        result={
-            **result,
-            "transferId": transfer.transfer_id,
-            "token": transfer.token,
-            "downloadUrl": (
-                api_v2_path(
-                    f"/connectors/{connector_id}/fs/transfers/{transfer.transfer_id}"
-                )
-                + f"?token={transfer.token}&previewAccessToken={urllib.parse.quote(payload.previewAccessToken)}"
-            ),
-        },
+    await owned_device(request, user_id=preview["user_id"], connector_id=connector_id)
+    return await _forward_fs_read(
+        request, route_id="connector.fs.read", user_id=preview["user_id"], connector_id=connector_id,
+        root=preview["root"], path=preview["path"], downloads=downloads,
+        preview_access_token=payload.previewAccessToken,
     )
 
 
@@ -395,8 +284,9 @@ async def connector_fs_transfer_download(
     store: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
     downloads: FsDownloadRelayManager = Depends(get_fs_downloads),
-    files: ConnectorFileService = Depends(get_connector_file_service),
 ) -> StreamingResponse:
+    """The bytes of a ``fs/read`` transfer, relayed while the device ``PUT``s them (``api.device_transfers``)."""
+
     transfer = await downloads.get(transfer_id, token)
     if previewAccessToken:
         preview = _fs_preview_access_payload(previewAccessToken)
@@ -414,16 +304,6 @@ async def connector_fs_transfer_download(
     await require_owned_online_connector(connector_id, user_id, store, manager)
     if transfer is None or transfer.connector_id != connector_id:
         raise HTTPException(status_code=404, detail="transfer not found")
-    try:
-        if not transfer.pushed:
-            await files.request_upload(
-                connector_id=connector_id,
-                scope_id=connector_scope_id(connector_id),
-                transfer=transfer,
-                upload_url=api_v2_path(f"/connector/fs/transfers/{transfer.transfer_id}"),
-            )
-    except ConnectorServiceError as exc:
-        raise_connector_service_error(exc)
     return StreamingResponse(
         downloads.stream(transfer_id=transfer_id, token=token),
         media_type=transfer.media_type or "application/octet-stream",
@@ -446,28 +326,10 @@ async def connector_fs_read_text(
     payload: FsReadTextRequest,
     root: str = Query(..., min_length=1),
     user_id: str = Depends(current_user_id),
-    store: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
-) -> FsReadTextResponse:
-    if (forwarded := await forward_connector(
+) -> Any:
+    return await forward_connector(
         request, "connector.fs.readText", user_id=user_id, connector_id=connector_id, response_model=FsReadTextResponse
-    )) is not None:
-        return forwarded
-    await require_owned_online_connector(connector_id, user_id, store, manager)
-    path = resolve_workspace_path(root, payload.path)
-    result = await request_connector(
-        manager,
-        connector_id,
-        "fs.readText",
-        {
-            "sessionId": connector_scope_id(connector_id),
-            "root": root,
-            "path": path,
-            "maxBytes": payload.maxBytes,
-        },
-        timeout=30,
     )
-    return FsReadTextResponse(**result, serverTime=utc_now())
 
 
 @router.post("/{connector_id}/fs/write", response_model=RpcResponsePayload)
@@ -477,28 +339,10 @@ async def connector_fs_write(
     payload: FsWriteRequest,
     root: str = Query(..., min_length=1),
     user_id: str = Depends(current_user_id),
-    store: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
-) -> RpcResponsePayload:
-    if (forwarded := await forward_connector(
+) -> Any:
+    return await forward_connector(
         request, "connector.fs.write", user_id=user_id, connector_id=connector_id, response_model=RpcResponsePayload
-    )) is not None:
-        return forwarded
-    await require_owned_online_connector(connector_id, user_id, store, manager)
-    path = resolve_workspace_path(root, payload.path)
-    params: dict = {
-        "sessionId": connector_scope_id(connector_id),
-        "root": root,
-        "path": path,
-        "content": payload.content,
-        "encoding": payload.encoding,
-    }
-    if payload.ifMatch is not None:
-        params["ifMatch"] = payload.ifMatch
-    result = await request_connector(
-        manager, connector_id, "fs.writeFile", params, timeout=30
     )
-    return RpcResponsePayload(ok=True, result=result)
 
 
 def _content_disposition(disposition: str, filename: str) -> str:

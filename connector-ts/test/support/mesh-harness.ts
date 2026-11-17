@@ -11,7 +11,7 @@ import { join } from 'node:path'
 
 import { Mesh, Router, RouterCredentials, type RpcStream } from 'meshcall'
 
-export const DEVICE_SERVICES = ['aa.device.v1.Link', 'aa.device.v1.Sessions', 'aa.device.v1.Store', 'aa.device.v1.Runtime', 'aa.device.v1.Commands', 'aa.device.v1.Workspace', 'aa.device.v1.Client', 'aa.device.v1.Secure']
+export const DEVICE_SERVICES = ['aa.device.v1.Link', 'aa.device.v1.Sessions', 'aa.device.v1.Store', 'aa.device.v1.Commands', 'aa.device.v1.Client', 'aa.device.v1.Secure']
 
 export function routerBinary(): string | null {
   const candidates = [process.env.MESHCALL_ROUTER_BINARY, '/tmp/aa-mc/bin/meshcall-router'].filter((value): value is string => typeof value === 'string' && value !== '')

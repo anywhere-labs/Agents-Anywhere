@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
 from typing import Any
 
-from sqlalchemy import update
 from test_model_config import (
     CODEX_LIKE,
     _activate,
@@ -18,9 +16,7 @@ from test_model_config import (
     state_user,
 )
 
-from agent_server.api.connector_ingress import _complete_runtime_discovery
 from agent_server.deps import model_channel_service_for
-from agent_server.infra.db.schema import connectors
 from agent_server.services import model_channels
 
 
@@ -100,22 +96,6 @@ def test_a_periodic_scan_does_not_rewrite_a_runtime_already_waiting_for_its_devi
     assert _switch(client, connector_id)["state"] == "applied"
 
 
-def test_an_unanswered_check_does_not_undo_an_applied_target(tmp_path, server_secret):
-    client, rpc, connector_id, headers, _ = _applied_on(tmp_path)
-    user_id = state_user(client, headers)
-    answering = rpc.request
-
-    async def silent(target: str, method: str, params: dict[str, Any], **kwargs: Any) -> dict[str, Any] | None:
-        if method == "runtime.config":
-            return None
-        return await answering(target, method, params, **kwargs)
-
-    rpc.request = silent
-    asyncio.run(model_channel_service_for(client.app.state)._drive(connector_id, "codex", user_id))
-
-    assert _switch(client, connector_id)["state"] == "applied"
-
-
 def test_a_scan_rechecks_an_old_connector_only_once_it_supports_channels(tmp_path, server_secret):
     client, _rpc, connector_id, headers, _ = _applied_on(tmp_path)
     user_id = state_user(client, headers)
@@ -134,96 +114,8 @@ def test_a_scan_rechecks_an_old_connector_only_once_it_supports_channels(tmp_pat
     assert _switch(client, connector_id)["state"] == "applied"
 
 
-class _Discovery:
-    """Records the order of the steps that follow a device's discovery."""
-
-    def __init__(self) -> None:
-        self.events: list[str] = []
-        self.current = True
-        self.failures: dict[str, int] = {}
-        self._manager = SimpleNamespace(is_connection_id_current=self._is_current)
-        self._store = SimpleNamespace(clear_channel_device_gate=self._clear_gate)
-
-    async def _is_current(self, _connector_id: str, _connection_id: str) -> bool:
-        return self.current
-
-    async def _clear_gate(self, _connector_id: str, _connection_id: str) -> None:
-        self.events.append("gate-open")
-
-    async def publish_discovery(self, _connector_id: str, _reason: str) -> None:
-        self.events.append("published")
-
-    async def reconcile_active(self, _connector_id: str, **_: Any) -> None:
-        self.events.append("active-reconciled")
-
-    async def step(self, name: str) -> None:
-        if self.failures.get(name):
-            self.failures[name] -= 1
-            raise RuntimeError(name)
-        self.events.append(name)
-
-    def complete(self) -> None:
-        asyncio.run(_complete_runtime_discovery(
-            self, "conn", SimpleNamespace(connection_id="c1"), reason="test",  # type: ignore[arg-type]
-            on_discovered=lambda _: self.step("targets"),
-            on_ready=lambda _: self.step("drives"),
-        ))
-
-
-def test_reconciliation_starts_after_the_gate_opens_and_active_runtimes_restart():
-    discovery = _Discovery()
-
-    discovery.complete()
-
-    assert discovery.events == ["published", "targets", "gate-open", "active-reconciled", "drives"]
-
-
-def test_reconnection_steps_are_retried(monkeypatch):
-    sleep = asyncio.sleep
-    monkeypatch.setattr(asyncio, "sleep", lambda _delay: sleep(0))
-    discovery = _Discovery()
-    discovery.failures = {"targets": 1, "drives": 1}
-
-    discovery.complete()
-
-    assert discovery.events == ["published", "targets", "gate-open", "active-reconciled", "drives"]
-
-
-def test_a_replaced_connection_stops_before_opening_the_gate():
-    discovery = _Discovery()
-    discovery.current = False
-
-    discovery.complete()
-
-    assert discovery.events == ["published"]
-
-
-def test_a_drive_only_reaches_the_runtime_once_the_gate_is_open(tmp_path, server_secret):
-    client, rpc, connector_id, _headers, _ = _applied_on(tmp_path)
-    store = client.app.state.store
-    channels = model_channel_service_for(client.app.state)
-
-    async def gated() -> None:
-        async with store._engine.begin() as conn:
-            await conn.execute(update(connectors).where(connectors.c.id == connector_id).values(presence_connection_id="c1"))
-        await store.set_channel_device_gate(connector_id, "c1")
-        await channels.connector_event(connector_id)
-
-    asyncio.run(gated())
-    assert rpc.requests == []
-
-    async def opened() -> None:
-        await channels.connector_discovered(connector_id)
-        await store.clear_channel_device_gate(connector_id, "c1")
-        await channels.connector_event(connector_id)
-
-    asyncio.run(opened())
-    assert [request[1] for request in rpc.requests] == ["runtime.config"]
-    assert _switch(client, connector_id)["state"] == "applied"
-
-
 def _restarted(rpc) -> bool:
-    return any(request[1] in {"runtime.stop", "runtime.start"} for request in rpc.requests)
+    return any(request[1] in {"runtime.apply", "channel.switch"} for request in rpc.requests)
 
 
 def test_a_switch_waits_for_a_request_admitted_before_it_closed_the_runtime(tmp_path, server_secret):

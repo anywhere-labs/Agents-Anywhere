@@ -3,15 +3,13 @@ from __future__ import annotations
 import asyncio
 import json
 
-from agent_server.infra.fs_downloads import FsDownloadRelayManager
-from agent_server.infra.redis_coordinator import RedisCoordinator
-from agent_server.infra.terminal_broker import SCROLLBACK_MAX_BYTES, TerminalBroker
-from agent_server.infra.terminal_stream_hub import TerminalStreamHub
-from agent_server.infra.timeline_broker import TimelineBroker
-from agent_server.infra.ws_tickets import ClientWsTicketManager
-from agent_server.services.shell_tasks import ShellTaskManager
 from fakeredis import FakeServer
 from fakeredis.aioredis import FakeRedis
+
+from agent_server.infra.fs_downloads import FsDownloadRelayManager
+from agent_server.infra.redis_coordinator import RedisCoordinator
+from agent_server.infra.timeline_broker import TimelineBroker
+from agent_server.infra.ws_tickets import ClientWsTicketManager
 
 
 def _coordinator(server: FakeServer) -> RedisCoordinator:
@@ -281,81 +279,6 @@ def test_stale_lock_owner_cannot_mutate_or_publish_after_replacement() -> None:
     asyncio.run(exercise())
 
 
-def test_shell_task_completion_crosses_instances() -> None:
-    async def exercise() -> None:
-        fake_server = FakeServer()
-        creator = ShellTaskManager(_coordinator(fake_server))
-        receiver = ShellTaskManager(_coordinator(fake_server))
-        task = await creator.create(
-            session_id="browse-1",
-            connector_id="connector-1",
-            command="pwd",
-            cwd="/repo",
-            timeout_ms=30_000,
-        )
-        waiter = asyncio.create_task(
-            creator.wait(task.id, session_id="browse-1", timeout_seconds=1)
-        )
-        await asyncio.sleep(0)
-
-        completed = await receiver.complete(
-            task.id,
-            session_id="browse-1",
-            connector_id="connector-1",
-            status="completed",
-            result={"exitCode": 0, "stdout": "/repo\n"},
-        )
-
-        assert completed is not None
-        result = await waiter
-        assert result.status == "completed"
-        assert result.result == {"exitCode": 0, "stdout": "/repo\n"}
-        popped = await creator.pop(task.id, session_id="browse-1")
-        assert popped.status == "completed"
-        try:
-            await receiver.get(task.id, session_id="browse-1")
-        except KeyError:
-            pass
-        else:
-            raise AssertionError("completed task was not consumed")
-
-    asyncio.run(exercise())
-
-
-def test_terminal_stream_events_cross_instances() -> None:
-    class Socket:
-        def __init__(self) -> None:
-            self.messages: asyncio.Queue[dict] = asyncio.Queue()
-
-        async def send_json(self, payload: dict) -> None:
-            await self.messages.put(payload)
-
-    async def exercise() -> None:
-        fake_server = FakeServer()
-        publisher = TerminalStreamHub(_coordinator(fake_server))
-        subscriber = TerminalStreamHub(_coordinator(fake_server))
-        await publisher.start()
-        await subscriber.start()
-        socket = Socket()
-        try:
-            await subscriber.attach("connector-1", "terminal-1", socket)  # type: ignore[arg-type]
-            await subscriber.mark_ready("connector-1", "terminal-1", socket)  # type: ignore[arg-type]
-            await publisher.publish_output(
-                "connector-1",
-                {"terminalId": "terminal-1", "dataBase64": "b2s=", "seq": 2},
-            )
-            assert await asyncio.wait_for(socket.messages.get(), timeout=1) == {
-                "type": "output",
-                "data": "b2s=",
-                "seq": 2,
-            }
-        finally:
-            await publisher.close()
-            await subscriber.close()
-
-    asyncio.run(exercise())
-
-
 def test_fs_download_relay_streams_between_instances() -> None:
     async def exercise() -> None:
         fake_server = FakeServer()
@@ -394,125 +317,6 @@ def test_fs_download_relay_streams_between_instances() -> None:
         assert await upload_task
         assert b"".join(streamed) == b"abcdef"
         assert await creator.get(transfer.transfer_id, transfer.token) is None
-
-    asyncio.run(exercise())
-
-
-def test_interactive_terminal_routes_relay_and_scrollback_cross_instances() -> None:
-    class Socket:
-        def __init__(self) -> None:
-            self.messages: asyncio.Queue[dict] = asyncio.Queue()
-            self.closed = False
-
-        async def send_json(self, payload: dict) -> None:
-            await self.messages.put(payload)
-
-        async def close(self) -> None:
-            self.closed = True
-
-    async def exercise() -> None:
-        fake_server = FakeServer()
-        relay_broker = TerminalBroker(
-            _coordinator(fake_server), instance_id="server-relay"
-        )
-        browser_broker = TerminalBroker(
-            _coordinator(fake_server), instance_id="server-browser"
-        )
-        await relay_broker.start()
-        await browser_broker.start()
-        relay_socket = Socket()
-        browser_socket = Socket()
-        second_browser = Socket()
-        capped_browser = Socket()
-        try:
-            terminal = await browser_broker.register(
-                session_id="browse-1",
-                connector_id="connector-1",
-                label="zsh",
-                root="/repo",
-                cwd="/repo",
-                shell="zsh",
-                cols=80,
-                rows=24,
-            )
-            attached = await relay_broker.attach_connector(
-                terminal.id,
-                terminal.relay_token,
-                relay_socket,  # type: ignore[arg-type]
-            )
-            assert attached is not None
-            assert await browser_broker.wait_connector(terminal.id, timeout=1)
-
-            await relay_broker.on_output(terminal.id, data=b"ready\n", seq=1)
-            await browser_broker.attach_client(
-                terminal.id,
-                browser_socket,  # type: ignore[arg-type]
-            )
-            assert await asyncio.wait_for(browser_socket.messages.get(), timeout=1) == {
-                "type": "replay",
-                "data": "cmVhZHkK",
-                "seq": 1,
-            }
-
-            assert await browser_broker.send_to_connector(
-                terminal.id, {"type": "input", "data": "bHMK"}
-            )
-            assert await asyncio.wait_for(relay_socket.messages.get(), timeout=1) == {
-                "type": "input",
-                "data": "bHMK",
-            }
-
-            await relay_broker.on_output(terminal.id, data=b"live\n", seq=2)
-            assert await asyncio.wait_for(browser_socket.messages.get(), timeout=1) == {
-                "type": "output",
-                "data": "bGl2ZQo=",
-                "seq": 2,
-            }
-
-            await relay_broker.attach_client(
-                terminal.id,
-                second_browser,  # type: ignore[arg-type]
-                from_seq=1,
-            )
-            assert await asyncio.wait_for(second_browser.messages.get(), timeout=1) == {
-                "type": "replay",
-                "data": "bGl2ZQo=",
-                "seq": 2,
-            }
-            await browser_broker.detach_client(
-                terminal.id,
-                browser_socket,  # type: ignore[arg-type]
-            )
-            assert await browser_broker.has_clients(terminal.id)
-            await relay_broker.detach_client(
-                terminal.id,
-                second_browser,  # type: ignore[arg-type]
-            )
-            assert not await browser_broker.has_clients(terminal.id)
-
-            large_chunk = b"x" * (200 * 1024)
-            await relay_broker.on_output(terminal.id, data=large_chunk, seq=3)
-            await relay_broker.on_output(terminal.id, data=large_chunk, seq=4)
-            bounded = await browser_broker.get(terminal.id)
-            assert bounded is not None
-            assert bounded.scrollback_bytes <= SCROLLBACK_MAX_BYTES
-            await browser_broker.attach_client(
-                terminal.id,
-                capped_browser,  # type: ignore[arg-type]
-            )
-            capped_replay = await asyncio.wait_for(
-                capped_browser.messages.get(), timeout=1
-            )
-            assert capped_replay["type"] == "replay"
-            assert capped_replay["seq"] == 4
-            assert len(capped_replay["data"]) < 300_000
-
-            removed = await browser_broker.remove(terminal.id)
-            assert removed is not None
-            assert await relay_broker.get(terminal.id) is None
-        finally:
-            await relay_broker.close()
-            await browser_broker.close()
 
     asyncio.run(exercise())
 
@@ -621,7 +425,7 @@ def test_fenced_scripts_reject_a_replaced_lock_owner() -> None:
     asyncio.run(exercise())
 
 
-def test_runtime_ingress_pause_and_disconnect_wait_for_the_remote_notification_owner():
+def test_remote_disconnect_waits_for_the_notification_owner_to_abort():
     from agent_server.api.connector_ingress import _ConnectorNotificationPump
     from agent_server.infra.connector_rpc import ConnectorRpcManager
 
@@ -645,18 +449,10 @@ def test_runtime_ingress_pause_and_disconnect_wait_for_the_remote_notification_o
         connection = await owner.register("conn", Socket())
         pump = _ConnectorNotificationPump("conn", Blocking())
         connection.abort_notifications = pump.abort
-        connection.set_runtime_ingress_enabled = pump.set_runtime_ingress_enabled
         pump.start()
         pump.enqueue_message({"method": "session.source.updated", "params": {"runtime": "codex", "sessionId": "session"}})
         await entered.wait()
-        await asyncio.wait_for(caller.set_runtime_ingress_enabled("conn", "codex", False), 2)
-        assert not pump._inflight_tasks or all(task.done() for task in pump._inflight_tasks)
-        pump.enqueue_message({"method": "session.source.updated", "params": {"runtime": "codex", "sessionId": "session"}})
-        await asyncio.wait_for(pump.flush(), 1)
-        assert pump.obsolete == 2
-        await caller.set_runtime_ingress_enabled("conn", "codex", True)
-        assert "codex" not in pump._blocked_runtimes
-        assert await caller.disconnect("conn", reason="connector deleted")
+        assert await asyncio.wait_for(caller.disconnect("conn", reason="connector deleted"), 2)
         assert not await caller.is_online("conn")
         assert pump._pending == 0
         await caller.close()

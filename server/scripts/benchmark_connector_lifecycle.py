@@ -47,7 +47,6 @@ from agent_server.infra.db import sessions as sessions_t
 from agent_server.infra.db.migrations import upgrade_database
 from agent_server.services.connector_ingest import ConnectorIngestService
 from agent_server.services.connector_notifications import ConnectorNotificationService
-from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.effective_capabilities import (
     publish_connector_session_capabilities,
 )
@@ -188,12 +187,9 @@ async def audit(app, connector_id, session_id, *, pooled=False):
     rows = [seeded, *others]
     runtime_id = seeded["runtime_id"]
     stats = Counters(store)
-    realtime = ConnectorRealtimeService(
-        state.shell_tasks, state.terminal_broker, state.terminal_stream_hub
-    )
     service = ConnectorIngestService(
         store,
-        ConnectorNotificationService(store, realtime, state.timeline_write_buffer),
+        ConnectorNotificationService(store),
         state.timeline_broker,
         state.device_runtime_service,
         state.rpc,
@@ -430,9 +426,8 @@ async def audit(app, connector_id, session_id, *, pooled=False):
             store=store,
             manager=state.rpc,
             broker=state.timeline_broker,
-            terminals=state.terminal_broker,
-            timeline_buffer=state.timeline_write_buffer,
             runtime_state_cache=state.session_runtime_state_cache,
+            links=state.device_link,
         )
         assert socket.closed and not await state.rpc.is_online(connector_id)
 

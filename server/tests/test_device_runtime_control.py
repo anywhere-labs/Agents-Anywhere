@@ -33,7 +33,6 @@ from agent_server.core.device_meshcall import (
 )
 from agent_server.core.device_runtime import RuntimeTypeDescriptor
 from agent_server.core.device_settings import ConnectorDeviceSettingsPatch
-from agent_server.infra.connector_rpc import ConnectorRpcError
 from agent_server.services.connector_device_settings import update_device_settings
 from agent_server.services.device_commands import (
     CommandOutcome,
@@ -85,9 +84,6 @@ class FakeManager:
 
     async def request(self, *_args: Any, **_kwargs: Any) -> Any:
         raise AssertionError("a v3 device must not get v2 runtime RPCs")
-
-    async def set_runtime_ingress_enabled(self, *_args: Any) -> None:
-        raise AssertionError("v2 ingress switch used for a v3 device")
 
 
 class FakeCommands:
@@ -283,9 +279,8 @@ def test_device_settings_apply_command() -> None:
         fixture = _fixture()
         async with v3_device() as (app, user_id, device_id, _service, _manager, commands):
             commands.answer = fixture.get("results", {}).get("deviceSettingsApply", {"applied": True})
-            requester = type("Manager", (), {"device_commands": commands})()
             settings, delivered = await update_device_settings(
-                app.state.store, requester, device_id,
+                app.state.store, commands, device_id,
                 ConnectorDeviceSettingsPatch(confirmQuitOnShutdown=True), user_id=user_id,
             )
             kind, payload = commands.sent[-1]
@@ -295,7 +290,7 @@ def test_device_settings_apply_command() -> None:
             # Offline: stored (LinkWelcome.desired.deviceSettings), not delivered.
             commands.answer = DeviceCommandOffline()
             _settings, delivered = await update_device_settings(
-                app.state.store, requester, device_id,
+                app.state.store, commands, device_id,
                 ConnectorDeviceSettingsPatch(confirmQuitOnShutdown=False), user_id=user_id,
             )
             assert not delivered
@@ -313,11 +308,7 @@ def test_workflows_on_a_v3_device_answer_definitely() -> None:
                 device_id, runtime_type="claude", name="Work", config=CONFIG, active=True, user_id=user_id
             )
 
-            class UnsupportedRpc:
-                async def request(self, *_args: Any, **_kwargs: Any) -> Any:
-                    raise ConnectorRpcError("device_method_unsupported", "not on v3 devices")
-
-            workflows = RuntimeWorkflowService(app.state.store, UnsupportedRpc(), service)
+            workflows = RuntimeWorkflowService(app.state.store, service, commands, app.state.device_reads)
             project = await app.state.store.create_project(
                 user_id=user_id, connector_id=device_id, name="repo", workspace_path="/repo"
             )
@@ -333,9 +324,13 @@ def test_workflows_on_a_v3_device_answer_definitely() -> None:
                 )
             # The device reported no ``runtime.workspace.prepare``: clients create the session directly.
             assert prepare.value.code == "workflow_unsupported" and prepare.value.status == 422
-            row = {"connector_id": device_id, "runtime_id": runtime.runtimeId, "runtime_type": "claude", "user_id": user_id}
+            session = await app.state.store.create_session(
+                connector_id=device_id, project_id=project.id, runtime="claude",
+                external_session_id="ext_1", title="Work", cwd="/repo",
+            )
+            # device-meshcall carries no runtime session actions (tree, position, recovery, ...).
             with pytest.raises(WorkflowError) as call:
-                await workflows._call(row, "session.tree", {"sessionId": "sess_1"})
+                await workflows.session_action(session.id, "session.tree", {}, user_id=user_id)
             assert call.value.code == "workflow_unsupported" and call.value.status == 409
 
     asyncio.run(scenario())

@@ -1,38 +1,30 @@
+"""Device shell (``/connectors/{id}/shell/*``). ``exec`` goes to the device with ``Client/call``.
+
+Shell tasks reported their completion with a v2 notification that has no carrier on v3: they answer 409
+``shell_tasks_unsupported``, and v2 Connectors 409 ``device_upgrade_required``.
+"""
+
 from __future__ import annotations
+
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from agent_server.api.client_forward import forward_connector
-from agent_server.api.connector_common import (
-    connector_scope_id,
-    raise_connector_service_error,
-    require_owned_connector,
-    require_owned_online_connector,
-)
+from agent_server.api.client_forward import forward_connector, owned_device
 from agent_server.core.models import (
     RpcResponsePayload,
     ShellExecRequest,
     ShellTaskStartResponse,
     ShellTaskWaitResponse,
 )
-from agent_server.core.utc import utc_now
-from agent_server.deps import (
-    current_user_id,
-    get_connector_shell_service,
-    get_rpc,
-    get_store,
-)
-from agent_server.infra.connector_rpc import ConnectorRpcManager
-from agent_server.infra.repositories.facade import Store
-from agent_server.services.connector_rpc import ConnectorServiceError
-from agent_server.services.connector_shell import (
-    ConnectorShellService,
-    ConnectorShellTaskNotFoundError,
-    ConnectorShellTaskTimeoutError,
-)
-from agent_server.services.workspace import resolve_workspace_path
+from agent_server.deps import current_user_id
 
 router = APIRouter(prefix="/connectors", tags=["connector-shell"])
+
+SHELL_TASKS_UNSUPPORTED = {
+    "code": "shell_tasks_unsupported",
+    "message": "Shell tasks are not available on this device; use shell/exec.",
+}
 
 
 @router.post("/{connector_id}/shell/exec", response_model=RpcResponsePayload)
@@ -42,55 +34,22 @@ async def connector_shell_exec(
     payload: ShellExecRequest,
     root: str = Query(..., min_length=1),
     user_id: str = Depends(current_user_id),
-    store: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
-    shell: ConnectorShellService = Depends(get_connector_shell_service),
-) -> RpcResponsePayload:
-    if (forwarded := await forward_connector(
+) -> Any:
+    return await forward_connector(
         request, "connector.shell.exec", user_id=user_id, connector_id=connector_id, response_model=RpcResponsePayload
-    )) is not None:
-        return forwarded
-    await require_owned_online_connector(connector_id, user_id, store, manager)
-    cwd = resolve_workspace_path(root, payload.cwd or ".")
-    try:
-        result = await shell.exec(
-            connector_id=connector_id,
-            scope_id=connector_scope_id(connector_id),
-            root=root,
-            cwd=cwd,
-            command=payload.command,
-            timeout_ms=payload.timeoutMs,
-        )
-    except ConnectorServiceError as exc:
-        raise_connector_service_error(exc)
-    return RpcResponsePayload(ok=True, result=result)
+    )
 
 
 @router.post("/{connector_id}/shell/tasks", response_model=ShellTaskStartResponse)
 async def connector_shell_task_start(
+    request: Request,
     connector_id: str,
     payload: ShellExecRequest,
     root: str = Query(..., min_length=1),
     user_id: str = Depends(current_user_id),
-    store: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
-    shell: ConnectorShellService = Depends(get_connector_shell_service),
-) -> ShellTaskStartResponse:
-    await require_owned_online_connector(connector_id, user_id, store, manager)
-    cwd = resolve_workspace_path(root, payload.cwd or ".")
-    scope_id = connector_scope_id(connector_id)
-    try:
-        task = await shell.start(
-            connector_id=connector_id,
-            scope_id=scope_id,
-            root=root,
-            cwd=cwd,
-            command=payload.command,
-            timeout_ms=payload.timeoutMs,
-        )
-    except ConnectorServiceError as exc:
-        raise_connector_service_error(exc)
-    return ShellTaskStartResponse(**task.view(), serverTime=utc_now())
+) -> Any:
+    await owned_device(request, user_id=user_id, connector_id=connector_id)
+    raise HTTPException(status_code=409, detail=SHELL_TASKS_UNSUPPORTED)
 
 
 @router.get(
@@ -98,25 +57,11 @@ async def connector_shell_task_start(
     response_model=ShellTaskWaitResponse,
 )
 async def connector_shell_task_wait(
+    request: Request,
     connector_id: str,
     task_id: str,
     timeoutMs: int = Query(default=120_000, ge=1, le=300_000),
     user_id: str = Depends(current_user_id),
-    store: Store = Depends(get_store),
-    shell: ConnectorShellService = Depends(get_connector_shell_service),
-) -> ShellTaskWaitResponse:
-    await require_owned_connector(connector_id, user_id, store)
-    try:
-        completed = await shell.wait(
-            scope_id=connector_scope_id(connector_id),
-            task_id=task_id,
-            timeout_seconds=timeoutMs / 1000,
-        )
-    except ConnectorShellTaskNotFoundError:
-        raise HTTPException(status_code=404, detail="shell task not found") from None
-    except ConnectorShellTaskTimeoutError:
-        raise HTTPException(
-            status_code=408,
-            detail="shell task wait timed out",
-        ) from None
-    return ShellTaskWaitResponse(**completed.view(), serverTime=utc_now())
+) -> Any:
+    await owned_device(request, user_id=user_id, connector_id=connector_id)
+    raise HTTPException(status_code=409, detail=SHELL_TASKS_UNSUPPORTED)

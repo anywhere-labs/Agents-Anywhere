@@ -111,7 +111,6 @@ def test_failed_delete_keeps_revoked_tombstone_and_can_finish_on_retry(tmp_path)
             "store": state.store,
             "manager": state.rpc,
             "broker": state.timeline_broker,
-            "terminals": state.terminal_broker,
             "runtime_state_cache": state.session_runtime_state_cache,
             "links": state.device_link,
         }
@@ -130,130 +129,6 @@ def test_failed_delete_keeps_revoked_tombstone_and_can_finish_on_retry(tmp_path)
             await state.store.get_session(session_id)
         with pytest.raises(KeyError):
             await state.store.begin_connector_deletion(connector_id, user_id=owner)
-
-    asyncio.run(run())
-
-
-def test_runtime_deletion_cancels_old_queue_and_retires_legacy_identity(tmp_path):
-    from runtime_fixtures import seed_runtime_inventory
-    from test_runtime_config import _inventory
-
-    from agent_server.api.connector_ingress import _ConnectorNotificationPump
-    from agent_server.core.models import ConnectorIngestRequest
-    from agent_server.services.connector_ingest import ConnectorIngestService
-    from agent_server.services.connector_notifications import (
-        ConnectorNotificationService,
-    )
-    from agent_server.services.connector_realtime import ConnectorRealtimeService
-
-    client = make_client(tmp_path)
-    connector_id, _, session_id, _ = create_connector_and_session(client)
-    state = client.app.state
-
-    async def run():
-        await seed_runtime_inventory(
-            state.store, connector_id, _inventory(status="stopped")
-        )
-        await state.store.set_device_runtime_config(connector_id, "codex", {})
-        owner = (await state.store.get_connector(connector_id)).userId
-        original = await state.store.get_session(session_id)
-        realtime = ConnectorRealtimeService(
-            state.shell_tasks, state.terminal_broker, state.terminal_stream_hub
-        )
-        service = ConnectorIngestService(
-            state.store,
-            ConnectorNotificationService(state.store, realtime),
-            state.timeline_broker,
-            state.device_runtime_service,
-            state.rpc,
-            state.session_runtime_state_cache,
-        )
-        entered = asyncio.Event()
-
-        class Blocked:
-            async def handle_notification_message(self, **kwargs):
-                entered.set()
-                await asyncio.Event().wait()
-                await service.handle_notification_message(**kwargs)
-
-        class Socket:
-            async def close(self, **kwargs):
-                pass
-
-        connection = await state.rpc.register(connector_id, Socket())
-        pump = _ConnectorNotificationPump(
-            connector_id, Blocked()
-        )
-        connection.abort_notifications = pump.abort
-        connection.set_runtime_ingress_enabled = pump.set_runtime_ingress_enabled
-        pump.start()
-        notification = {
-            "method": "session.meta.upsert",
-            "params": {
-                "sessionId": session_id,
-                "runtime": "codex",
-                "runtimeId": "codex",
-                "externalSessionId": original.externalSessionId,
-                "cwd": original.cwd,
-                "title": "stale",
-            },
-        }
-        pump.enqueue_message(notification)
-        await entered.wait()
-        runtime = await asyncio.wait_for(
-            state.device_runtime_service.delete_config(
-                connector_id, "codex", user_id=owner
-            ),
-            2,
-        )
-        assert not runtime.configured
-        await pump.flush()
-        assert pump.obsolete == 1
-        with pytest.raises(KeyError):
-            await state.store.get_session(session_id)
-        # Retired identities remain denied, even after adding a new instance.
-        result = await service.ingest(
-            connector_id=connector_id,
-            payload=ConnectorIngestRequest(notifications=[notification]),
-        )
-        assert result.accepted == 0 and result.rejected[0].code == "runtime_not_configured"
-        assert runtime.runtimeId == "codex"
-        # Deletion leaves no row; a new instance gets a fresh identity.
-        created = await state.store.create_device_runtime(
-            connector_id, runtime_type="codex", name="Codex", config={}, active=False,
-        )
-        runtime = runtime.model_copy(update={"runtimeId": created["runtimeId"]})
-        await state.rpc.set_runtime_ingress_enabled(connector_id, runtime.runtimeId, True)
-        assert "codex" in await state.store.get_unconfigured_runtime_ids(connector_id)
-        result = await service.ingest(
-            connector_id=connector_id,
-            payload=ConnectorIngestRequest(notifications=[notification]),
-        )
-        assert result.accepted == 0 and result.rejected[0].code == "runtime_not_configured"
-        # Only the replacement identity may publish new sessions.
-        notification["params"]["runtimeId"] = runtime.runtimeId
-        notification["params"]["title"] = "new runtime"
-        result = await service.ingest(
-            connector_id=connector_id,
-            payload=ConnectorIngestRequest(notifications=[notification]),
-        )
-        assert result.accepted == 1 and not result.rejected
-        assert (await state.store.get_session(session_id)).title == "new runtime"
-        await pump.close()
-        await state.rpc.unregister(connector_id, connection)
-        # A completely new WebSocket pump reloads the durable retired-ID set.
-        reconnected = _ConnectorNotificationPump(
-            connector_id, service,
-            unconfigured_runtimes=await state.store.get_unconfigured_runtime_ids(connector_id),
-        )
-        reconnected.start()
-        notification["params"]["runtimeId"] = "codex"
-        notification["params"]["title"] = "stale after reconnect"
-        reconnected.enqueue_message(notification)
-        await reconnected.flush()
-        assert reconnected.obsolete == 1
-        assert (await state.store.get_session(session_id)).title == "new runtime"
-        await reconnected.close()
 
     asyncio.run(run())
 
@@ -285,40 +160,6 @@ def test_pending_deletion_is_resumed_without_purging_legacy_revoked_rows(tmp_pat
             await state.store.get_session(session_id)
         # The recovery worker must never reinterpret an old credential state as deletion consent.
         await state.store.delete_connector(legacy_id, user_id=owner)
-
-    asyncio.run(run())
-
-
-def test_runtime_pause_discards_queued_work_after_reconfiguration():
-    from agent_server.api.connector_ingress import _ConnectorNotificationPump
-
-    async def run():
-        entered, release = asyncio.Event(), asyncio.Event()
-        handled = []
-
-        class Ingest:
-            async def handle_notification_message(self, **kwargs):
-                session_id = kwargs["params"]["sessionId"]
-                if session_id == "other":
-                    entered.set()
-                    await release.wait()
-                handled.append(session_id)
-
-        pump = _ConnectorNotificationPump("connector", Ingest(), max_concurrency=1)
-        pump.start()
-        def enqueue(runtime, session):
-            pump.enqueue_message({"method": "session.source.updated", "params": {"runtime": runtime, "sessionId": session}})
-        enqueue("claude", "other")
-        await entered.wait()
-        enqueue("codex", "old")
-        await pump.set_runtime_ingress_enabled("codex", False)
-        await pump.set_runtime_ingress_enabled("codex", True)
-        enqueue("codex", "new")
-        release.set()
-        await asyncio.wait_for(pump.flush(), 2)
-        assert handled == ["other", "new"]
-        assert pump.obsolete == 1
-        await pump.close()
 
     asyncio.run(run())
 

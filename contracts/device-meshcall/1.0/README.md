@@ -9,7 +9,7 @@ v3 中 Server 与 Connector 之间的契约，取代 v2 的 `/api/v2/connector/w
 - **在线**：以 Server 持有的 `Link/attach` 流为准。设备每 20 秒在流上发一次心跳，租约 60 秒，每次连接带一个 `connectionId` 代次；调用时放在 metadata `aa-connection-id` 里。流结束即离线：读请求返回 200 和 `deviceOffline`，命令返回 409 `connector_offline`。
 - **源头**：`server/agent_server/core/device_meshcall.py` 与客户端路由表 `server/agent_server/core/client_routes.py`。生成命令：`cd server && .venv/bin/python -m scripts.export_v3_contracts`（加 `--check` 只检查）。产物：
   - `schemas/*.schema.json`：各个 payload 的 JSON Schema。
-  - `device.meshcall.json`：MeshCall 可移植契约，可交给 `meshcall generate` 生成 Python 或 TS 客户端。每个方法的 request/response 都是真实模型；`Commands/*` 的 `CommandCall.p`、`CommandAck.r` 按方法带上类型（`qualname` 写作 `CommandCall[SendMessageCommand]`）。
+  - `device.meshcall.json`：MeshCall 可移植契约，可交给 `meshcall generate` 生成 Python 或 TS 客户端。每个方法的 request/response 都是真实模型；`Commands/*` 的 `CommandCall.p`、`CommandAck.r` 按方法带上类型（`qualname` 写作 `CommandCall[SessionSyncCommand]`）。
   - `payloads.json`：每个业务方法的载荷类型（见[业务载荷](#业务载荷)）。
   - `client-routes.json`：客户端路由表（见 [Client 服务](#client-服务普通模式)）。
   - `client-errors.json`：转发路由的错误到 HTTP 状态的映射。
@@ -24,23 +24,18 @@ v3 中 Server 与 Connector 之间的契约，取代 v2 的 `/api/v2/connector/w
 | `aa.device.v1.Link` | `attach` | server_stream | 心跳与可丢事件（`runtime.status`、`runtime.notice.updated`、`runtime.queue.updated`、`port.listening`、`port.closed`） |
 | | `outbox` | server_stream | 出站箱（`OutboxItem`）：每次打开都从最小的未确认 `oid` 开始按顺序重发 |
 | | `ackOutbox` | unary | 累计确认（`OutboxAck`） |
-| `aa.device.v1.Sessions` | `snapshot` | server_stream | 客户端快照，按字节预算分块（`StreamChunk`） |
-| | `watch` | server_stream | 打开流即订阅，取消即退订；流项为 `ChangesEvent` |
-| | `notices` / `state` / `capabilities` / `queue` | unary | 读 |
-| `aa.device.v1.Store` | `read` / `changesSince` / `planDocument` | unary | 读 |
-| | `readBlob` / `exportShare` | server_stream | 大块读 |
-| `aa.device.v1.Runtime` | `catalogs` | unary | 读：模型、权限目录，以及 `catalogs.commands`（会话当前可用的斜杠命令） |
-| `aa.device.v1.Commands` | `<命令>`（`COMMAND_METHODS` 转成驼峰，如 `sessionQueueSendNow`） | unary | 改变状态的命令：请求为 `CommandCall`，响应为 `CommandAck`，`idempotency_key = commandId` |
+| `aa.device.v1.Sessions` | `watch` | server_stream | 打开流即订阅，取消即退订；流项为 `ChangesEvent` |
+| | `workspacePreparationGet` / `creationGet` | unary | 读工作区准备与创建的进度 |
+| `aa.device.v1.Store` | `readBlob` / `exportShare` | server_stream | 大块读 |
+| `aa.device.v1.Commands` | `<命令>`（`COMMAND_METHODS` 转成驼峰，如 `sessionSync`） | unary | Server 自己发起的命令：请求为 `CommandCall`，响应为 `CommandAck`，`idempotency_key = commandId` |
 | | `status` | unary | 查询命令回执（`command.status`） |
-| `aa.device.v1.Workspace` | `call` | unary | 仅普通模式：文件、终端、Shell。请求为 `WorkspaceCallRequest {method, params}`，响应为 `WorkspaceCallResponse {result}`；`method` 只能是 `WORKSPACE_METHODS` 里的 v2 方法，`params` 与 `result` 和 v2 相同。不重试 |
-| | `terminalOutput` | server_stream | 仅普通模式：打开即订阅一个终端的输出，取消即退订；流项为 `TerminalOutputItem` |
 | `aa.device.v1.Client` | `call` | server_stream | 仅普通模式：一次客户端 API 请求（`ClientCallRequest`），流项先是 `ClientCallHead`，再是正文分块（`ClientCallChunk`） |
 | | `subscribe` | server_stream | 仅普通模式：订阅终端（`ClientSubscribeRequest`），流项为终端 WebSocket 消息（`TerminalStreamItem`） |
 | `aa.device.v1.Secure` | `channel` | duplex | 仅加密模式使用：每个客户端通道一条调用，流项为 `SecureChannelItem {n, ct}`，Server 原样转发 |
 
 业务方法到路由的映射见源文件的 `REQUEST_METHODS`、`command_route()`、`LINK_ROUTES`；事件与出站箱的方法名见 `EVENT_METHODS`、`OUTBOX_METHODS`。
 
-切换到 `Client/call` 之后，以下方法会删除：`Sessions/{snapshot, notices, state, capabilities, queue}`、`Store/{read, changesSince, planDocument}`、`Runtime/catalogs`、整个 `Workspace`，以及 `Commands` 里的用户命令（`sessionSendMessage`、`sessionSteer`、`sessionInterrupt`、`sessionRespondNotice`、`sessionSelect`、`sessionPlanning`、`sessionGoal`、`sessionQueue*`，以及不带准备的 `sessionCreationBegin`）。保留的是 Server 自己发起的调用：`Link/*`、`Sessions/watch`、`Sessions/{workspacePreparationGet, creationGet}`、`Store/{readBlob, exportShare}`、`Commands/status`、`Commands/{runtimeApply, channelSwitch, deviceSettingsApply, previewOpen, previewClose, sessionSync}`、工作区准备与带准备的创建命令，以及 `Secure/channel`。在那之前两套并存。
+会话快照、时间线、notices、运行状态、能力、队列、目录、计划文档，设备上的文件、终端、Shell，以及用户发起的命令（发消息、引导、中断、回复审批、选择、计划、目标、排队消息），都改为经 `Client/call`（加密模式经 `Secure/channel`）调用设备的客户端 API，MeshCall 上不再有对应的方法。设备命令收件箱仍接受这些命令，载荷见 `COMMAND_PAYLOADS`（`DEVICE_COMMANDS`）。
 
 ## Client 服务（普通模式）
 
@@ -90,48 +85,27 @@ v3 中 Server 与 Connector 之间的契约，取代 v2 的 `/api/v2/connector/w
 
 MeshCall 的外壳（`CommandCall.p`、`CommandAck.r`、`LinkAttachItem.p`、`OutboxItem.p`）在线上仍是对象；每个业务方法放进去的内容由 `COMMAND_PAYLOADS`、`READ_PAYLOADS`、`EVENT_PAYLOADS`、`OUTBOX_PAYLOADS` 规定，导出为 `payloads.json`：
 
-- 命令：如 `session.sendMessage` 的 `SendMessageCommand` / `SendMessageResult`，`session.creation.begin` 的 `CreationBeginCommand`（不带准备的 `DirectCreationCommand` 或带 `preparationId` 的 `PreparedCreationCommand`），`runtime.apply` 的 `RuntimeApplyCommand` / `RuntimeApplyResult`，`device.settings.apply` 的 `DeviceSettingsApplyCommand`，`session.sync` 的 `SessionSyncCommand {sessionId, takeover?, archived?}`。`session.planning`、`session.goal` 的结果引用 protocol 1.2 的 `planning-response`、`goal-response`，`preview.*` 引用 preview 1.0。
+- 命令：`COMMAND_PAYLOADS` 覆盖设备收件箱的全部命令（`DEVICE_COMMANDS`），其中只有 `COMMAND_METHODS` 由 Server 经 `Commands/*` 发出，其余经 `Client/call` 到达。如 `session.sendMessage` 的 `SendMessageCommand` / `SendMessageResult`，`session.creation.begin` 的 `CreationBeginCommand`（不带准备的 `DirectCreationCommand` 或带 `preparationId` 的 `PreparedCreationCommand`），`runtime.apply` 的 `RuntimeApplyCommand` / `RuntimeApplyResult`，`device.settings.apply` 的 `DeviceSettingsApplyCommand`，`session.sync` 的 `SessionSyncCommand {sessionId, takeover?, archived?}`。`session.planning`、`session.goal` 的结果引用 protocol 1.2 的 `planning-response`、`goal-response`，`preview.*` 引用 preview 1.0。
 - 工作区准备与创建：请求为 `WorkspacePrepareCommand`、`PreparationReserveCommand` 等，回答为 runtime-workflows 1.2 的工作流状态（`workflow-state`）。
-- 读：`Sessions/state` 的 `SessionStateRequest` / `SessionStateResponse`，`Store/readBlob` 的 `ReadBlobRequest` / `ReadBlobChunk`，`Store/exportShare` 的 `ExportShareRequest` / `ExportShareChunk` 等。
+- 读：`Sessions/watch` 的 `SessionWatchRequest` / `ChangesEvent`，`Store/readBlob` 的 `ReadBlobRequest` / `ReadBlobChunk`，`Store/exportShare` 的 `ExportShareRequest` / `ExportShareChunk` 等。
 - 事件：`runtime.status` 的 `status` 是按 `event` 区分的 `RuntimeStatusPayload`：`runtime.types`、`capabilities.changed`、`catalogs.changed`、`session.status`、`config.updated`、`planning.state.updated`、`goal.state.updated`；没有 `event` 时按带的是 `instance`（应用期望状态之后的实例）还是 `state`（运行中实例的健康状态）区分。`runtime.notice.updated` 带 protocol 1.2 的 notice，`runtime.queue.updated` 带队列状态，`port.*` 引用 preview 1.0。
 - `LinkWelcome.desired.runtimes` 的每一项是 `RuntimeApplyCommand`；没有的可选字段（`modelGateway`、`operationId`、`switchRevision`）不输出为 null。
 
-Server 发送每条命令之前按请求模型校验 `p`（`validate_command_payload()`）。模型只要求设备本来就要求的字段，不合格的命令不登记、不发出，按设备同样的规则回 409 `invalid_argument`。仍是任意对象的字段：Runtime 实例的 `config`（由该类型的 `configSchema` 约束）、`modelConnection` 状态、时间线条目与分享条目（protocol 1.2 的条目原样透传）、`Workspace/call` 的 v2 参数与结果（切换后删除）、`ClientCallRequest.body`（由各路由的客户端契约约束）。
+Server 发送每条命令之前按请求模型校验 `p`（`validate_command_payload()`）。模型只要求设备本来就要求的字段，不合格的命令不登记、不发出，按设备同样的规则回 409 `invalid_argument`。仍是任意对象的字段：Runtime 实例的 `config`（由该类型的 `configSchema` 约束）、`modelConnection` 状态、时间线条目与分享条目（protocol 1.2 的条目原样透传）、`ClientCallRequest.body`（由各路由的客户端契约约束）。
 
 ## 工作区（普通模式）
 
-`Workspace/call` 转发 v2 客户端用到的工作区方法，参数与结果都沿用 v2（`WORKSPACE_METHODS`）：
+文件、终端与 Shell 都是客户端 API 路由（`client-routes.json`），经 `Client/call` 调用：
 
-- 文件：`fs.readDir`、`fs.readText`、`fs.writeFile`、`fs.prepareDownload`、`fs.uploadPreparedDownload`。
-- 终端：`terminal.create`、`terminal.list`、`terminal.rename`、`terminal.setPersistent`、`terminal.close`、`terminal.write`、`terminal.resize`、`terminal.snapshot`。
-- Shell：`shell.exec`。`shell.task.*` 不在其中：任务结束在 v2 是一条通知，v3 还没有对应的通道。
-
-白名单以外的方法，设备回 `invalid_argument`。只读的方法（`WORKSPACE_READ_METHODS`）结果未知时报 `device_read_timeout`，其余报 `command_outcome_unknown`，Server 都不重发。
-
-- **文件内容**不走 MeshCall：下载先 `fs.prepareDownload`（返回大小与 sha256），再 `fs.uploadPreparedDownload {transferId, token, uploadUrl, root, path}`，其中 Server 把 `uploadUrl` 设为 `/api/v3/device/transfers/{transferId}`（`DEVICE_TRANSFER_PATH`）。设备立即回 `{transferId, uploadStarted: true}`，随后在后台把文件 `PUT` 到这个路径（请求头 `X-Transfer-Token`），与 `Store/readBlob` 用同一个中继；指向其他源的 `uploadUrl` 一律拒绝。
-- **终端输出**走 `Workspace/terminalOutput {terminalId, sessionId, fromSeq}`，与 v2 终端中继的帧一一对应：
-  - 第一项总是 `terminal.replay {terminalId, seq, dataBase64, terminal}`：截至 `seq` 的 scrollback（最多 512 KiB）。读得太慢、落到 scrollback 之外时再发一次，客户端按它重画。
-  - 之后按顺序发 `terminal.output {terminalId, seq, dataBase64}`。
-  - 进程退出、终端关闭或过期时发 `terminal.exited {terminalId, exitCode, reason}`，流随即结束。
-  - 一个终端可以同时有多条订阅（多个 worker、多个客户端），各自独立读 scrollback，慢的不拖累快的。
-  - 输入与调整大小走 `Workspace/call` 的 `terminal.write`、`terminal.resize`。
-- 加密模式下不注册 `Workspace`：同样的方法经 `Secure/channel` 里的客户端 API 执行。
-
-## 斜杠命令
-
-`Runtime/catalogs {sessionId}` 的响应 `{sessionId, catalogs}` 里，`catalogs.commands` 是该会话当前可用的斜杠命令 `[{name, description?, inputHint?}]`。它来自 Runtime 最近一次上报的命令目录（ACP `available_commands_update`）；会话还没在设备上打开时为空列表。
-
-- v2 的 `session.commands`：Server 读这个目录，按 v2 的 `RuntimeCommandView` 形状返回（与 v2 ACP Runtime 相同：`acceptsArgs: true`，参数是字符串），并按 `query`、`limit` 过滤。
-- v2 的 `session.command.execute`：与 v2 ACP Runtime 相同，命令必须在目录里（否则 `command_unavailable`）；Server 把 `/<命令> <参数>`（有 `raw` 时保留用户原文的引号与换行）作为一条用户消息，经 `Commands/sessionSendMessage` 发给设备，`clientMessageId` 取 `operationId`。不需要新的设备命令。
+- **文件内容**不走 MeshCall：`POST fs/read` 时 Server 在 `ClientCallRequest.server.transfer` 里给出中继位置 `/api/v3/device/transfers/{transferId}`（`DEVICE_TRANSFER_PATH`）。设备立即回答，随后在后台把文件 `PUT` 到这个路径（请求头 `X-Transfer-Token`），与 `Store/readBlob` 用同一个中继；指向其他源的位置一律拒绝。
+- **终端输出**走 `Client/subscribe`，见 [Client 服务](#client-服务普通模式)。一个终端可以同时有多条订阅，各自独立读 scrollback，慢的不拖累快的。
+- 会话的斜杠命令目录、模型与权限目录同样由客户端 API 回答。
 
 ## 会话读与命令的业务字段
 
 各方法的模型见[业务载荷](#业务载荷)，下面是语义。两端共用样例 `server/tests/fixtures/device_shapes.json` 与 `runtime_control_commands.json`：Server 发出的请求与设备真实的返回都在里面，任何一边改了形状，另一边的测试都会失败；每一项还要分别通过 Server 的 pydantic 模型和 Connector 侧按生成的 JSON Schema 做的校验（ajv）。
 
-- `Sessions/snapshot` 的 `StreamChunk.chunk`：JSON 对象，或字符串。字符串有两种写法，Server 都接受：按 `seq` 拼接后是一个 JSON 对象（TS Connector 把 JSON 文本按帧上限切片）；或者每块各是一个 JSON 对象的 base64 deflate。
-- `Sessions/state {sessionId, part?}`：`part` 为 `planning` 时返回 `{planning}`，为 `goal` 时返回 `{goal}`，形状与 v2 的计划、目标状态相同；不带 `part` 时返回 `{state, planning, goal}`。其他取值报 `invalid_argument`。
-- `Store/planDocument {sessionId, planId?, revision?}`：带 `planId` 与 `revision` 时返回 `{document}`；只带 `sessionId` 时返回 `{plans}`（新的在前）。找不到时报 `plan_document_not_found`。
-- `session.select`（`Commands/sessionSelect`）：`p` 为 `{sessionId, runtime, runtimeId, externalSessionId?, selections}`，`selections` 可一次带多项，值为 null 的项跳过。返回 v2 形状 `{updated, applied, sessionId, externalSessionId, selections, state}`。
+- `session.select`（经 `Client/call` 到达收件箱）：`p` 为 `{sessionId, runtime, runtimeId, externalSessionId?, selections}`，`selections` 可一次带多项，值为 null 的项跳过。返回 v2 形状 `{updated, applied, sessionId, externalSessionId, selections, state}`。
 - `session.creation.begin`：`p` 可带 `planningIntent`、`goalIntent`，各为 `{mode, operationId}`。带计划意图时设备先进入计划模式再发首条消息，失败则拒发；带目标意图时把内容设为目标，不当作消息发出。
 - 接管开关用现有的 `session.sync {sessionId, takeover}`。设备离线或没有确认时，Server 记在 Redis 的 `device-takeover:{deviceId}` 里，设备上线后按 Server 当时的值重发。
 - `runtime.status` 里的计划、目标事件为 `status: {event, revision, state}`。
@@ -168,7 +142,7 @@ Server 发送每条命令之前按请求模型校验 `p`（`validate_command_pay
 - **重启**：Connector 重启时未消费的准备一律过期；已预留但还没开始创建的，创建视图为 `rejected`（`initialization_interrupted`，`messageAccepted: false`）；创建已开始、首条消息已落盘但还没交给 Agent 的，重启后在新的 Agent 会话上发出（Agent 从没收到它，不算重发）；连首条消息都没落盘的，创建视图为 `rejected`。
 - **加密模式**：`required` 模式不注册这些方法，Server 也拒绝 `/api/v2/runtime-workflows`，并从设备上报的 Runtime 能力里去掉这两项能力，新建会话页直接创建。
 
-`CRITICAL_METHODS` 是 v2 关键通道（#484）的全部方法：审批回复、notices、建会话与工作区准备的查询、回复和取消。设备要为它们单独留出执行额度，长读请求不能占满。
+建会话与工作区准备的查询、回复和取消走设备的关键执行额度，长读请求不能占满；`Client/call` 按路由的 `kind` 分配额度。
 
 ## 加密模式（`e2eeMode: "required"`）
 
@@ -178,7 +152,7 @@ Server 发送每条命令之前按请求模型校验 `p`（`validate_command_pay
   - `Link/*`；
   - `Secure/channel`；
   - Server 自己发起、不含会话内容的方法：`Commands/status`、`runtimeApply`、`deviceSettingsApply`、`channelSwitch`、`previewOpen`、`previewClose`。
-- 用户发起的读、订阅、其他命令（包括 `sessionSync`）、`Runtime/catalogs` 以及 `Workspace/*` 不注册，一律走 `Secure/channel`。Server 就算想发明文请求，也没有目标。
+- 用户发起的读、订阅、其他命令（包括 `sessionSync`）不注册，一律走 `Secure/channel`。Server 就算想发明文请求，也没有目标。
 - Server 签发的 Mesh token 的 scopes 也按同一张表收窄。
 - `Link/attach` 上只发 `runtime.status`、`port.listening`、`port.closed`。`runtime.notice.updated`、`runtime.queue.updated` 带有审批和排队消息的正文，只推给订阅了该会话的加密通道；列表需要的「待审批」状态由 `SessionSummary.status` 提供。
 - 出站箱与命令回执不带正文：`r` 为 null（可延迟命令除外：只保留 `DEFERRABLE_RESULT_FIELDS` 里的实例状态字段，它们描述 Server 自己保存的配置，不含会话内容），`e` 只带 `code`；展示信封必须是 `sealed`；`attachment.consumed.sha256` 用密文的摘要。Server 在存储和写日志之前，还会用 `scrub_for_e2ee()` 再清理一遍（纵深防御）。

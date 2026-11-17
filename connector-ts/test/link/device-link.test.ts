@@ -9,7 +9,7 @@ import { ConversationService } from '../../src/application/index.js'
 import type { RuntimeHandles } from '../../src/application/ports/index.js'
 import { AttachHub, ControlPlane, DeviceLink, callClass, rewriteUpgradeHead, secureChannelVia, type Egress, type LinkState, type SecureChannelWire } from '../../src/link/index.js'
 import { inProcessStore, openSqliteStore, type RemoteStore } from '../../src/store/index.js'
-import { DeviceReaders, MemoryChangeFeed, OutboxSignal, joinChunks, plainSealer } from '../../src/sync/index.js'
+import { DeviceReaders, MemoryChangeFeed, OutboxSignal, plainSealer } from '../../src/sync/index.js'
 import { ConnectProxy, FakeServer, RouterProcess, routerBinary } from '../support/mesh-harness.js'
 
 async function until(condition: () => boolean, timeoutMs = 10_000, what = 'condition'): Promise<number> {
@@ -32,13 +32,13 @@ describe('upgrade head rewrite', () => {
 })
 
 describe('call classes', () => {
-  it('keeps approvals, notices and the outbox apart from long streams', () => {
-    expect(callClass('aa.device.v1.Commands', 'sessionRespondNotice')).toBe('critical')
-    expect(callClass('aa.device.v1.Sessions', 'notices')).toBe('critical')
+  it('keeps creation prompts and the outbox apart from long streams', () => {
+    expect(callClass('aa.device.v1.Commands', 'sessionCreationRespond')).toBe('critical')
+    expect(callClass('aa.device.v1.Sessions', 'creationGet')).toBe('critical')
     expect(callClass('aa.device.v1.Link', 'outbox')).toBe('critical')
-    expect(callClass('aa.device.v1.Commands', 'sessionSendMessage')).toBe('command')
+    expect(callClass('aa.device.v1.Commands', 'sessionSync')).toBe('command')
     expect(callClass('aa.device.v1.Sessions', 'watch')).toBe('stream')
-    expect(callClass('aa.device.v1.Store', 'read')).toBe('read')
+    expect(callClass('aa.device.v1.Store', 'readBlob')).toBe('stream')
   })
 })
 
@@ -215,13 +215,11 @@ describe.skipIf(binary === null)('DeviceLink against a real Router', () => {
     // The summary queued when the session was created arrives and is acknowledged.
     await until(() => server.outbox.some(item => item.m === 'session.summary'), 10_000, 'summary')
     // Reads go through.
-    const chunks = await server.stream<{ seq: number; chunk: string; end: boolean }>('aa.device.v1.Sessions', 'snapshot', { sessionId: 'sess_1' })
-    expect(chunks.at(-1)?.end).toBe(true)
-    expect(joinChunks(chunks)).toMatchObject({ historySource: 'live', state: { sessionId: 'sess_1' } })
+    expect(await server.call('aa.device.v1.Commands', 'status', { commandId: 'cmd_none' })).toEqual({ commandId: 'cmd_none', known: false, outcome: null })
     // A replaced generation is refused before anything runs.
-    await expect(server.call('aa.device.v1.Sessions', 'state', { sessionId: 'sess_1' }, 'lc_old')).rejects.toMatchObject({ code: 'failed_precondition', details: { reason: 'connection_replaced' } })
+    await expect(server.call('aa.device.v1.Commands', 'status', { commandId: 'cmd_none' }, 'lc_old')).rejects.toMatchObject({ code: 'failed_precondition', details: { reason: 'connection_replaced' } })
     // An application error keeps its AA code.
-    await expect(server.call('aa.device.v1.Sessions', 'state', { sessionId: 'sess_x' })).rejects.toMatchObject({ code: 'session_not_found' })
+    await expect(server.call('aa.device.v1.Sessions', 'creationGet', { createOperationId: 'op_x' })).rejects.toMatchObject({ code: 'workflow_unsupported' })
     // A command settles with a durable receipt; replay returns the same ack; status reads it.
     const call = { commandId: 'cmd_1', deadline: new Date(Date.now() + 30_000).toISOString(), p: { sessionId: 'sess_1', archived: true } }
     const ack = await server.call<{ outcome: string }>('aa.device.v1.Commands', 'sessionSync', call)
@@ -277,8 +275,8 @@ describe.skipIf(binary === null)('DeviceLink against a real Router', () => {
     expect(link.e2eeMode).toBe('required')
     expect(await server.call('aa.device.v1.Commands', 'status', { commandId: 'none' })).toMatchObject({ known: false })
     // Content methods are not on the Router at all, so the Server has nothing to send plaintext to.
-    await expect(server.call('aa.device.v1.Sessions', 'state', { sessionId: 'sess_1' })).rejects.toBeTruthy()
-    await expect(server.call('aa.device.v1.Commands', 'sessionSendMessage', { commandId: 'c', deadline: new Date().toISOString(), p: {} })).rejects.toBeTruthy()
+    await expect(server.call('aa.device.v1.Sessions', 'creationGet', { createOperationId: 'op_1' })).rejects.toBeTruthy()
+    await expect(server.call('aa.device.v1.Commands', 'sessionCreationBegin', { commandId: 'c', deadline: new Date().toISOString(), p: {} })).rejects.toBeTruthy()
     // Only the plaintext-safe events ride on attach.
     link.attach.emit('runtime.notice.updated', { sessionId: 'sess_1', notice: { noticeId: 'n1', sessionId: 'sess_1', title: 'secret', type: 'interaction' } })
     link.attach.emit('port.listening', { deviceId: 'dev_1', ports: [{ port: 5173 }] })

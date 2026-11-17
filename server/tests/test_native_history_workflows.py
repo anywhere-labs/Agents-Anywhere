@@ -31,41 +31,19 @@ def test_native_handoff_confirmation_is_strict_and_paths_are_not_accepted():
     assert request.model_dump()["cliExited"] is True
 
 
-def test_recovery_status_query_keeps_authorization_and_routes_same_operation():
+def test_session_recovery_is_unsupported_after_authorization():
     async def run():
-        calls = []
-        session = SimpleNamespace(
-            connectorId="device", runtimeId="pi-instance", runtime="pi", takeover=True
-        )
+        seen = []
 
         async def get_session(session_id, *, user_id):
-            assert user_id == "account" and session_id == "session"
-            return session
+            seen.append((session_id, user_id))
+            if user_id != "account":
+                raise KeyError(session_id)
+            return SimpleNamespace(connectorId="device", runtimeId="pi-instance", runtime="pi", takeover=True)
 
-        async def get_runtime(device, runtime_id, *, user_id):
-            assert (device, runtime_id, user_id) == ("device", "pi-instance", "account")
-
-        async def request(device, method, values, **kwargs):
-            calls.append((method, values))
-            if method == "session.capabilities":
-                return {
-                    "capabilitySet": {
-                        "capabilities": [
-                            {
-                                "capabilityId": "session.recover",
-                                "supported": True,
-                                "available": False,
-                                "allowed": True,
-                            }
-                        ]
-                    }
-                }
-            return {"phase": "running"}
-
+        # device-meshcall carries no session actions: nothing reaches the device.
         service = RuntimeWorkflowService(
-            SimpleNamespace(get_session=get_session),
-            SimpleNamespace(request=request),
-            SimpleNamespace(get_runtime=get_runtime),
+            SimpleNamespace(get_session=get_session), SimpleNamespace(), SimpleNamespace(), SimpleNamespace()
         )
         body = {
             "operationId": "stable",
@@ -73,18 +51,12 @@ def test_recovery_status_query_keeps_authorization_and_routes_same_operation():
             "cliExited": True,
             "sourceRevision": "revision",
         }
-        result = await service.session_action(
-            "session", "session.recover", body, user_id="account"
-        )
-        assert result["phase"] == "running"
-        assert calls[-1][1]["operationId"] == "stable"
-        assert calls[-1][1]["cliExited"] is True
-        session.takeover = False
-        count = len(calls)
-        with pytest.raises(WorkflowError, match="授权"):
-            await service.session_action(
-                "session", "session.recover", body, user_id="account"
-            )
-        assert len(calls) == count
+        with pytest.raises(WorkflowError) as unsupported:
+            await service.session_action("session", "session.recover", body, user_id="account")
+        assert unsupported.value.code == "workflow_unsupported"
+        assert unsupported.value.status == 409
+        with pytest.raises(KeyError):
+            await service.session_action("session", "session.recover", body, user_id="intruder")
+        assert seen == [("session", "account"), ("session", "intruder")]
 
     asyncio.run(run())

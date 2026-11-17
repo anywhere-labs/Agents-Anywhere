@@ -542,10 +542,8 @@ class DeviceRuntimeRepositoryMixin:
             if result.rowcount == 0:
                 raise KeyError(runtime_id)
             session_ids = list((await conn.execute(session_query)).scalars())
-            # Terminal roots live in Redis and have no session FK. Timeline,
-            # active runs and shares cascade from sessions; projects can be
+            # Timeline, active runs and shares cascade from sessions; projects can be
             # shared by other instances.
-            await self.terminal_roots.forget_session_terminal_roots(connector_id, session_ids)
             await conn.execute(
                 delete(sessions_t).where(
                     sessions_t.c.connector_id == connector_id,

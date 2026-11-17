@@ -12,7 +12,6 @@ from agent_server.services.repository_ports import ConnectorDeletionRepository
 
 if TYPE_CHECKING:
     from agent_server.infra.connector_rpc import ConnectorRpcManager
-    from agent_server.infra.terminal_broker import TerminalBroker
     from agent_server.infra.timeline_broker import TimelineBroker
     from agent_server.services.session_runtime_state_cache import (
         SessionRuntimeStateCache,
@@ -30,7 +29,6 @@ async def delete_connector_data(
     user_id: str,
     store: ConnectorDeletionRepository,
     manager: ConnectorRpcManager,
-    terminals: TerminalBroker,
     runtime_state_cache: SessionRuntimeStateCache,
     device_link: DeviceLinkRevoker,
 ) -> None:
@@ -41,7 +39,6 @@ async def delete_connector_data(
         # The v3 MeshCall link first (any worker may hold it), then a v2 WebSocket.
         await device_link.revoke(connector_id, "connector deleted")
         await manager.disconnect(connector_id, reason="connector deleted")
-        await terminals.remove_for_connector(connector_id)
         for session_id in session_ids:
             await runtime_state_cache.discard(session_id)
         await store.delete_connector(connector_id, user_id=user_id)
@@ -52,14 +49,12 @@ class ConnectorDeletionRecovery:
         self,
         store: ConnectorDeletionRepository,
         manager: ConnectorRpcManager,
-        terminals: TerminalBroker,
         runtime_state_cache: SessionRuntimeStateCache,
         broker: TimelineBroker,
         device_link: DeviceLinkRevoker,
     ) -> None:
         self._store = store
         self._manager = manager
-        self._terminals = terminals
         self._runtime_state_cache = runtime_state_cache
         self._broker = broker
         self._device_link = device_link
@@ -73,7 +68,6 @@ class ConnectorDeletionRecovery:
                     user_id,
                     self._store,
                     self._manager,
-                    self._terminals,
                     self._runtime_state_cache,
                     self._device_link,
                 )

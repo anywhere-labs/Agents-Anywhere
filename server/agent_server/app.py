@@ -32,7 +32,6 @@ from agent_server.api import (
     device_link,
     device_transfers,
     e2ee,
-    error_handlers,
     model_config,
     oauth,
     pairing,
@@ -64,7 +63,7 @@ from agent_server.infra.db.migrations import (
     require_current_database,
     upgrade_database,
 )
-from agent_server.infra.device_link import DeviceLinkHub, DeviceRpcBridge
+from agent_server.infra.device_link import DeviceLinkHub
 from agent_server.infra.device_mesh import DeviceMesh, MeshSettings
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.infra.malloc_trim import run_malloc_trim_loop
@@ -77,9 +76,6 @@ from agent_server.infra.preview_state import PreviewStateStore
 from agent_server.infra.redis_coordinator import RedisCoordinator
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.session_watch import SessionWatchHub
-from agent_server.infra.terminal_broker import TerminalBroker
-from agent_server.infra.terminal_roots import TerminalRootStore
-from agent_server.infra.terminal_stream_hub import TerminalStreamHub
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.infra.tokens_access_cache import TokensAccessCache
 from agent_server.infra.tokens_client import TokensClient
@@ -87,13 +83,11 @@ from agent_server.infra.ws_tickets import ClientWsTicketManager
 from agent_server.services.channel_reconciliation import ChannelReconciler
 from agent_server.services.client_forward import ClientForwarder
 from agent_server.services.connector_deletion import ConnectorDeletionRecovery
-from agent_server.services.connector_rpc import ConnectorServiceError
 from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.device_blobs import DeviceBlobService
 from agent_server.services.device_commands import DeviceCommandService
 from agent_server.services.device_link import DeviceLinkService
 from agent_server.services.device_planning import DevicePlanningService
-from agent_server.services.device_queue import DeviceQueueService
 from agent_server.services.device_reads import DeviceReadService
 from agent_server.services.device_runtimes import DeviceRuntimeService
 from agent_server.services.e2ee_mode import apply_e2ee_mode
@@ -103,11 +97,9 @@ from agent_server.services.effective_capabilities import (
 from agent_server.services.previews import PreviewService
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 from agent_server.services.setup_tokens import SetupTokenService
-from agent_server.services.shell_tasks import ShellTaskManager
 from agent_server.services.usage_events import UsageRecorder
 from agent_server.services.usage_maintenance import UsageMaintenanceLoop
 from agent_server.services.user_tokens import UserTokenService
-from agent_server.services.workspace import WorkspaceServiceError
 
 CONNECTOR_PRESENCE_SWEEP_SECONDS = 5
 
@@ -131,18 +123,6 @@ async def _connector_presence_watchdog(app: FastAPI) -> None:
         await asyncio.sleep(CONNECTOR_PRESENCE_SWEEP_SECONDS)
         stale_connections = await app.state.rpc.expire_stale()
         for connection in stale_connections:
-            try:
-                await app.state.terminal_broker.remove_ephemeral_for_connector(
-                    connection.connector_id,
-                    connection_id=connection.connection_id,
-                )
-            except Exception:  # noqa: BLE001 - keep the presence watchdog alive
-                logger.exception(
-                    "failed to clean stale connector terminals connector_id={} "
-                    "connection_id={}",
-                    connection.connector_id,
-                    connection.connection_id,
-                )
             app.state.capability_refresh.request(connection.connector_id)
             await publish_dashboard_changed(
                 app.state.store,
@@ -191,8 +171,6 @@ def create_app(
             )
             await app.state.redis.start()
             await app.state.timeline_broker.start()
-            await app.state.terminal_stream_hub.start()
-            await app.state.terminal_broker.start()
             await app.state.rpc.start()
             # Never blocks startup: a Router that is down only shows in readiness (#441 review).
             await app.state.device_mesh.start()
@@ -267,28 +245,14 @@ def create_app(
                 await app.state.rpc.close()
             finally:
                 try:
-                    await app.state.terminal_broker.close()
+                    await app.state.timeline_broker.close()
                 finally:
                     try:
-                        await app.state.terminal_stream_hub.close()
+                        await app.state.redis.close()
                     finally:
-                        try:
-                            await app.state.timeline_broker.close()
-                        finally:
-                            try:
-                                await app.state.redis.close()
-                            finally:
-                                await app.state.store.close()
+                        await app.state.store.close()
 
     app = FastAPI(title="Agent Server", version="2.2.0", lifespan=lifespan)
-    app.add_exception_handler(
-        ConnectorServiceError,
-        error_handlers.connector_service_error_handler,
-    )
-    app.add_exception_handler(
-        WorkspaceServiceError,
-        error_handlers.workspace_service_error_handler,
-    )
     # Inside CORS, so a refused request still carries CORS headers and the browser can read e2ee_required.
     app.add_middleware(E2eeGateMiddleware, settings=e2ee_settings)
     cors_origins = os.environ.get("AGENT_SERVER_CORS_ORIGINS")
@@ -323,22 +287,13 @@ def create_app(
         instance_id=process_settings.instance_id(),
     )
     app.state.store.bind_connector_lifecycle(app.state.rpc.lifecycle_guard)
-    app.state.terminal_roots = TerminalRootStore(app.state.redis)
-    app.state.store.bind_terminal_roots(app.state.terminal_roots)
     app.state.device_mesh = DeviceMesh(MeshSettings.from_environment())
     app.state.device_link_hub = DeviceLinkHub(
         app.state.device_mesh, app.state.redis, worker_id=app.state.rpc.instance_id
     )
-    # v3 devices answer ConnectorRpcManager requests over MeshCall.
-    app.state.device_rpc_bridge = DeviceRpcBridge(app.state.device_link_hub, app.state.device_mesh)
-    app.state.rpc.attach_mesh_link(app.state.device_rpc_bridge)
+    # v3 devices are online through their ``Link/attach`` lease (the same presence key as v2 sockets).
+    app.state.rpc.attach_mesh_link(app.state.device_link_hub)
     app.state.fs_downloads = FsDownloadRelayManager(app.state.redis)
-    app.state.shell_tasks = ShellTaskManager(app.state.redis)
-    app.state.terminal_broker = TerminalBroker(
-        app.state.redis,
-        instance_id=app.state.rpc.instance_id,
-    )
-    app.state.terminal_stream_hub = TerminalStreamHub(app.state.redis)
     app.state.tokens_access_cache = TokensAccessCache(app.state.redis)
     app.state.tokens_client_factory = TokensClient
     app.state.gateway_prober = GatewayProber(allow_private=private_gateways_allowed())
@@ -362,7 +317,6 @@ def create_app(
         app.state.timeline_broker,
         app.state.redis,
         app.state.session_runtime_state_cache,
-        terminal_broker=app.state.terminal_broker,
     )
     app.state.usage_recorder = UsageRecorder(
         app.state.store,
@@ -384,7 +338,7 @@ def create_app(
         e2ee_settings=_e2ee_settings,
     )
     app.state.connector_deletion_recovery = ConnectorDeletionRecovery(
-        app.state.store, app.state.rpc, app.state.terminal_broker,
+        app.state.store, app.state.rpc,
         app.state.session_runtime_state_cache, app.state.timeline_broker,
         app.state.device_link,
     )
@@ -406,7 +360,6 @@ def create_app(
         app.state.store, app.state.device_mesh, app.state.device_link_hub, e2ee_settings=_e2ee_settings
     )
     app.state.device_link.commands = app.state.device_commands
-    app.state.device_rpc_bridge.commands = app.state.device_commands
     # Every device-served client route of a device-meshcall device goes through ``Client/call``.
     app.state.client_forwarder = ClientForwarder(
         app.state.device_mesh, app.state.device_link_hub, app.state.device_commands
@@ -420,10 +373,7 @@ def create_app(
         app.state.redis,
     )
     app.state.device_link.attachment_consumed = app.state.device_blobs.consumed
-    app.state.device_queue = DeviceQueueService(app.state.device_reads, app.state.device_commands)
-    app.state.device_planning = DevicePlanningService(
-        app.state.store, app.state.device_reads, app.state.device_commands
-    )
+    app.state.device_planning = DevicePlanningService(app.state.store, app.state.device_commands)
     app.state.usage_maintenance = UsageMaintenanceLoop(
         app.state.store,
         app.state.redis,
