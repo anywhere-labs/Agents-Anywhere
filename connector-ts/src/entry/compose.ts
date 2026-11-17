@@ -19,10 +19,11 @@ import {
 } from '../application/index.js'
 import type { LiveEvents, Log, RuntimeHandle, RuntimeHandleEvent, RuntimeProvider } from '../application/ports/index.js'
 import { legacyDataDir, type ConnectorRuntime, type ConnectorSettings, type RuntimeFactory } from '../host/index.js'
-import { ControlPlane, DeviceLink, blobLookup, deviceAttachmentFetcher, deviceTransferUploader, readSystemProxySettings, resolveEgress, type Egress, type LinkLogger } from '../link/index.js'
+import { ControlPlane, DeviceLink, blobLookup, deviceAttachmentFetcher, deviceTransferUploader, readSystemProxySettings, resolveEgress, type Egress, type LinkLogger, type WorkspaceServiceDeps } from '../link/index.js'
 import { openStoreWorker, inProcessStore, openSqliteStore, type RemoteStore } from '../store/index.js'
 import { DeviceReaders, DeviceTunnelApi, MemoryChangeFeed, OutboxSignal, plainSealer, type RuntimeFacts, type SessionFacts } from '../sync/index.js'
 import { AttachmentCache, FileOps, RootPolicy, ShellOps, Terminals, nodePtySpawner, rootsFromEnv, workspaceMethods } from '../workspace/index.js'
+import { instanceCatalogs, preparedDownloadUpload } from './client-api.js'
 import { importLegacyV2 } from './legacy-import.js'
 import { builtinProviders } from './runtimes.js'
 import { DeviceTrust, openSealedUpload, type DeviceTrustOptions } from './trust.js'
@@ -228,6 +229,14 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
         const readers = new DeviceReaders(store, clock.nowIso, facts, history, prepared)
         const watch = { store, feed, now: clock.nowIso }
         const workspace = workspaceMethods(files, new ShellOps(policy), terminals ?? undefined)
+        // `aa.device.v1.Workspace` in normal mode; its prepared-download upload also serves `POST fs/read` of the client API.
+        const workspaceService: WorkspaceServiceDeps = {
+          methods: workspace,
+          ...(terminals !== null ? { terminals } : {}),
+          preparedFile: params => files.preparedFile(params),
+          upload: deviceTransferUploader(settings.serverUrl, handshake, egress),
+          onUploadError: (transferId, error) => log('warn', `file download ${transferId} failed: ${message(error)}`),
+        }
         const tunnel = new DeviceTunnelApi({
           deviceId: settings.connectorId,
           store,
@@ -239,6 +248,11 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
           ...(terminals !== null ? { terminals } : {}),
           facts: sessionFacts,
           newId: ids.newId,
+          // The link keeps each session's slash commands; it is created after the tunnel, so it is read per call.
+          commands: sessionId => link?.sessionCommands.get(sessionId) ?? [],
+          runtimes: instanceCatalogs(runtimes),
+          transferUpload: preparedDownloadUpload(workspaceService),
+          platform: process.platform,
         })
         if (options.trust !== false) {
           trust = await DeviceTrust.open({
@@ -275,14 +289,7 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
               find: blobLookup({ blobs: store.blobs, attachment: (sessionId, fileId) => attachments.find(sessionId, fileId) }),
               upload: deviceTransferUploader(settings.serverUrl, handshake, egress),
             },
-            // Normal mode: the same workspace handlers as the secure channel, as `aa.device.v1.Workspace`.
-            workspace: {
-              methods: workspace,
-              ...(terminals !== null ? { terminals } : {}),
-              preparedFile: params => files.preparedFile(params),
-              upload: deviceTransferUploader(settings.serverUrl, handshake, egress),
-              onUploadError: (transferId, error) => log('warn', `file download ${transferId} failed: ${message(error)}`),
-            },
+            workspace: workspaceService,
             ...(deviceTrust !== null ? { secure: deviceTrust.secure } : {}),
             // Normal mode: the client API the secure channel answers, as `aa.device.v1.Client`.
             client: tunnel,

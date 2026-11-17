@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -219,7 +219,7 @@ describe.skipIf(binary === null)('entry: rpc, CLI and the composition root', () 
       type: 'codex',
       instanceId: 'codex',
       capabilities: () => ({ revision: 3, items: [{ id: 'runtime.steer', supported: true }] }),
-      catalogs: async () => ({ selections: { model: null } }),
+      catalogs: async () => ({ models: { runtime: 'codex', revision: 4, models: [{ id: 'gpt-5', displayName: 'GPT-5', selectionId: 'gpt-5' }] } as never, selections: { model: null } }),
       listNativeSessions: async () => ({ sessions: [{ nativeSessionId: 'thr_1', title: 'Fix the build', cwd: '/w', updatedAt: '2026-11-17T00:00:00.000Z' }] }),
       readNativeHistory: async () => ({ items: [{ type: 'message.completed', itemId: 'm1', role: 'user', text: 'hello' }] as never }),
       open: async (target, options) => {
@@ -234,7 +234,9 @@ describe.skipIf(binary === null)('entry: rpc, CLI and the composition root', () 
       discover: async () => ({ type: 'codex', displayName: 'Codex', installed: true, agentVersion: '0.166.0', problems: [], instancePolicy: 'multiple', processScope: 'shared' }),
       start: async () => handle,
     }
-    const host = await startHostProcess({ kind: 'cli', home, routerBinary: binary!, compose: { storeMode: 'in-process', providers: [provider], trust: { vault: noVault() }, terminals: false } })
+    const root = mkdtempSync(join(tmpdir(), 'aa-root-'))
+    writeFileSync(join(root, 'blob.bin'), 'abc')
+    const host = await startHostProcess({ kind: 'cli', home, routerBinary: binary!, compose: { storeMode: 'in-process', providers: [provider], trust: { vault: noVault() }, terminals: false, workspaceRoots: [root] } })
     try {
       const credential = server.deviceCredential
       await host.controller.start({ serverUrl: server.url, connectorId: credential.deviceId, connectorToken: credential.token })
@@ -252,8 +254,33 @@ describe.skipIf(binary === null)('entry: rpc, CLI and the composition root', () 
       expect(snapshot.timeline.items.map(item => item.id)).toEqual(['m1'])
       expect(snapshot.runtimeCapabilities).toMatchObject({ revision: 3, capabilities: [{ capabilityId: 'runtime.steer', scope: 'runtime' }] })
       expect(opened).toEqual([])
+      // The client API answers with what the composition root wired: instance catalogs, session slash commands and
+      // file downloads through the transfer relay.
+      const clientCall = async (request: Record<string, unknown>): Promise<{ head: { status: number }; body: Record<string, unknown> }> => {
+        const [head, ...chunks] = await server.stream<{ kind: string; status: number }>('aa.device.v1.Client', 'call', { caller: { userId: 'usr_1' }, ...request })
+        return { head: head!, body: joinChunks(chunks as never) as Record<string, unknown> }
+      }
+      const dev = `/api/v2/connectors/${credential.deviceId}`
+      const models = await clientCall({ route: 'connector.runtime.catalogs.model', method: 'GET', path: `${dev}/runtimes/codex/catalogs/model` })
+      expect(models.head.status).toBe(200)
+      expect(models.body.catalog).toMatchObject({ runtime: 'codex', revision: 4, models: [{ id: 'gpt-5' }] })
+      const missing = await clientCall({ route: 'connector.runtime.catalogs.model', method: 'GET', path: `${dev}/runtimes/rt_none/catalogs/model` })
+      expect(missing.head.status).toBe(404)
+      const download = await clientCall({
+        route: 'connector.fs.read',
+        method: 'POST',
+        path: `${dev}/fs/read`,
+        query: { root },
+        body: { path: 'blob.bin' },
+        server: { transfer: { transferId: 'tr_1', token: 'tok_1', path: '/api/v3/device/transfers/tr_1' } },
+      })
+      expect(download.head.status).toBe(200)
+      expect(download.body).toMatchObject({ ok: true, result: { transferId: 'tr_1', token: 'tok_1', size: 3 } })
+      await until(() => server.transfers.has('tr_1'), 10_000, 'the transfer upload')
+      expect(server.transfers.get('tr_1')).toMatchObject({ token: 'tok_1', bytes: Buffer.from('abc') })
     } finally {
       await host.shutdown()
+      rmSync(root, { recursive: true, force: true })
     }
   }, 40_000)
 

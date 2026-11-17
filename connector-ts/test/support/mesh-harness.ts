@@ -119,16 +119,18 @@ interface Held {
   events: { m: string; p: Record<string, unknown> }[]
 }
 
-function readBody(request: IncomingMessage): Promise<Record<string, unknown>> {
+function readBytes(request: IncomingMessage): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = []
     request.on('data', (chunk: Buffer) => chunks.push(chunk))
     request.once('error', reject)
-    request.once('end', () => {
-      const text = Buffer.concat(chunks).toString('utf8')
-      resolve(text === '' ? {} : JSON.parse(text) as Record<string, unknown>)
-    })
+    request.once('end', () => resolve(Buffer.concat(chunks)))
   })
+}
+
+async function readBody(request: IncomingMessage): Promise<Record<string, unknown>> {
+  const text = (await readBytes(request)).toString('utf8')
+  return text === '' ? {} : (JSON.parse(text) as Record<string, unknown>)
 }
 
 function send(response: ServerResponse, status: number, body: unknown): void {
@@ -149,6 +151,8 @@ export class FakeServer {
   public held: Held | null = null
   public readonly outbox: OutboxSeen[] = []
   public readonly calls: string[] = []
+  /** Bytes a device PUT to the transfer relay, by transfer id. */
+  public readonly transfers = new Map<string, { token: string; bytes: Buffer }>()
   public pendingCommands: Record<string, unknown>[] = []
   public seqFloors: Record<string, number> = {}
   public e2eeMode: 'off' | 'required' = 'off'
@@ -187,9 +191,15 @@ export class FakeServer {
   }
 
   private async route(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    const body = await readBody(request)
     const auth = request.headers.authorization ?? ''
     this.calls.push(request.url ?? '')
+    if (request.method === 'PUT' && request.url?.startsWith('/api/v3/device/transfers/') === true) {
+      const bytes = await readBytes(request)
+      if (auth !== `Bearer at_${this.credential}`) return send(response, 401, { detail: 'invalid connector access token' })
+      this.transfers.set(request.url.slice('/api/v3/device/transfers/'.length), { token: String(request.headers['x-transfer-token'] ?? ''), bytes })
+      return send(response, 200, { ok: true })
+    }
+    const body = await readBody(request)
     if (request.url === '/api/v3/device/auth') {
       if (auth !== `Connector ${this.deviceId}:${this.credential}`) return send(response, 401, { detail: 'invalid connector credential' })
       return send(response, 200, { accessToken: `at_${this.credential}`, expiresIn: 900 })
