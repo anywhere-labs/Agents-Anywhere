@@ -3,6 +3,7 @@
 //   contains "#slow": replies with some text, then waits for session/cancel (or 60 seconds);
 //   contains "#plan": sends a Markdown plan (plan_update), then replies;
 //   contains "#later": replies after 3 seconds (a turn that ends while the test has the link down);
+//   contains "#bulk <n>": reports n completed tool calls (one timeline item each), then replies;
 //   otherwise: replies "echo: <text> [model=<model> permission=<permission>] sessions-in-cwd=<session/new calls in that cwd>".
 // After session/new it reports the slash command catalog (available_commands_update).
 // When the session's directory holds `.e2e-slow-config` (a number of milliseconds), session/set_config_option answers
@@ -75,6 +76,11 @@ async function prompt(message) {
     return
   }
   if (text.includes('#later')) await new Promise(resolve => setTimeout(resolve, 3000))
+  const bulk = /#bulk (\d+)/u.exec(text)
+  for (let index = 0; index < Number(bulk?.[1] ?? 0); index++) {
+    const output = `step ${index}: ${'lorem ipsum dolor sit amet '.repeat(6)}`
+    update(sessionId, { sessionUpdate: 'tool_call', toolCallId: `bulk-${process.pid}-${message.id}-${index}`, title: `Read file ${index}`, kind: 'read', status: 'completed', content: [{ type: 'content', content: { type: 'text', text: output } }] })
+  }
   if (text.includes('#plan')) {
     update(sessionId, { sessionUpdate: 'plan_update', plan: { type: 'markdown', planId: 'plan-e2e', content: '# E2E plan\n\n1. Read the code\n2. Fix the bug\n' } })
   }
