@@ -123,17 +123,19 @@ def test_native_update_between_thought_deltas_keeps_the_active_thought_identity(
     assert second["content"]["text"] == "first second"
 
 
-def test_unverified_message_id_changes_split_thought_runs_without_delta_churn():
+def test_unverified_message_ids_keep_one_contiguous_thought_run():
     projection = Projection("session", "epoch", runtime_type="hermes")
 
     first = projection.apply(thought("a", message_id="untrusted-1"))
     first_delta = projection.apply(thought("b", message_id="untrusted-1"))
     second = projection.apply(thought("c", message_id="untrusted-2"))
 
+    # An unstable ID must not segment: one reasoning item per delta would be
+    # the failure mode, so every unverified delta joins the same run.
     assert first_delta["id"] == first["id"]
     assert first_delta["content"]["text"] == "ab"
-    assert second["id"] != first["id"]
-    assert second["content"]["text"] == "c"
+    assert second["id"] == first["id"]
+    assert second["content"]["text"] == "abc"
 
 
 def test_missing_message_id_keeps_the_existing_fallback_grouping():
@@ -164,5 +166,102 @@ def test_assistant_text_projection_keeps_its_existing_shape():
         "kind": "markdown",
         "format": "markdown",
         "text": "answer",
-        "isThinking": False,
     }
+
+
+def test_attachment_only_user_message_is_still_projected():
+    projection = Projection("session", "epoch", runtime_type="pi")
+
+    item = projection.apply(
+        {
+            "sessionUpdate": "user_message_chunk",
+            "messageId": "m1",
+            "aaProjectionVerified": True,
+            "content": {"type": "text", "text": ""},
+            "_meta": {
+                "aa": {
+                    "clientMessageId": "m1",
+                    "boundary": True,
+                    "attachments": [{"id": "a1"}],
+                }
+            },
+        }
+    )
+
+    assert item["role"] == "user"
+    assert item["status"] == "done"
+    assert item["content"]["attachments"] == [{"id": "a1"}]
+    assert item["content"]["clientMessageId"] == "m1"
+
+
+def test_empty_assistant_chunk_with_boundary_still_ends_the_message():
+    projection = Projection("session", "epoch", runtime_type="pi")
+
+    item = projection.apply(
+        {
+            "sessionUpdate": "agent_message_chunk",
+            "messageId": "r1",
+            "aaProjectionVerified": True,
+            "content": {"type": "text", "text": ""},
+            "_meta": {"aa": {"boundary": True}},
+        }
+    )
+
+    assert item["status"] == "done"
+
+
+def test_replay_reproduces_live_keys_regardless_of_earlier_messages():
+    def sequence():
+        first = thought("one", message_id="X", verified=True)
+        answer = {
+            "sessionUpdate": "agent_message_chunk",
+            "messageId": "reply-1",
+            "aaProjectionVerified": True,
+            "content": {"type": "text", "text": "answer"},
+        }
+        second = thought("two", message_id="X", verified=True)
+        return first, answer, second
+
+    live = Projection("session", "epoch", runtime_type="pi")
+    live_items = [live.apply(update) for update in sequence()]
+
+    replayed = Projection("session", "epoch", runtime_type="pi")
+    replayed.apply(
+        {
+            "sessionUpdate": "agent_message_chunk",
+            "messageId": "earlier",
+            "aaProjectionVerified": True,
+            "content": {"type": "text", "text": "unrelated"},
+        }
+    )
+    replayed_items = [replayed.apply(update) for update in sequence()]
+
+    assert replayed_items[0]["id"] == live_items[0]["id"]
+    assert replayed_items[2]["id"] == live_items[2]["id"]
+    assert replayed_items[0]["id"] != replayed_items[2]["id"]
+
+
+def test_recovered_projection_continues_instead_of_reappending():
+    live = Projection("session", "e1", runtime_type="pi")
+    first = live.apply(thought("first", message_id="Y", verified=True))
+    live.apply(
+        {
+            "sessionUpdate": "agent_message_chunk",
+            "messageId": "reply",
+            "aaProjectionVerified": True,
+            "content": {"type": "text", "text": "answer"},
+        }
+    )
+    second = live.apply(thought("second", message_id="Y", verified=True))
+
+    # Recover starts a new projection on a new epoch and only restores items.
+    # Both segments come back, so the next one must continue past them rather
+    # than landing on an existing segment and appending to finished text.
+    recovered = Projection("session", "e2", runtime_type="pi")
+    recovered.items.update({first["id"]: first, second["id"]: second})
+    third = recovered.apply(thought("third", message_id="Y", verified=True))
+
+    assert third["id"] not in {first["id"], second["id"]}
+    assert recovered.items[first["id"]]["content"]["text"] == "first"
+    assert recovered.items[second["id"]]["content"]["text"] == "second"
+    assert third["content"]["text"] == "third"

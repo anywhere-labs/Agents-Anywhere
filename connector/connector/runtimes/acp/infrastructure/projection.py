@@ -14,7 +14,56 @@ class Projection:
         self.current_kind = None
         self.current_thought_identity = None
         self.current_thought_key = None
-        self.verified_thought_occurrences: dict[str, int] = {}
+
+    def _reset_segment(self):
+        self.current_kind = None
+        self.current_thought_identity = None
+        self.current_thought_key = None
+
+    @staticmethod
+    def _status(aa_metadata: dict) -> str:
+        stop_reason = aa_metadata.get("stopReason")
+        if stop_reason == "aborted":
+            return "cancelled"
+        if stop_reason == "error":
+            return "failed"
+        return "done" if aa_metadata.get("boundary") else "running"
+
+    def _thought_occurrence(self, kind: str, verified_id: str) -> int:
+        """Number of segments already stored for this ID.
+
+        Derived from self.items rather than a connection-local counter, so live,
+        replay (runtime.py snapshot) and recover (sessions.py) all agree.
+        """
+        # Occurrence 0 is the pre-segmentation key; later segments are stored
+        # under ``occurrence N`` with the same N this scan returns, so the probe
+        # has to start at 1 and advance by one rather than skipping ahead.
+        if fingerprint([self.session_id, kind, verified_id]) not in self.items:
+            return 0
+        occurrence = 1
+        while (
+            fingerprint(
+                [self.session_id, kind, verified_id, "occurrence", occurrence]
+            )
+            in self.items
+        ):
+            occurrence += 1
+        return occurrence
+
+    def _thought_key(self, kind: str, verified_id: str | None) -> str:
+        if verified_id is None:
+            return fingerprint(
+                [self.session_id, self.epoch, kind, self.message_index]
+            )
+        occurrence = self._thought_occurrence(kind, verified_id)
+        if occurrence == 0:
+            # Items written before segmented thoughts existed use this key.
+            # Keeping it for the first segment lets the upgrade upsert them in
+            # place instead of duplicating them.
+            return fingerprint([self.session_id, kind, verified_id])
+        return fingerprint(
+            [self.session_id, kind, verified_id, "occurrence", occurrence]
+        )
 
     def apply(self, update: dict) -> dict | None:
         native = update.get("_meta", {}).get("aa", {}).get("timelineItem")
@@ -47,7 +96,9 @@ class Projection:
             if content.get("type") != "text":
                 return None
             chunk_text = content.get("text", "")
-            if not chunk_text:
+            if not chunk_text and is_thought:
+                # A thought delta carries nothing on its own; other chunks may
+                # still end a message or attach files with empty text.
                 return None
 
             message_id = update.get("messageId")
@@ -59,11 +110,13 @@ class Projection:
                 and message_id
                 else None
             )
+            # Unverified IDs are not stable across deltas (that is what makes
+            # them unverified), so segmenting on them can emit one reasoning
+            # item per token. Merging two runs that should stay apart only
+            # costs readability; splitting on every delta is unusable.
             thought_identity = (
                 ("verified", verified_message_id)
                 if verified_message_id is not None
-                else ("unverified", message_id)
-                if is_thought and isinstance(message_id, str) and message_id
                 else ("fallback", None)
             )
             new_kind = self.current_kind != kind
@@ -74,40 +127,13 @@ class Projection:
             )
             if new_kind or new_thought_segment:
                 self.message_index += 1
+                self._reset_segment()
                 self.current_kind = kind
                 if is_thought:
                     self.current_thought_identity = thought_identity
-                    if verified_message_id is not None:
-                        # Occurrences are connection-local: persisted items do
-                        # not retain enough data to reconstruct prior segments.
-                        # Keep the first observed segment on Pi's key for upserts.
-                        occurrence = self.verified_thought_occurrences.get(
-                            verified_message_id, 0
-                        )
-                        self.verified_thought_occurrences[verified_message_id] = (
-                            occurrence + 1
-                        )
-                        self.current_thought_key = (
-                            fingerprint(
-                                [self.session_id, kind, verified_message_id]
-                            )
-                            if occurrence == 0
-                            else fingerprint(
-                                [
-                                    self.session_id,
-                                    kind,
-                                    verified_message_id,
-                                    self.message_index,
-                                ]
-                            )
-                        )
-                    else:
-                        self.current_thought_key = fingerprint(
-                            [self.session_id, self.epoch, kind, self.message_index]
-                        )
-                else:
-                    self.current_thought_identity = None
-                    self.current_thought_key = None
+                    self.current_thought_key = self._thought_key(
+                        kind, verified_message_id
+                    )
             if is_thought:
                 key = self.current_thought_key
             elif message_id and update.get("aaProjectionVerified"):
@@ -119,15 +145,6 @@ class Projection:
             old = self.items.get(key, {})
             text = old.get("content", {}).get("text", "") + chunk_text
             aa_metadata = update.get("_meta", {}).get("aa", {})
-            status = (
-                "cancelled"
-                if aa_metadata.get("stopReason") == "aborted"
-                else "failed"
-                if aa_metadata.get("stopReason") == "error"
-                else "done"
-                if aa_metadata.get("boundary")
-                else "running"
-            )
             item = {
                 "id": key,
                 "sessionId": self.session_id,
@@ -139,12 +156,11 @@ class Projection:
                     if kind == "user_message_chunk"
                     else "assistant"
                 ),
-                "status": status,
+                "status": self._status(aa_metadata),
                 "content": {
                     "kind": "reasoning" if is_thought else "markdown",
                     "format": "markdown",
                     "text": text,
-                    **({"isThinking": False} if not is_thought else {}),
                     **(
                         {"clientMessageId": aa_metadata["clientMessageId"]}
                         if aa_metadata.get("clientMessageId")
@@ -158,9 +174,7 @@ class Projection:
                 },
             }
         elif kind in {"tool_call", "tool_call_update"}:
-            self.current_kind = None
-            self.current_thought_identity = None
-            self.current_thought_key = None
+            self._reset_segment()
             tool_id = update["toolCallId"]
             key = fingerprint([self.session_id, "tool", tool_id]) if update.get("aaProjectionVerified") else fingerprint([self.session_id, self.epoch, "tool", tool_id])
             old = self.items.get(key, {})
@@ -244,7 +258,5 @@ class Projection:
                     }
                 )
                 result.append(dict(item))
-        self.current_kind = None
-        self.current_thought_identity = None
-        self.current_thought_key = None
+        self._reset_segment()
         return result
