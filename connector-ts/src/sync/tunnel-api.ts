@@ -46,13 +46,14 @@ export type AttachmentFacts = AttachmentRef
 
 /**
  * A call as the routes read it: the command identity the caller registered, and what only the Server knows, taken
- * over the request body's own claims — the session id it allocated, the takeover switch, the uploads it holds, the
+ * over the request body's own claims — the session id it allocated, the takeover switch and archive state, the uploads it holds, the
  * transfer of a download, the file of a preview token. A call through a secure channel has none of them.
  */
 interface Call {
   readonly command: { readonly commandId: string; readonly inputDigest: string | null; readonly deadline: string | null } | null
   readonly sessionId: string | null
   readonly takeover: boolean | null
+  readonly archived: boolean | null
   readonly attachments: readonly AttachmentFacts[] | null
   readonly transfer: TransferFacts | null
   readonly preview: PreviewFacts | null
@@ -77,6 +78,7 @@ export function callOf(context: TunnelCallContext | undefined): Call {
     command: context?.command === undefined ? null : { commandId: context.command.commandId, inputDigest: nonEmpty(context.command.inputDigest), deadline: nonEmpty(context.command.deadline) },
     sessionId: nonEmpty(server.sessionId),
     takeover: typeof server.takeover === 'boolean' ? server.takeover : null,
+    archived: typeof server.archived === 'boolean' ? server.archived : null,
     attachments: Array.isArray(server.attachments) ? server.attachments.map(record).filter(item => nonEmpty(item.fileId) !== null) as unknown as AttachmentFacts[] : null,
     transfer: transferId !== null && token !== null && uploadPath !== null ? { transferId, token, path: uploadPath, ...(nonEmpty(transfer.downloadUrl) !== null ? { downloadUrl: transfer.downloadUrl as string } : {}) } : null,
     preview: previewRoot !== null && previewPath !== null ? { root: previewRoot, path: previewPath } : null,
@@ -298,6 +300,11 @@ export class DeviceTunnelApi implements TunnelApi {
     return call.takeover ?? session.takeover
   }
 
+  /** Archived in the Server's directory or on the device (its use cases refuse an archived session either way). */
+  private archived(session: Session, call: Call): boolean {
+    return call.archived === true || session.archived
+  }
+
   private requireTakeover(session: Session, call: Call): void {
     if (!this.takeover(session, call)) throw conflict('session_read_only', READ_ONLY)
   }
@@ -481,7 +488,7 @@ export class DeviceTunnelApi implements TunnelApi {
   /** `POST runtime/messages`: archived and read-only sessions refuse it; the device decides about busy and the queue. */
   private async sendMessage(caller: ChannelCaller, call: Call, sessionId: string, body: Record<string, unknown>): Promise<TunnelApiResponse> {
     const session = await this.requireSession(sessionId)
-    const source = sessionSourceError(session)
+    const source = sessionSourceError({ archived: this.archived(session, call), sourceAvailability: session.sourceAvailability })
     if (source !== null) throw conflict(source.code, source.message)
     this.requireTakeover(session, call)
     if (typeof body.content !== 'string') throw invalid('content is required')
@@ -632,7 +639,7 @@ export class DeviceTunnelApi implements TunnelApi {
 
   private async planning(caller: ChannelCaller, call: Call, sessionId: string, body: Record<string, unknown>): Promise<TunnelApiResponse> {
     const session = await this.requireSession(sessionId)
-    if (session.archived) throw conflict('session_archived', '会话已归档。')
+    if (this.archived(session, call)) throw conflict('session_archived', '会话已归档。')
     await this.requireCapability(session, call, 'session.planning')
     if (typeof body.command === 'string' && PLAN_REVIEW_COMMANDS.has(body.command)) await this.requireCapability(session, call, 'session.plan_review')
     if (Array.isArray(body.attachments) && body.attachments.length > 0) await this.requireCapability(session, call, 'runtime.attachment')
@@ -642,7 +649,7 @@ export class DeviceTunnelApi implements TunnelApi {
 
   private async goal(caller: ChannelCaller, call: Call, sessionId: string, body: Record<string, unknown>): Promise<TunnelApiResponse> {
     const session = await this.requireSession(sessionId)
-    if (session.archived || !this.takeover(session, call)) throw conflict('goal_control_not_allowed', 'goal_control_not_allowed')
+    if (this.archived(session, call) || !this.takeover(session, call)) throw conflict('goal_control_not_allowed', 'goal_control_not_allowed')
     await this.requireCapability(session, call, 'session.goal')
     if (Array.isArray(body.attachments) && body.attachments.length > 0) await this.requireCapability(session, call, 'runtime.attachment')
     const operationId = call.command?.commandId ?? text(body.operationId)

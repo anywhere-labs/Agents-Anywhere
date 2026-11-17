@@ -7,11 +7,16 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from agent_server.api.client_forward import forward_session, owned_session
+from agent_server.api.client_forward import (
+    forward_session,
+    owned_session,
+    session_facts,
+)
 from agent_server.api.session_planning import DevicePlanning, forwarded_operation, owned
 from agent_server.api.sessions import _require_session_action_capability
 from agent_server.api.v2_compat import V3_SESSION_ONLY
 from agent_server.core.capabilities import RUNTIME_ATTACHMENT, SESSION_GOAL
+from agent_server.core.device_meshcall import ClientServerFacts
 from agent_server.core.goal.models import GoalRequest, GoalResponse, GoalState
 from agent_server.core.models import SessionView
 from agent_server.deps import current_user_id, get_rpc, get_store
@@ -53,7 +58,8 @@ async def execute_goal(
     device: DevicePlanning,
 ):
     if (forwarded := await forward_session(
-        request, "session.goal.execute", user_id=user_id, session_id=session_id, response_model=GoalResponse
+        request, "session.goal.execute", user_id=user_id, session_id=session_id, response_model=GoalResponse,
+        server=_facts,
     )) is not None:
         return forwarded
     session = await owned(db, session_id, user_id)
@@ -94,3 +100,7 @@ async def goal_operation(
     if result is None:
         raise HTTPException(404, "goal operation not found")
     return result
+
+
+async def _facts(session: SessionView) -> ClientServerFacts:
+    return session_facts(session)

@@ -79,7 +79,7 @@ def test_queue_reads_changes_and_messages_go_to_the_device(mesh_router: RouterPr
                 assert sent.json()["result"]["delivery"] == "queued"
                 request = state.client_calls[-1]
                 assert request["route"] == "session.runtime.messages" and request["body"]["queue"] == "auto"
-                assert request["command"]["commandId"] == "m_q" and request["server"] == {"takeover": True}
+                assert request["command"]["commandId"] == "m_q" and request["server"] == {"takeover": True, "archived": False}
 
                 read = await client.get(f"{base}/queue", headers=headers)
                 assert read.status_code == 200, read.text

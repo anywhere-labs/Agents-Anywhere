@@ -214,7 +214,7 @@ def test_command_receipts_register_settle_and_replay(mesh_router: RouterProcess,
                 assert request["command"]["inputDigest"] == client_input_digest(
                     "session.runtime.messages", {"clientMessageId": "m_1", "content": "hi"}
                 )
-                assert request["server"] == {"takeover": True}
+                assert request["server"] == {"takeover": True, "archived": False}
                 receipt = await store.get_device_command(user_id, "m_1")
                 assert (receipt["origin"], receipt["kind"], receipt["state"]) == (
                     "client", "session.runtime.messages", "accepted"

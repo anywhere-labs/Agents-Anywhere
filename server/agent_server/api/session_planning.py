@@ -12,7 +12,11 @@ from fastapi.responses import Response
 from pydantic import RootModel
 
 from agent_server.api.client_forward import call as client_call
-from agent_server.api.client_forward import forward_session, owned_session
+from agent_server.api.client_forward import (
+    forward_session,
+    owned_session,
+    session_facts,
+)
 from agent_server.api.device_session_reads import device_read_http_error
 from agent_server.api.sessions import _require_session_action_capability
 from agent_server.api.v2_compat import V3_SESSION_ONLY
@@ -21,6 +25,7 @@ from agent_server.core.capabilities import (
     SESSION_PLAN_REVIEW,
     SESSION_PLANNING,
 )
+from agent_server.core.device_meshcall import ClientServerFacts
 from agent_server.core.models import SessionView
 from agent_server.core.planning.models import (
     PlanDocument,
@@ -138,7 +143,8 @@ async def execute_planning(
     device: DevicePlanning,
 ):
     if (forwarded := await forward_session(
-        request, "session.planning.execute", user_id=user_id, session_id=session_id, response_model=PlanningResponse
+        request, "session.planning.execute", user_id=user_id, session_id=session_id, response_model=PlanningResponse,
+        server=_facts,
     )) is not None:
         return forwarded
     session = await owned(db, session_id, user_id)
@@ -242,3 +248,7 @@ async def download_plan(
         media_type="text/markdown; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="PLAN.md"'},
     )
+
+
+async def _facts(session: SessionView) -> ClientServerFacts:
+    return session_facts(session)

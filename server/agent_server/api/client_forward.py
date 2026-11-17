@@ -235,6 +235,12 @@ async def forward_connector(
     return to_response(answer)
 
 
+def session_facts(session: SessionView, **extra: Any) -> ClientServerFacts:
+    """The session facts the Server owns (takeover, archive state) for a command on ``session``."""
+
+    return ClientServerFacts(takeover=session.takeover, archived=session.archived, **extra)
+
+
 async def attachment_facts(
     conn: Request, *, user_id: str, session: SessionView, body: Any, field: str = "attachments"
 ) -> list[AttachmentRef] | None:

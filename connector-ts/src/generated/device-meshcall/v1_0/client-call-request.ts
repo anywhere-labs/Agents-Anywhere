@@ -70,6 +70,10 @@ export type Route =
   | "connector.runtime.catalogs.permission"
   | "connector.runtime.commands"
 /**
+ * whether the session is archived in the directory
+ */
+export type Archived = boolean | null
+/**
  * the Server's records of the attachments the body references
  */
 export type Attachments = AttachmentRef[] | null
@@ -138,6 +142,7 @@ export interface Query {
  * Facts the Server owns. The device takes them over whatever the body says, on ``Client/call`` only.
  */
 export interface ClientServerFacts {
+  archived?: Archived
   attachments?: Attachments
   /**
    * a preview read: the file its token opened

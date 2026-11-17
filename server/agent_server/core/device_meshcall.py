@@ -1274,6 +1274,7 @@ class ClientServerFacts(DeviceModel):
 
     sessionId: str | None = Field(default=None, description="create-and-start: the directory row the Server created")
     takeover: bool | None = None
+    archived: bool | None = Field(default=None, description="whether the session is archived in the directory")
     attachments: list[AttachmentRef] | None = Field(
         default=None, description="the Server's records of the attachments the body references"
     )

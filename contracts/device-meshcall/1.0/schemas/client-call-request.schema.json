@@ -137,6 +137,19 @@
     "ClientServerFacts": {
       "description": "Facts the Server owns. The device takes them over whatever the body says, on ``Client/call`` only.",
       "properties": {
+        "archived": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "whether the session is archived in the directory",
+          "title": "Archived"
+        },
         "attachments": {
           "anyOf": [
             {

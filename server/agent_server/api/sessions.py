@@ -28,6 +28,7 @@ from agent_server.api.client_forward import (
     owned_device,
     owned_session,
     raw_body,
+    session_facts,
     to_response,
 )
 from agent_server.api.client_forward import (
@@ -411,7 +412,7 @@ async def _forward_session_command(
     refs = await attachment_facts(request, user_id=user_id, session=session, body=body, field=attachments) if (
         attachments
     ) else None
-    facts = ClientServerFacts(takeover=session.takeover, **({"attachments": refs} if refs else {}))
+    facts = session_facts(session, **({"attachments": refs} if refs else {}))
     try:
         admission = run_service.admitted(session, user_id=user_id) if run_service is not None else nullcontext()
         async with admission:

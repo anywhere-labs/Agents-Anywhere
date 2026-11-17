@@ -189,7 +189,7 @@ def test_slash_commands_are_forwarded_with_a_receipt(mesh_router: RouterProcess,
                 assert ran.json()["ok"] is True and ran.json()["result"]["executionState"] == "accepted"
                 request = state.client_calls[-1]
                 assert request["route"] == "session.runtime.commands.execute"
-                assert request["command"]["commandId"] == "op_cmd_1" and request["server"] == {"takeover": True}
+                assert request["command"]["commandId"] == "op_cmd_1" and request["server"] == {"takeover": True, "archived": False}
                 assert request["body"]["raw"] == "/review  src\nplease"
                 receipt = await app.state.store.get_device_command("user_v3", "op_cmd_1")
                 assert (receipt["kind"], receipt["state"], receipt["sessionId"]) == (

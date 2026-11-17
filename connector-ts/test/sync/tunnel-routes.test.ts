@@ -30,6 +30,12 @@ describe('messages and steer', () => {
     const allowed = await device.request('POST', at('/runtime/messages'), { content: 'x', clientMessageId: 'cm_on' }, { server: { takeover: true } })
     expect(allowed.status, JSON.stringify(allowed.body)).toBe(200)
     await device.runTurn('x')
+    // Archived in the Server's directory: refused even though the device copy is not archived.
+    const archivedByServer = await device.request('POST', at('/runtime/messages'), { content: 'x', clientMessageId: 'cm_sarch' }, { server: { takeover: true, archived: true } })
+    expect(archivedByServer.status).toBe(409)
+    expect(detail(archivedByServer.body)).toEqual({ code: 'session_archived', message: 'session is archived in Agents Anywhere' })
+    expect((await device.request('POST', at('/planning'), { command: 'enter_plan', operationId: 'op_arch' }, { server: { takeover: true, archived: true } })).status).toBe(409)
+    expect(detail((await device.request('POST', at('/goal'), { action: 'set', objective: 'x', operationId: 'op_garch' }, { server: { takeover: true, archived: true } })).body).code).toBe('goal_control_not_allowed')
     await device.inbox.handle('sessionSync', { commandId: 'c_arch', p: { sessionId: S, takeover: true, archived: true } } as never)
     const archived = await device.request('POST', at('/runtime/messages'), { content: 'x', clientMessageId: 'cm_arch' })
     expect(archived.status).toBe(409)
