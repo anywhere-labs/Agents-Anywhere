@@ -1,11 +1,12 @@
-// ACP Client Core：一条 ACP 连接上的客户端一侧。
+// ported from effi-evo cloud/agentd/src/conv/agent-process.ts @95b52ec (session routing, early buffering, replay capture)
 //
-// ported from effi-evo cloud/agentd/src/conv/agent-process.ts @95b52ec（会话路由、early 缓冲、只读回放捕获），
-// effi-crew cloud/agentd/src/conv/agent-process.ts @30f8334 是它的早期版本。
-// 与 agentd 的差别：
-// - 线路层用自己的 JsonRpcPeer（jsonrpc.ts），反向扩展请求按 sessionId 交给会话，不认识的回 method_not_found；
-// - 协议版本协商（v1 / v2）和 initialize `_meta` 扩展协商集中在这里，方言只读结果；
-// - 不声明 fs / terminal 客户端能力：AA 的文件与终端走独立通道，Codex、Claude、Pi、Hermes 都不依赖它们。
+// ACP Client Core: the client side of one ACP connection.
+// - The wire layer is its own JsonRpcPeer (jsonrpc.ts); reverse extension requests are handed to sessions by
+//   sessionId, and unknown ones get method_not_found.
+// - Protocol version negotiation (v1 / v2) and initialize `_meta` extension negotiation live here; dialects only
+//   read the results.
+// - The fs / terminal client capabilities are not declared: AA files and terminals use separate channels, and
+//   Codex, Claude, Pi and Hermes do not depend on them.
 
 import { ErrorCodes, JsonRpcError, type JsonRpcPeer, type RequestContext, type RequestOptions } from './jsonrpc.js'
 
@@ -15,10 +16,10 @@ export type Json = null | boolean | number | string | Json[] | { [key: string]: 
 export type JsonRecord = { [key: string]: Json }
 
 export interface InitializeOptions {
-  /** 客户端支持的最高协议版本；Agent 回它支持的版本（≤）。 */
+  /** Highest protocol version the client supports; the Agent answers with the version it supports (<=). */
   readonly protocolVersion: 1 | 2
   readonly clientCapabilities: JsonRecord
-  /** initialize 顶层 `_meta`（扩展协商，例如 `codexIpc`）。 */
+  /** Top-level initialize `_meta` (extension negotiation, e.g. `codexIpc`). */
   readonly meta?: JsonRecord
   readonly timeoutMs?: number
 }
@@ -28,18 +29,18 @@ export interface AgentInfo {
   readonly agentCapabilities: JsonRecord
   readonly agentInfo: { readonly name?: string; readonly version?: string; readonly title?: string }
   readonly authMethods: readonly JsonRecord[]
-  /** initialize 响应顶层 `_meta`。 */
+  /** Top-level `_meta` of the initialize response. */
   readonly meta: JsonRecord
 }
 
-/** 会话一侧的接收者。一个会话 ID 只有一个 sink（主会话或子 Agent 会话都按 ID 注册）。 */
+/** The receiver on the session side. A session ID has exactly one sink (main and sub-Agent sessions both register by ID). */
 export interface SessionSink {
   onUpdate(update: JsonRecord, notification: JsonRecord): void
-  /** 会话范围内的反向请求：权限、表单、`_codex/session/history_reset` 等。 */
+  /** Session-scoped reverse requests: permissions, forms, `_codex/session/history_reset`, etc. */
   onRequest(method: string, params: JsonRecord, context: RequestContext): Promise<unknown>
 }
 
-/** Agent 在 session/new 返回前就推的更新（例如可用命令），先存着等会话认领。 */
+/** Updates the Agent pushes before session/new returns (e.g. available commands), held until a session claims them. */
 const EARLY_SESSIONS = 32
 const EARLY_UPDATES = 200
 const EARLY_MS = 120_000
@@ -64,7 +65,7 @@ export class AcpClient {
   private readonly early = new Map<string, { at: number; updates: JsonRecord[] }>()
   private globalRequest: ((method: string, params: JsonRecord, context: RequestContext) => Promise<unknown>) | undefined
   private readonly notificationListeners = new Map<string, ((params: JsonRecord) => void)[]>()
-  /** 任何流量的最后时间（ms），供空闲回收。 */
+  /** Time of the last traffic of any kind (ms), used for idle reclamation. */
   lastActivity = Date.now()
 
   constructor(readonly peer: JsonRpcPeer) {
@@ -114,12 +115,12 @@ export class AcpClient {
     this.peer.notify(method, params)
   }
 
-  /** 没有会话认领的反向请求（例如 `_session/list/changes` 之外的全局请求）。 */
+  /** Reverse requests no session claims (e.g. global requests other than `_session/list/changes`). */
   onGlobalRequest(handler: (method: string, params: JsonRecord, context: RequestContext) => Promise<unknown>): void {
     this.globalRequest = handler
   }
 
-  /** 非 session/update 的通知（例如 `_session/list/changes`、`_auth/status_update`）。 */
+  /** Notifications other than session/update (e.g. `_session/list/changes`, `_auth/status_update`). */
   onNotification(method: string, listener: (params: JsonRecord) => void): () => void {
     const list = this.notificationListeners.get(method) ?? []
     list.push(listener)
@@ -130,7 +131,7 @@ export class AcpClient {
     }
   }
 
-  /** 认领一个会话 ID；之前缓冲的更新立即交付。返回解除函数。 */
+  /** Claims a session ID; previously buffered updates are delivered at once. Returns a release function. */
   attach(sessionId: string, sink: SessionSink): () => void {
     this.sinks.set(sessionId, sink)
     const early = this.early.get(sessionId)
@@ -150,8 +151,8 @@ export class AcpClient {
   }
 
   /**
-   * 在 fn 执行期间把该会话的更新收集起来（只读回放：session/load 的历史在响应之前到达）。
-   * 收集期间不交给 sink。
+   * Collects the session's updates while fn runs (read-only replay: session/load history arrives before the
+   * response). Collected updates are not handed to the sink.
    */
   async capture<T>(sessionId: string, fn: () => Promise<T>): Promise<{ result: T; updates: JsonRecord[] }> {
     const updates: JsonRecord[] = []
@@ -212,7 +213,7 @@ export function isInvalidParams(error: unknown): boolean {
   return error instanceof JsonRpcError && error.code === ErrorCodes.invalidParams
 }
 
-/** ACP 错误的可读描述。 */
+/** Readable description of an ACP error. */
 export function describeAcpError(error: unknown): string {
   if (error instanceof JsonRpcError) {
     const data = error.data === undefined ? '' : ' ' + JSON.stringify(error.data).slice(0, 300)

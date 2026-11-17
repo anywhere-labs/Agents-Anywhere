@@ -1,5 +1,6 @@
-// Hermes Agent，经它自己的 `hermes acp` stdio 服务接入。
-// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/hermes/definition.py `HERMES`
+// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/hermes/definition.py @98dd0e6e5 (HERMES)
+//
+// Hermes Agent, connected through its own `hermes acp` stdio server.
 
 import type { AcpAgentDefinition } from '../definition.js'
 import { hermesDialect } from './dialect.js'
@@ -15,7 +16,8 @@ export const HERMES: AcpAgentDefinition = {
   check: ['acp', '--check'],
   version: ['acp', '--version'],
   settings: [{ key: 'hermesHome', title: 'Hermes 配置目录（可选）', environment: 'HERMES_HOME' }],
-  // Hermes 自己的编辑审批策略和它给的名字。命令审批由 Hermes 决定，以审批请求的形式到达 AA。
+  // Hermes's own edit approval policies and their names. Command approval is decided by Hermes and reaches AA as
+  // approval requests.
   permissionOptions: [
     ['ask', 'Default'],
     ['workspace_session', 'Accept Edits'],

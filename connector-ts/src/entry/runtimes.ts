@@ -26,7 +26,7 @@ import { piProvider } from '../runtime/profiles/pi/provider.js'
 import type { Log } from './compose.js'
 
 /**
- * One Runtime instance on this device (v2 `RuntimeInstanceSpec`). The legacy instance of a type has
+ * One Runtime instance on this device. The legacy instance of a type has
  * `runtimeId === runtimeType` and empty settings; named instances come from the Server's desired state.
  */
 export interface RuntimeInstanceSpec {
@@ -49,7 +49,7 @@ export const GATEWAY_FIELD = 'modelGateway'
 
 /**
  * The gateway protocols each Runtime type takes, first the default (a gateway kept in config names its protocol
- * only when there is more than one, as v2's `model_gateway_schema`).
+ * only when there is more than one).
  */
 export const GATEWAY_RUNTIME_PROTOCOLS: Readonly<Record<string, readonly ModelGatewayConfig['protocol'][]>> = {
   claude: ['anthropic'],

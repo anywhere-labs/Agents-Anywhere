@@ -10,7 +10,7 @@ import { FakeAcpAgent, tick, type Json } from '../support/fake-acp-agent.js'
 
 const THREAD = 'native-1'
 
-/** codex-acp 的配置项形状（ModelConfigOption.ts、AgentMode.ts、CollaborationModeConfig.ts）。 */
+/** Shape of codex-acp's configuration options (ModelConfigOption.ts, AgentMode.ts, CollaborationModeConfig.ts). */
 function codexAgent(): FakeAcpAgent {
   const agent = new FakeAcpAgent()
   agent.configOptions = [
@@ -39,7 +39,7 @@ async function open(agent: FakeAcpAgent, selections?: Record<string, string>) {
 
 const codex = (turnId: string, itemType: string, clientMessageId?: string): Json => ({ codex: { turnId, itemType, ...(clientMessageId ? { clientMessageId } : {}) } })
 
-/** 一个 Codex turn：推理、一条助手消息、一个命令、第二条助手消息。 */
+/** One Codex turn: reasoning, an assistant message, a command, a second assistant message. */
 function turnUpdates(turnId: string): Json[] {
   return [
     { sessionUpdate: 'user_message_chunk', messageId: `${turnId}-user`, content: { type: 'text', text: 'hi' }, _meta: codex(turnId, 'userMessage', 'c1') },
@@ -59,7 +59,7 @@ describe('Codex definition', () => {
   it('keeps launch instructions out of the instance configuration and stays resident', () => {
     expect(() => checkDefinition(CODEX)).not.toThrow()
     expect(CODEX.idleMs).toBe(0)
-    // codex-acp 见到 --version 就打印自己的版本，CLI 版本要用 -V
+    // codex-acp prints its own version on --version; the CLI version needs -V
     expect(CODEX.version).toEqual(['cli', '-V'])
   })
 })
@@ -71,7 +71,7 @@ describe('Codex negotiation', () => {
     const init = agent.received.find(r => r.method === 'initialize')!.params
     expect(init.clientCapabilities).toMatchObject({ _meta: { codexItemContext: true } })
     expect(init._meta).toEqual({ codexIpc: { approvals: true, settings: true, historyReplacement: true } })
-    // 不声明 AIR：codex-acp 会对 AIR 改用另一套工具上报形状
+    // do not declare AIR: with AIR codex-acp switches to a different tool-report shape
     expect(JSON.stringify(init)).not.toContain('jetbrains')
     await session.prompt({ text: 'hi' }, { deliveryId: 'd1', clientMessageId: 'c1' })
     expect(agent.received.find(r => r.method === 'session/prompt')!.params).toMatchObject({ _meta: { codexIpc: { clientMessageId: 'c1' } } })
@@ -102,7 +102,7 @@ describe('Codex timeline identity (v2 rules)', () => {
       `tool:${at(0, 'tool:commandExecution')}`,
       `assistant:${at(1, 'assistant-message')}`,
     ])
-    // AA 发的消息与 Codex 回显的 userMessage（clientId = c1）是同一个条目
+    // a message sent by AA and the userMessage Codex echoes (clientId = c1) are the same item
     expect(events.find(e => e.type === 'message.completed' && e.role === 'user')).toMatchObject({ itemId: codexClientMessageItemId(THREAD, 'c1') })
   })
 
@@ -144,7 +144,7 @@ describe('Codex history replacement', () => {
     expect(replayed.length).toBeGreaterThan(0)
     expect(replayed.every(e => e.replay === true)).toBe(true)
     expect(replayed.some(e => e.type === 'turn.started')).toBe(false)
-    // 再替换一次：位置从头数，ID 不变
+    // replace once more: positions count from the start, IDs unchanged
     const first = itemIds(replayed)
     await agent.ask(CODEX_HISTORY_RESET, { sessionId: THREAD, revision: 'rev-2', phase: 'begin' })
     const mark = events.length
@@ -153,7 +153,7 @@ describe('Codex history replacement', () => {
     await tick(10)
     expect(itemIds(events.slice(mark))).toEqual(first)
     expect(events.at(-1)).toMatchObject({ type: 'history.reset', phase: 'abort', revision: 'rev-2' })
-    // 之后的内容是实时的：回合外内容开自主回合
+    // later content is live: out-of-turn content opens an autonomous turn
     agent.text(THREAD, 'live', 'm-live')
     await tick(10)
     expect(events.some(e => e.type === 'turn.started')).toBe(true)

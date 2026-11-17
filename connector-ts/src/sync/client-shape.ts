@@ -23,7 +23,7 @@ export function protocolEvent(sessionId: string, sequence: number, type: string,
   }
 }
 
-/** v2 `timeline_events_from_items`: revision 1 is `timeline.item_created`, later revisions `timeline.item_updated`. */
+/** Timeline events for items: revision 1 is `timeline.item_created`, later revisions `timeline.item_updated`. */
 export function timelineEvents(sessionId: string, items: readonly TimelineItem[], emittedAt: string): ProtocolEventEnvelope[] {
   return [...items]
     .sort((left, right) => left.updatedSeq - right.updatedSeq)

@@ -1,6 +1,8 @@
 // @ts-nocheck
-// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/pi/permissions.mjs
-// AA 的工具审批守卫：SDK bridge 把它作为第一个扩展强制载入 Pi；内容摘要在启动和重新载入时都校验。
+// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/pi/permissions.mjs @98dd0e6e5 (tool approval guard)
+//
+// AA's tool approval guard: the SDK bridge force-loads it into Pi as the first extension; its content digest is
+// verified at startup and on every reload.
 import { createHash } from 'node:crypto'
 import { readFile, stat, unlink } from 'node:fs/promises'
 import { join } from 'node:path'

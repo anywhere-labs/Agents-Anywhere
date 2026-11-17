@@ -1,9 +1,8 @@
 /**
  * The Connector half of `dsh-bridge 2.0` sync for plugins that are already installed
- * (DSH-3; contracts/dsh-bridge/2.0). Ported from v2 `connector/runtimes/dsh/bridge/sync.py`
- * `SyncRelay`, with one change: an acknowledgement and a checkpoint now mean
- * "committed to the Connector's local store" instead of "accepted by the Server"
- * (04-connector.md §5.6). Old plugins cannot tell the difference.
+ * (DSH-3; contracts/dsh-bridge/2.0). An acknowledgement and a checkpoint mean
+ * "committed to the Connector's local store", not "accepted by the Server"
+ * (04-connector.md §5.6); plugins cannot tell the difference.
  *
  * The 2.0 plugin sends notifications it already projected onto the platform timeline
  * (`timeline.itemUpsert`, `session.meta.upsert`, …), so they go to the local store as
@@ -47,7 +46,7 @@ export class Bridge2Error extends Error {
   constructor(readonly code: string, message: string, readonly retryable = false) { super(message) }
 }
 
-/** The local store refused a history for good (v2: Server 4xx, 413 meaning too large). */
+/** The local store refused a history for good; retrying will not help. */
 export class HistoryRefusedError extends Error {
   constructor(readonly reason: 'history_too_large' | 'history_rejected', message: string = reason) { super(message) }
 }
@@ -96,7 +95,7 @@ function eventTime(value: unknown): string | undefined {
 }
 
 /**
- * sync.py `_with_event_time`: date replayed items without a time by their own DSH event
+ * Dates replayed items that have no time by their own DSH event
  * time, else by the session's last activity, so a re-capture does not re-sort sessions.
  */
 export function withEventTime(items: readonly Json[], activity: unknown): Json[] {
@@ -329,7 +328,7 @@ export class Bridge2SyncRelay {
 
   /**
    * Everything a checkpoint covers was acknowledged, so it is committed locally already:
-   * storing it says "the plugin may resume after this point" (v2: "the Server has it").
+   * storing it says "the plugin may resume after this point".
    */
   async saveCheckpoint(subscriptionId: string, externalSessionId: string, checkpoint: unknown): Promise<void> {
     if (subscriptionId === this.subscriptionId) await this.awaitSubscription()

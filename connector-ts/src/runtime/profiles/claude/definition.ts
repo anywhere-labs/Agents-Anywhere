@@ -1,19 +1,17 @@
-// Claude：驱动 @agentclientprotocol/claude-agent-acp（04 §5.3）。适配器内含 Claude CLI，也可以用
-// `CLAUDE_CODE_EXECUTABLE` 指向用户已有的 Claude Code。
+// Claude: drives @agentclientprotocol/claude-agent-acp (04 §5.3). The adapter bundles the Claude CLI;
+// `CLAUDE_CODE_EXECUTABLE` can point it at the user's own Claude Code instead.
 //
-// 与 v2 的差别：
-// - v2 直接用 Claude Agent SDK；v3 一律走 ACP。
-// - v2 实例配置的 `environment`（任意环境变量覆盖）不再提供：实例配置不能携带启动指令（research/06 §6.2）。
-//   模型网关改由 Profile 注入（RuntimeInstanceConfig.modelGateway）。
-// - 适配器由用户安装（`npm i -g @agentclientprotocol/claude-agent-acp`）或在实例配置里填路径；
-//   受管安装（锁定版本、随 Desktop 分发）跟 Pi 的 npm 运行时一起做。
+// - Instance config has no `environment` (arbitrary env overrides): instance config must not carry launch
+//   instructions (research/06 §6.2). The model gateway is injected by the Profile (RuntimeInstanceConfig.modelGateway).
+// - The adapter is installed by the user (`npm i -g @agentclientprotocol/claude-agent-acp`) or its path is set in
+//   instance config; a managed install (pinned version, shipped with Desktop) will come with Pi's npm runtime.
 
 import type { AcpAgentDefinition } from '../definition.js'
 import { claudeDialect } from './dialect.js'
 import { claudeEnvironment } from './environment.js'
 import { claudePermissionCatalog } from './permissions.js'
 
-/** 验证过的适配器版本（S2）。 */
+/** Verified adapter version (S2). */
 export const CLAUDE_AGENT_ACP_VERSION = '0.107.2'
 
 export const CLAUDE: AcpAgentDefinition = {
@@ -26,7 +24,7 @@ export const CLAUDE: AcpAgentDefinition = {
   },
   arguments: [],
   check: ['--version'],
-  // `--cli` 把后面的参数交给内置的 Claude CLI。
+  // `--cli` passes the remaining arguments to the bundled Claude CLI.
   version: ['--cli', '--version'],
   adapterVersion: ['--version'],
   settings: [{ key: 'claudeExecutable', title: '本机 Claude Code 路径（可选）', environment: 'CLAUDE_CODE_EXECUTABLE' }],

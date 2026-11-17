@@ -61,7 +61,7 @@ export interface StoreLedgerDeps {
   /** The DSH runtime instance these sessions belong to. */
   readonly runtimeId: string
   readonly now?: () => string
-  /** `planning.observed` facts for the Planning application (v2 `observe_planning`); dropped when absent. */
+  /** `planning.observed` facts for the Planning application; dropped when absent. */
   readonly planning?: (params: Json) => Promise<void>
   /** `session.inventory.begin/complete` (baseline progress); ignored when absent. */
   readonly inventory?: (method: string, params: Json) => void

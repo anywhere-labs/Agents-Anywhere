@@ -4,7 +4,7 @@ import { ConversationError } from './errors.js'
  * A user message on its way from a client to the Runtime (02-domain-model.md §5.1, `clientMessageId`).
  *
  * - `accepted`: written to the local store; the device has promised to handle it (this is what
- *   `CommandAck.outcome = accepted` means: "落盘才确认").
+ *   `CommandAck.outcome = accepted` means: acknowledged only once persisted).
  * - `queued`: waiting in the session queue (`Delivery(queued)`).
  * - `sending`: handed to the Runtime, waiting for acceptance evidence.
  * - `started`: the Runtime took it (a turn started or the steer landed).

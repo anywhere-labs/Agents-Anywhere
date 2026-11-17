@@ -1,8 +1,8 @@
 /**
- * DSH session identity across both routes (DSH-2, 04-connector.md §5.6 "会话 ID").
+ * DSH session identity across both routes (DSH-2, 04-connector.md §5.6, session IDs).
  *
- * - The source key depends only on DSH_HOME (the 1.x endpoint path under it, as v2), so
- *   both routes, and sessions created by v2, map to the same AA session IDs.
+ * - The source key depends only on DSH_HOME (the 1.x endpoint path under it), so both routes,
+ *   and sessions created by earlier Connectors, map to the same AA session IDs.
  * - The plugin route lets AA choose the native ID (`aa_<ns digest>_<platform id>`), which the
  *   formula inverts. DSH's automation ACP (direct route) only mints random UUIDs, so the
  *   Connector records "platform session ID <-> DSH ID" aliases and every lookup checks them first.

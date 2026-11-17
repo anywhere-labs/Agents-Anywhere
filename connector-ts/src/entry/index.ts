@@ -1,5 +1,5 @@
-// 组合根：compose.ts 装配本地库、用例、设备连接与 Runtime；host-process.ts 是 rpc、Desktop 与 CLI 共用的进程骨架；
-// 只有这里把各层装配在一起。
+// Composition root: compose.ts wires the local store, use cases, device link and Runtimes; host-process.ts is the
+// process skeleton shared by rpc, Desktop and the CLI. Only this layer puts the others together.
 
 export { activeTurns, connectorRuntime, type ComposeOptions, type Log } from './compose.js'
 export { builtinProviders, nativeSessionId, RuntimeRegistry, runtimeSpecFrom, type RuntimeInstanceSpec, type RuntimeRegistryOptions } from './runtimes.js'

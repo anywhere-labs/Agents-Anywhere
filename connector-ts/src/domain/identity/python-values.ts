@@ -24,7 +24,7 @@ export function pyOr(...values: JsonValue[]): JsonValue {
   return values.length ? (values[values.length - 1] as JsonValue) : null
 }
 
-/** Python `str()` for the scalar JSON values v2 identity code stringifies. */
+/** Python `str()` for the scalar JSON values the identity rules stringify. */
 export function pyStr(value: JsonValue): string {
   if (typeof value === 'string') return value
   if (value === true) return 'True'

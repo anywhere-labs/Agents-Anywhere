@@ -1,12 +1,12 @@
-// ported from effi-crew cloud/agentd/src/mesh.ts @30f8334
+// ported from effi-crew cloud/agentd/src/mesh.ts @30f8334 (connection loop)
+// ported from effi-crew cloud/agentd/src/util.ts @30f8334 (Backoff)
 //
 // The device's MeshCall link (06-protocols.md §2, contracts/device-meshcall/1.0): say hello over HTTPS for a
 // Router token and a connection generation, register aa.device.v1.* as targeted services (instance_id = deviceId),
 // call ready so a Server worker holds Link/attach and Link/outbox, and keep it that way: re-register after the
 // Router connection drops, say hello again when the token is refused, retry `duplicate instance_id` at a short
-// steady interval, call ready again when the holder goes away. Changes from agentd: the token comes from
-// `POST /api/v3/device/hello` (not /internal/router-token); no tunnels and no E2E keys at the MeshCall level
-// (encryption is AA's own Secure/channel); the token is not refreshed while registered, because the Router keeps
+// steady interval, call ready again when the holder goes away. The token comes from `POST /api/v3/device/hello`;
+// there are no tunnels and no E2E keys at the MeshCall level (encryption is AA's own Secure/channel); the token is not refreshed while registered, because the Router keeps
 // connections past the token's expiry and a new hello would replace the connection generation; the WebSocket goes
 // through `RouterBridge` so proxies and the system CAs apply.
 
@@ -87,7 +87,7 @@ export interface DeviceLinkOptions {
   readonly timing?: DeviceLinkTiming
 }
 
-/** Exponential backoff with ±25 % jitter (agentd util.ts). */
+/** Exponential backoff with ±25 % jitter. */
 export class Backoff {
   private attempt = 0
   public constructor(private readonly baseMs = 1000, private readonly maxMs = 30_000) {}
@@ -366,7 +366,7 @@ export class DeviceLink {
             fresh = true
           } catch (error) {
             if (signal.aborted) break
-            // Pairing again is the only cure; the host shows it (v2 "expired credential").
+            // Pairing again is the only cure; the host shows it as an expired credential.
             if ((error as { code?: unknown }).code === 'credential_rejected') throw error
             problem(`hello failed: ${(error as Error).message}`)
             await sleep(backoff.next(), signal)

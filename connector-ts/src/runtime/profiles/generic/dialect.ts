@@ -1,11 +1,13 @@
-// 通用 ACP 方言：每个钩子都保持标准 ACP 行为（v2 acp/domain/dialect.py `GENERIC_DIALECT`）。
-// 具体 Agent 的方言在它的基础上覆盖需要的钩子。
+// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/domain/dialect.py @98dd0e6e5 (GENERIC_DIALECT)
+//
+// Generic ACP dialect: every hook keeps standard ACP behaviour. Agent-specific dialects override the hooks they
+// need on top of it.
 
 import type { RuntimeType } from '../../../application/ports/runtime-session.js'
 import { negotiatedCapabilities } from '../../acp/capabilities.js'
 import type { AcpDialect } from '../../acp/dialect.js'
 
-/** v2 AgentClient 的 clientCapabilities（录制里可见）。 */
+/** clientCapabilities sent in initialize (visible in recordings). */
 export const GENERIC_CLIENT_CAPABILITIES = {
   auth: {},
   elicitation: { form: {} },

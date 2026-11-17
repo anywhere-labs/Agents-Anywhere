@@ -1,5 +1,5 @@
-// Codex 伴随层：自动跟随、deeplink 交接、退出 App 的两步流程、rollout 权限、Windows 写锁退路、附件。
-// 真实进程、真实 App 一概不碰：进程表、信号、URL opener、写锁目录都是注入的替身。
+// Codex companion: auto-follow, deeplink handover, the two-step quit-the-App flow, rollout permissions, the Windows write-lock fallback, attachments.
+// Never touches real processes or the real App: the process table, signals, URL opener and write-lock directory are injected stand-ins.
 
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -54,7 +54,7 @@ const windowsUnknown: CodexInspection = { ownership: 'unknown', execution: 'unkn
 const APP: ProcessInfo = { pid: 54846, ppid: 1, uid: 501, startedAt: 'Mon Nov 16 18:19:54 2026', executable: '/Applications/ChatGPT.app/Contents/MacOS/ChatGPT' }
 const APP_SERVER: ProcessInfo = { pid: 12512, ppid: 54846, uid: 501, startedAt: 'Mon Nov 16 22:33:36 2026', executable: '/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex' }
 
-/** 可控的进程表：信号由测试决定进程是否退出。 */
+/** Controllable process table: the test decides whether a signal makes a process exit. */
 class FakeProcesses implements ProcessTable, ProcessSignaller {
   table: ProcessInfo[] = []
   readonly signals: string[] = []
@@ -87,7 +87,7 @@ class FakeLocks implements LockDirectory {
 
 describe('Codex inspect parsing', () => {
   it('reads the codex-acp response shape and never guesses optimistically', () => {
-    // 实机 codex-acp 2.6.0 的响应（ChatGPT App 持有、无人应答）。
+    // response from a real codex-acp 2.6.0 (held by the ChatGPT App, nobody answering).
     const blocked = parseInspection({ ownership: 'external', execution: 'unknown', control: 'unavailable', route: 'blocked', publication: 'withdrawn', archiveReceipt: null, writerLock: 'held', writerLockObservation: { state: 'held', reason: 'contended', observedAt: 1794845016416, fileIdentity: '16777234:98305753' } })
     expect(blocked).toEqual({ ownership: 'external', execution: 'unknown', control: 'unavailable', route: 'blocked', writerLock: { state: 'held', reason: 'contended', observedAt: 1794845016416, fileIdentity: '16777234:98305753' } })
     expect(parseInspection({ ownership: 'external', execution: 'idle', control: 'ipc', route: 'follow' })).toEqual(follow)
@@ -181,7 +181,7 @@ describe('Quitting the Codex App (two steps, explicit consent)', () => {
     expect(outcome).toMatchObject({ status: 'completed', terminated: [APP.pid], killed: [], survivors: [], childSurvivors: [] })
     expect(outcome.threads).toEqual([{ threadId: T1, route: 'resume', writerLock: 'unheld' }])
     expect(processes.signals).toEqual([`TERM ${APP.pid}`])
-    // 计划只能用一次。
+    // a plan can be used only once.
     expect((await q.execute(prepared.plan.planId, { force: false })).status).toBe('unknown_plan')
   })
 
@@ -282,7 +282,7 @@ describe('Codex auto-follow', () => {
     await auto.scan()
     await auto.scan()
     expect(suggested).toEqual([`${T1}:external_owner_running`])
-    // 锁文件消失再出现：新的一段持有，重新建议。
+    // the lock file disappears and reappears: a new holding period, suggested again.
     locks.entries = []
     await auto.scan()
     locks.entries = [{ threadId: T1, mtimeMs: 3 }]
@@ -307,7 +307,7 @@ describe('Codex auto-follow', () => {
     attached.add(T2)
     await auto.scan()
     await tick(40)
-    expect(calls.get(T1)).toBe(3) // 1 次 + 2 次重试
+    expect(calls.get(T1)).toBe(3) // 1 call + 2 retries
     expect(calls.get(T2)).toBeUndefined()
     expect(suggested).toEqual([])
     auto.stop()
@@ -342,13 +342,13 @@ describe('Rollout permission settings', () => {
       JSON.stringify({ type: 'turn_context', payload: { approval_policy: 'never', sandbox_policy: { type: 'danger-full-access' } } }),
       settingsRecord('on-request', 'auto_review', true),
       JSON.stringify({ type: 'response_item', payload: { type: 'message' } }),
-      '{"type":"turn_context","payload":{"approval_pol', // 还在追加的半行
+      '{"type":"turn_context","payload":{"approval_pol', // a half line still being appended
     ].join('\n'))
     expect(await findRollout(home, T1)).toBe(path)
     expect(await rolloutPermissionSettings(path)).toEqual({ approvalPolicy: 'on-request', approvalsReviewer: 'auto_review', sandbox: 'workspace-write' })
     expect(permissionSelectionFromSettings(await rolloutPermissionSettings(path))).toBe(codexPermissionSelectionId('auto_review', { permission_mode: 'auto_review' }))
 
-    // 不是 UUIDv7 的线程：按日期目录倒序找；归档目录兜底。
+    // threads that are not UUIDv7: search date directories newest first; the archive directory is the fallback.
     const other = '019ec9ee-060d-4e01-a46f-1a3264c0c313'
     mkdirSync(join(home, 'archived_sessions'), { recursive: true })
     writeFileSync(join(home, 'archived_sessions', `rollout-2026-06-15T14-18-00-${other}.jsonl`), JSON.stringify({ type: 'turn_context', payload: { approval_policy: 'never', sandbox_policy: { type: 'dangerFullAccess' } } }))
@@ -360,9 +360,9 @@ describe('Rollout permission settings', () => {
 
   it('follows the v2 matching rules and reports unknown instead of a default', () => {
     expect(permissionSelectionFromSettings({ approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: 'workspace-write' })).toBe(codexPermissionSelectionId('request_approval', { permission_mode: 'request_approval' }))
-    // full access 没有固定评审者，Codex 缺省的 user 也算匹配。
+    // full access has no fixed reviewer, so Codex's default user also matches.
     expect(permissionSelectionFromSettings({ approvalPolicy: 'never', approvalsReviewer: 'user', sandbox: 'danger-full-access' })).toBe(codexPermissionSelectionId('full_access', { permission_mode: 'full_access' }))
-    // on-request 但不知道评审者：两个条目都固定了评审者，判定不了。
+    // on-request with an unknown reviewer: both entries fix a reviewer, so it cannot be decided.
     expect(permissionSelectionFromSettings({ approvalPolicy: 'on-request', sandbox: 'workspace-write' })).toBeUndefined()
     expect(permissionSelectionFromSettings({ approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: 'read-only' })).toBeUndefined()
     expect(permissionSelectionFromSettings({})).toBeUndefined()
@@ -377,7 +377,7 @@ describe('Codex companion handle', () => {
       agent.received.push({ method: '_codex/session/inspect', params: params as Json })
       const answer = inspections((params as Json).sessionId as string, ++call)
       if (answer instanceof Error) throw answer
-      // codex-acp 的线上形状：writerLock 是字符串，详情在 writerLockObservation。
+      // codex-acp's wire shape: writerLock is a string, details are in writerLockObservation.
       const { writerLock, ...rest } = answer
       return { ...rest, publication: 'withdrawn', archiveReceipt: null, ...(writerLock ? { writerLock: writerLock.state, writerLockObservation: writerLock } : {}) }
     })
@@ -436,9 +436,9 @@ describe('Codex companion handle', () => {
     const { handle, routes, opened } = companion(agent, { platform: 'win32' })
     await handle.open({ kind: 'existing', ref: { nativeSessionId: T1 } }, { sessionId: 'aa_1', replay: 'none' })
     expect(loads(agent).at(-1)?.params._meta).toBeUndefined()
-    expect(opened).toEqual([]) // 写锁 unknown 不交给 App
+    expect(opened).toEqual([]) // an unknown write lock is not handed to the App
     expect(routes.size).toBe(0)
-    // 其它平台同样的结果仍走 auto，由 codex-acp 报 blocked。
+    // on other platforms the same result still goes auto, and codex-acp reports blocked.
     const mac = codexAgent(() => windowsUnknown)
     const other = companion(mac, { platform: 'darwin' })
     await other.handle.open({ kind: 'existing', ref: { nativeSessionId: T2 } }, { sessionId: 'aa_2', replay: 'none' })
@@ -463,7 +463,7 @@ describe('Codex companion handle', () => {
     const prepared = await handle.ownerRelease.prepare({ nativeSessionId: T1 }, { sessionId: 'aa_7' })
     expect(prepared).toMatchObject({ status: 'plan', plan: { sessionId: 'aa_7', nativeSessionId: T1, owner: { displayName: 'Codex App', processCount: 1 }, releasesOtherSessions: true } })
     if (prepared.status !== 'plan') throw new Error('expected a plan')
-    // 拟定计划不发信号；丢弃后计划不能再执行
+    // drafting a plan sends no signal; after discarding, the plan cannot run
     expect(processes.signals).toEqual([])
     handle.ownerRelease.discard(prepared.plan.planId)
     expect((await handle.ownerRelease.execute(prepared.plan.planId, { force: false })).status).toBe('plan_expired')
@@ -486,10 +486,10 @@ describe('Codex companion handle', () => {
     const page = await handle.listNativeSessions()
     expect(page.sessions.map(s => [s.nativeSessionId, s.permission])).toEqual([
       [T1, codexPermissionSelectionId('full_access', { permission_mode: 'full_access' })],
-      [T2, undefined], // 找不到 rollout：不填，不代入默认值
+      [T2, undefined], // rollout not found: left empty, no default filled in
       ['not-a-thread', undefined],
     ])
-    // 已打开的线程以会话配置为准，不再读 rollout
+    // an opened thread follows the session configuration and no longer reads the rollout
     await handle.open({ kind: 'existing', ref: { nativeSessionId: T1 } }, { sessionId: 'aa_1', replay: 'none' })
     expect((await handle.listNativeSessions()).sessions.find(s => s.nativeSessionId === T1)?.permission).toBeUndefined()
   })

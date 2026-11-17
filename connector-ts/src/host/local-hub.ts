@@ -1,4 +1,6 @@
-// ported from the v2 Connector's connector/mesh/hub.py (Agents Anywhere 2.x), in TypeScript on meshcall 9334405.
+// ported from Agents-Anywhere v2 connector/connector/mesh/hub.py @98dd0e6e5 (LocalHub)
+//
+// The Connector's local MeshCall Router, built on meshcall 9334405.
 import { createHash, randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync, chmodSync, renameSync } from 'node:fs'
 import { connect } from 'node:net'

@@ -1,6 +1,7 @@
 // @ts-nocheck
-// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/pi/sdk-bridge.mjs
-// 模板：生成到 AA 的适配器缓存时把 __AA_PI_SDK_URL__ 换成校验过的 SDK 绝对 URL。
+// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/pi/sdk-bridge.mjs @98dd0e6e5 (SDK bridge)
+//
+// Template: when generated into AA's adapter cache, __AA_PI_SDK_URL__ is replaced with the verified absolute SDK URL.
 // Generated into AA's adapter cache with an absolute, verified SDK URL.
 // Never copied into the user's Pi installation or global extension settings.
 import * as sdk from '__AA_PI_SDK_URL__'

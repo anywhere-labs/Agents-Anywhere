@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path'
 
 import { dataDir } from './paths.js'
 
-/** The Connector's binding to a Server (v2 `ConnectorSettings`, same field names on `aa.local.v2.Control`). */
+/** The Connector's binding to a Server (the same field names as on `aa.local.v2.Control`). */
 export interface ConnectorSettings {
   serverUrl: string
   connectorId: string
@@ -26,7 +26,7 @@ function number(value: unknown, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback
 }
 
-/** v2 `config_from_params`: the three credentials are required; the rest falls back to defaults. */
+/** Settings from request params: the three credentials are required; the rest falls back to defaults. */
 export function settingsFrom(params: unknown): ConnectorSettings {
   if (params === null || typeof params !== 'object' || Array.isArray(params)) throw new ConfigError('config params must be an object')
   const p = params as Record<string, unknown>

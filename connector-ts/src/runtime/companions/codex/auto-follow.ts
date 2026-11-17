@@ -1,14 +1,19 @@
-// 自动跟随：发现 Codex App 正在使用的线程，路线为 follow 时建议会话引擎接管（`native_session.follow_suggested`）。
-// ported from Agents-Anywhere v2 connector/connector/runtimes/codex/ipc/service.py（候选扫描、有界重试、按状态退避）
+// ported from Agents-Anywhere v2 connector/connector/runtimes/codex/ipc/service.py @98dd0e6e5 (candidate scan, bounded retry, per-state backoff)
 //
-// 候选来源是写锁目录（lock-directory.ts）：启动时扫一遍，之后目录变化或定时轮询时再扫。每个候选调
-// `_codex/session/inspect`（只读，不 resume），然后：
-// - route follow：建议接管，同一段持有期只建议一次（锁文件消失后再出现才会再次建议）；
-// - route blocked 且锁是新出现或刚变化的：多半是「App 先广播 following、后登记 ownership」的竞态
-//   （v2 docs/codex-ipc-takeover.md「接管竞态」），间隔几秒有界重试；重试用完记为 blocked，之后按较长间隔再看；
-// - 其它（local 已由本进程持有、resume 无人持有）：不建议，按更长间隔再看。
-// 与 v2 的差别：v2 自己是 IPC 客户端，能收到 following 广播；v3 经 codex-acp，收不到这些广播，
-// 用写锁目录的变化代替。是否真的打开由会话引擎决定。
+// Auto-follow: finds threads the Codex App is using and, when the route is follow, suggests that the session engine
+// take over (`native_session.follow_suggested`).
+//
+// Candidates come from the write lock directory (lock-directory.ts): scanned once at startup, then again on directory
+// changes or periodic polls. Each candidate gets `_codex/session/inspect` (read-only, no resume), then:
+// - route follow: suggest a takeover, only once per holding period (suggested again only after the lock file
+//   disappears and reappears);
+// - route blocked with a lock that is new or just changed: most likely the race where the App broadcasts following
+//   before it registers ownership; retried a bounded number of times a few seconds apart; once retries run out it
+//   is marked blocked and checked again at a longer interval;
+// - anything else (local already held by this process, resume with no holder): no suggestion, checked again at a
+//   longer interval.
+// codex-acp does not receive the App's following broadcasts, so changes in the write lock directory stand in for
+// them. Whether the thread is actually opened is up to the session engine.
 
 import type { CodexInspection } from './inspect.js'
 import type { LockDirectory, LockEntry } from './lock-directory.js'
@@ -16,22 +21,22 @@ import type { LockDirectory, LockEntry } from './lock-directory.js'
 export interface AutoFollowOptions {
   readonly locks: LockDirectory
   readonly inspect: (threadId: string) => Promise<CodexInspection>
-  /** AA 已经打开（附着）了这个线程。 */
+  /** AA has already opened (attached to) this thread. */
   readonly isAttached: (threadId: string) => boolean
   readonly suggest: (threadId: string, reason: string, inspection: CodexInspection) => void
-  /** 目录变化通知可能丢，定时兜底。 */
+  /** Directory change notifications can be lost; polling is the fallback. */
   readonly pollMs?: number
   readonly debounceMs?: number
-  /** 竞态重试：间隔与次数（v2 announce_retry_delay / attempts）。 */
+  /** Race retries: interval and count. */
   readonly raceRetryDelayMs?: number
   readonly raceRetryAttempts?: number
-  /** 持有但无人应答的线程多久再看一次（v2 held_retry_interval）。 */
+  /** How often to recheck a thread that is held but whose holder does not answer. */
   readonly blockedRetryMs?: number
-  /** 无人持有或已由本进程持有的线程多久再看一次（v2 retry_interval）。 */
+  /** How often to recheck a thread with no holder or held by this process. */
   readonly settledRetryMs?: number
-  /** 每次最多看最新的多少个锁文件。 */
+  /** At most how many of the newest lock files to look at per scan. */
   readonly recentLimit?: number
-  /** 同时进行的 inspect 数（没有 owner 时每个要等 IPC discovery 超时，约 5 秒）。 */
+  /** Concurrent inspects (with no owner each waits for the IPC discovery timeout, about 5 seconds). */
   readonly concurrency?: number
   readonly now?: () => number
 }
@@ -78,7 +83,7 @@ export class CodexAutoFollow {
     this.timers.clear()
   }
 
-  /** 会话引擎关闭了线程：之后可以再次建议。 */
+  /** The session engine closed the thread: it can be suggested again. */
   forget(threadId: string): void {
     this.threads.delete(threadId)
   }
@@ -93,7 +98,7 @@ export class CodexAutoFollow {
     this.debounce.unref?.()
   }
 
-  /** 扫一遍；扫描期间又有请求时结束后再扫一遍（不丢通知）。 */
+  /** Scans once; if another request arrives during the scan, scans again afterwards (no notification is lost). */
   scan(): Promise<void> {
     if (this.running !== undefined) {
       this.again = true
@@ -115,7 +120,7 @@ export class CodexAutoFollow {
   private async scanOnce(): Promise<void> {
     const entries = await this.options.locks.list()
     const present = new Map(entries.map(e => [e.threadId, e]))
-    // 锁文件没了：这段持有结束，忘掉状态，之后再出现时重新建议。
+    // The lock file is gone: this holding period is over; forget the state and suggest again if it reappears.
     for (const id of [...this.threads.keys()]) if (!present.has(id) && !this.forced.has(id)) this.threads.delete(id)
     const forced = [...this.forced]
     this.forced.clear()
@@ -132,7 +137,7 @@ export class CodexAutoFollow {
     await pool(due, this.options.concurrency ?? 4, ({ entry, fresh }) => this.probe(entry, fresh))
   }
 
-  /** undefined：这次不看；true：新出现或刚变化（可能处在竞态里）；false：按间隔复查。 */
+  /** undefined: skip this time; true: new or just changed (possibly in the race); false: recheck on the interval. */
   private due(entry: LockEntry, forced: boolean): boolean | undefined {
     if (this.options.isAttached(entry.threadId)) return undefined
     const state = this.threads.get(entry.threadId)
@@ -163,7 +168,7 @@ export class CodexAutoFollow {
       mtimeMs: entry.mtimeMs,
       status: 'settled',
       lastProbe: this.now(),
-      // 同一段持有期（锁文件未变）里累计重试次数。
+      // Retries accumulate within one holding period (lock file unchanged).
       retries: previous !== undefined && previous.mtimeMs === entry.mtimeMs ? previous.retries : 0,
     }
     this.threads.set(entry.threadId, state)

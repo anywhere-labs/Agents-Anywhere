@@ -1,8 +1,9 @@
-// ported from effi-evo cloud/agentd/src/conv/agent-process.ts @95b52ec（进程部分；effi-crew @30f8334 的同名文件是它的早期版本）
+// ported from effi-evo cloud/agentd/src/conv/agent-process.ts @95b52ec (process lifecycle)
 //
-// 一个 ACP 适配器子进程：spawn、stderr 末尾、退出原因、按需停止。ACP 协议部分在 runtime/acp/client.ts。
-// 与 agentd 的差别：POSIX 上自成进程组（停止时连同适配器拉起的 app-server / Claude CLI 一起结束）；
-// Windows 上用 taskkill /T 结束进程树（Job 对象留待 S3 的分发结论）。
+// One ACP adapter child process: spawn, stderr tail, exit reason, stop on demand. The ACP protocol part lives in
+// runtime/acp/client.ts. On POSIX the process leads its own process group (stopping it also ends the app-server /
+// Claude CLI the adapter launched); on Windows taskkill /T ends the process tree (Job objects await the S3
+// distribution decision).
 
 import { spawn, type ChildProcess } from 'node:child_process'
 
@@ -17,9 +18,9 @@ export interface AgentCommand {
 
 export interface SpawnOptions {
   readonly maxMessageBytes?: number
-  /** stderr 每一行（调试日志）。 */
+  /** Every stderr line (debug logs). */
   readonly onStderr?: (line: string) => void
-  /** SIGTERM 之后多久 SIGKILL。 */
+  /** How long after SIGTERM to send SIGKILL. */
   readonly killAfterMs?: number
 }
 
@@ -30,7 +31,7 @@ export class AgentProcess {
   private stderrTail = ''
   private exitedReason: string | undefined
   private readonly exitPromise: Promise<string>
-  /** 正在按计划停止：之后的退出不算崩溃。 */
+  /** Stopping as planned: a later exit does not count as a crash. */
   private stopping = false
   private readonly killAfterMs: number
 
@@ -62,7 +63,7 @@ export class AgentProcess {
         (tail !== '' ? `: ${tail.split('\n').slice(-3).join(' / ').slice(0, 500)}` : ''))
     })
     this.peer = new JsonRpcPeer(ndjsonTransport(this.child.stdout!, this.child.stdin!, options.maxMessageBytes ?? DEFAULT_MAX_MESSAGE_BYTES))
-    // 管道错误（Agent 退出瞬间写入的 EPIPE 等）只关闭这条 Runtime 连接，不能变成 Connector 进程的未捕获异常。
+    // Pipe errors (such as EPIPE when writing as the Agent exits) only close this Runtime connection and must not become uncaught exceptions in the Connector process.
     for (const [name, stream] of [['stdin', this.child.stdin], ['stdout', this.child.stdout]] as const) {
       stream?.on('error', (error: Error) => {
         if (!this.peer.isClosed) this.peer.close(`agent ${name} failed: ${error.message}`)
@@ -71,7 +72,7 @@ export class AgentProcess {
     this.child.stderr?.on('error', (error: Error) => {
       this.stderrTail = (this.stderrTail + `\nstderr failed: ${error.message}`).slice(-4000)
     })
-    // 连接断了但进程还在（超限、stdout 上的垃圾）：没人还能和它说话，按崩溃处理。
+    // The connection dropped but the process lives on (limit exceeded, garbage on stdout): nobody can talk to it anymore, so treat it as a crash.
     void this.peer.whenClosed().then(reason => {
       if (this.exitedReason !== undefined || this.stopping) return
       setTimeout(() => {
@@ -90,7 +91,7 @@ export class AgentProcess {
     return this.exitedReason === undefined
   }
 
-  /** 是否是按计划停止的（不是崩溃）。 */
+  /** Whether it stopped as planned (not a crash). */
   get expectedExit(): boolean {
     return this.stopping
   }
@@ -103,13 +104,13 @@ export class AgentProcess {
     return this.stderrTail
   }
 
-  /** 进程退出时 resolve（原因）。 */
+  /** Resolves (with the reason) when the process exits. */
   exited(): Promise<string> {
     return this.exitPromise
   }
 
   /**
-   * 进程先退出时以退出原因 reject，避免请求永远挂着。
+   * Rejects with the exit reason when the process exits first, so requests never hang forever.
    */
   async withExit<T>(promise: Promise<T>): Promise<T> {
     const exited = this.exitPromise.then(why => {
@@ -120,14 +121,14 @@ export class AgentProcess {
       return await Promise.race([promise, exited])
     } catch (error) {
       if (this.exitedReason !== undefined) throw new Error(this.exitedReason)
-      // 流可能比 exit 事件早关一点。
+      // The streams may close slightly before the exit event.
       const why = await Promise.race([this.exitPromise, new Promise<undefined>(resolve => setTimeout(() => resolve(undefined), 1000).unref())])
       if (why !== undefined) throw new Error(why)
       throw error
     }
   }
 
-  /** 停止：关 stdin，SIGTERM 进程组，超时 SIGKILL；等到进程真正退出（它持有的写锁之类此时已释放）。 */
+  /** Stops: closes stdin, SIGTERMs the process group, SIGKILLs on timeout; waits until the process really exits (by then things like its write locks are released). */
   async stop(): Promise<void> {
     if (this.exitedReason !== undefined) return
     this.stopping = true
@@ -152,7 +153,7 @@ export class AgentProcess {
       try {
         this.child.kill(signal)
       } catch {
-        // 已经退出
+        // already exited
       }
     }
   }

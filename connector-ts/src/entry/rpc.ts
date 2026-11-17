@@ -4,7 +4,7 @@ export const READY_KIND = 'connector.ready'
 export const READY_VERSION = 1
 
 /**
- * `anywhere-cli rpc` (local-machine 2.0 §控制通道): one ready line on stdout, then nothing else is ever written
+ * `anywhere-cli rpc` (local-machine 2.0, control channel): one ready line on stdout, then nothing else is ever written
  * there; the host talks to `aa.local.v2.Control` / `Logs` with the `host` key it carries. Closing stdin shuts the
  * Connector, and with it the Router, down.
  */

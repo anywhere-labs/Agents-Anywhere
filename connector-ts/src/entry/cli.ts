@@ -130,7 +130,7 @@ function printInvitation(io: CliIo, invitation: ClientPairingInvitation, color: 
   io.out(`It works once and expires at ${invitation.expiresAt}.`)
 }
 
-/** `anywhere-cli`: the same commands as the v2 CLI (`start`, `pair`, `configure`, `rpc`) plus `pair-client`. Returns the exit code. */
+/** `anywhere-cli`: the `start`, `pair`, `configure`, `rpc` and `pair-client` commands. Returns the exit code. */
 export async function runCli(argv: readonly string[], options: CliOptions = {}): Promise<number> {
   const io = options.io ?? { out: line => process.stdout.write(`${line}\n`), err: line => process.stderr.write(`${line}\n`) }
   const [command, ...rest] = argv

@@ -1,7 +1,8 @@
-// ACP 录制与回放（沿用 v2 connector/tests/fixtures/acp-recordings 的格式：每行 {direction, message}）。
-// - recordTo：在一条连接上记下双向消息；
-// - ReplayAgent：在内存传输的 Agent 一端按录制顺序回放：客户端发出一条（核对方法名），就把紧随其后的
-//   incoming 消息依次推回去。用于在没装 Agent 的机器上测方言与事件翻译。
+// ACP recording and replay (the format of the `acp-recordings` test fixtures: one {direction, message} per line).
+// - recordTo: records the messages in both directions on a connection;
+// - ReplayAgent: replays in recorded order on the Agent end of an in-memory transport: each time the client sends a
+//   message (its method name is checked), the incoming messages right after it are pushed back in turn. Used to
+//   test dialects and event translation on machines without the Agent installed.
 
 import { JsonRpcPeer, type JsonRpcMessage, type MessageTransport } from './jsonrpc.js'
 
@@ -14,7 +15,7 @@ export function parseRecording(text: string): RecordingEntry[] {
   return text.split('\n').filter(line => line.trim() !== '').map(line => JSON.parse(line) as RecordingEntry)
 }
 
-/** 记录一条连接上的所有消息。返回停止记录的函数。 */
+/** Records every message on a connection. Returns a function that stops recording. */
 export function recordTo(peer: JsonRpcPeer, sink: (entry: RecordingEntry) => void): () => void {
   return peer.tap((direction, message) => sink({ direction, message }))
 }
@@ -38,7 +39,7 @@ export class ReplayAgent {
   }
 
   private onClientMessage(message: JsonRpcMessage): void {
-    // 客户端可能发出录制里没有的通知（例如取消）：跳过不核对。
+    // The client may send notifications missing from the recording (e.g. cancel): skip them without checking.
     const expected = this.entries[this.cursor]
     if (!expected || expected.direction !== 'outgoing') {
       if ('method' in message && !('id' in message)) return
@@ -62,7 +63,7 @@ export class ReplayAgent {
   }
 }
 
-/** 给测试用：回放 Agent 的另一端。 */
+/** For tests: the other end of the replay Agent. */
 export function replayPeer(entries: readonly RecordingEntry[], pair: [MessageTransport, MessageTransport]): { peer: JsonRpcPeer; agent: ReplayAgent } {
   const agent = new ReplayAgent(entries, pair[1])
   return { peer: new JsonRpcPeer(pair[0]), agent }

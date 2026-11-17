@@ -44,7 +44,7 @@ describe('AcpRuntimeSession', () => {
     expect(types).toEqual(['turn.started', 'message.completed', 'message.delta', 'message.delta', 'turn.ended'])
     const deltas = events.filter((e): e is Extract<RuntimeEvent, { type: 'message.delta' }> => e.type === 'message.delta')
     expect(deltas.map(d => d.text).join('')).toBe('Hello')
-    // 同一条消息的两个增量落在同一个条目上，ID 与 v2 通用 ACP 规则一致（会话 ID + 连接 epoch + 序号）
+    // both deltas of one message land on the same item; IDs follow the generic ACP rule (session ID + connection epoch + sequence)
     expect(deltas[0]!.itemId).toBe(deltas[1]!.itemId)
     const user = events[1] as Extract<RuntimeEvent, { type: 'message.completed' }>
     expect(user.itemId).toBe(acpFingerprint(['aa_s1', 'user_message_chunk', 'c1']))
@@ -102,7 +102,7 @@ describe('AcpRuntimeSession', () => {
     expect(answer).toEqual({ outcome: { outcome: 'selected', optionId: 'allow' } })
     expect(events.some(e => e.type === 'interaction.resolved')).toBe(true)
 
-    // 取消：待答审批回 cancelled
+    // cancel: the pending approval resolves as cancelled
     agent.onPrompt = async (params, a) => {
       answer = await a.ask('session/request_permission', { sessionId: params.sessionId, toolCall: { toolCallId: 't2' }, options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }] })
       return { stopReason: 'cancelled' }
@@ -135,7 +135,7 @@ describe('AcpRuntimeSession', () => {
     expect(answer).toBeUndefined()
     expect(events.some(e => e.type === 'interaction.resolved')).toBe(false)
     expect(session.busy).toBe(true)
-    // 交互还在：用户可以重答，Agent 收到答复，回合正常结束。
+    // the interaction is still there: the user can answer again, the Agent gets the answer and the turn ends normally.
     await session.respond(opened.interactionId, { kind: 'option', optionId: 'allow' })
     await tick(10)
     expect(answer).toEqual({ outcome: { outcome: 'selected', optionId: 'allow' } })

@@ -1,9 +1,9 @@
-// S1 实测：codex-acp 在真实 Codex App 上的双向同步（08-migration-and-rollout.md §1）。
-// 默认跳过。运行：
+// S1 field test: two-way sync of codex-acp with the real Codex App (08-migration-and-rollout.md §1).
+// Skipped by default. Run:
 //   AA_LIVE_CODEX=1 AA_CODEX_ACP=/path/to/codex-acp/dist/index.js \
 //   [AA_CODEX_PATH=/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex] \
 //   corepack yarn vitest run test/live/codex-s1.live.test.ts
-// 会在真实 ~/.codex 里新建线程（工作目录在临时目录），并用少量模型额度。
+// Creates threads in the real ~/.codex (working directory in a temporary directory) and spends a little model quota.
 
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -117,7 +117,7 @@ describe.skipIf(!live)('S1: codex-acp × real Codex App (macOS)', () => {
       report.inspections = inspections
       const followable = inspections.find(i => i.route === 'follow')
       report.followCandidate = followable ?? null
-      // 只读历史：不 resume
+      // read-only history: no resume
       const target = String((followable ?? inspections[0])?.sessionId ?? '')
       const read = asRecord(await client.request('_codex/session/read', { sessionId: target }, { timeoutMs: 60_000 }))
       report.readOnlyHistory = { sessionId: target, updates: Array.isArray(read.updates) ? read.updates.length : null }
@@ -165,7 +165,7 @@ describe.skipIf(!live)('S1: codex-acp × real Codex App (macOS)', () => {
         publishedInOwners: JSON.stringify(owners).includes(createdThread),
       }
       expect(agentText(session)).toContain('S1-NEW-OK')
-      // 给 App 留时间看到发布（侧边栏需人工确认）
+      // give the App time to see the publication (the sidebar needs a manual check)
       await sleep(3000)
       try {
         execFileSync('screencapture', ['-x', join(tmpdir(), 'aa-v3-s1-owner.png')])
@@ -200,7 +200,7 @@ describe.skipIf(!live)('S1: codex-acp × real Codex App (macOS)', () => {
         _meta: { codexIpc: { clientMessageId: 'aa-s1-follow-1' } },
       }, { timeoutMs: 300_000 }))
       const followText = agentText(session)
-      // 设置切换：思考强度
+      // settings switch: reasoning effort
       const options = Array.isArray(loaded.configOptions) ? loaded.configOptions.map(asRecord) : []
       const effort = options.find(o => o.category === 'thought_level' || o.id === 'reasoning_effort')
       let settings: unknown = 'no effort option'

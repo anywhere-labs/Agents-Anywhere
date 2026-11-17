@@ -258,7 +258,7 @@ export function authorizeClient(state: DeviceTrustState, clientId: string, ident
   return grant
 }
 
-/** The Server's declaration is only ever a reason to tighten (§6 "声明，不是命令"). */
+/** The Server's declaration is only ever a reason to tighten (§6 "a declaration, not a command"). */
 export function declareServerMode(state: DeviceTrustState, serverMode: E2eeMode, nowIso: string): Change {
   if (serverMode !== 'required' || state.policy.required) return { state, events: [] }
   return {

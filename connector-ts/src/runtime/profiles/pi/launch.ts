@@ -1,7 +1,8 @@
-// Pi 的启动准备：本机模式绑定用户自己的 pi 与 SDK，受管环境装好 npm 运行时并写私有配置；两者都用打过补丁的
-// `@openma/pi-acp` 适配器，并强制载入 AA 的审批守卫。
-// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/pi/definition.py（`layout`、`prepare_launch`、
-// `source_changed`）与 environment.py。
+// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/pi/definition.py @98dd0e6e5 (layout, prepare_launch, source_changed)
+// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/pi/environment.py @98dd0e6e5 (npm_root, bundled_runtime, prepare_environment)
+//
+// Pi launch preparation: local mode binds the user's own pi and SDK; the managed environment installs the npm runtime
+// and writes private config. Both use the patched `@openma/pi-acp` adapter and force-load AA's approval guard.
 
 import { createHash } from 'node:crypto'
 import { readFileSync, statSync } from 'node:fs'
@@ -21,36 +22,39 @@ import { agentDirectory, installationIdentity, probeSdk, resolveLocal, type PiIn
 import { normalizePiSettings, prepareManagedSettings, privateJson, type PiSettings } from './settings.js'
 
 /**
- * 受管环境锁定一个验证过的 SDK；适配器跟随 0.1.x 发布（每个补丁锚点使用前都会复核）。
- * Desktop 用同一个文件构建预装包。
+ * The managed environment pins one verified SDK; the adapter follows 0.1.x releases (every patch anchor is re-verified
+ * before use). Desktop builds its preinstalled bundle from the same file.
  */
 export const DEPENDENCIES: Readonly<Record<string, string>> = JSON.parse(
   readFileSync(fileURLToPath(new URL('./dependencies.json', import.meta.url)), 'utf8'),
 ) as Record<string, string>
 export const ADAPTER_ENTRY = '@openma/pi-acp/dist/bin.js'
 export const SDK_PACKAGE = '@earendil-works/pi-coding-agent'
-/** Desktop 预装的依赖：从它播种不需要网络。 */
+/** Dependencies preinstalled by Desktop: seeding from them needs no network. */
 export const BUNDLED_RUNTIME_ENV = 'AA_PI_BUNDLED_RUNTIME'
 export const NPM_ROOT_ENV = 'AA_PI_NPM_ROOT'
 
-/** 一个 Pi 实例在磁盘上的位置。 */
+/** Where a Pi instance lives on disk. */
 export interface PiLayout {
   readonly managed: boolean
-  /** 实例私有目录：进程工作目录、执行来源记录、受管会话、写入校验文件。 */
+  /** Instance private directory: process working directory, execution source record, managed sessions, write verification files. */
   readonly root: string
-  /** 受管环境的私有配置（按配置内容分代：取消的准备不会覆盖更新的网关配置）。 */
+  /**
+   * Managed environment private config (one generation per config content, so a cancelled preparation cannot
+   * overwrite a newer gateway config).
+   */
   readonly settingsRoot: string
   readonly agentDir: string
   readonly permissionFile: string
   readonly planningDir: string
-  /** 受管环境的会话目录（`--session-dir`）；本机模式用 Pi 自己的。 */
+  /** Managed environment session directory (`--session-dir`); local mode uses Pi's own. */
   readonly sessionDir?: string
-  /** 同一台机器上所有实例共用的 npm 运行时与适配器缓存。 */
+  /** npm runtime and adapter cache shared by all instances on the machine. */
   readonly npmRoot: string
   readonly adapterRoot: string
 }
 
-/** 数据目录下 Pi 的实例目录（v2 acp/composition.py `runtime_root`）。 */
+/** Pi instance directory under the data directory; the name must stay stable so existing instance directories are found. */
 export function piInstanceRoot(dataDir: string, sessionNamespace: string, instanceId: string): string {
   return join(dataDir, 'pi', 'instances', acpRuntimeRootName(sessionNamespace, instanceId))
 }
@@ -83,8 +87,9 @@ export function piLayout(context: Pick<LaunchContext, 'dataDir' | 'sessionNamesp
 }
 
 /**
- * Pi、Node、适配器的升级每次启动都会复核，不算换了来源；只有运行模式或原生配置目录变了才算
- * （受管环境的私有目录按配置分代，换目录不算）。v2 `source_changed`。
+ * Upgrades of Pi, Node or the adapter are re-verified on every start and do not count as a source change; only a change
+ * of execution mode or native config directory does (the managed environment's private directory is per config
+ * generation, so changing it does not count).
  */
 export function sourceChanged(previous: JsonObject | undefined, current: JsonObject): boolean {
   if (!previous) return false
@@ -92,7 +97,10 @@ export function sourceChanged(previous: JsonObject | undefined, current: JsonObj
   return fixed.some(key => JSON.stringify(previous[key]) !== JSON.stringify(current[key]))
 }
 
-/** 很慢的部分（加载 SDK 探测、依赖树摘要）按安装位置与清单修改时间缓存；升级后清单变了就重算。 */
+/**
+ * The slow parts (loading the SDK probe, dependency tree digest) are cached by install location and manifest mtime;
+ * they are recomputed when an upgrade changes the manifest.
+ */
 export class PiLaunchCache {
   private readonly probes = new Map<string, Promise<void>>()
   private readonly identities = new Map<string, Promise<JsonObject>>()
@@ -135,13 +143,16 @@ const sharedCache = new PiLaunchCache()
 export interface PiLaunchOptions {
   readonly cache?: PiLaunchCache
   readonly env?: NodeJS.ProcessEnv
-  /** 受管环境取网关模型列表（测试替换）。 */
+  /** Fetches the gateway model list for the managed environment (replaced by tests). */
   readonly fetch?: typeof fetch
-  /** 本机 pi 的解析（测试替换）。 */
+  /** Local pi resolution (replaced by tests). */
   readonly resolveLocal?: (settings: JsonObject) => Promise<PiInstallation>
 }
 
-/** v2 `prepare_launch`：每次拉起 Pi 进程之前调用。返回命令、参数与 Pi 需要的环境变量（守卫、权限、网关密钥）。 */
+/**
+ * Called before every Pi process start. Returns the command, arguments and the environment variables Pi needs (guard,
+ * permission, gateway key).
+ */
 export async function preparePiLaunch(context: LaunchContext, options: PiLaunchOptions = {}): Promise<LocalLaunch> {
   const env = options.env ?? process.env
   const gateway: ModelGatewayConfig | undefined = context.modelGateway
@@ -151,7 +162,7 @@ export async function preparePiLaunch(context: LaunchContext, options: PiLaunchO
   let installation: PiInstallation | undefined
   if (!paths.managed) {
     installation = await (options.resolveLocal ?? (values => resolveLocal(values, { env })))(context.settings)
-    // 先拒绝不能用的本机 SDK，再下载适配器。
+    // Reject an unusable local SDK before downloading the adapter.
     await cache.probe(installation)
   }
   const bundle = env[BUNDLED_RUNTIME_ENV]
@@ -196,7 +207,7 @@ export async function preparePiLaunch(context: LaunchContext, options: PiLaunchO
   }
   const electron = nodeEnvironment(local.node)
   if (Object.keys(electron).length) {
-    // Desktop 的 Electron 只对这个进程按 Node 运行；它的目录里没有给 Agent 自己的命令用的 `node`。
+    // Desktop's Electron runs as Node only for this process; its directory has no `node` for the Agent's own commands.
     Object.assign(environment, electron)
   } else {
     environment.PATH = dirname(local.node) + delimiter + (env.PATH ?? '')

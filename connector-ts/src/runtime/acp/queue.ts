@@ -1,4 +1,4 @@
-// 只增不减的异步事件队列：一个生产者，一个消费者（RuntimeSession.events）。
+// Append-only async event queue: one producer, one consumer (RuntimeSession.events).
 
 export class EventQueue<T> implements AsyncIterable<T> {
   private readonly buffer: T[] = []

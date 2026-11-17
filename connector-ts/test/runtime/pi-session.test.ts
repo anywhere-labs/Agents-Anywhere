@@ -97,7 +97,7 @@ describe('Pi session', () => {
     }
     const session = await handle.open({ kind: 'new', spec: { cwd: work } }, { sessionId: 'aa_s2', replay: 'none' }) as PiRuntimeSession
     const events = collect(session)
-    // 接纳不等模型输出：守卫报告回合开始就算
+    // acceptance does not wait for model output: the guard reporting the turn start is enough
     const acceptance = await session.prompt({ text: 'hello' }, { deliveryId: 'd', clientMessageId: 'c1' })
     expect(acceptance).toMatchObject({ outcome: 'accepted', userItemId: acpFingerprint(['aa_s2', 'user_message_chunk', 'c1']) })
     release()
@@ -230,13 +230,13 @@ describe('Pi session', () => {
     await session.prompt({ text: 'one' }, { deliveryId: 'd1', clientMessageId: 'c1' })
     await until(() => of(events, 'turn.ended').length === 1)
     await session.checkIdle(Date.now() + 3600_000)
-    // 终端里的 pi 续写了一条
+    // the pi in a terminal appended a message
     const file = world.agents[0]!.sessionFiles.get(session.nativeSessionId)!
     writeFileSync(file, readFileSync(file, 'utf8') + JSON.stringify({ type: 'message', id: 'cli1', parentId: 'u1', message: { role: 'user', content: 'from cli' } }) + '\n')
     world.configure = agent => {
       agent.onPrompt = async () => ({ stopReason: 'end_turn' })
     }
-    // 醒来时同步完整历史（v2 历史 ID）；新进程还没报告写入状态（模拟 bridge 未就绪），这次输入被拒绝而不是盲写。
+    // on wake, sync the full history (with history IDs); the new process has not reported its write status yet (bridge not ready), so this input is refused rather than written blindly.
     world.bridgeReports = false
     const result = await session.prompt({ text: 'two' }, { deliveryId: 'd2', clientMessageId: 'c2' })
     await tick()
@@ -266,7 +266,7 @@ describe('Pi session', () => {
     await tick()
     expect(events[0]).toMatchObject({ type: 'message.completed', replay: true, text: 'from the terminal', itemId: piHistoryItemId('aa_s8', { id: 'u1' }, 0, 0) })
     expect((await session.prompt({ text: 'continue' }, { deliveryId: 'd', clientMessageId: 'c' })).outcome).toBe('accepted')
-    // 同一个原生文件只能有一个 AA 写者
+    // one native file can have only one AA writer
     await expect(handle.open({ kind: 'existing', ref }, { sessionId: 'aa_s9', replay: 'none' })).rejects.toMatchObject({ error: { code: 'pi_source_busy' } })
     await handle.stop()
   })
@@ -296,7 +296,7 @@ describe('Pi session', () => {
 
   it('keeps reporting the first native id after a dormant new session restarts under a new one', async () => {
     const { handle, world, work, layout, reopen } = setup()
-    // 第一轮 Pi 没写原生文件（还没有助手消息落盘）；第二个进程里的会话会写。
+    // in the first round Pi wrote no native file (no assistant message persisted yet); the session in the second process does.
     world.configure = agent => {
       agent.onPrompt = async params => {
         if (world.agents.length > 1) {
@@ -313,20 +313,20 @@ describe('Pi session', () => {
     expect(await session.checkIdle(Date.now() + 3600_000)).toBe(true)
     expect((await session.prompt({ text: 'two' }, { deliveryId: 'd2', clientMessageId: 'c2' })).outcome).toBe('accepted')
     await until(() => of(events, 'turn.ended').length === 2)
-    // 第二个进程开了新的原生会话，对外仍是最初的 ID；权限跟着新的原生 ID 走。
+    // the second process opened a new native session but still uses the original ID externally; permissions follow the new native ID.
     const actual = world.agents[1]!.sessionFiles.keys().next().value!
     expect(actual).not.toBe(first)
     expect(session.nativeSessionId).toBe(first)
     expect(JSON.parse(readFileSync(join(layout.root, 'pi-session-aliases.json'), 'utf8'))).toEqual({ version: 1, aliases: { [actual]: first } })
     expect(JSON.parse(readFileSync(layout.permissionFile, 'utf8'))[actual]).toBe('readonly')
-    // 目录、只读历史、open(existing) 都用最初的 ID。
+    // catalogs, read-only history and open(existing) all use the original ID.
     const ref = (await handle.listNativeSessions()).sessions.find(s => s.locator?.endsWith(`${actual}.jsonl`))!
     expect(ref.nativeSessionId).toBe(first)
     const page = await handle.readNativeHistory({ nativeSessionId: first }, { limit: 10 })
     expect(page.items[0]).toMatchObject({ itemId: piHistoryItemId(piNativeSessionId('pi', ref.locator!, first), { id: 'u1' }, 0, 0) })
     await session.close()
     await handle.stop()
-    // Connector 重启：别名表从实例目录读回来。
+    // Connector restart: the alias table is read back from the instance directory.
     const restarted = reopen()
     expect((await restarted.listNativeSessions()).sessions.map(s => s.nativeSessionId)).toContain(first)
     const resumed = await restarted.open({ kind: 'existing', ref: { nativeSessionId: first } }, { sessionId: 'aa_alias', replay: 'none' }) as PiRuntimeSession
@@ -383,7 +383,7 @@ describe('Pi session', () => {
       [item('m3', 'agent_thought_chunk'), 'reasoning', 'hmm', 'cancelled'],
       [item('m3'), 'assistant', 'half', 'cancelled'],
     ])
-    // 正文增量与整条消息是同一个条目
+    // text deltas and the whole message are the same item
     expect(new Set(of(events, 'message.delta').map(e => e.itemId))).toEqual(new Set([item('m1', 'agent_thought_chunk'), item('m1'), item('m2'), item('m3', 'agent_thought_chunk'), item('m3')]))
     const ended = of(events, 'turn.ended')
     expect(ended.map(e => e.reason)).toEqual(['end_turn', 'failed', 'cancelled'])
@@ -392,7 +392,7 @@ describe('Pi session', () => {
     expect(notices).toEqual([expect.objectContaining({
       itemId: acpFingerprint(['aa_fail', 'pi-turn-error', ended[1]!.turnId]), level: 'error', kind: 'error', text: '429 rate limit exceeded', turnId: ended[1]!.turnId,
     })])
-    // 提示排在回合结束之前
+    // the notice comes before the turn ends
     expect(events.indexOf(notices[0]!)).toBeLessThan(events.indexOf(ended[1]!))
     await handle.stop()
   })
@@ -456,7 +456,7 @@ describe('Pi session', () => {
     expect(page.items[0]).toMatchObject({ role: 'user', clientMessageId: 'c1', timelineAttachments: [info] })
     expect(page.items[2]).toMatchObject({ level: 'error', kind: 'error' })
     expect(page.items[3]).not.toHaveProperty('timelineAttachments')
-    // 交接时的完整重放与只读历史同形（条目 ID 用 AA 会话 ID）
+    // the full replay on handover has the same shape as read-only history (item IDs use the AA session ID)
     world.configure = agent => {
       agent.onPrompt = async () => ({ stopReason: 'end_turn' })
     }

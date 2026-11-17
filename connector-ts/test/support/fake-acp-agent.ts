@@ -1,4 +1,4 @@
-// 进程内的假 ACP Agent：在内存传输的另一端注册处理器，测试按需编排 prompt 的行为。
+// In-process fake ACP Agent: registers handlers on the other end of an in-memory transport; tests script the prompt behaviour as needed.
 
 import { JsonRpcPeer, memoryTransportPair, type RequestContext } from '../../src/runtime/acp/jsonrpc.js'
 
@@ -25,7 +25,7 @@ export class FakeAcpAgent {
     { id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: 'm1', options: [{ value: 'm1', name: 'Model 1' }, { value: 'm2', name: 'Model 2' }] },
     { id: 'effort', name: 'Effort', category: 'thought_level', type: 'select', currentValue: 'low', options: [{ value: 'low', name: 'Low' }, { value: 'high', name: 'High' }] },
   ]
-  /** 旧的 session modes（session/new 一并返回）。 */
+  /** Legacy session modes (returned together with session/new). */
   modes: Json | undefined
   onPrompt: PromptScript = async () => ({ stopReason: 'end_turn' })
   onSteer: (params: Json) => Promise<Json> = async () => ({ outcome: 'injected' })

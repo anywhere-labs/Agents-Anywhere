@@ -21,7 +21,7 @@ export interface LeaseIdentity {
 
 /** What to do about a live owner. */
 export type Arbitration =
-  /** A v2 Connector or an unknown owner: refuse to start (v2 `connector_already_running`). */
+  /** A v2 Connector or an unknown owner: refuse to start (`connector_already_running`). */
   | 'conflict'
   /** An older v3 owner: ask it to hand over, then claim again. */
   | 'request_handover'
@@ -113,7 +113,7 @@ export class RuntimeLease {
 
   /**
    * Claims the machine for this process, or reports the live owner and what to do about it. With a
-   * `connectorId` the id is appended to the shared history in the same transaction (v2 rule 4).
+   * `connectorId` the id is appended to the shared history in the same transaction.
    */
   public async claim(binding: { connectorId?: string; serverUrl?: string } = {}): Promise<ClaimResult> {
     const [startedAt, command] = await Promise.all([this.probe.startedAt(this.pid), this.probe.commandLine(this.pid)])

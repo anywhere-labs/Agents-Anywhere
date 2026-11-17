@@ -1,4 +1,4 @@
-// 身份私钥与列表密钥存取：macOS Keychain、Windows DPAPI、Linux Secret Service（0600 文件兜底）。
+// Storage for the identity private key and list keys: macOS Keychain, Windows DPAPI, Linux Secret Service (0600 file as fallback).
 
 export * from './file-secrets.js'
 export * from './file-trust-repository.js'

@@ -1,4 +1,4 @@
-// Codex 伴随层（04 §5.2）：自动跟随、deeplink 交接、退出 App、未加载线程的权限、Windows 写锁退路。
+// Codex companion layer (04 §5.2): auto-follow, deeplink handover, quitting the App, permissions of unloaded threads, Windows write lock fallback.
 
 export { CodexAutoFollow, type AutoFollowOptions } from './auto-follow.js'
 export { deeplinkSupported, openerCommand, systemUrlOpener, threadDeeplink, type UrlOpener } from './deeplink.js'

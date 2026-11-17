@@ -3,7 +3,7 @@
 // or in `LinkWelcome.desired`, and what the device has goes back as `runtime.status` on `Link/attach`:
 //
 // - `{runtimeId: '*', status: {event: 'runtime.types', runtimeTypes, features}}`: the Runtime types this build ships,
-//   as Runtime Control 2.x descriptors (what v2's `runtime.discover` answered). It replaces discovery.
+//   as Runtime Control 2.x descriptors (the shape `runtime.discover` returns in 2.x). It replaces discovery.
 // - `{runtimeId, status: {..facts, instance: {status, error?}}, capabilities?}`: each instance after it was applied.
 //
 // The command payloads and results are declared here until the device-meshcall contract carries them.
@@ -53,7 +53,7 @@ interface ModelConnectionReport {
   readonly externalOwner: null
 }
 
-/** Runtime Control 2.x features the Server may rely on (v2 `CONNECTOR_FEATURES`). */
+/** Runtime Control 2.x features the Server may rely on. */
 export const RUNTIME_CONTROL_FEATURES: readonly string[] = ['channelReconcileFence']
 
 /** Runtime Control 2.x protocol names (`openai_chat`) of the gateway protocols a type takes. */
@@ -62,7 +62,7 @@ function serverProtocols(runtimeType: string): string[] {
 }
 
 /**
- * Types that take a model gateway (v2 `ModelConnectionCapability`): the Server keeps the gateway in
+ * Types that take a model gateway (`ModelConnectionCapability`): the Server keeps the gateway in
  * `config.modelGateway` and the device injects it as `RuntimeInstanceConfig.modelGateway`. Claude takes Anthropic;
  * Pi only in its managed environment (its settings check refuses the other modes).
  */
@@ -92,7 +92,7 @@ const MODEL_CONNECTIONS: Readonly<Record<string, JsonObject>> = {
   },
 }
 
-/** v2 `model_gateway_schema` (the Server finds the key by the `modelGateway` component). */
+/** The Runtime Control 2.x `model_gateway_schema` (the Server finds the key by the `modelGateway` component). */
 function gatewaySchema(protocols: readonly string[]): JsonObject {
   return {
     type: 'object',

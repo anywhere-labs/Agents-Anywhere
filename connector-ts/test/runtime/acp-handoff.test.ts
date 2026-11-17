@@ -5,8 +5,8 @@ import type { AcpDialect } from '../../src/runtime/acp/dialect.js'
 import { AcpRuntimeHandle, peerConnection } from '../../src/runtime/acp/handle.js'
 import { FakeAcpAgent, tick } from '../support/fake-acp-agent.js'
 
-// 04 §5.6「路由切换要交接写锁」里属于 ACP 核心的部分：只在回合之间切换、交接期间不开新回合、
-// 已接纳的回合中途断开时结果未知（不重发）。
+// The ACP-core part of 04 §5.6 (route switches hand over the write lock): switch only between turns, start no new turn during the handover,
+// and an accepted turn that disconnects midway has an unknown outcome (no resend).
 const dialect: AcpDialect = {
   runtime: 'acp:fake',
   clientCapabilities: () => ({}),
@@ -44,7 +44,7 @@ describe('ACP route handoff', () => {
     const released: string[] = []
     const drained = handle.drain(session => released.push(session.sessionId))
     await tick(10)
-    // 空闲会话立即关闭；运行中的会话还在跑，也不接新消息
+    // an idle session closes at once; a running session keeps running but takes no new messages
     expect(released).toEqual(['aa_idle'])
     expect(agent.received.filter(r => r.method === 'session/close').map(r => r.params.sessionId)).toEqual([idle.session.nativeSessionId])
     expect(await running.session.prompt({ text: 'more' }, { deliveryId: 'd2', clientMessageId: 'c2' })).toMatchObject({ outcome: 'rejected', error: { code: 'session_busy' } })

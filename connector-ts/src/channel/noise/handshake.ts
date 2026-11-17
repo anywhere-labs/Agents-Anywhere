@@ -1,4 +1,4 @@
-// HandshakeState（Noise 规范 §5.3）。只负责握手消息的读写与 Split，授权判断在上层（Device / Client Trust）。
+// HandshakeState (Noise spec §5.3). Only reads and writes handshake messages and performs Split; authorization decisions live above (Device / Client Trust).
 
 import {
   DHLEN,
@@ -14,27 +14,27 @@ import { CipherState, SymmetricState } from './state.js'
 
 export interface HandshakeOptions {
   readonly crypto: NoiseCrypto
-  /** 例如 `Noise_XXpsk0_25519_AESGCM_SHA256` */
+  /** e.g. `Noise_XXpsk0_25519_AESGCM_SHA256` */
   readonly protocolName: string
   readonly initiator: boolean
   readonly prologue?: Uint8Array
-  /** 本端身份密钥（长期 X25519）。 */
+  /** Local static key (long-term X25519). */
   readonly s?: NoiseKeyPair
-  /** 只用于测试向量：固定的临时密钥。正式代码让它由 crypto 生成。 */
+  /** Test vectors only: a fixed ephemeral key. Production code lets crypto generate it. */
   readonly e?: NoiseKeyPair
-  /** 预先已知的对端身份公钥（KK 的两端、配对时客户端从二维码拿到的设备公钥用于事后核对，不放这里）。 */
+  /** Remote static public key known in advance (both sides of KK; the device public key a client gets from the QR code when pairing is checked afterwards and does not go here). */
   readonly rs?: Uint8Array
   readonly re?: Uint8Array
   readonly psks?: readonly Uint8Array[]
 }
 
 export interface TransportPair {
-  /** 本端发送用。 */
+  /** For sending from this side. */
   readonly send: CipherState
-  /** 本端接收用。 */
+  /** For receiving on this side. */
   readonly receive: CipherState
   readonly handshakeHash: Uint8Array
-  /** 握手里认证过的对端身份公钥（KK 的预消息或 XX 的 `s`）。 */
+  /** The remote static public key authenticated in the handshake (the KK pre-message or the XX `s`). */
   readonly remoteStatic: Uint8Array | null
 }
 
@@ -85,12 +85,12 @@ export class HandshakeState {
     return state
   }
 
-  /** 握手是否已经结束（已 Split）。 */
+  /** Whether the handshake has finished (Split done). */
   get isComplete(): boolean {
     return this.#result !== null
   }
 
-  /** 下一条消息该本端写吗。 */
+  /** Whether this side writes the next message. */
   get isMyTurn(): boolean {
     return this.#index % 2 === (this.initiator ? 0 : 1)
   }
@@ -103,7 +103,7 @@ export class HandshakeState {
     return this.#rs ? Uint8Array.from(this.#rs) : null
   }
 
-  /** 握手结束后取得传输用的两个 CipherState；只能取一次。 */
+  /** After the handshake, takes the two CipherStates for transport; can be taken only once. */
   takeTransport(): TransportPair {
     const result = this.#result
     if (!result) throw new NoiseError('noise: handshake not complete')
@@ -225,7 +225,7 @@ export class HandshakeState {
   }
 
   async #dhFor(token: Token): Promise<Uint8Array> {
-    // es：发起方的 e 与响应方的 s；se：发起方的 s 与响应方的 e。
+    // es: initiator's e with responder's s; se: initiator's s with responder's e.
     let local: NoiseKeyPair | null
     let remote: Uint8Array | null
     switch (token) {
@@ -246,7 +246,7 @@ export class HandshakeState {
     }
     if (!local || !remote) throw new NoiseError(`noise: missing key for ${token}`)
     const shared = await local.dh(remote)
-    // 低阶点得到全零共享密钥：三端一律拒绝，行为一致。
+    // A low-order point yields an all-zero shared secret: all three platforms reject it the same way.
     if (shared.length !== DHLEN || isAllZero(shared)) throw new NoiseError('noise: invalid DH result')
     return shared
   }

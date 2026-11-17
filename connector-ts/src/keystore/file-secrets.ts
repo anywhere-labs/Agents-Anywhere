@@ -1,5 +1,6 @@
-// DeviceSecrets 的文件实现：身份私钥与列表密钥存在 <dataDir>/trust/secrets.json（0600），
-// 有系统保险库时整份用 AES-256-GCM 加密。不写进任何备份或导出。
+// File implementation of DeviceSecrets: the identity private key and list keys live in
+// <dataDir>/trust/secrets.json (0600), sealed as a whole with AES-256-GCM when a system vault is available. Never
+// written into any backup or export.
 
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'

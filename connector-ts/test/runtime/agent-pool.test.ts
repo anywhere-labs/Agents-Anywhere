@@ -46,7 +46,7 @@ describe('AgentPool', () => {
     first.crash('boom')
     await Promise.resolve()
     await new Promise(resolve => setTimeout(resolve, 0))
-    const second = await pool.acquire() // 第一次崩溃立即重启
+    const second = await pool.acquire() // the first crash restarts immediately
     second.crash('boom again')
     await new Promise(resolve => setTimeout(resolve, 0))
     await expect(pool.acquire()).rejects.toThrow(/retrying in 2 s/)

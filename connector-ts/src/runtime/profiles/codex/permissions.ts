@@ -1,5 +1,7 @@
-// Codex 权限目录：沿用 v2 codex/domain/catalogs.py `codex_permission_catalog_items` 的条目、selection ID 与 i18n，
-// 落到 codex-acp 的 `mode` 预设（src/AgentMode.ts）上。
+// ported from Agents-Anywhere v2 connector/connector/runtimes/codex/domain/catalogs.py @98dd0e6e5 (codex_permission_catalog_items)
+//
+// Codex permission catalog. Entries, selection IDs and i18n keys match what clients already use; each maps to a
+// codex-acp `mode` preset (src/AgentMode.ts).
 
 import type { ConfigOption } from '../../../application/ports/runtime-session.js'
 import { codexPermissionSelectionId } from '../../../domain/identity/index.js'
@@ -7,7 +9,7 @@ import type { ProtocolPermissionItem } from '../../../generated/protocol/v1_2/pe
 
 interface CodexPermission {
   readonly id: string
-  /** codex-acp `mode` 预设。 */
+  /** codex-acp `mode` preset. */
   readonly mode: string
   readonly label: string
   readonly description: string
@@ -33,7 +35,10 @@ export const CODEX_PERMISSIONS: readonly CodexPermission[] = [
   },
 ]
 
-/** codex-acp `mode` 值 → v2 权限 selection ID（read-only 等 v2 没有的预设用自身 ID）。 */
+/**
+ * codex-acp `mode` value -> permission selection ID that clients know. Presets outside the catalog (read-only, etc.)
+ * use their own ID.
+ */
 export function codexPermissionSelectionForMode(mode: string): string {
   const permission = CODEX_PERMISSIONS.find(p => p.mode === mode)
   return permission ? codexPermissionSelectionId(permission.id, { permission_mode: permission.id }) : codexPermissionSelectionId(mode)

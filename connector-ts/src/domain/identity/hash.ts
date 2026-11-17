@@ -7,7 +7,7 @@ export function utf8Strict(text: string): Buffer {
   return Buffer.from(text, 'utf8')
 }
 
-/** sha256 hex of the strict UTF-8 encoding (v2 Python helpers). */
+/** sha256 hex of the strict UTF-8 encoding. */
 export function sha256Hex(text: string): string {
   return createHash('sha256').update(utf8Strict(text)).digest('hex')
 }

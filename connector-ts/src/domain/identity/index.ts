@@ -1,4 +1,4 @@
-// 身份算法：会话 ID、选择项 ID、Timeline 条目 ID 等，与 v2 Python 逐字节一致（contracts/identity-vectors 金标准向量覆盖）；纯函数，无 I/O。
+// Identity algorithms: session IDs, selection IDs, Timeline item IDs, etc. They must stay byte-for-byte identical to the IDs already stored and held by clients (covered by the contracts/identity-vectors golden vectors); pure functions, no I/O.
 
 export * from './acp-timeline.js'
 export * from './claude-timeline.js'

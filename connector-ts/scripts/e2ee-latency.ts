@@ -1,18 +1,18 @@
-// E-7（docs/v3/11-e2ee-noise.md §13）：加密模式的首屏与流式延迟，与普通模式比较，P95 增加不超过 20%。
+// E-7 (docs/v3/11-e2ee-noise.md §13): first-screen and streaming latency of encrypted mode compared with plain mode; the P95 increase must stay within 20%.
 //
-// 对一套真实部署测量（等 Server 隧道与设备链路合起来后直接运行）：
+// Measures a real deployment (run it directly once the Server tunnel and the device link are joined up):
 //   AA_E7_CONFIG=e7.json corepack yarn vitest run test/e2ee/e7-live.test.ts
-// 配置见 `E7Config`。加密一侧先用设备上生成的 aa-pair:// 链接配对一次，身份写进 `identityFile`（含私钥，
-// 放在仓库外、权限 0600），之后每次用 KK 重连。
+// Configuration: see `E7Config`. The encrypted side pairs once with an aa-pair:// link generated on the device and writes the identity to `identityFile` (it holds the private key;
+// keep it outside the repository with mode 0600), then reconnects with KK on every run.
 //
-// 测什么：
-// - 首屏：普通模式 `GET /api/v2/sessions/{id}/snapshot`；加密模式同一请求经安全通道。
-//   「热」：通道已建立，只算请求；「冷」：每次都取票据、开隧道 WebSocket、KK 握手再请求。
-//   判定用热路径（与普通模式的长连接 HTTP 对等），冷路径单独报告。
-// - 流式：订阅会话事件，发一条消息，每个事件的延迟 = 客户端收到的时刻 − 事件的 `emittedAt`。
-//   `emittedAt` 是设备的时钟：在设备所在的机器上运行，或确认两边已对时。
+// What it measures:
+// - First screen: plain mode `GET /api/v2/sessions/{id}/snapshot`; encrypted mode sends the same request through the secure channel.
+//   Warm: the channel is already up, only the request is timed. Cold: each run fetches a ticket, opens the tunnel WebSocket and does the KK handshake before the request.
+//   The verdict uses the warm path (on par with plain mode's keep-alive HTTP); the cold path is reported separately.
+// - Streaming: subscribe to session events and send a message; each event's latency = time the client receives it - the event's `emittedAt`.
+//   `emittedAt` is the device clock: run on the device's machine, or make sure both clocks are synchronized.
 //
-// 普通模式与加密模式可以是同一台 Server 上的两台设备，也可以是两套部署（各自的 serverUrl/accessToken）。
+// Plain and encrypted mode can be two devices on the same Server or two separate deployments (each with its own serverUrl/accessToken).
 
 import { randomBytes } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
@@ -30,7 +30,7 @@ import { generateX25519, nodeNoiseCrypto, x25519FromSecret } from '../src/channe
 import { clientIdFor } from '../src/domain/trust/index.js'
 
 // ---------------------------------------------------------------------------
-// 统计与判定
+// Statistics and verdict
 // ---------------------------------------------------------------------------
 
 export interface Summary {
@@ -54,7 +54,7 @@ export function summarize(values: readonly number[]): Summary {
 export interface Comparison {
   readonly plainP95: number
   readonly encryptedP95: number
-  /** encrypted / plain − 1 */
+  /** encrypted / plain - 1 */
   readonly increase: number
   readonly pass: boolean
 }
@@ -65,12 +65,12 @@ export function compareP95(plain: Summary, encrypted: Summary, limit = 0.2): Com
 }
 
 // ---------------------------------------------------------------------------
-// 一条内容路径（普通或加密）
+// One content path (plain or encrypted)
 // ---------------------------------------------------------------------------
 
 export type SessionEvent = Record<string, unknown>
 
-/** 打开一次会话所需的操作；普通模式与加密模式各实现一份。 */
+/** The operations needed to open a session; plain mode and encrypted mode each implement them. */
 export interface ContentPath {
   snapshot(sessionId: string): Promise<unknown>
   sendMessage(sessionId: string, content: string): Promise<void>
@@ -89,7 +89,7 @@ export async function measureFirstScreen(
   if (mode === 'warm') {
     const path = await open()
     try {
-      await path.snapshot(sessionId) // 预热
+      await path.snapshot(sessionId) // warm-up
       for (let i = 0; i < iterations; i++) {
         const started = clock()
         await path.snapshot(sessionId)
@@ -116,9 +116,9 @@ export async function measureFirstScreen(
 export interface StreamOptions {
   readonly message: string
   readonly timeoutMs: number
-  /** 事件里的设备时间字段（ISO 字符串或毫秒），默认 `emittedAt`。 */
+  /** Device time field in the event (ISO string or milliseconds); defaults to `emittedAt`. */
   readonly timeField?: string
-  /** 收到这个事件就结束本轮（默认：`runtime.state.updated` 且 payload 里的状态回到 idle）。 */
+  /** Receiving this event ends the round (default: `runtime.state.updated` with the payload status back to idle). */
   readonly done?: (event: SessionEvent) => boolean
   readonly now?: () => number
 }
@@ -141,7 +141,7 @@ export function turnFinished(event: SessionEvent): boolean {
   return status === 'idle' || status === 'completed'
 }
 
-/** 一轮：订阅、发消息、收事件直到结束或超时；返回每个事件的延迟（毫秒）。 */
+/** One round: subscribe, send a message, collect events until the round ends or times out; returns each event's latency in milliseconds. */
 export async function measureStreaming(path: ContentPath, sessionId: string, options: StreamOptions): Promise<number[]> {
   const field = options.timeField ?? 'emittedAt'
   const now = options.now ?? Date.now
@@ -151,7 +151,7 @@ export async function measureStreaming(path: ContentPath, sessionId: string, opt
   let finish!: () => void
   const finished = new Promise<void>((resolve) => (finish = resolve))
   const unsubscribe = await path.subscribe(sessionId, (event) => {
-    if (!sent) return // 订阅前的积压（session.subscribed、补发）不计
+    if (!sent) return // backlog from before the subscription (session.subscribed, replays) is not counted
     const at = eventTime(event, field)
     if (at !== null) lags.push(now() - at)
     if (done(event)) finish()
@@ -167,7 +167,7 @@ export async function measureStreaming(path: ContentPath, sessionId: string, opt
 }
 
 // ---------------------------------------------------------------------------
-// 普通模式：HTTP + 会话 WebSocket
+// Plain mode: HTTP + session WebSocket
 // ---------------------------------------------------------------------------
 
 export interface Endpoint {
@@ -225,10 +225,10 @@ export function plainPath(endpoint: Endpoint, clientId = `e7_${randomBytes(4).to
 }
 
 // ---------------------------------------------------------------------------
-// 加密模式：隧道 WebSocket + 安全通道
+// Encrypted mode: tunnel WebSocket + secure channel
 // ---------------------------------------------------------------------------
 
-/** 配对后保存的客户端身份（含私钥；放在仓库外）。 */
+/** Client identity saved after pairing (holds the private key; keep it outside the repository). */
 export interface StoredIdentity {
   readonly deviceId: string
   readonly devicePub: string
@@ -240,11 +240,11 @@ export interface StoredIdentity {
 export interface EncryptedEndpoint extends Endpoint {
   readonly deviceId: string
   readonly identity: StoredIdentity
-  /** `POST /api/v2/ws-ticket` 的 scope；隧道票据的范围还在和 C 确认，默认沿用 C 当前接受的 dashboard。 */
+  /** Scope for `POST /api/v2/ws-ticket`. The tunnel ticket scope is still being agreed with C, so it defaults to `dashboard`, which C accepts today. */
   readonly ticketScope?: Record<string, unknown>
 }
 
-/** 把隧道 WebSocket 接到一个通道上：发出 `ClientTunnelFrame`，收到的帧交给通道。 */
+/** Connects the tunnel WebSocket to a channel: sends `ClientTunnelFrame`s and hands received frames to the channel. */
 async function tunnelWire(
   endpoint: EncryptedEndpoint,
   clientId: string,
@@ -289,7 +289,7 @@ export interface ChannelFactory {
   (ch: string): Promise<{ channel: ClientSecureChannel; close(): Promise<void> }>
 }
 
-/** 经隧道重连（KK）到已配对设备。 */
+/** Reconnects (KK) to a paired device through the tunnel. */
 export function tunnelChannels(endpoint: EncryptedEndpoint): ChannelFactory {
   const identity = x25519FromSecret(fromB64url(endpoint.identity.clientSecret))
   const clientId = clientIdFor(identity.publicKey)
@@ -344,7 +344,7 @@ export function encryptedPath(
 }
 
 // ---------------------------------------------------------------------------
-// 配对（一次）
+// Pairing (once)
 // ---------------------------------------------------------------------------
 
 export async function pairOnce(endpoint: Endpoint & { readonly pairingUri: string }, identityFile: string): Promise<StoredIdentity> {
@@ -381,7 +381,7 @@ export async function pairOnce(endpoint: Endpoint & { readonly pairingUri: strin
 }
 
 // ---------------------------------------------------------------------------
-// 一次完整测量
+// One full measurement
 // ---------------------------------------------------------------------------
 
 export interface E7Config {
@@ -390,13 +390,13 @@ export interface E7Config {
   readonly encrypted: Endpoint & {
     readonly sessionId: string
     readonly identityFile: string
-    /** 第一次运行时用；之后读 identityFile。 */
+    /** Used on the first run; later runs read identityFile. */
     readonly pairingUri?: string
     readonly ticketScope?: Record<string, unknown>
   }
-  /** 省略时不测流式。 */
+  /** When omitted, streaming is not measured. */
   readonly stream?: { readonly message: string; readonly rounds?: number; readonly timeoutMs?: number; readonly timeField?: string }
-  /** P95 允许增加的比例，默认 0.2。 */
+  /** Allowed P95 increase ratio, default 0.2. */
   readonly limit?: number
 }
 

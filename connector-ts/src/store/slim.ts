@@ -1,13 +1,11 @@
-// ported from effi-crew cloud/agentd/src/conv/slim.ts @30f8334
+// ported from effi-crew cloud/agentd/src/conv/slim.ts @30f8334 (slimDraft, fitItem, fitPage)
 //
-// Keeping session content small enough to store, send and draw. agentd learned this the hard way
-// (2026-11-13: a screenshot tool's base64 images kept verbatim made 18 messages weigh 107 MB and the console
-// could not open the conversation). v3 keeps agentd's thresholds and detection rules, with one change: the
-// device store is the authority for session content (D1), so nothing is thrown away. A large field moves into
-// the content-addressed blob store and the item keeps a head/tail preview plus a `blobRef` that clients can
-// expand (04-connector.md §6.4).
+// Keeping session content small enough to store, send and draw: base64 images kept verbatim can make a handful of
+// messages weigh over 100 MB, more than a client can open. The device store is the authority for session content
+// (D1), so nothing is thrown away. A large field moves into the content-addressed blob store and the item keeps a
+// head/tail preview plus a `blobRef` that clients can expand (04-connector.md §6.4).
 //
-// Layers, as in agentd:
+// Layers:
 //   1. slimDraft — what is stored: inline media (image / audio / blob data, data: URLs) and very long strings
 //      leave the item; the item's payload stays under ITEM_PAYLOAD_MAX.
 //   2. fitItem — one item on the wire within a byte budget, cutting harder on a copy if it must.
@@ -17,14 +15,14 @@ import { TERMINAL_ITEM_STATUSES, type BlobRef, type JsonObject, type TimelineDra
 
 export { PAGE_BUDGET, PAGE_LIMIT_MAX, SNAPSHOT_LIMIT } from '../domain/conversation/index.js'
 
-/** A string longer than this leaves the item (agentd TOOL_STRING_MAX). */
+/** A string longer than this leaves the item. */
 export const STRING_MAX = 48 * 1024
 /** An item's stored payload above this gets harder cuts (04-connector.md §6.4). */
 export const ITEM_PAYLOAD_MAX = 64 * 1024
 /** Head and tail kept as the preview of a moved string (04-connector.md §6.4: 4 KiB each). */
 export const PREVIEW_HEAD = 4 * 1024
 export const PREVIEW_TAIL = 4 * 1024
-/** One item on the wire, whatever the page budget (agentd MESSAGE_BUDGET, below the 4 MiB Router frame). */
+/** One item on the wire, whatever the page budget (below the 4 MiB Router frame). */
 export const ITEM_WIRE_MAX = 3 * 1024 * 1024
 
 const MEDIA_TYPES = new Set(['image', 'audio', 'blob'])
@@ -147,7 +145,7 @@ function slimValue(value: unknown, path: string, context: SlimContext, depth: nu
 
 /**
  * The draft as it is stored. Strings above 48 KiB and inline media move to blobs; if the payload is still above
- * 64 KiB (many medium fields), strings above 8 KiB, then above 1 KiB, move too (agentd's harder tiers).
+ * 64 KiB (many medium fields), strings above 8 KiB, then above 1 KiB, move too.
  * Deterministic, so replaying the same draft yields the same hash and does not tick the clock.
  */
 export function slimDraft(draft: TimelineDraft, sink: BlobSink): TimelineDraft {

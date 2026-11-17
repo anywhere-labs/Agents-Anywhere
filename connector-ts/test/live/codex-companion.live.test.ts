@@ -1,8 +1,8 @@
-// Codex 伴随层实机测试（默认跳过，只读）：经 provider 拉起真实的 codex-acp，对本机 Codex App 做只读探测。
+// Codex companion live test (skipped by default, read-only): launches a real codex-acp through the provider and probes the local Codex App read-only.
 //   AA_LIVE_CODEX=1 AA_CODEX_ACP=/path/to/codex-acp/dist/index.js \
 //   [AA_CODEX_PATH=/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex] \
 //   corepack yarn vitest run test/live/codex-companion.live.test.ts
-// 不打开 deeplink、不发任何信号、不打开会话：opener 与 signaller 换成会让测试失败的替身。
+// Opens no deeplink, sends no signal and opens no session: the opener and signaller are stand-ins that fail the test.
 
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -36,7 +36,7 @@ describe.skipIf(!live)('Codex companions against the real Codex App (read-only)'
       for await (const event of handle.events) events.push(event)
     })()
     try {
-      // 只列 codex-acp 自己的 owner：官方 App 的线程不在里面。
+      // lists only codex-acp's own owner: threads of the official App are not in it.
       const owners = await handle.ipcOwnerInventory()
       console.log('ipc owners', JSON.stringify(owners).slice(0, 400))
 
@@ -45,7 +45,7 @@ describe.skipIf(!live)('Codex companions against the real Codex App (read-only)'
       for (const [id, inspection] of inspected) console.log('inspect', id, JSON.stringify(inspection))
       const followable = inspected.filter(([, i]) => i.route === 'follow').map(([id]) => id)
 
-      // 自动跟随：启动扫描后，能跟随的线程都会被建议。
+      // auto-follow: after the startup scan, every followable thread is suggested.
       const deadline = Date.now() + 60_000
       while (Date.now() < deadline && !followable.every(id => events.some(e => e.type === 'native_session.follow_suggested' && e.ref.nativeSessionId === id))) {
         await new Promise(resolve => setTimeout(resolve, 500))

@@ -10,11 +10,11 @@ export { codexIdentity } from './identity.js'
 export { CODEX_PERMISSIONS, codexPermissionCatalog, codexPermissionSelectionForMode } from './permissions.js'
 
 export interface CodexProviderOptions extends AcpAgentProviderOptions {
-  /** 测试注入伴随层的依赖（写锁目录、opener、进程表…）。 */
+  /** Companion layer dependencies injected by tests (write lock directory, opener, process table, ...). */
   readonly companion?: Partial<Omit<CodexCompanionOptions, 'codexHome' | 'autoFollow' | 'deeplinkHandoff'>>
 }
 
-/** Codex provider：通用 ACP provider 加 Codex 伴随层（runtime/companions/codex）。 */
+/** Codex provider: the generic ACP provider plus the Codex companion layer (runtime/companions/codex). */
 export class CodexProvider implements RuntimeProvider {
   readonly type = CODEX.runtime
   readonly base: AcpAgentProvider
@@ -33,7 +33,7 @@ export class CodexProvider implements RuntimeProvider {
 
   async start(instance: RuntimeInstanceConfig): Promise<CodexRuntimeHandle> {
     const settings = this.base.validateSettings(instance.settings)
-    // 打开路线由伴随层按 inspect 结果逐次决定，方言读同一张表。
+    // The companion layer picks the open route per session from its inspect result; the dialect reads the same map.
     const routes = new Map<string, CodexOpenRoute>()
     const definition = {
       ...CODEX,

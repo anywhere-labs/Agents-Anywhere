@@ -18,7 +18,7 @@ export interface WatchRequest {
 /**
  * `Sessions/watch` (06-protocols.md §3.4): opening the stream subscribes, cancelling it unsubscribes. The stream
  * reads committed changes from the store at the consumer's pace, so a slow Server never holds up the Runtime and
- * every item carries its latest state (agentd's WatcherQueue rule). Gaps before `afterSeq` are not filled here:
+ * every item carries its latest state. Gaps before `afterSeq` are not filled here:
  * clients catch up through the Server with their own cursors.
  */
 export async function* watchSession(deps: WatchDeps, request: WatchRequest, signal: AbortSignal): AsyncGenerator<ChangesEvent> {

@@ -1,10 +1,12 @@
-// `$CODEX_HOME/thread-writer-locks/`：哪些线程被某个 app-server 加载过。
-// ported from Agents-Anywhere v2 connector/connector/runtimes/codex/ipc/candidates.py（候选线程来源）
+// ported from Agents-Anywhere v2 connector/connector/runtimes/codex/ipc/candidates.py @98dd0e6e5 (candidate thread source)
 //
-// app-server 第一次加载线程时创建 `<线程>.lock` 并持有其上的 flock；释放后 Codex 可能删掉也可能留下文件，
-// 所以文件只说明「值得问一下」，持有与否以 `_codex/session/inspect` 为准。
-// 这是自动跟随的候选来源：不需要声明 AIR `sessionIndex`（`_session/list/subscribe` 需要），也不依赖
-// `_codex/ipc/sessions`（它只列 codex-acp 自己的 owner，官方 App 不响应）。
+// `$CODEX_HOME/thread-writer-locks/`: which threads some app-server has loaded.
+//
+// When an app-server first loads a thread it creates `<thread>.lock` and holds an flock on it; after release Codex
+// may delete the file or leave it, so a file only means "worth asking", and `_codex/session/inspect` decides whether
+// it is held. This is the candidate source for auto-follow: it needs neither the AIR `sessionIndex` declaration
+// (which `_session/list/subscribe` requires) nor `_codex/ipc/sessions` (which lists only codex-acp's own owners; the
+// official App does not answer it).
 
 import { watch, type FSWatcher } from 'node:fs'
 import { readdir, stat } from 'node:fs/promises'
@@ -19,9 +21,9 @@ export interface LockEntry {
 }
 
 export interface LockDirectory {
-  /** 当前的锁文件，最新的在前。目录不存在时为空。 */
+  /** Current lock files, newest first. Empty when the directory does not exist. */
   list(): Promise<readonly LockEntry[]>
-  /** 目录有变化时回调（不保证每次变化都通知，调用方另有轮询兜底）。返回停止函数。 */
+  /** Called when the directory changes (not guaranteed for every change; callers also poll as a fallback). Returns a stop function. */
   watch(onChange: () => void): () => void
 }
 
@@ -43,7 +45,7 @@ export function lockDirectory(codexHome: string): LockDirectory {
         try {
           entries.push({ threadId: threadId.toLowerCase(), mtimeMs: (await stat(join(directory, name))).mtimeMs })
         } catch {
-          // 刚被删掉
+          // just deleted
         }
       }
       return entries.sort((a, b) => b.mtimeMs - a.mtimeMs)
@@ -54,7 +56,7 @@ export function lockDirectory(codexHome: string): LockDirectory {
         watcher = watch(directory, { persistent: false }, () => onChange())
         watcher.on('error', () => watcher?.close())
       } catch {
-        // 目录还不存在（没装 Codex 或从没加载过线程）：靠轮询。
+        // The directory does not exist yet (Codex not installed or no thread ever loaded): rely on polling.
       }
       return () => watcher?.close()
     },

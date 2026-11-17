@@ -1,10 +1,14 @@
-// Codex 的 Timeline ID：沿用 v2 codex/timeline（identity.py、accumulator.py）。
-// - AA 发出、或带客户端消息 ID 的用户消息：`codexClientMessageItemId(线程, clientMessageId)`；
-// - 其余按「线程 + Codex turn + lane + lane 内位置」：`codexTurnPositionItemId`（codex-turn-item-v2）；
-//   推理共用当前助手消息的位置、不前进；
-// - 不按位置的类型（contextCompaction 等）用原生条目 ID。
-// Codex turn 与条目类型来自 codex-acp 的 `_meta.codex`（客户端声明 `_meta.codexItemContext` 才有，
-// anywhere-labs/codex-acp#6）。实时与 `_codex/session/read` 历史走同一个算法，所以 ID 一致。
+// ported from Agents-Anywhere v2 connector/connector/runtimes/codex/timeline/identity.py @98dd0e6e5 (Timeline ID rules)
+// ported from Agents-Anywhere v2 connector/connector/runtimes/codex/timeline/accumulator.py @98dd0e6e5 (turn positions)
+//
+// Codex Timeline IDs, matching IDs already stored for existing sessions.
+// - User messages sent by AA or carrying a client message ID: `codexClientMessageItemId(thread, clientMessageId)`.
+// - Everything else by thread + Codex turn + lane + position in lane: `codexTurnPositionItemId`
+//   (codex-turn-item-v2). Reasoning shares the current assistant message's position and does not advance it.
+// - Types not identified by position (contextCompaction, etc.) use the native item ID.
+// The Codex turn and item type come from codex-acp's `_meta.codex` (present only when the client declares
+// `_meta.codexItemContext`, anywhere-labs/codex-acp#6). Live updates and `_codex/session/read` history use the
+// same algorithm, so the IDs agree.
 
 import {
   codexClientMessageItemId,

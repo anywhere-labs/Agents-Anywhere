@@ -11,7 +11,7 @@ function isHttpFailure(error: unknown): error is HttpFailure {
 }
 
 /**
- * The Server URL a user typed (v2 `resolve_pair_server_url`): a full http(s) URL is taken as is; a bare host is
+ * The Server URL a user typed: a full http(s) URL is taken as is; a bare host is
  * tried over https, then http, against `/api/v2/health` (anything below 500 counts as reachable).
  */
 export async function resolvePairServerUrl(value: string | null | undefined, fetchJson: FetchJson, timeoutMs = 10_000, signal?: AbortSignal): Promise<string> {

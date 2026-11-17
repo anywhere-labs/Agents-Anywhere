@@ -1,5 +1,6 @@
-// aa.device.v1.Workspace（普通模式）：v2 工作区方法（文件、终端、Shell）经 Workspace/call 执行，终端输出经
-// Workspace/terminalOutput 推给 Server。处理函数与加密通道（sync/tunnel-api）用的是同一批 workspace 实现。
+// aa.device.v1.Workspace (normal mode): the 2.x workspace methods (files, terminals, shell) run through
+// Workspace/call, and terminal output is pushed to the Server through Workspace/terminalOutput. The handlers share
+// the same workspace implementation as the secure channel (sync/tunnel-api).
 import { MeshCallError } from 'meshcall'
 
 import type { BlobTransfer, TransferUpload, UploadFile } from './device-files.js'
@@ -49,7 +50,7 @@ export interface TerminalOutputItem {
   readonly p: Record<string, unknown>
 }
 
-/** A workspace handler by v2 method name (the same ones `sync/tunnel-api` serves through a secure channel). */
+/** A workspace handler by 2.x method name (the same ones `sync/tunnel-api` serves through a secure channel). */
 export type WorkspaceHandler = (params: Record<string, unknown>) => Promise<unknown>
 
 /** Terminal events routed to one sink (`Terminals.attach`). */
@@ -63,7 +64,7 @@ export interface TerminalSource {
 }
 
 export interface WorkspaceServiceDeps {
-  /** v2 workspace handlers by method name (`workspaceMethods`); a method the device lacks is `unimplemented`. */
+  /** 2.x workspace handlers by method name (`workspaceMethods`); a method the device lacks is `unimplemented`. */
   readonly methods: Readonly<Record<string, WorkspaceHandler>>
   /** Terminals (node-pty); absent: `terminalOutput` answers `unimplemented`. */
   readonly terminals?: TerminalSource
@@ -74,7 +75,7 @@ export interface WorkspaceServiceDeps {
   readonly onUploadError?: (transferId: string, error: unknown) => void
 }
 
-/** Without a change, a watcher looks at the terminal again after this long (v2 relay: a closed record expires). */
+/** Without a change, a watcher looks at the terminal again after this long (so it notices a closed record that expired). */
 export const TERMINAL_POLL_MS = 30_000
 /** Largest `dataBase64` payload of one `terminal.output` item, in bytes before encoding. */
 export const TERMINAL_OUTPUT_ITEM_BYTES = 512 * 1024
@@ -92,7 +93,7 @@ function isWorkspaceMethod(method: string): method is WorkspaceMethod {
   return (WORKSPACE_METHODS as readonly string[]).includes(method)
 }
 
-/** `Workspace/call`: one whitelisted v2 method, its v2 params in and its v2 result out. */
+/** `Workspace/call`: one whitelisted 2.x method, its 2.x params in and its 2.x result out. */
 export async function workspaceCall(deps: WorkspaceServiceDeps, request: WorkspaceCallRequest): Promise<WorkspaceCallResponse> {
   const method = typeof request.method === 'string' ? request.method : ''
   if (!isWorkspaceMethod(method)) throw new MeshCallError('invalid_argument', `${method || '(none)'} is not a workspace method`)
@@ -104,8 +105,8 @@ export async function workspaceCall(deps: WorkspaceServiceDeps, request: Workspa
 }
 
 /**
- * v2 `fs.uploadPreparedDownload`: answers at once and sends the file in the background, like the v2 Connector, so
- * the Server can start streaming the relay to its client. The bytes go to `uploadUrl`, a path on the Server
+ * `fs.uploadPreparedDownload`: answers at once and sends the file in the background, so the Server can start
+ * streaming the relay to its client. The bytes go to `uploadUrl`, a path on the Server
  * (`/api/v3/device/transfers/{transferId}`); another origin is refused.
  */
 async function uploadPreparedDownload(deps: WorkspaceServiceDeps, params: Record<string, unknown>): Promise<Record<string, unknown>> {

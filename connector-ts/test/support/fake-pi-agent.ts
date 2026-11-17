@@ -1,5 +1,5 @@
-// 进程内的假 Pi（@openma/pi-acp 补丁后的行为）：在 FakeAcpAgent 上加 Pi 的 `_meta.pi`（审批守卫已载入、会话文件位置）、
-// 守卫的状态更新与表单请求。每个连接一个实例，记下连接时带的会话专属环境变量。
+// In-process fake Pi (behaviour of the patched @openma/pi-acp): adds Pi's `_meta.pi` (approval guard loaded, session file location),
+// guard status updates and form requests on top of FakeAcpAgent. One instance per connection, recording the session-specific environment it connected with.
 
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -10,16 +10,16 @@ import { GUARD } from '../../src/runtime/profiles/pi/dialect.js'
 import { FakeAcpAgent, type Json } from './fake-acp-agent.js'
 
 export interface PiWorld {
-  /** 每次连接（= 一个 Pi 进程）一个假 Agent，按顺序。 */
+  /** One fake Agent per connection (= one Pi process), in order. */
   readonly agents: FakePiAgent[]
-  /** 每次连接带的环境变量。 */
+  /** Environment variables of each connection. */
   readonly environments: Record<string, string>[]
-  /** 新会话的原生文件写在这里（`<sessionsDir>/<id>.jsonl`）。 */
+  /** Native files of new sessions are written here (`<sessionsDir>/<id>.jsonl`). */
   readonly sessionsDir: string
-  /** 新建的假 Agent 交给测试再配置。 */
+  /** Newly created fake Agents are handed to the test for further setup. */
   configure: (agent: FakePiAgent) => void
   guardLoaded: boolean
-  /** 像 SDK bridge 一样在打开钉住的文件时报告写入状态（摘要一致、没有冲突）。 */
+  /** Like the SDK bridge, reports the write status when opening the pinned file (digest matches, no conflict). */
   bridgeReports: boolean
 }
 
@@ -62,12 +62,12 @@ export class FakePiAgent extends FakeAcpAgent {
     })
   }
 
-  /** 守卫报告这一轮已开始（模型输出之前）。 */
+  /** The guard reports that this turn has started (before model output). */
   started(sessionId: string): void {
     this.update(sessionId, { sessionUpdate: 'session_info_update', _meta: { pi: { event: 'status', key: 'aa-prompt-started', text: 'started' } } })
   }
 
-  /** 守卫请求工具审批（ctx.ui.confirm → 表单）。 */
+  /** The guard requests tool approval (ctx.ui.confirm -> form). */
   confirmTool(sessionId: string, tool: { id: string; name: string; input: Json }): Promise<Json> {
     return this.ask('elicitation/create', {
       mode: 'form', sessionId, message: `AA_TOOL_PERMISSION\n${JSON.stringify(tool)}\n\n`,
@@ -75,7 +75,7 @@ export class FakePiAgent extends FakeAcpAgent {
     })
   }
 
-  /** 守卫请求计划审阅（ctx.ui.input）。 */
+  /** The guard requests plan review (ctx.ui.input). */
   reviewPlan(sessionId: string, toolCallId: string, markdown: string): Promise<Json> {
     return this.ask('elicitation/create', {
       mode: 'form', sessionId, message: `AA_PLAN_REVIEW\n${toolCallId}`,
@@ -83,7 +83,7 @@ export class FakePiAgent extends FakeAcpAgent {
     })
   }
 
-  /** 像 Pi 一样把会话写进原生文件（版本 3 的头 + 条目）。 */
+  /** Writes the session to a native file like Pi does (version 3 header + entries). */
   persist(sessionId: string, cwd: string, entries: Json[]): string {
     const file = this.sessionFiles.get(sessionId) ?? this.environment.AA_PI_SESSION_FILE!
     writeHistory(file, sessionId, cwd, entries)

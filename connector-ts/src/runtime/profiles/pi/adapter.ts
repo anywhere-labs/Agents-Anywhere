@@ -1,8 +1,9 @@
-// 对第三方发布包 `@openma/pi-acp` 做一个很小、逐个核对锚点的兼容补丁。
-// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/pi/adapter.py
+// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/pi/adapter.py @98dd0e6e5 (adapter compatibility patch)
 //
-// 过渡方案（04-connector.md §5.4）：v3 之后推动上游或维护 fork 去掉补丁。每个锚点在使用前都要匹配上，
-// 匹配不上就停止准备，绝不带着半个补丁运行。
+// A small, anchor-verified compatibility patch of the third-party release `@openma/pi-acp`.
+//
+// Interim measure (04-connector.md §5.4): the patch goes away once upstream or a maintained fork takes the changes.
+// Every anchor must match before use; if one does not, preparation stops. It never runs with half a patch.
 
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
@@ -16,7 +17,7 @@ import { fail } from '../../acp/errors.js'
 import { fileLock } from '../../supervisor/npm-runtime.js'
 
 export const PATCH_REVISION = 6
-/** 0.1.x 到目前为止补丁入口都没变；下面每个锚点仍要求匹配。 */
+/** The patch entry points have not changed across 0.1.x so far; every anchor below must still match. */
 export const SUPPORTED_ADAPTER: readonly [number, number] = [0, 1]
 export const BRIDGE_TEMPLATE = fileURLToPath(new URL('./assets/sdk-bridge.mjs', import.meta.url))
 
@@ -42,7 +43,10 @@ export const ANCHORS: ReadonlyArray<readonly [string, string]> = [
     'extensions: session.extensions(), aaLoadingReport: aaLoadingReport(),',
   ],
 ]
-/** 打开会话时模型不可用只记日志：补丁后直接失败（不静默换模型）。v2 用 Python `re`，`.` 不跨行。 */
+/**
+ * When opening a session, an unavailable model is only logged; after the patch it fails outright (no silent model
+ * switch). `.` does not cross line breaks.
+ */
 const REQUIRE_MODEL = /await this\.requireModel\(session\)\.catch\(\(error\) => \{\n.*?\n {4}\}\);/g
 
 export function adapterVersion(packageRoot: string): string {
@@ -54,7 +58,7 @@ export function adapterVersion(packageRoot: string): string {
   return String(version)
 }
 
-/** 给发布包的每个 dist/*.js 打补丁；任何锚点找不到都失败。 */
+/** Patches every dist/*.js of the release; fails if any anchor is not found. */
 export function patchSources(sources: Readonly<Record<string, string>>): Record<string, string> {
   const patched: Record<string, string> = {}
   for (const [name, source] of Object.entries(sources)) patched[name] = source.replaceAll('"@earendil-works/pi-coding-agent"', '"../sdk-bridge.mjs"')
@@ -88,27 +92,28 @@ function sha256(text: string | Buffer): string {
 }
 
 export interface PreparedAdapter {
-  /** 打过补丁的入口（缓存里的 dist/<入口名>）。 */
+  /** Patched entry (dist/<entry name> in the cache). */
   readonly entry: string
   readonly metadata: JsonObject
 }
 
-/** 适配器依赖所在的 node_modules（包自己的，或它所在的那个）。 */
+/** node_modules holding the adapter's dependencies (the package's own, or the one it sits in). */
 function dependencyRoot(packageRoot: string): string | undefined {
   for (let current = packageRoot; ; current = dirname(current)) {
     const candidate = join(current, 'node_modules')
     try {
       if (statSync(candidate).isDirectory()) return candidate
     } catch {
-      // 继续向上
+      // keep walking up
     }
     if (dirname(current) === current) return undefined
   }
 }
 
 /**
- * 在 `root/<补丁摘要>` 生成补丁后的可执行副本：发布文件、SDK bridge（写入绝对 SDK URL）、指回原依赖的
- * node_modules 链接。已有同名缓存时逐字节核对，不信任旧缓存里的可执行文件。
+ * Builds a patched executable copy at `root/<patch digest>`: the release files, the SDK bridge (with the absolute
+ * SDK URL written in) and a node_modules link back to the original dependencies. An existing cache with the same
+ * name is compared byte by byte; executables in an old cache are not trusted.
  */
 export async function prepareAdapter(entry: string, sdk: string, root: string): Promise<PreparedAdapter> {
   const packageRoot = dirname(dirname(entry))
@@ -121,7 +126,8 @@ export async function prepareAdapter(entry: string, sdk: string, root: string): 
   const patchedSources = patchSources(sources)
   const sdkEntry = join(sdk, 'dist/index.js')
   const bridge = (await readFile(BRIDGE_TEMPLATE, 'utf8')).replaceAll('__AA_PI_SDK_URL__', pathToFileURL(sdkEntry).href)
-  // 依赖解析是可执行缓存身份的一部分：Desktop 可能把没变的 npm 发布从实例缓存挪到共享缓存，旧适配器要留给还在用它的进程。
+  // Dependency resolution is part of the executable cache identity: Desktop may move an unchanged npm release from
+  // the instance cache to the shared cache, and the old adapter must stay for processes still using it.
   const modules = dependencyRoot(packageRoot)
   if (modules === undefined) fail('pi_adapter_dependencies_missing', 'Pi ACP 依赖目录不存在。')
   const modulesReal = realpathSync(modules)
@@ -135,7 +141,7 @@ export async function prepareAdapter(entry: string, sdk: string, root: string): 
       await cp(packageRoot, staging, { recursive: true, verbatimSymlinks: true, filter: source => basename(source) !== 'node_modules' })
       await writeFile(join(staging, 'sdk-bridge.mjs'), bridge, 'utf8')
       for (const [name, source] of Object.entries(patchedSources)) await writeFile(join(staging, 'dist', name), source, 'utf8')
-      // 第三方依赖解析仍然挂在原安装上。
+      // Third-party dependencies still resolve from the original install.
       await symlink(modules, join(staging, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir')
       if (existsSync(destination)) {
         for (const name of ['sdk-bridge.mjs', ...Object.keys(releaseFiles).map(file => join('dist', file))]) {

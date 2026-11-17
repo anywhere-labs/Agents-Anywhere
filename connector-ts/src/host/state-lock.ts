@@ -1,5 +1,7 @@
-// ported from desktop-workbench/electron/machine-state-lock.ts (contracts/local-machine/2.0 short file transaction), so
-// Desktop, the Python Connector and this Connector share one implementation of the lock (04-connector.md §9.1).
+// ported from Agents-Anywhere v2 desktop-workbench/electron/machine-state-lock.ts @98dd0e6e5 (withMachineStateLock, ownerAlive)
+//
+// The contracts/local-machine/2.0 short file transaction, so Desktop, the Python Connector and this Connector share
+// one implementation of the lock (04-connector.md §9.1).
 import { randomBytes } from 'node:crypto'
 import { mkdir, open, readFile, rename, rm } from 'node:fs/promises'
 import { connect, createServer, type AddressInfo } from 'node:net'

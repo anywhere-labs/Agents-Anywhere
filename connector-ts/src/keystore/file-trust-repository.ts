@@ -1,5 +1,5 @@
-// TrustRepository 的文件实现：<dataDir>/trust/trust.json（0600）。信任列表只有公钥与名称，不是秘密，
-// 但只能由设备自己写。
+// File implementation of TrustRepository: <dataDir>/trust/trust.json (0600). The trust list holds only public keys
+// and names, so it is not secret, but only the device itself writes it.
 
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'

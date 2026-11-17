@@ -1,5 +1,5 @@
-// 客户端安全通道（Desktop、CLI，以及测试；Web 换一个 NoiseCrypto 实现复用同一套逻辑）。
-// 配对：XXpsk0，核对设备公钥与二维码一致；重连：KK，设备公钥是钉住的值。
+// Client-side secure channel (Desktop, CLI, and tests; Web reuses the same logic with a different NoiseCrypto implementation).
+// Pairing: XXpsk0, checking the device public key matches the QR code; reconnect: KK, with the device public key pinned.
 
 import { clientIdFor } from '../domain/trust/index.js'
 import { HandshakeState, type NoiseCrypto, type NoiseKeyPair } from './noise/index.js'

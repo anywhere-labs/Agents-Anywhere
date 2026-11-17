@@ -1,12 +1,14 @@
-// 未加载线程的权限显示：从 rollout 末尾读 Codex 实际生效的审批与沙箱设置，映射到 v2 权限目录。
-// ported from Agents-Anywhere v2 connector/connector/runtimes/codex/sessions/rollout_settings.py
-// 与 domain/selections.py `permission_selection_from_thread_state`（匹配规则）。
+// ported from Agents-Anywhere v2 connector/connector/runtimes/codex/sessions/rollout_settings.py @98dd0e6e5 (rollout settings)
+// ported from Agents-Anywhere v2 connector/connector/runtimes/codex/domain/selections.py @98dd0e6e5 (permission_selection_from_thread_state)
 //
-// `_codex/session/read` 和 thread/read 都不带审批与沙箱设置，而 resume 会从 Codex App 手里抢写锁，
-// 所以读 rollout：Codex 每个回合追加 `turn_context`，设置变化时追加 `thread_settings_applied`，
-// 取最新的一条。结果为空表示未知，调用方不得代入默认值。
-// 与 v2 的差别：rollout 路径由线程 ID 在 `$CODEX_HOME/sessions/YYYY/MM/DD/` 和 `archived_sessions/` 里找
-// （v2 从 thread/read 的 `path` 拿；v3 不直接连 app-server）。
+// Permission display for unloaded threads: reads the approval and sandbox settings Codex actually applied from the
+// rollout tail and maps them onto the permission catalog.
+//
+// Neither `_codex/session/read` nor thread/read carries the approval and sandbox settings, and resume would take the
+// write lock from the Codex App, so the rollout is read instead: Codex appends `turn_context` every turn and
+// `thread_settings_applied` when settings change; the latest one wins. An empty result means unknown, and callers
+// must not substitute defaults. The rollout path is found by thread ID under `$CODEX_HOME/sessions/YYYY/MM/DD/`
+// and `archived_sessions/`, since this does not connect to the app-server directly.
 
 import { open, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -14,7 +16,7 @@ import { join } from 'node:path'
 import { codexPermissionSelectionId } from '../../../domain/identity/index.js'
 import { CODEX_PERMISSIONS } from '../../profiles/codex/permissions.js'
 
-/** 设置记录实际都在末尾几 KiB 内；上限防止病态 rollout 变成整文件扫描。 */
+/** Settings records are always within the last few KiB; the cap keeps a pathological rollout from becoming a full-file scan. */
 export const MAX_SCAN_BYTES = 1024 * 1024
 const CHUNK_BYTES = 64 * 1024
 const MARKERS = ['"turn_context"', '"thread_settings_applied"']
@@ -43,7 +45,7 @@ type Json = Record<string, unknown>
 
 const isRecord = (value: unknown): value is Json => value !== null && typeof value === 'object' && !Array.isArray(value)
 
-/** 读 rollout 末尾最新的设置记录；读不到或没有记录时返回 {}。 */
+/** Reads the latest settings record from the rollout tail; returns {} when unreadable or absent. */
 export async function rolloutPermissionSettings(path: string | undefined, maxBytes = MAX_SCAN_BYTES): Promise<PermissionSettings> {
   if (!path) return {}
   try {
@@ -53,7 +55,7 @@ export async function rolloutPermissionSettings(path: string | undefined, maxByt
       try {
         record = JSON.parse(line)
       } catch {
-        continue // Codex 还在追加的行
+        continue // a line Codex is still appending
       }
       const settings = permissionSettings(record)
       if (settings !== undefined) return settings
@@ -94,7 +96,7 @@ function policySandbox(policy: unknown): string | undefined {
 function profileSandbox(settings: Json): string | undefined {
   const active = settings.active_permission_profile
   if (isRecord(active) && typeof active.id === 'string' && PROFILE_SANDBOXES[active.id] !== undefined) return PROFILE_SANDBOXES[active.id]
-  // 没有具名 profile 时只带解析后的 profile。
+  // Without a named profile, only the resolved profile is included.
   const profile = settings.permission_profile
   if (!isRecord(profile)) return undefined
   if (profile.type === 'disabled') return 'danger-full-access'
@@ -105,7 +107,7 @@ function profileSandbox(settings: Json): string | undefined {
   return writable ? 'workspace-write' : 'read-only'
 }
 
-/** 从文件末尾往前逐行产出（最新的在前）。 */
+/** Yields lines from the end of the file backwards (newest first). */
 async function* linesFromEnd(path: string, maxBytes: number): AsyncGenerator<string> {
   const file = await open(path, 'r')
   try {
@@ -119,7 +121,7 @@ async function* linesFromEnd(path: string, maxBytes: number): AsyncGenerator<str
       const chunk = Buffer.alloc(size)
       await file.read(chunk, 0, size, position)
       const parts = splitLines(Buffer.concat([chunk, remainder]))
-      // 第一段可能接着上一块。
+      // The first segment may continue from the previous chunk.
       remainder = parts[0] ?? Buffer.alloc(0)
       for (let i = parts.length - 1; i >= 1; i -= 1) {
         const line = parts[i]!.toString('utf8')
@@ -146,11 +148,12 @@ function splitLines(buffer: Buffer): Buffer[] {
 }
 
 /**
- * v2 权限目录里与设置匹配的条目（selections.py `permission_selection_from_thread_state` 的匹配规则）：
- * - approvalPolicy 给出时必须相同；
- * - approvalsReviewer 给出时必须相同，但 `user`（Codex 缺省）也匹配没有固定评审者的条目（完全访问）；
- * - 没有评审者而策略是 on-request 时，不匹配固定了评审者的条目；
- * - sandbox 给出时必须相同。
+ * Permission catalog entries that match the settings:
+ * - approvalPolicy, when given, must be equal;
+ * - approvalsReviewer, when given, must be equal, but `user` (the Codex default) also matches entries with no fixed
+ *   reviewer (full access);
+ * - with no reviewer and an on-request policy, entries with a fixed reviewer do not match;
+ * - sandbox, when given, must be equal.
  */
 export function permissionSelectionFromSettings(settings: PermissionSettings): string | undefined {
   const { approvalPolicy, approvalsReviewer, sandbox } = settings
@@ -167,7 +170,7 @@ export function permissionSelectionFromSettings(settings: PermissionSettings): s
   return undefined
 }
 
-/** UUIDv7 线程 ID 前 48 位是创建时间（毫秒）；不是 v7 时返回 undefined。 */
+/** The first 48 bits of a UUIDv7 thread ID are the creation time (ms); undefined when it is not v7. */
 export function threadCreatedAt(threadId: string): Date | undefined {
   if (!THREAD_ID.test(threadId) || threadId[14] !== '7') return undefined
   const ms = Number.parseInt(threadId.slice(0, 8) + threadId.slice(9, 13), 16)
@@ -186,8 +189,9 @@ async function findIn(directory: string, suffix: string): Promise<string | undef
 }
 
 /**
- * 找线程的 rollout：先按 UUIDv7 的创建日期（前后各一天，目录按本地时区命名）找，再在最近
- * `maxDays` 个日期目录里找，最后找 archived_sessions（压缩过的 `.jsonl.zst` 不读）。
+ * Finds a thread's rollout: first by the UUIDv7 creation date (one day either side, since directories are named in
+ * local time), then in the latest `maxDays` date directories, and finally in archived_sessions (compressed
+ * `.jsonl.zst` files are not read).
  */
 export async function findRollout(codexHome: string, threadId: string, maxDays = 400): Promise<string | undefined> {
   if (!THREAD_ID.test(threadId)) return undefined
@@ -226,7 +230,7 @@ export async function findRollout(codexHome: string, threadId: string, maxDays =
   return findIn(join(codexHome, 'archived_sessions'), suffix)
 }
 
-/** 未加载线程当前的权限 selection ID；未知时 undefined（不代入默认值）。 */
+/** Current permission selection ID of an unloaded thread; undefined when unknown (no default is substituted). */
 export async function nativePermissionSelection(codexHome: string, threadId: string): Promise<string | undefined> {
   return permissionSelectionFromSettings(await rolloutPermissionSettings(await findRollout(codexHome, threadId)))
 }

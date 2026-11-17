@@ -1,8 +1,8 @@
 /**
  * The local MeshCall Router a 2.0 plugin connects to, and the `connector.json`
- * rendezvous that tells it where (contracts/dsh-bridge/2.0 "拓扑与发现", "鉴权").
+ * rendezvous that tells it where (contracts/dsh-bridge/2.0, sections on topology and discovery, and authentication).
  *
- * v3 keeps this only for already-installed 2.0 plugins (04-connector.md §5.6, 08 §3.0.0).
+ * This exists only for already-installed 2.0 plugins (04-connector.md §5.6, 08 §3.0.0).
  * The Router may be shared with the Desktop control channel (`aa.local.v2.Control/Logs`,
  * owned by `host/`): MeshCall freezes the service list once serving starts, so whoever
  * owns the Router mounts `SyncService` before `startServing()`. `Bridge2Router.start()`
@@ -32,7 +32,7 @@ export interface Bridge2Rendezvous {
   key: string
 }
 
-/** hub.py `ROLE_PERMISSIONS`, limited to the two roles the DSH bridge needs. */
+/** Router role permissions, limited to the two roles the DSH bridge needs. */
 export const ROLE_PERMISSIONS = {
   connector: { register: [CONTROL_SERVICE, LOGS_SERVICE, SYNC_SERVICE], call: [`${BRIDGE_SERVICE}/*`, `${REGISTRY_SERVICE}/*`] },
   'dsh-bridge': { register: [BRIDGE_SERVICE], call: [`${SYNC_SERVICE}/*`, ...['write', 'read', 'tail'].map(method => `${LOGS_SERVICE}/${method}`)] },
@@ -55,12 +55,12 @@ export function routerAuthDocument(keys: Record<Bridge2Role, { digest: string }>
   }
 }
 
-/** provider_config.py `endpoint_path`: `<user home>/.agents-anywhere/dsh-bridge/connector.json`. */
+/** The rendezvous path 2.0 plugins read: `<user home>/.agents-anywhere/dsh-bridge/connector.json`. */
 export function rendezvousPath(home: string = userInfo().homedir || homedir()): string {
   return join(home, '.agents-anywhere', 'dsh-bridge', 'connector.json')
 }
 
-/** hub.py `write_private_json`: atomic replace, readable by this user only. */
+/** Writes private JSON: atomic replace, readable by this user only. */
 export async function writePrivateJson(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 })
   const temporary = join(dirname(path), `.${path.split(/[\\/]/).pop()}.${randomBytes(4).toString('hex')}.tmp`)
@@ -90,7 +90,7 @@ export async function unpublishRendezvous(path: string, instanceId: string): Pro
 
 const UNIX_PATH_LIMIT = 103
 
-/** hub.py: `~/.agents-anywhere/router/<instanceId>.sock`, or the temp directory when that path is too long. */
+/** `~/.agents-anywhere/router/<instanceId>.sock`, or the temp directory when that path is too long. */
 export function routerEndpoint(instanceId: string, home: string = userInfo().homedir || homedir()): LocalEndpoint {
   if (process.platform === 'win32') return { pipe: `agents-anywhere-${instanceId}` }
   const preferred = join(home, '.agents-anywhere', 'router', `${instanceId}.sock`)

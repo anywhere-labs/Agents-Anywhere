@@ -1,10 +1,11 @@
-// 不依赖全局 Node / npm 安装已发布的 JavaScript Runtime（Pi 的 ACP 适配器与 SDK）。
-// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/infrastructure/npm.py
+// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/infrastructure/npm.py @98dd0e6e5 (npm runtime install)
 //
-// 与 v2 的差别：
-// - 安装锁用独占创建的锁文件（记下持有进程的 pid，持有者已退出时接管），Node 没有 flock；
-// - 解压 Node 发布包用系统自带的 tar（macOS、Linux、Windows 10 起都有 bsdtar），不自带解压实现；
-// - 下载用全局 fetch。
+// Installs published JavaScript Runtimes (Pi's ACP adapter and SDK) without relying on a global Node / npm.
+// - The install lock is an exclusively created lock file (recording the holder's pid, taken over when the holder has
+//   exited), since Node has no flock;
+// - Node release archives are extracted with the system tar (bsdtar ships with macOS, Linux and Windows 10+), with no
+//   bundled extractor;
+// - downloads use the global fetch.
 
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
@@ -16,18 +17,18 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { fail, RuntimeFailure } from '../acp/errors.js'
 
 export const NODE_VERSION = '22.23.2'
-/** Pi 的包声明 engines ">=22.19.0"；更高的大版本也接受。 */
+/** Pi's package declares engines ">=22.19.0"; higher major versions are accepted too. */
 export const MINIMUM_NODE: readonly [number, number, number] = [22, 19, 0]
-/** Desktop 传入自己的 Electron 可执行文件：告诉它按 Node 运行。 */
+/** Desktop passes its own Electron executable: tell it to run as Node. */
 export const ELECTRON_NODE_ENV = 'AA_ELECTRON_NODE'
 export const ELECTRON_RESET = fileURLToPath(new URL('./assets/electron-node.mjs', import.meta.url))
-/** 先试配置的来源，再试官方，再试 npmmirror（它的 Node 校验和与官方一致）。每个来源用自己的校验列表。 */
+/** Tries the configured source first, then the official one, then npmmirror (its Node checksums match the official ones). Each source uses its own checksum list. */
 export const NODE_MIRROR_ENV = 'AA_NODE_MIRROR'
 const NODE_DIST_SOURCES = ['https://nodejs.org/dist', 'https://registry.npmmirror.com/-/binary/node']
 export const NPM_REGISTRY_ENV = 'AA_NPM_REGISTRY'
 const NPM_REGISTRY_SOURCES = ['https://registry.npmjs.org', 'https://registry.npmmirror.com']
 
-/** 另一个 Desktop、Pi 会话或遗留的预检可能还在下载：等它，但不无限等。 */
+/** Another Desktop, a Pi session or a leftover preflight may still be downloading: wait for it, but not forever. */
 export const LOCK_TIMEOUT_MS = 600_000
 const LOCK_POLL_MS = 500
 const NODE_ARCHIVE_LIMIT = 128 * 1024 * 1024
@@ -63,8 +64,9 @@ function pidAlive(pid: number): boolean {
 }
 
 /**
- * 独占锁：`path` 不存在时创建并写入本进程 pid；存在时等持有者释放，持有者已退出则接管。
- * 超时报 `agent_install_busy`。返回释放函数。
+ * Exclusive lock: when `path` does not exist, create it and write this process's pid; when it exists, wait for the
+ * holder to release it, taking over if the holder has exited. Times out with `agent_install_busy`. Returns a release
+ * function.
  */
 export async function fileLock(path: string, options: { timeoutMs?: number } = {}): Promise<() => Promise<void>> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 })
@@ -79,7 +81,7 @@ export async function fileLock(path: string, options: { timeoutMs?: number } = {
         try {
           if ((await readFile(path, 'utf8')) === token) await unlink(path)
         } catch {
-          // 已被接管或删除
+          // already taken over or deleted
         }
       }
     } catch (error) {
@@ -106,7 +108,7 @@ function sources(variable: string, defaults: readonly string[]): string[] {
   return [...new Set([configured, ...defaults].filter(Boolean))]
 }
 
-/** `node` 需要的额外环境变量：Desktop 的 Electron 要被告知按 Node 运行。 */
+/** Extra environment variables `node` needs: Desktop's Electron must be told to run as Node. */
 export function nodeEnvironment(node: string): Record<string, string> {
   const configured = process.env[ELECTRON_NODE_ENV]
   if (!configured) return {}
@@ -117,7 +119,7 @@ export function nodeEnvironment(node: string): Record<string, string> {
   }
 }
 
-/** 放在脚本之前的参数：Electron 的变量不泄漏到 Agent 运行的命令里。 */
+/** Arguments placed before the script: Electron's variable does not leak into the commands the Agent runs. */
 export function nodeLaunchArguments(node: string): string[] {
   return Object.keys(nodeEnvironment(node)).length ? ['--import', pathToFileURL(ELECTRON_RESET).href] : []
 }
@@ -163,7 +165,7 @@ export interface NodePair {
   readonly npm: string
 }
 
-/** 一个带 npm 的兼容 Node；版本管理器的 shim 先解析成它当前指向的 Node。 */
+/** A compatible Node with npm; version manager shims are first resolved to the Node they currently point to. */
 export async function nodePair(executable: string): Promise<NodePair | undefined> {
   if (!isFile(executable)) return undefined
   let resolved: string
@@ -178,7 +180,7 @@ export async function nodePair(executable: string): Promise<NodePair | undefined
   return { node: realpathSync(resolved), npm: realpathSync(npm) }
 }
 
-/** Desktop 自己的可执行文件：不需要 npm 或下载就能当 Node 用。 */
+/** Desktop's own executable: usable as Node without npm or a download. */
 export async function electronNode(): Promise<string | undefined> {
   const configured = process.env[ELECTRON_NODE_ENV]
   if (!configured || !isFile(configured)) return undefined
@@ -221,7 +223,7 @@ async function downloadNode(base: string, filename: string, archive: string): Pr
   if (digest.digest('hex') !== expected) fail('node_checksum_mismatch', 'Node 下载校验失败，请重试。')
 }
 
-/** 一个带 npm 的 Node：系统里兼容的，否则下载校验过的官方发布包。 */
+/** A Node with npm: a compatible one on the system, otherwise a downloaded and verified official release. */
 export async function nodeRuntime(root: string, options: { onInstall?: () => void } = {}): Promise<NodePair> {
   const system = whichExecutable('node')
   if (system !== undefined) {
@@ -251,7 +253,7 @@ export async function nodeRuntime(root: string, options: { onInstall?: () => voi
       }
     }
     if (!downloaded) throw failure ?? new RuntimeFailure({ code: 'node_download_failed', message: 'Node 下载失败，请检查网络后重试。' })
-    // bsdtar / GNU tar 默认拒绝绝对路径和 `..` 成员。
+    // bsdtar / GNU tar reject absolute paths and `..` members by default.
     try {
       await run('tar', [target.archive.endsWith('.zip') ? '-xf' : '-xzf', archive, '-C', staging], { timeoutMs: 300_000 })
     } catch {
@@ -268,7 +270,7 @@ export async function nodeRuntime(root: string, options: { onInstall?: () => voi
   return pair
 }
 
-/** 运行已安装包用的 Node；这一步不需要 npm。 */
+/** The Node used to run installed packages; this step does not need npm. */
 export async function nodeExecutable(root: string, options: { onInstall?: () => void } = {}): Promise<string> {
   const system = whichExecutable('node')
   if (system !== undefined) {
@@ -309,7 +311,7 @@ async function npmInstall(root: string, staging: string, entry: string, onOutput
 }
 
 export interface NpmRuntimeOptions {
-  /** Desktop 预装好的同一组依赖（`package.json` + `node_modules`）：从它复制，不需要网络。 */
+  /** The same dependency set preinstalled by Desktop (`package.json` + `node_modules`): copied from there, no network needed. */
   readonly bundle?: string
   readonly onInstall?: () => void
   readonly onOutput?: (line: string) => void
@@ -317,11 +319,11 @@ export interface NpmRuntimeOptions {
 
 export interface NpmRuntime {
   readonly node: string
-  /** 入口脚本的绝对路径。 */
+  /** Absolute path of the entry script. */
   readonly script: string
 }
 
-/** 按依赖清单安装到 `root/<清单摘要>`：先用同清单的预装包，否则走 npm registry 的完整性校验。 */
+/** Installs the dependency manifest into `root/<manifest digest>`: a preinstalled package with the same manifest first, otherwise npm registry with integrity checks. */
 export async function installNpmRuntime(root: string, dependencies: Readonly<Record<string, string>>, entry: string, options: NpmRuntimeOptions = {}): Promise<NpmRuntime> {
   await mkdir(root, { recursive: true, mode: 0o700 })
   const identity = npmRuntimeIdentity(dependencies)
@@ -336,7 +338,7 @@ export async function installNpmRuntime(root: string, dependencies: Readonly<Rec
       try {
         await writeFile(join(staging, 'package.json'), JSON.stringify({ private: true, dependencies }))
         if (bundleMatches(options.bundle, dependencies, entry)) {
-          // 复制而不是链接：Desktop 更新会替换它的资源，而 Pi 实例还在用这份缓存。
+          // Copy rather than link: Desktop updates replace its resources while Pi instances keep using this cache.
           await cp(join(options.bundle, 'node_modules'), join(staging, 'node_modules'), { recursive: true, verbatimSymlinks: true })
         } else {
           await npmInstall(root, staging, entry, options.onOutput)
@@ -355,8 +357,9 @@ export async function installNpmRuntime(root: string, dependencies: Readonly<Rec
 }
 
 /**
- * 安装目录名：v2 的 `sha256(json.dumps(dependencies, sort_keys=True))[:20]`（Python 默认分隔符 `, ` / `: `），
- * 同一清单在 v2 与 v3 得到同一个目录。清单只含 ASCII 包名与版本范围。
+ * Install directory name: the first 20 hex characters of sha256 over the dependencies serialized like
+ * `json.dumps(dependencies, sort_keys=True)` (separators `, ` / `: `), so existing installs of the same manifest are
+ * reused. Manifests contain only ASCII package names and version ranges.
  */
 export function npmRuntimeIdentity(dependencies: Readonly<Record<string, string>>): string {
   const entries = Object.entries(dependencies).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))

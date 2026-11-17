@@ -1,4 +1,4 @@
-// 子进程管道出错（Agent 退出瞬间写入的 EPIPE）只关闭这条 Runtime 连接，不让 Connector 进程崩溃。
+// A child-process pipe error (EPIPE from a write as the Agent exits) closes only that Runtime connection and does not crash the Connector process.
 import { describe, expect, it } from 'vitest'
 
 import { runtimeError } from '../../src/runtime/acp/session.js'
@@ -11,7 +11,7 @@ function agent(script: string): AgentProcess {
 
 describe('AgentProcess stdio failures', () => {
   it('a write into a pipe the agent closed (EPIPE) closes the connection instead of crashing', async () => {
-    // 进程还活着，但已经关掉了自己的 stdin：之后的写入异步报 EPIPE。
+    // the process is still alive but has closed its own stdin: later writes fail asynchronously with EPIPE.
     const process_ = agent("require('node:fs').closeSync(0); setTimeout(() => {}, 5000)")
     await new Promise(resolve => setTimeout(resolve, 300))
     const big = 'x'.repeat(256 * 1024)

@@ -1,5 +1,6 @@
-// 本地存储：SQLite schema、迁移、块存储与字节预算，实现 Store / Outbox 端口。
-// SQLite 驱动用 node:sqlite（S3 结论：三种宿主都不需要原生模块）；所有访问在专用 worker 线程里。
+// Local storage: SQLite schema, migrations, blob storage and byte budgets, implementing the Store / Outbox ports.
+// The SQLite driver is node:sqlite (finding S3: none of the three hosts needs a native module); all access runs on
+// a dedicated worker thread.
 
 import { Worker } from 'node:worker_threads'
 

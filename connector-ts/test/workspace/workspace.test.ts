@@ -135,7 +135,7 @@ describe('fs.writeFile', () => {
     writeFileSync(path, 'disk')
     await expect(files().writeFile({ root: home, path: 'f.txt', content: 'x', ifMatch: sha('editor') })).rejects.toMatchObject({ code: 'stale' })
     await expect(files().writeFile({ root: home, path: 'gone.txt', content: 'x', ifMatch: sha('editor') })).rejects.toMatchObject({ code: 'stale' })
-    // An empty ifMatch accepts both a new and an existing file (v2 behaviour).
+    // An empty ifMatch accepts both a new and an existing file.
     await files().writeFile({ root: home, path: 'new.txt', content: 'n', ifMatch: '' })
     await files().writeFile({ root: home, path: 'f.txt', content: 'y', ifMatch: '' })
     expect(readFileSync(path, 'utf8')).toBe('y')

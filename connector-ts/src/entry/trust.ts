@@ -24,7 +24,7 @@ function failure(code: string, message: string): Error {
   return Object.assign(new Error(message), { code })
 }
 
-/** AES-GCM tag after every sealed segment (contracts/e2ee/1.0 「附件与分享」). */
+/** AES-GCM tag after every sealed segment (contracts/e2ee/1.0, attachments and sharing). */
 const SEGMENT_TAG_BYTES = 16
 
 /**

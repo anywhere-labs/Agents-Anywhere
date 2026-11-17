@@ -1,4 +1,6 @@
-// Hermes 方言。ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/hermes/definition.py `HermesDialect`
+// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/hermes/definition.py @98dd0e6e5 (HermesDialect)
+//
+// Hermes dialect.
 
 import type { ConfigOption } from '../../../application/ports/runtime-session.js'
 import { negotiatedCapabilities } from '../../acp/capabilities.js'
@@ -8,18 +10,18 @@ import { genericDialect } from '../generic/dialect.js'
 export const EDIT_POLICY_OPTION = 'edit_approval_policy'
 
 export function hermesDialect(): AcpDialect {
-  // 已经弹出的审批卡：(原生会话, toolCallId)。回答之后 Hermes 会用卡片自己的 id 发一条 tool_call_update
-  // 关闭它；那不是工具调用，落条目会在 Timeline 上多出一项。
+  // Approval cards already shown: (native session, toolCallId). After an answer Hermes sends a tool_call_update with
+  // the card's own id to close it; that is not a tool call, and recording it would add an extra Timeline item.
   const approvalCards = new Set<string>()
   const key = (nativeSessionId: string, toolCallId: unknown) => `${nativeSessionId}\u0000${String(toolCallId)}`
   return {
     ...genericDialect('hermes', { permissionCatalog: true }),
     capabilities: info => negotiatedCapabilities(info, { steer: true, permissionCatalog: true }),
-    // Hermes 在纯文本 prompt 里执行注册过的斜杠命令，包括 /steer；不支持附件。
+    // Hermes runs registered slash commands, including /steer, from plain-text prompts; no attachments.
     steer: 'text-command',
     steerCommand: '/steer',
     steerAttachments: false,
-    // Hermes 把编辑审批策略放在 ACP 的 mode 类别下。
+    // Hermes puts its edit approval policy under the ACP mode category.
     adaptConfig: options => options.map((option): ConfigOption => (option.id === EDIT_POLICY_OPTION && option.category === 'mode' ? { ...option, category: 'permission' } : option)),
     observeRequest: (method, params, context) => {
       if (method !== 'session/request_permission') return

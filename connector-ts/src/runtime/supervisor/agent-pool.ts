@@ -1,27 +1,29 @@
-// ported from effi-evo cloud/agentd/src/conv/agent-pool.ts @95b52ec（effi-crew @30f8334 没有这个文件）
+// ported from effi-evo cloud/agentd/src/conv/agent-pool.ts @95b52ec (AgentPool)
 //
-// 每个 Runtime 实例一个（共享）ACP 适配器进程：第一次需要时启动，所有会话共用；停止实例、空闲太久时停掉。
-// 崩溃会结束所有会话正在跑的回合；下一次需要时重新启动。连续崩溃退避，坏掉的适配器不会被循环重启。
-// 与 agentd 的差别：键是实例 ID；进程工厂可注入（测试用内存连接）；忙碌判定由调用方提供。
+// One (shared) ACP adapter process per Runtime instance: started on first need and shared by all sessions; stopped
+// when the instance stops or after staying idle too long. A crash ends the running turns of all sessions; the process
+// restarts on next need. Consecutive crashes back off, so a broken adapter is not restarted in a loop.
+// Pools are keyed by instance ID; the process factory is injectable (tests use in-memory connections); the caller
+// decides what counts as busy.
 
-/** 池管理的一个连接（真实进程或测试替身）。 */
+/** A connection the pool manages (a real process or a test double). */
 export interface PooledConnection {
   readonly startedAt: number
   readonly alive: boolean
-  /** 按计划停止的（不算崩溃）。 */
+  /** Stopped as planned (not a crash). */
   readonly expectedExit: boolean
   readonly pid?: number | undefined
   exited(): Promise<string>
   stop(): Promise<void>
 }
 
-/** 默认：没有回合、待答交互或后台任务的进程，空闲这么久就停掉。 */
+/** Default: a process with no turn, pending interaction or background task is stopped after being idle this long. */
 export const DEFAULT_IDLE_MS = 30 * 60_000
-/** 没有会话在用的进程（只为列会话或探测模型启动的）早点停。 */
+/** A process no session uses (started only to list sessions or probe models) stops sooner. */
 const UNUSED_IDLE_MS = 60_000
-/** 崩溃前稳定运行了这么久，崩溃计数重新开始。 */
+/** After running stably this long before a crash, the crash count starts over. */
 const STABLE_MS = 60_000
-/** 第 n 次连续崩溃（n ≥ 2）后的等待：2 秒、4 秒……最多一分钟。第一次重启立即进行。 */
+/** Wait after the n-th consecutive crash (n >= 2): 2 seconds, 4 seconds... up to one minute. The first restart happens at once. */
 const BACKOFF_BASE_MS = 2000
 const BACKOFF_MAX_MS = 60_000
 
@@ -31,13 +33,13 @@ export function backoffMs(failures: number): number {
 
 export interface PoolOptions<T extends PooledConnection> {
   readonly start: () => Promise<T>
-  /** 有回合、交互或后台任务在进行：不算空闲。 */
+  /** A turn, interaction or background task is in progress: not idle. */
   readonly busy: (connection: T) => boolean
-  /** 有会话在用。 */
+  /** A session is using it. */
   readonly attached: (connection: T) => boolean
   readonly lastActivity: (connection: T) => number
   readonly idleMs?: number
-  /** 进程退出（含崩溃）；expected 表示按计划停止。 */
+  /** The process exited (including crashes); expected means a planned stop. */
   readonly onExit?: (connection: T, reason: string, expected: boolean) => void
   readonly now?: () => number
 }
@@ -45,7 +47,7 @@ export interface PoolOptions<T extends PooledConnection> {
 export interface PoolState {
   readonly running: boolean
   readonly error?: string
-  /** 退避期间的下次允许启动时间（ISO）。 */
+  /** Next allowed start time during backoff (ISO). */
   readonly retryAt?: string
   readonly failures: number
 }
@@ -53,7 +55,7 @@ export interface PoolState {
 export class AgentPool<T extends PooledConnection> {
   private current: T | undefined
   private starting: Promise<T> | undefined
-  /** 正在退出的进程：下一个要等它退出（它持有的写锁之类那时才释放）。 */
+  /** The process that is exiting: the next one waits for it to exit (only then are things like its write locks released). */
   private stopping: Promise<void> | undefined
   private failures = 0
   private retryAt = 0
@@ -68,7 +70,7 @@ export class AgentPool<T extends PooledConnection> {
     this.now = options.now ?? Date.now
   }
 
-  /** 活着的连接，如果有。 */
+  /** The live connection, if any. */
   live(): T | undefined {
     return this.current?.alive === true ? this.current : undefined
   }
@@ -85,7 +87,7 @@ export class AgentPool<T extends PooledConnection> {
     }
   }
 
-  /** 拿到连接，没有就启动（同时来的调用拿到同一个）。 */
+  /** Gets the connection, starting one if there is none (concurrent calls get the same one). */
   acquire(): Promise<T> {
     if (this.closed) return Promise.reject(new Error('runtime is stopping'))
     const live = this.live()
@@ -137,7 +139,7 @@ export class AgentPool<T extends PooledConnection> {
     this.options.onExit?.(connection, reason, connection.expectedExit)
   }
 
-  /** 停掉当前进程（重启、关闭实例）；计划内，不退避。返回是否有进程在跑。 */
+  /** Stops the current process (restart, instance shutdown); planned, so no backoff. Returns whether a process was running. */
   async stop(): Promise<boolean> {
     if (this.starting) await this.starting.catch(() => undefined)
     const connection = this.current
@@ -167,7 +169,7 @@ export class AgentPool<T extends PooledConnection> {
     this.timer.unref?.()
   }
 
-  /** 空闲太久就停掉（没有回合、交互、后台任务）。 */
+  /** Stops the process after it has been idle too long (no turn, interaction or background task). */
   checkIdle(now = this.now()): void {
     const connection = this.current
     if (!connection || !connection.alive || this.starting) return

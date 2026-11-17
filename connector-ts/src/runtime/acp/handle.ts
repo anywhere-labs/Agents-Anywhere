@@ -1,5 +1,6 @@
-// RuntimeHandle / RuntimeProvider 的通用 ACP 实现：进程池 + ACP 客户端 + 方言。
-// 进程监督在 supervisor/，会话引擎在 session.ts；这里负责打开会话、原生会话目录、只读历史与运行时级事件。
+// Generic ACP implementation of RuntimeHandle / RuntimeProvider: process pool + ACP client + dialect.
+// Process supervision lives in supervisor/ and the session engine in session.ts; this file opens sessions and
+// handles the native session inventory, read-only history and runtime-level events.
 
 import { realpathSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -39,16 +40,16 @@ import { prepareFailure, preparedSession } from './prepared.js'
 import { EventQueue } from './queue.js'
 import { AcpRuntimeSession, defaultIdentity } from './session.js'
 
-/** 一条初始化过的 ACP 连接。 */
+/** An initialized ACP connection. */
 export interface AcpConnection extends PooledConnection {
   readonly client: AcpClient
   readonly info: AgentInfo
 }
 
-/** `scope.cwd`：按工作目录分进程时（MiMo）的进程工作目录。 */
+/** `scope.cwd`: the process working directory when processes are split per workspace (MiMo). */
 export type ConnectionFactory = (scope?: { readonly cwd: string }) => Promise<AcpConnection>
 
-/** 起一个适配器进程并完成 initialize。 */
+/** Starts an adapter process and completes initialize. */
 export function processConnection(command: AgentCommand, dialect: AcpDialect, options: { initializeTimeoutMs?: number; onStderr?: (line: string) => void } = {}): ConnectionFactory {
   return async () => {
     const proc = new AgentProcess(command, options.onStderr ? { onStderr: options.onStderr } : {})
@@ -78,7 +79,7 @@ export function processConnection(command: AgentCommand, dialect: AcpDialect, op
   }
 }
 
-/** 已有的 JSON-RPC 对等端（测试、录制回放、DSH 插件 socket）上的连接。 */
+/** A connection over an existing JSON-RPC peer (tests, recording replay, the DSH plugin socket). */
 export function peerConnection(peer: JsonRpcPeer, dialect: AcpDialect): ConnectionFactory {
   return async () => {
     const client = new AcpClient(peer)
@@ -107,13 +108,13 @@ export interface AcpHandleOptions {
   readonly dialect: AcpDialect
   readonly connect: ConnectionFactory
   readonly idleMs?: number
-  /** 不列出原生会话（v2 definition `native_inventory=False`）。 */
+  /** Do not list native sessions. */
   readonly nativeInventory?: boolean
-  /** 每个工作目录一个 Agent 进程，进程在该目录里启动（v2 `launch_in_workspace`）。 */
+  /** One Agent process per workspace, started in that workspace. */
   readonly processPerWorkspace?: boolean
-  /** 建会话前就能列出的权限选项（v2 definition `permission_options`：值, 名称）。 */
+  /** Permission options that can be listed before a session is created (value, name). */
   readonly permissionOptions?: ReadonlyArray<readonly [string, string]>
-  /** 完整的权限目录条目（带 v2 的 i18n、identity 等元数据），可按当前配置过滤；优先于 permissionOptions。 */
+  /** Full permission catalog entries (with i18n, identity and other metadata), filterable by the current config; takes precedence over permissionOptions. */
   readonly permissionCatalog?: (config: readonly ConfigOption[]) => readonly ProtocolPermissionItem[]
   /** Workspace preparation (`prepare`, capabilities `runtime.workspace.prepare` and `runtime.session.async_create`). */
   readonly workspacePreparation?: boolean
@@ -125,7 +126,7 @@ export const WORKSPACE_PREPARATION_CAPABILITIES: readonly Capability[] = [
   { id: 'runtime.session.async_create', supported: true, parameters: { workflowVersion: '1.2' } },
 ]
 
-/** 会话能力：协商得到的 sessionCapabilities 里有没有某一项。 */
+/** Session capability: whether the negotiated sessionCapabilities include an entry. */
 export function hasSessionCapability(info: AgentInfo, name: string): boolean {
   return asRecord(info.agentCapabilities.sessionCapabilities)[name] !== undefined
 }
@@ -134,7 +135,7 @@ export class AcpRuntimeHandle implements RuntimeHandle {
   readonly type: RuntimeType
   readonly instanceId: string
   readonly events = new EventQueue<RuntimeHandleEvent>()
-  /** 进程池：通常只有一个（键为空串）；按工作目录分进程时每个目录一个。 */
+  /** Process pools: usually just one (empty-string key); one per workspace when processes are split per workspace. */
   private readonly pools = new Map<string, AgentPool<AcpConnection>>()
   private readonly sessions = new Map<AcpConnection, Set<AcpRuntimeSession>>()
   private info: AgentInfo | undefined
@@ -190,7 +191,7 @@ export class AcpRuntimeHandle implements RuntimeHandle {
     }
   }
 
-  /** 拿到连接（必要时启动进程）。 */
+  /** Gets a connection (starting the process when needed). */
   connection(cwd?: string): Promise<AcpConnection> {
     return this.pool(this.scope(cwd)).acquire()
   }
@@ -206,7 +207,7 @@ export class AcpRuntimeHandle implements RuntimeHandle {
     // The session's live configuration (it changes on every select), else the most recently opened one's.
     const config = this.openSession(sessionId)?.configOptions ?? this.lastConfig
     const fromConfig = catalogsFromConfig(this.type, config, this.options.dialect.selections)
-    // acp/runtime.py `list_permission_catalog`
+    // Permission catalog: the full catalog when provided, else the static permission options.
     const items = this.options.permissionCatalog?.(config)
       ?? this.options.permissionOptions?.map(([value, title]) => ({ id: value, displayName: title, description: null, default: false, selectionId: value, metadata: {} }))
     if (!items?.length) return fromConfig
@@ -236,11 +237,11 @@ export class AcpRuntimeHandle implements RuntimeHandle {
   }
 
   async readNativeHistory(ref: NativeSessionRef, window: HistoryWindow): Promise<NativeHistoryPage> {
-    // 方言自己的只读实现（Claude 读 JSONL）不一定需要 Agent 进程，按需再取连接。
+    // The dialect's own read-only implementation (Claude reads JSONL) may not need an Agent process; get a connection only when needed.
     const special = this.options.dialect.readNativeHistory?.(ref, window, () => this.connection(ref.locator))
     if (special !== undefined) return special
     const connection = await this.connection(ref.locator)
-    // 通用实现：加载并捕获回放，再关闭。会写原生记录的 Runtime（Claude）必须由方言或原生历史伴随层接管。
+    // Generic implementation: load and capture the replay, then close. Runtimes that write native records (Claude) must be handled by the dialect or the native history companion.
     if (connection.info.agentCapabilities.loadSession !== true) return { items: [] }
     const { updates } = await connection.client.capture(ref.nativeSessionId, () => connection.client.request('session/load', {
       sessionId: ref.nativeSessionId, cwd: ref.locator ?? process.cwd(), mcpServers: [], ...(this.options.dialect.openParams?.(ref) ?? {}),
@@ -330,8 +331,8 @@ export class AcpRuntimeHandle implements RuntimeHandle {
   }
 
   /**
-   * 创建时的初始选择（类别 → selection ID）落到会话配置（v2 `merge_legacy` + `configurations.update`）。
-   * 映射不唯一、值不可用或设置失败都让创建失败，并关闭刚建的会话。
+   * Applies the initial selections given at creation (category -> selection ID) to the session config.
+   * A non-unique mapping, an unavailable value or a failed set fails the creation and closes the new session.
    */
   private async applySelections(session: AcpRuntimeSession, selections: Readonly<Record<string, string | null>>): Promise<void> {
     try {
@@ -348,15 +349,16 @@ export class AcpRuntimeHandle implements RuntimeHandle {
 
   private draining = false
 
-  /** 打开的会话（路由切换时按会话交接）。 */
+  /** Open sessions (handed over per session when the route switches). */
   openSessions(): AcpRuntimeSession[] {
     return [...this.sessions.values()].flatMap(set => [...set])
   }
 
   /**
-   * 把这条路由让出去（04 §5.6「路由切换要交接写锁」）：不再打开新会话；空闲会话立即关闭，运行中的等回合
-   * 结束再关；全部关完后停掉进程。返回时这条路由持有的写锁都已释放。`onReleased` 在每个会话关闭后调用，
-   * 上层据此把它切到新路由。
+   * Gives up this route (04 §5.6 "route switches hand over the write lock"): no new sessions are opened; idle
+   * sessions close at once and running ones close after their turn ends; once all are closed the processes stop.
+   * When this returns, every write lock held by this route has been released. `onReleased` is called after each
+   * session closes, so the caller can move it to the new route.
    */
   async drain(onReleased?: (session: AcpRuntimeSession) => void): Promise<void> {
     this.draining = true
@@ -365,25 +367,25 @@ export class AcpRuntimeHandle implements RuntimeHandle {
       onReleased?.(session)
     }))
     const pools = [...this.pools.values()]
-    // 关掉的进程池不能再用：之后若重新允许打开（resumeOpening），按需建新进程池。
+    // A closed process pool cannot be reused: if opening is allowed again later (resumeOpening), a new pool is created on demand.
     this.pools.clear()
     await Promise.all(pools.map(pool => pool.shutdown()))
   }
 
-  /** 交接取消（例如新路由没起来）：重新允许打开会话。 */
+  /** Handover cancelled (e.g. the new route did not come up): allows opening sessions again. */
   resumeOpening(): void {
     this.draining = false
   }
 }
 
-/** 从会话配置项生成 AA 模型目录（selection ID 沿用 v2 ACP 规则）。 */
+/** Builds the AA model catalog from the session config options (selection IDs follow the generic ACP rules). */
 export function catalogsFromConfig(runtime: string, options: readonly ConfigOption[], codec?: SelectionCodec): Catalogs {
   const model = options.find(o => o.category === 'model' && o.type === 'select')
   if (!model?.values?.length) return {}
   const effort = options.find(o => o.category === 'effort' && o.type === 'select')
   const hidden = new Set(codec?.hiddenEfforts ?? [])
   const efforts = (effort?.values ?? []).filter(e => !hidden.has(e.value))
-  // acp/domain/catalogs.py: a model alone is its raw value; only a model with a reasoning effort is encoded
+  // A model alone is its raw value; only a model with a reasoning effort is encoded
   // (`decodeAcpSelection` rejects an encoded null effort).
   const selectionId = codec
     ? (m: string, e: string | null) => codec.modelSelectionId(m, e)
@@ -401,7 +403,7 @@ export function catalogsFromConfig(runtime: string, options: readonly ConfigOpti
     })),
   }
   const currentEffort = effort && !hidden.has(String(effort.currentValue)) ? String(effort.currentValue) : null
-  // acp/application/sessions.py `state`: the current value of each model / permission / effort option.
+  // The current value of each model / permission / effort option.
   const selections: Record<string, string> = { model: selectionId(String(model.currentValue), currentEffort) }
   for (const category of ['permission', 'effort'] as const) {
     const option = options.find(o => o.category === category && o.type === 'select')

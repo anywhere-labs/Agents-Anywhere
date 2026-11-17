@@ -1,5 +1,5 @@
-// 端口接口：RuntimeSession、Store、Outbox、DeviceMesh、Clock、KeyStore、SecureChannel 等，由外层实现。
-// RuntimeSession 由 B（Runtime）在 runtime-session.ts 定义。
+// Port interfaces: RuntimeSession, Store, Outbox, DeviceMesh, Clock, KeyStore, SecureChannel, etc., implemented by outer layers.
+// RuntimeSession is defined in runtime-session.ts.
 
 export type * from './runtime-session.js'
 export type * from './change-feed.js'

@@ -1,6 +1,7 @@
-// 有界读取原生会话文件的小工具：目录列表、文件头、文件签名。只读，不跟随目录符号链接。
-// ported from effi-crew cloud/agentd/src/conv/cli-files.ts @30f8334（`dirNames`、`headLines` 的有界读取思路；
-// 那里只认 Claude / Codex，这里给 Pi 的 JSONL 用）。
+// ported from effi-crew cloud/agentd/src/conv/cli-files.ts @30f8334 (dirNames, headLines)
+//
+// Small helpers for bounded reads of native session files: directory listings, file heads, file signatures.
+// Read-only; directory symlinks are not followed. Used for Pi's JSONL.
 
 import { lstat, open, readdir, realpath, stat } from 'node:fs/promises'
 import { join, relative, isAbsolute } from 'node:path'
@@ -13,7 +14,7 @@ export async function dirNames(dir: string): Promise<string[]> {
   }
 }
 
-/** 文件第一行（最多 `maxBytes`）；读不到或没有换行且超长时返回 undefined。 */
+/** The first line of a file (at most `maxBytes`); undefined when unreadable, or when there is no newline and it is too long. */
 export async function firstLine(path: string, maxBytes = 128 * 1024): Promise<string | undefined> {
   let handle
   try {
@@ -31,7 +32,7 @@ export async function firstLine(path: string, maxBytes = 128 * 1024): Promise<st
   }
 }
 
-/** `child` 是否在 `root` 之内（两者都应是解析过符号链接的绝对路径）。 */
+/** Whether `child` is inside `root` (both should be absolute paths with symlinks resolved). */
 export function within(child: string, root: string): boolean {
   const rel = relative(root, child)
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
@@ -44,8 +45,8 @@ export interface WalkError {
 }
 
 /**
- * 递归列出 `roots` 下的 `*.jsonl`（按名字排序，跳过点开头的目录，不跟随目录符号链接）。文件解析到来源之外的报错。
- * 返回解析后的真实路径。
+ * Recursively lists `*.jsonl` under `roots` (sorted by name, skipping dot directories, not following directory
+ * symlinks). Files that resolve outside their source are reported as errors. Returns the resolved real paths.
  */
 export async function walkJsonl(roots: readonly string[]): Promise<{ files: string[]; errors: WalkError[] }> {
   const files: string[] = []
@@ -55,7 +56,7 @@ export async function walkJsonl(roots: readonly string[]): Promise<{ files: stri
     try {
       realRoots.push(await realpath(root))
     } catch {
-      // 不存在的来源不算错误
+      // a missing source is not an error
     }
   }
   const visit = async (root: string, directory: string): Promise<void> => {

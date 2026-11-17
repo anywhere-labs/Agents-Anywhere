@@ -1,9 +1,9 @@
 // ported from effi-crew cloud/agentd/src/conv/sync.ts @30f8334 (Coalescer)
 //
 // Throttles commits of streaming output: the first change goes at once, later changes at most every
-// `intervalMs`, the last one always. v3 uses 100 ms (v2's assistant-text merge window) instead of agentd's
-// 333 ms, and applies it before the store: a delta stream becomes one SQLite commit (and one clock tick) per
-// item per window, not one per token.
+// `intervalMs`, the last one always. The default is 100 ms, the window in which assistant text is merged, and it
+// applies before the store: a delta stream becomes one SQLite commit (and one clock tick) per item per window,
+// not one per token.
 
 export class Coalescer {
   private readonly dirty = new Set<string>()

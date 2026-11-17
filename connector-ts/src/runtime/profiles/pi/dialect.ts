@@ -1,8 +1,10 @@
-// Pi 与标准 ACP 的差异，作为通用引擎的方言钩子。
-// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/pi/dialect.py
+// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/pi/dialect.py @98dd0e6e5 (PiDialect)
 //
-// v2 的方言还负责审批表单、计划审阅、合成配置项（权限、计划模式）和 `/bash` 授权；v3 端口里这些放在
-// Pi 会话（session.ts）：它包着通用 ACP 会话，改写交互、拦截配置。这里只保留引擎内部要用的钩子。
+// Pi's differences from standard ACP, as dialect hooks for the generic engine.
+//
+// Approval forms, plan review, synthesized config options (permission, plan mode) and `/bash` authorization live in
+// the Pi session (session.ts), which wraps the generic ACP session, rewrites interactions and intercepts config.
+// Only the hooks the engine itself needs are here.
 
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -17,7 +19,7 @@ import { contentText } from '../../acp/mapping.js'
 import { promptBlocks } from '../../acp/session.js'
 import { genericDialect } from '../generic/dialect.js'
 
-/** AA 的审批守卫（Pi 扩展）。路径和内容摘要都会在 Pi 进程里核对。 */
+/** AA's approval guard (a Pi extension). Both its path and content digest are verified inside the Pi process. */
 export const GUARD = fileURLToPath(new URL('./assets/permissions.mjs', import.meta.url))
 export const PERMISSION_OPTION = 'aa-permission'
 export const PLAN_OPTION = 'aa-planning'
@@ -25,11 +27,11 @@ export const PERMISSIONS = ['ask', 'ask_all', 'readonly'] as const
 export type PiPermission = (typeof PERMISSIONS)[number]
 export const TOOL_PERMISSION_PREFIX = 'AA_TOOL_PERMISSION\n'
 export const PLAN_REVIEW_PREFIX = 'AA_PLAN_REVIEW\n'
-/** 守卫在 SDK 开始一轮时报告的状态键（模型输出之前）。 */
+/** Status key the guard reports when the SDK starts a run (before any model output). */
 export const PROMPT_STARTED_KEY = 'aa-prompt-started'
 export const PLAN_MODE_KEY = 'aa-plan-mode'
 
-/** 守卫出错时方言发出的提示事件的错误码：Pi 会话据此停止执行。 */
+/** Error code of the notice the dialect emits when the guard fails; the Pi session stops execution on it. */
 export const GUARD_FAILED = 'pi_permissions_failed'
 
 function piMeta(update: JsonRecord): JsonRecord {
@@ -41,16 +43,16 @@ export function isPiStatus(update: JsonRecord, key: string): boolean {
   return update.sessionUpdate === 'session_info_update' && meta.event === 'status' && meta.key === key
 }
 
-/** Pi 的会话级能力：AA 的审批守卫管工具权限；插话看 initialize 的 `_meta.steering.supported`。 */
+/** Pi's session capabilities: AA's approval guard handles tool permissions; steering follows `_meta.steering.supported` from initialize. */
 export function piCapabilities(info: AgentInfo): Capability[] {
   const steer = asRecord(info.meta.steering).supported === true
   return negotiatedCapabilities(info, { steer, permissionCatalog: true })
 }
 
-/** 打开会话后由方言记下的事实：原生会话文件位置（v2 `native_files`）；正在输出的消息正文。 */
+/** Facts the dialect records after a session opens: native session file locations, and text of messages being streamed. */
 export interface PiDialectState {
   readonly sessionFiles: Map<string, string | null>
-  /** `<更新类别>\0<messageId>` → 已收到的正文。消息结束时用它给出整条消息与结局。 */
+  /** `<update kind>\0<messageId>` -> text received so far. Used to emit the whole message and its outcome when it ends. */
   readonly messages: Map<string, string>
 }
 
@@ -58,12 +60,13 @@ export function piDialectState(): PiDialectState {
   return { sessionFiles: new Map(), messages: new Map() }
 }
 
-/** v2 附件规则：这几种图片内联给模型，其余文件给 resource_link（acp/infrastructure/attachments.py `IMAGE_TYPES`）。 */
+/** These image types are inlined for the model; other files are sent as resource_link. */
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
 
 /**
- * Pi 的输入块：本机图片文件读出来内联（Pi 只认内联图片，v2 同样处理）；带平台身份的附件在块上挂
- * `_meta.aa.attachment`，SDK bridge 据此把附件写进原生用户消息的 `aaAttachments`，历史与重放因此能还原附件。
+ * Pi prompt blocks: local image files are read and inlined (Pi only accepts inline images). Attachments with a
+ * platform identity get `_meta.aa.attachment` on their block; the SDK bridge uses it to write the attachment into the
+ * native user message's `aaAttachments`, so history and replay can restore attachments.
  */
 export function piPromptBlocks(input: PromptInput): JsonRecord[] {
   const inlined = (input.attachments ?? []).map((attachment): PromptAttachment => {
@@ -82,14 +85,15 @@ export function piPromptBlocks(input: PromptInput): JsonRecord[] {
   })
 }
 
-/** Pi 的消息结束标记（每条助手消息末尾一个空文本块，`_meta.pi.event = assistant_message`）给出的结局。 */
+/** Outcome given by Pi's end-of-message marker (an empty text block at the end of each assistant message, `_meta.pi.event = assistant_message`). */
 function messageStatus(stopReason: unknown): 'done' | 'failed' | 'cancelled' {
   return stopReason === 'error' ? 'failed' : stopReason === 'aborted' ? 'cancelled' : 'done'
 }
 
 /**
- * 模型报错时 pi-acp 让 session/prompt 失败，错误数据里带 `_meta.pi.assistantError`。这类错误的消息就是模型给的
- * 原因：原样保留（不拼上错误数据），并标在 details 上，Pi 会话据此在 Timeline 上给出错误提示。
+ * When the model errors, pi-acp fails session/prompt with `_meta.pi.assistantError` in the error data. The message of
+ * such an error is the reason the model gave: it is kept as is (without the error data appended) and flagged in
+ * details, so the Pi session shows an error notice on the Timeline.
  */
 function assistantFailure(error: unknown): { message: string; failure?: string } | undefined {
   if (!(error instanceof JsonRpcError)) return undefined
@@ -103,7 +107,8 @@ export function piDialect(state: PiDialectState = piDialectState()): AcpDialect 
     ...genericDialect('pi', { permissionCatalog: true }),
     capabilities: piCapabilities,
     steer: 'extension',
-    // Pi 的消息与工具 ID 在回放之间稳定：带 messageId / toolCallId 的更新用原生 ID 算条目（v2 `aaProjectionVerified`）。
+    // Pi's message and tool IDs are stable across replays: updates with a messageId / toolCallId derive their item
+    // from the native ID.
     identity: (context: SessionContext): ItemIdentity => {
       const projection = new AcpProjectionIdentity(context.sessionId, context.epoch)
       return {
@@ -112,7 +117,8 @@ export function piDialect(state: PiDialectState = piDialectState()): AcpDialect 
         finish: () => projection.finish(),
       }
     },
-    // 补丁后的适配器把它绑到这条消息上，原生历史因此带着 AA 的消息 ID、显示文本与附件。
+    // The patched adapter binds this to the message, so native history carries AA's message ID, display text and
+    // attachments.
     promptParams: delivery => ({ _meta: { aa: { clientMessageId: delivery.clientMessageId } } }),
     promptBlocks: piPromptBlocks,
     acceptanceEvidence: update => isPiStatus(update, PROMPT_STARTED_KEY),
@@ -162,10 +168,11 @@ export function piDialect(state: PiDialectState = piDialectState()): AcpDialect 
 }
 
 /**
- * 带 messageId 的消息块（v2 `Projection.apply` 的消息部分）。正文照常交给通用翻译（返回 undefined），这里只记下
- * 已收到的正文；遇到 Pi 的消息结束标记时，用整条正文和结局（v2 `_meta…stopReason`：error → failed、aborted →
- * cancelled、其余 done）发 message.completed，条目 ID 与正文增量相同（Pi 的 messageId 在回放之间稳定）。
- * 同一条消息的思考条目也随结束标记以同一个结局结束，与历史里的规则一致（pi-history.ts：结局作用于整条消息的各块）。
+ * Message chunks with a messageId. Text goes through the generic translation as usual (returns undefined); this only
+ * records the text received. On Pi's end-of-message marker it emits message.completed with the whole text and the
+ * outcome (`_meta...stopReason`: error -> failed, aborted -> cancelled, anything else done), under the same item ID as
+ * the text deltas (Pi's messageId is stable across replays). The message's thinking item ends with the same outcome at
+ * the marker, matching the history rule (pi-history.ts: the outcome applies to every block of the message).
  */
 function messageUpdate(state: PiDialectState, update: JsonRecord, context: SessionContext, turnId: string | undefined): RuntimeEvent[] | undefined {
   const messageId = String(update.messageId)

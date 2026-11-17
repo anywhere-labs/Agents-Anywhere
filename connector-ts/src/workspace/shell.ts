@@ -1,6 +1,6 @@
-// `shell.exec`, `shell.task.start`, `shell.task.cancel` with the behaviour of v2 connector/local/shell.py: the command
-// runs through the platform shell in its own process group (Unix) or process tree (Windows), stdin closed, output
-// capped at 64,000 characters per stream, killed on timeout (TERM, then KILL after 2 s; `taskkill /T /F` on Windows).
+// `shell.exec`, `shell.task.start`, `shell.task.cancel`: the command runs through the platform shell in its own
+// process group (Unix) or process tree (Windows), stdin closed, output capped at 64,000 characters per stream,
+// killed on timeout (TERM, then KILL after 2 s; `taskkill /T /F` on Windows).
 import { spawn, type ChildProcess } from 'node:child_process'
 import { stat } from 'node:fs/promises'
 

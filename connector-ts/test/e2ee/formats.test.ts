@@ -21,8 +21,8 @@ const formats = JSON.parse(readFileSync(new URL('../../../contracts/e2ee/1.0/vec
 const hex = (value: string) => Uint8Array.from(Buffer.from(value, 'hex'))
 const pattern = (length: number) => Uint8Array.from({ length }, (_, i) => (i * 31 + 7) & 0xff)
 
-describe('e2ee 1.0 字节格式（vectors/aa-formats.json）', () => {
-  it('clientId 与指纹由身份公钥派生', () => {
+describe('e2ee 1.0 byte formats (vectors/aa-formats.json)', () => {
+  it('clientId and fingerprint are derived from the identity public key', () => {
     for (const identity of formats.identities) {
       expect(clientIdFor(hex(identity.identityPub))).toBe(identity.clientId)
       expect(identityFingerprint(hex(identity.identityPub))).toBe(identity.fingerprint)
@@ -35,7 +35,7 @@ describe('e2ee 1.0 字节格式（vectors/aa-formats.json）', () => {
     expect(Buffer.from(connectPrologue(connect.fields[0], connect.fields[1], connect.fields[2])).toString('hex')).toBe(connect.bytes)
   })
 
-  it('展示信封：固定 nonce 时逐字节一致，随机 nonce 时能解开', async () => {
+  it('display envelope: byte-exact with a fixed nonce, opens with a random nonce', async () => {
     for (const envelope of formats.displayEnvelopes) {
       const ad = e2eeLabel('display', envelope.deviceId, envelope.sessionId, envelope.slot, envelope.keyId)
       expect(Buffer.from(ad).toString('hex')).toBe(envelope.ad)
@@ -51,7 +51,7 @@ describe('e2ee 1.0 字节格式（vectors/aa-formats.json）', () => {
     }
   })
 
-  it('附件与分享的分段密文', () => {
+  it('segmented ciphertext for attachments and shares', () => {
     for (const object of formats.sealedObjects) {
       const segments = sealSegments(object.purpose, object.objectId, hex(object.key), pattern(object.plaintextLength))
       expect(segments.length).toBe(object.segments.length)
@@ -69,13 +69,13 @@ describe('e2ee 1.0 字节格式（vectors/aa-formats.json）', () => {
     }
   })
 
-  it('带密钥的输入摘要', () => {
+  it('keyed input digest', () => {
     for (const digest of formats.inputDigests) {
       expect(inputDigest(hex(digest.directoryKey), Buffer.from(digest.body))).toBe(digest.inputDigest)
     }
   })
 
-  it('分片与重组', () => {
+  it('fragmentation and reassembly', () => {
     for (const { messageLength, frames } of formats.framing) {
       const message = pattern(messageLength)
       const out = fragment(message)
@@ -89,7 +89,7 @@ describe('e2ee 1.0 字节格式（vectors/aa-formats.json）', () => {
     expect(fragment(new Uint8Array(0))[0]![0]).toBe(FRAME_FINAL)
   })
 
-  it('配对 URI', () => {
+  it('pairing URI', () => {
     expect(parsePairingUri(formats.pairingUri.uri)).toEqual(formats.pairingUri.payload)
   })
 })

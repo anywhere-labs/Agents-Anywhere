@@ -1,4 +1,4 @@
-// 工作区：文件、Shell 任务、终端（node-pty）、端口发现与附件。
+// Workspace: files, shell tasks, terminals (node-pty), port discovery and attachments.
 
 import { FileOps } from './files.js'
 import type { Params } from './params.js'
@@ -17,8 +17,8 @@ export { ShellOps, type Notify, type ShellResult } from './shell.js'
 export type WorkspaceHandler = (params: Params) => Promise<unknown>
 
 /**
- * The v2 workspace methods by name (`fs.readDir`, `shell.exec`, ...), for whichever transport serves them. Their
- * request and response bodies are unchanged from v2; device-meshcall 1.0 does not name them yet.
+ * The workspace methods by name (`fs.readDir`, `shell.exec`, ...), for whichever transport serves them. Their
+ * request and response bodies are the 2.x shapes clients send; device-meshcall 1.0 does not name them yet.
  */
 export function workspaceMethods(files: FileOps, shell: ShellOps, terminals?: Terminals): Readonly<Record<string, WorkspaceHandler>> {
   return {

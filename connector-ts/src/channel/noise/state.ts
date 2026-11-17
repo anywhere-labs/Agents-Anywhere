@@ -1,4 +1,4 @@
-// CipherState 与 SymmetricState（Noise 规范 §5.1、§5.2）。
+// CipherState and SymmetricState (Noise spec §5.1, §5.2).
 
 import {
   HASHLEN,
@@ -34,12 +34,12 @@ export class CipherState {
     return this.#key !== null
   }
 
-  /** 下一条消息要用的计数器，也就是已经处理过的消息条数。 */
+  /** The counter for the next message, i.e. the number of messages already processed. */
   get nonce(): bigint {
     return this.#nonce
   }
 
-  /** 只用于测试与恢复：Noise 规范 §5.1 SetNonce。 */
+  /** Tests and recovery only: Noise spec §5.1 SetNonce. */
   setNonce(nonce: bigint): void {
     if (nonce < 0n || nonce >= MAX_NONCE) throw new NoiseError('noise: nonce out of range')
     this.#nonce = nonce
@@ -57,20 +57,20 @@ export class CipherState {
     if (!this.#key) return Uint8Array.from(ciphertext)
     if (this.#nonce >= MAX_NONCE) throw new NoiseError('noise: nonce exhausted')
     if (ciphertext.length < TAGLEN) throw new NoiseError('noise: ciphertext shorter than tag')
-    // 认证失败时计数器不前进（规范 §5.1）。
+    // The counter does not advance when authentication fails (spec §5.1).
     const out = await this.crypto.decrypt(this.#key, this.#nonce, ad, ciphertext)
     this.#nonce += 1n
     return out
   }
 
-  /** Noise 规范 §4.2 REKEY：k = ENCRYPT(k, 2^64-1, "", zeros)[0:32]；计数器不变。 */
+  /** Noise spec §4.2 REKEY: k = ENCRYPT(k, 2^64-1, "", zeros)[0:32]; the counter is unchanged. */
   async rekey(): Promise<void> {
     if (!this.#key) throw new NoiseError('noise: rekey without key')
     const out = await this.crypto.encrypt(this.#key, MAX_NONCE, EMPTY, ZERO_KEY)
     this.#key = out.slice(0, KEYLEN)
   }
 
-  /** 用后清零。 */
+  /** Zeroed after use. */
   destroy(): void {
     this.#key?.fill(0)
     this.#key = null
@@ -145,7 +145,7 @@ export class SymmetricState {
     return [first, second]
   }
 
-  /** Noise 规范 §4.3 HKDF（HMAC-SHA256），输出 2 或 3 段，各 32 字节。 */
+  /** Noise spec §4.3 HKDF (HMAC-SHA256), producing 2 or 3 outputs of 32 bytes each. */
   async #hkdf(ikm: Uint8Array, outputs: 2 | 3): Promise<Uint8Array[]> {
     const tempKey = await this.crypto.hmacSha256(this.#ck, ikm)
     const out1 = await this.crypto.hmacSha256(tempKey, Uint8Array.of(0x01))

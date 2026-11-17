@@ -1,8 +1,10 @@
-// Pi：OpenMA 发布的 ACP 可执行文件（`@openma/pi-acp`）绑定到一个 Pi SDK。
-// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/pi/definition.py `PI`
+// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/pi/definition.py @98dd0e6e5 (PI)
 //
-// 用 `piProvider()` 接入：它在通用 ACP 引擎之上加了按会话的进程、原生历史与交接、审批与计划的交互改写。
-// 定义本身也能交给通用 AcpAgentProvider（共享进程、没有原生历史），只用于诊断。
+// Pi: OpenMA's published ACP executable (`@openma/pi-acp`) bound to a Pi SDK.
+//
+// Connect it with `piProvider()`, which adds per-session processes, native history and handoff, and rewritten
+// approval and plan interactions on top of the generic ACP engine. The definition can also be given to the generic
+// AcpAgentProvider (shared process, no native history), for diagnostics only.
 
 import type { JsonObject } from '../../../application/ports/runtime-session.js'
 import type { AcpAgentDefinition, ConfigSchema } from '../definition.js'
@@ -43,7 +45,7 @@ const CUSTOM_MODELS_SCHEMA: JsonObject = {
   default: [],
 }
 
-/** 实例配置。模型网关不在这里（RuntimeInstanceConfig.modelGateway）；只有受管环境用它。 */
+/** Instance config. The model gateway is not here (RuntimeInstanceConfig.modelGateway); only the managed environment uses it. */
 export const PI_CONFIG_SCHEMA: ConfigSchema = {
   schema: {
     type: 'object',
@@ -72,7 +74,7 @@ export const PI_PERMISSION_OPTIONS: ReadonlyArray<readonly [string, string]> = [
 export const PI: AcpAgentDefinition = {
   runtime: 'pi',
   displayName: 'Pi',
-  // 本机模式的 pi CLI；真正的启动命令由 prepareLaunch 给出（Node + 打过补丁的适配器）。
+  // The pi CLI for local mode; the real launch command comes from prepareLaunch (Node + the patched adapter).
   executable: { name: 'pi', candidates: ['~/.nvmd/bin/pi', '~/.local/bin/pi', '~/.npm-global/bin/pi', '/opt/homebrew/bin/pi', '/usr/local/bin/pi'] },
   arguments: [],
   configSchema: PI_CONFIG_SCHEMA,

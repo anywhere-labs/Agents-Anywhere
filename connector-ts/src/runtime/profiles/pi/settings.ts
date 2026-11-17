@@ -1,9 +1,12 @@
-// Pi 实例配置：运行环境（本机 / 受管）、自定义模型，以及受管环境的私有 Pi 配置（模型网关写进 models.json）。
-// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/pi/settings.py、definition.py `normalize_config`，
-// 以及 connector/connector/runtimes/custom_models.py（只保留 Pi 用到的校验）。
+// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/pi/settings.py @98dd0e6e5 (private_json, prepare_settings, update_default_model)
+// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/pi/definition.py @98dd0e6e5 (normalize_config)
+// ported from Agents-Anywhere v2 connector/connector/runtimes/custom_models.py @98dd0e6e5 (normalize_custom_models)
 //
-// 与 v2 的差别：模型网关不在实例配置里，而在 RuntimeInstanceConfig.modelGateway（实例配置仍不能携带任意 command/args/env）；
-// v2 的 `model` 字段（新会话默认模型）改用网关的 `model`。
+// Pi instance config: execution mode (local / managed), custom models, and the managed environment's private Pi
+// config (the model gateway is written into models.json). Only the custom model checks Pi uses are implemented.
+//
+// The model gateway is not part of instance config but comes from RuntimeInstanceConfig.modelGateway (instance config
+// still cannot carry arbitrary command/args/env); the default model for new sessions is the gateway's `model`.
 
 import { randomUUID } from 'node:crypto'
 import { mkdir, open, readFile, rename, rm } from 'node:fs/promises'
@@ -24,7 +27,7 @@ export interface CustomModel {
   readonly efforts?: ReadonlyArray<{ readonly effortId: string; readonly displayName: string }>
 }
 
-/** 校验并整理过的 Pi 实例配置。 */
+/** Validated and normalized Pi instance config. */
 export interface PiSettings {
   readonly executionMode: ExecutionMode
   readonly cliPath?: string
@@ -45,7 +48,7 @@ function invalid(message: string): never {
   fail('invalid_config', message)
 }
 
-/** custom_models.py `normalize_custom_models`。 */
+/** Validates and normalizes the custom model list. */
 export function normalizeCustomModels(raw: unknown): CustomModel[] {
   if (raw === undefined || raw === null) return []
   if (!Array.isArray(raw)) invalid('customModels must be an array')
@@ -91,10 +94,10 @@ function normalizeEfforts(raw: unknown, modelIndex: number): Array<{ effortId: s
 }
 
 /**
- * definition.py `normalize_config`：
- * - 旧配置没写运行环境但有模型网关时，仍走受管环境；
- * - 网关只给受管环境用：其他模式带网关是错误，不是被忽略；
- * - 受管环境必须有网关（已有本机 Pi 请用本机模式）。
+ * Normalizes execution mode and gateway:
+ * - an older config with no execution mode but a model gateway still uses the managed environment;
+ * - the gateway is only for the managed environment: a gateway with any other mode is an error, not ignored;
+ * - the managed environment requires a gateway (with a local Pi already installed, use local mode).
  */
 export function normalizePiSettings(settings: JsonObject, gateway: ModelGatewayConfig | undefined): PiSettings {
   const declared = settings.executionMode
@@ -118,7 +121,7 @@ export function normalizePiSettings(settings: JsonObject, gateway: ModelGatewayC
   }
 }
 
-/** Pi 受管环境只认 OpenAI Chat Completions 兼容的网关（v2 MODEL_CONNECTION protocols=("openai_chat",)）。 */
+/** The Pi managed environment only accepts OpenAI Chat Completions compatible gateways. */
 export function checkGateway(gateway: ModelGatewayConfig): void {
   if (gateway.protocol !== 'openai-chat') fail('model_connection_unsupported', 'Pi 受管环境只支持 OpenAI Chat Completions 兼容的模型网关。')
   let url: URL
@@ -131,7 +134,7 @@ export function checkGateway(gateway: ModelGatewayConfig): void {
   if (gateway.authToken.trim() === '' || UNSAFE.test(gateway.authToken)) invalid('modelGateway.apiKey contains unsupported characters')
 }
 
-/** 只有本人可读写的 JSON 文件；先写临时文件再原子替换（settings.py `private_json`）。 */
+/** JSON file readable and writable only by the owner; written to a temporary file, then atomically replaced. */
 export async function privateJson(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 })
   const temporary = join(dirname(path), `.${basename(path)}.${randomUUID().replaceAll('-', '')}`)
@@ -149,20 +152,20 @@ export async function privateJson(path: string, value: unknown): Promise<void> {
   }
 }
 
-/** 配置的模型在 Pi 的列表里就用它，否则第一个；Pi 用它开新会话。 */
+/** The configured model if it is in Pi's list, otherwise the first one; Pi opens new sessions with it. */
 function defaultModel(models: ReadonlyArray<{ modelId: string }>, configured: string | undefined): string {
   const ids = models.map(model => model.modelId)
   return configured !== undefined && ids.includes(configured) ? configured : ids[0]!
 }
 
 export interface ManagedSettingsOptions {
-  /** 网关不给模型列表时用的取数函数（测试替换）。 */
+  /** Fetch function used when the gateway gives no model list (replaced by tests). */
   readonly fetch?: typeof fetch
-  /** 守卫扩展的绝对路径（写进私有 settings.json 的 extensions）。 */
+  /** Absolute path of the guard extension (written into `extensions` in the private settings.json). */
   readonly guard: string
 }
 
-/** 网关的模型列表（`GET <baseUrl>/models`）。 */
+/** The gateway's model list (`GET <baseUrl>/models`). */
 async function gatewayModels(gateway: ModelGatewayConfig, fetchImpl: typeof fetch): Promise<CustomModel[]> {
   try {
     const response = await fetchImpl(`${gateway.baseUrl.replace(/\/+$/, '')}/models`, {
@@ -179,8 +182,9 @@ async function gatewayModels(gateway: ModelGatewayConfig, fetchImpl: typeof fetc
 }
 
 /**
- * 受管环境的私有 Pi 配置目录 `<root>/pi`：models.json 只有一个 provider `aa` 指向网关（密钥经环境变量
- * `AA_PI_GATEWAY_KEY` 传入，不落盘），settings.json 设好默认模型并载入守卫扩展。绝不碰用户自己的 Pi 配置。
+ * The managed environment's private Pi config directory `<root>/pi`: models.json has a single provider `aa` pointing
+ * at the gateway (the key is passed via the `AA_PI_GATEWAY_KEY` environment variable and never written to disk), and
+ * settings.json sets the default model and loads the guard extension. The user's own Pi config is never touched.
  */
 export async function prepareManagedSettings(root: string, settings: PiSettings, gateway: ModelGatewayConfig, options: ManagedSettingsOptions): Promise<string> {
   const agentDir = join(root, 'pi')
@@ -214,8 +218,8 @@ export async function prepareManagedSettings(root: string, settings: PiSettings,
 }
 
 /**
- * 让新会话改用另一个已配置的模型，不重启 Pi（settings.py `update_default_model`）。
- * 每个会话在自己的 Pi 进程启动时读 settings.json；已有会话保留会话文件里的模型。
+ * Switches new sessions to another configured model without restarting Pi. Each session reads settings.json when its
+ * own Pi process starts; existing sessions keep the model in their session file.
  */
 export async function updateDefaultModel(agentDir: string, model: string | undefined): Promise<void> {
   const path = join(agentDir, 'settings.json')

@@ -1,4 +1,4 @@
-// 用例层：sendMessage、createSession、respondInteraction、队列与计划/目标命令；只依赖 domain 与 application/ports。
+// Use case layer: sendMessage, createSession, respondInteraction, queue and plan/goal commands; depends only on domain and application/ports.
 
 export * from './coalescer.js'
 export * from './creation/index.js'

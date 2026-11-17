@@ -1,4 +1,4 @@
-// 握手完成后的传输层：分片、重组、按帧数/时间 rekey、nonce 核对。设备端与客户端共用。
+// Transport layer after the handshake: fragmentation, reassembly, rekey by frame count/time, nonce checks. Shared by device and client.
 
 import { NoiseError, type CipherState, type TransportPair } from './noise/index.js'
 import {

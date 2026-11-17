@@ -1,5 +1,5 @@
-// 测试替身：一个可编排的 RuntimeSession，供会话引擎（A）与 DSH（E）的测试使用。
-// emit() 推事件；calls 记录所有调用；nextPrompt / nextSteer 决定下一次调用的结果。
+// Test double: a scriptable RuntimeSession for the session engine (A) and DSH (E) tests.
+// emit() pushes events; calls records every call; nextPrompt / nextSteer decide the result of the next call.
 
 import type {
   CommandResult,

@@ -1,3 +1,3 @@
-// 目标：会话聚合内的显式子聚合。写入带 expectedRevision（CAS），每个 operationId 只执行一次。
+// Goals: an explicit sub-aggregate inside the session aggregate. Writes carry expectedRevision (CAS); each operationId runs once.
 
 export * from './goal.js'

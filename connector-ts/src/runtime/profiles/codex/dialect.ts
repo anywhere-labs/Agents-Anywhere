@@ -1,17 +1,25 @@
-// Codex 方言：驱动 anywhere-labs/codex-acp（04 §5.2，S1 实测结论）。
+// Codex dialect: drives anywhere-labs/codex-acp (04 §5.2, findings from spike S1).
 //
-// - codexIpc 协商：审批、设置跟随 Codex App；历史整体替换（App 里回滚、压缩后）按 `_codex/session/history_reset`
-//   begin → 全量重放 → commit / abort 进行，期间的更新按历史重放翻译、条目位置从头数。
-// - 打开已有会话用 `codexIpc.mode: auto`：Codex App 正持有这个会话时跟随它，否则直接打开。
-// - 每条用户消息带 `codexIpc.clientMessageId`，Codex 记进 ThreadItem.clientId，实时和历史都能认回 AA 的消息。
-// - 条目 ID 沿用 v2 规则（identity.ts），依赖客户端声明 `_meta.codexItemContext`（codex-acp#6）。
-// - 不声明 AIR：codex-acp 对 AIR 客户端改用另一套工具调用上报形状。`_session/goal` 不依赖 AIR 声明。
-// - 附件：本机文件（含图片）一律以路径（resource_link + MIME）传，从不读出字节转 data URL：data URL 会写进
-//   rollout、撑大文件、影响 App 历史渲染。codex-acp 目前把 resource_link 变成文本链接，要让模型直接看到图片，
-//   需要 codex-acp 把 `image/*` 的 `file://` resource_link 转成原生 `localImage`（见 Codex 伴随层 PR）。
-// - 打开路线、侧边栏广播由 Codex 伴随层（runtime/companions/codex）通过 CodexDialectOptions 控制。
-// - 计划审阅：计划完成后 codex-acp 发 request_permission（`plan-review:<itemId>`，implement_plan / revise_plan）。
-//   拒绝会结束当前回合并留在计划模式，所以修改意见在回合结束后作为新消息发出。
+// - codexIpc negotiation: approvals and settings follow the Codex App. A whole-history replacement (after a
+//   rollback or compaction in the App) runs as `_codex/session/history_reset` begin -> full replay -> commit /
+//   abort; updates in between are translated as history replay, with item positions counted from the start.
+// - Existing sessions are opened with `codexIpc.mode: auto`: follow the Codex App when it holds the session,
+//   otherwise open it directly.
+// - Every user message carries `codexIpc.clientMessageId`, which Codex stores in ThreadItem.clientId, so AA's
+//   messages are recognised both live and in history.
+// - Item IDs follow the rules in identity.ts and depend on the client declaring `_meta.codexItemContext`
+//   (codex-acp#6).
+// - AIR is not declared: codex-acp reports tool calls in a different shape to AIR clients. `_session/goal` does
+//   not depend on declaring AIR.
+// - Attachments: local files (images included) are always passed by path (resource_link + MIME), never read into
+//   a data URL: data URLs are written into the rollout, bloat the file and affect history rendering in the App.
+//   codex-acp currently turns resource_link into a text link; for the model to see images directly, codex-acp has
+//   to turn `image/*` `file://` resource_links into native `localImage` (see the Codex companion PR).
+// - The open route and sidebar announcement are controlled by the Codex companion layer
+//   (runtime/companions/codex) through CodexDialectOptions.
+// - Plan review: when a plan is complete codex-acp sends request_permission (`plan-review:<itemId>`,
+//   implement_plan / revise_plan). Rejecting ends the current turn and stays in plan mode, so revision feedback
+//   is sent as a new message after the turn ends.
 
 import type { ConfigOption, HistoryItem, NativeSessionRef, RuntimeEvent } from '../../../application/ports/runtime-session.js'
 import { codexModelSelectionId } from '../../../domain/identity/index.js'
@@ -45,14 +53,16 @@ export function codexPlanReview(answer: { action: 'approve' | 'revise' | 'dismis
   if (answer.action === 'revise') {
     return { ...(revise !== undefined ? { optionId: revise } : {}), ...(answer.feedback ? { then: { action: 'prompt', text: answer.feedback } } : {}) }
   }
-  // 暂不执行：留在计划模式，回合随拒绝结束。
+  // Not now: stay in plan mode; the turn ends with the rejection.
   return revise !== undefined ? { optionId: revise } : {}
 }
 
 /**
- * codex-acp 是否把 `image/*` 的 `file://` resource_link 转成 Codex 原生 `localImage`（initialize 顶层
- * `_meta.localImageLinks.supported`，anywhere-labs/codex-acp#9；三条路由都生效）。不支持时模型只看到路径文本，所以图片附件能力按不支持报告，
- * 客户端隐藏入口；AA 从不改发 data URL（会写进 rollout、撑大文件）。
+ * Whether codex-acp turns `image/*` `file://` resource_links into Codex-native `localImage` (top-level
+ * `_meta.localImageLinks.supported` in initialize, anywhere-labs/codex-acp#9; applies to all three routes).
+ * Without it the model only sees the path text, so the image attachment capability is reported as unsupported
+ * and clients hide the entry point. AA never falls back to data URLs (they are written into the rollout and
+ * bloat the file).
  */
 export function codexLocalImageLinks(info: AgentInfo): boolean {
   return asRecord(info.meta.localImageLinks).supported === true
@@ -62,13 +72,14 @@ const HISTORY_EVENTS = new Set<RuntimeEvent['type']>(['message.delta', 'message.
 
 export interface CodexDialectOptions {
   /**
-   * 打开已有线程的路线：缺省 `auto`；`plain` 时不带 codexIpc（Windows 上写锁判定为 unknown 时，
-   * 由伴随层决定让 Codex 自己裁决写锁）。
+   * Route for opening an existing thread: `auto` by default; `plain` sends no codexIpc (when the write lock is
+   * unknown on Windows, the companion layer lets Codex arbitrate the write lock itself).
    */
   readonly openRoute?: (ref: NativeSessionRef) => 'auto' | 'plain'
   /**
-   * 请 codex-acp 把 AA 新建的线程广播给 Codex App，让它立即出现在侧边栏（`codexIpc.announceNewThreads`，
-   * 需要 codex-acp 支持；不认识的 codex-acp 会忽略）。缺省关闭：v2 实测这样出现的线程不进项目分组。
+   * Ask codex-acp to announce threads created by AA to the Codex App so they appear in its sidebar right away
+   * (`codexIpc.announceNewThreads`; requires codex-acp support, older codex-acp ignores it). Off by default:
+   * threads that appear this way are not put into a project group.
    */
   readonly announceNewThreads?: boolean
 }
@@ -95,7 +106,7 @@ export function codexDialect(options: CodexDialectOptions = {}): AcpDialect {
       modelSelectionId: codexModelSelectionId,
       permissionSelectionId: codexPermissionSelectionForMode,
     },
-    // codex-acp 的 `mode` 是审批与沙箱预设，即 AA 的权限；计划模式在 `collaboration_mode` 上。
+    // codex-acp's `mode` is the approval and sandbox preset, i.e. AA's permission; plan mode is on `collaboration_mode`.
     adaptConfig: options => options.map((option): ConfigOption => (option.id === 'mode' && option.category === 'mode' ? { ...option, category: 'permission' } : option)),
     planMode: options => (options.some(o => o.id === 'collaboration_mode') ? { optionId: 'collaboration_mode', planValue: 'plan', normalValue: 'default' } : undefined),
     interactionKind: (method, params) => (method === 'session/request_permission' && isPlanReview(params) ? 'plan_review' : undefined),
@@ -115,7 +126,8 @@ export function codexDialect(options: CodexDialectOptions = {}): AcpDialect {
       session.endReplay()
       session.emit({ type: 'history.reset', phase: params.phase, revision: params.revision })
     },
-    // 只读历史：`_codex/session/read` 直接读 Codex 的线程记录，不打开会话、不抢写锁。
+    // Read-only history: `_codex/session/read` reads Codex's thread records directly, without opening the session
+    // or taking the write lock.
     readNativeHistory: async (ref, window, connection) => {
       const { client, info } = await connection()
       const response = asRecord(await client.request(CODEX_SESSION_READ, { sessionId: ref.nativeSessionId }, { timeoutMs: 120_000 }))

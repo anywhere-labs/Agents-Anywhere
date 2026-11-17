@@ -19,7 +19,7 @@ let root: string
 let bin: string
 let home: string
 
-/** 假的 `hermes`：`acp --check` 按 FAKE_CHECK_EXIT 退出，`acp --version` 输出两行，`acp` 启动假 ACP Agent。 */
+/** Fake `hermes`: `acp --check` exits with FAKE_CHECK_EXIT, `acp --version` prints two lines, `acp` starts the fake ACP Agent. */
 function installFakeHermes(directory: string): string {
   mkdirSync(directory, { recursive: true })
   const path = join(directory, 'hermes')

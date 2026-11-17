@@ -1,6 +1,13 @@
-// 官方提供 ACP 入口的 Agent：每个一份定义，没有方言或只有很小的类别修正（04 §5.5）。
-// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/{opencode,antigravity,codebuddy,commandcode,mimo,minimax}/definition.py
-// runtime 取值与 v2 一致（不加 acp: 前缀）：会话 ID、Timeline ID 以它为输入。
+// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/opencode/definition.py @98dd0e6e5 (OPENCODE)
+// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/antigravity/definition.py @98dd0e6e5 (ANTIGRAVITY)
+// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/codebuddy/definition.py @98dd0e6e5 (CODEBUDDY)
+// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/commandcode/definition.py @98dd0e6e5 (CommandCodeDialect, COMMAND_CODE)
+// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/mimo/definition.py @98dd0e6e5 (MIMO)
+// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/minimax/definition.py @98dd0e6e5 (MiniMaxDialect, MINIMAX)
+//
+// Agents that ship an official ACP entry: one definition each, with no dialect or only a small category fix
+// (04 §5.5). `runtime` values carry no `acp:` prefix and must stay stable: session IDs and Timeline IDs are
+// derived from them.
 
 import type { ConfigOption } from '../../../application/ports/runtime-session.js'
 import type { AcpDialect } from '../../acp/dialect.js'
@@ -19,7 +26,7 @@ export const OPENCODE: AcpAgentDefinition = {
   dialect: () => genericDialect('opencode'),
 }
 
-/** Google Antigravity 的 CLI，用它自带的 ACP 入口。 */
+/** Google Antigravity's CLI, using its built-in ACP entry. */
 export const ANTIGRAVITY: AcpAgentDefinition = {
   runtime: 'antigravity',
   displayName: 'Google Antigravity',
@@ -32,7 +39,7 @@ export const ANTIGRAVITY: AcpAgentDefinition = {
   dialect: () => genericDialect('antigravity'),
 }
 
-/** 腾讯 CodeBuddy Code。 */
+/** Tencent CodeBuddy Code. */
 export const CODEBUDDY: AcpAgentDefinition = {
   runtime: 'codebuddy',
   displayName: 'CodeBuddy Code',
@@ -47,7 +54,10 @@ export const CODEBUDDY: AcpAgentDefinition = {
 
 export const COMMAND_CODE_PERMISSION_MODE = 'command-code-permission-mode'
 
-/** Command Code 用 ACP session modes 表达权限策略：没有权限类配置项时，把 modes 作为权限项。 */
+/**
+ * Command Code expresses its permission policy as ACP session modes: with no permission-category config option,
+ * the modes are used as the permission option.
+ */
 export function commandCodeDialect(): AcpDialect {
   return {
     ...genericDialect('commandcode'),
@@ -58,7 +68,7 @@ export function commandCodeDialect(): AcpDialect {
 export const COMMAND_CODE: AcpAgentDefinition = {
   runtime: 'commandcode',
   displayName: 'Command Code',
-  // npm 在所有平台都发布 cmdc。Windows 上 cmd 可能解析成 cmd.exe。
+  // npm publishes cmdc on every platform. On Windows, `cmd` may resolve to cmd.exe.
   executable: { name: 'cmdc', candidates: ['~/.local/bin/cmdc'], windowsNpmEntry: 'command-code/dist/index.mjs' },
   arguments: ['--no-auto-update', 'acp'],
   check: ['--no-auto-update', 'acp', '--help'],
@@ -68,7 +78,7 @@ export const COMMAND_CODE: AcpAgentDefinition = {
   dialect: () => commandCodeDialect(),
 }
 
-/** 小米 MiMo Code。它的 ACP 服务只接受进程 cwd 下的目录，所以每个工作目录一个进程。 */
+/** Xiaomi MiMo Code. Its ACP server only accepts directories under the process cwd, so there is one process per working directory. */
 export const MIMO: AcpAgentDefinition = {
   runtime: 'mimo',
   displayName: 'MiMo Code',
@@ -82,7 +92,7 @@ export const MIMO: AcpAgentDefinition = {
   dialect: () => genericDialect('mimo'),
 }
 
-/** MiniMax Code 把权限模式放在自定义的 ACP 类别里。 */
+/** MiniMax Code puts its permission mode in a custom ACP category. */
 export function miniMaxDialect(): AcpDialect {
   return {
     ...genericDialect('minimax'),
@@ -102,5 +112,5 @@ export const MINIMAX: AcpAgentDefinition = {
   dialect: () => miniMaxDialect(),
 }
 
-/** Connector 自带的全部官方 ACP Agent 定义（顺序即设备详情里的展示顺序）。 */
+/** All official ACP Agent definitions shipped with the Connector (in the order shown in device details). */
 export const OFFICIAL_ACP_AGENTS: readonly AcpAgentDefinition[] = [OPENCODE, ANTIGRAVITY, CODEBUDDY, COMMAND_CODE, MIMO, MINIMAX]

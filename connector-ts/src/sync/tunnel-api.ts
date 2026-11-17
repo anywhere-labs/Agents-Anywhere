@@ -1,4 +1,4 @@
-// The client API inside a secure channel (contracts/e2ee/1.0 「通道消息」): the same paths and bodies as normal mode,
+// The client API inside a secure channel (contracts/e2ee/1.0, channel messages section): the same paths and bodies as normal mode,
 // answered by this device instead of the Server. Session reads come from the local store, commands go through the
 // same CommandInbox as `aa.device.v1.Commands/*`, device content (files, terminals) through the workspace handlers.
 
@@ -14,7 +14,7 @@ import { protocolEvent } from './client-shape.js'
 import type { DeviceReaders } from './readers.js'
 import { watchSession, type WatchDeps } from './watch.js'
 
-/** A workspace handler by v2 method name (`fs.readDir`, `terminal.create`, ...). */
+/** A workspace handler by client method name (`fs.readDir`, `terminal.create`, ...). */
 export type WorkspaceCall = (params: Record<string, unknown>) => Promise<unknown>
 
 /** Terminal output routed to one subscriber (the workspace `Terminals.attach/release`). */
@@ -104,7 +104,7 @@ function int(value: string | null, fallback: number, min: number, max: number): 
   return parsed
 }
 
-/** `seq:N` (v2 cursor); anything else starts from the beginning. */
+/** `seq:N` (the cursor format clients send); anything else starts from the beginning. */
 function cursorSeq(cursor: string | null): number {
   const match = /^seq:(\d+)$/u.exec(cursor ?? '')
   return match === null ? 0 : Number(match[1])

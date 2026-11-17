@@ -10,7 +10,7 @@ export function dshTimelineItemId(externalSessionId: string, projectionKind: str
 }
 
 // ---------------------------------------------------------------------------
-// DSH plugin algorithms (dsh-bridge-next/src/host/dsh-runtime/identity.ts). These run in Node in v2,
+// DSH plugin algorithms (dsh-bridge-next/src/host/dsh-runtime/identity.ts). The plugin computes them in Node,
 // so they keep Node's lenient UTF-8 (lone surrogates hash as U+FFFD) and accept empty inputs.
 // ---------------------------------------------------------------------------
 

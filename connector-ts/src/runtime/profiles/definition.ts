@@ -1,5 +1,7 @@
-// ACP Agent 定义：Connector 自带的、类型化的启动方式与差异，从不接受用户提供的命令。
-// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/domain/agents.py（v3 按 D10 从 v2 迁移 profile 定义）。
+// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/domain/agents.py @98dd0e6e5 (profile definitions)
+//
+// ACP Agent definitions: typed launch methods and differences shipped with the Connector; user-provided commands
+// are never accepted.
 
 import type { Capability, ConfigOption, JsonObject, ModelGatewayConfig, RuntimeInstanceConfig, RuntimeType } from '../../application/ports/runtime-session.js'
 import type { ProtocolPermissionItem } from '../../generated/protocol/v1_2/permission-catalog-response.js'
@@ -7,20 +9,26 @@ import type { AcpDialect } from '../acp/dialect.js'
 import type { LocalLaunch, Platform } from './launch.js'
 
 /**
- * 实例配置可以从 Server 修改，所以绝不能携带启动指令；参数和环境变量只由定义决定。
- * 比较时忽略大小写。
+ * Instance config can be changed from the Server, so it must never carry launch instructions; arguments and
+ * environment variables are decided by the definition alone. Compared case-insensitively.
  */
 export const FORBIDDEN_CONFIG_KEYS: ReadonlySet<string> = new Set(['command', 'commands', 'args', 'arguments', 'argv', 'env', 'environment', 'launch', 'shell'])
 
-/** 本机命令：先找 PATH，再找候选路径（Desktop 或服务拉起的 Connector 往往拿不到登录 shell 的 PATH）。 */
+/**
+ * Local command: looked up on PATH first, then in candidate paths (a Connector launched by Desktop or a service
+ * often lacks the login shell's PATH).
+ */
 export interface Executable {
   readonly name: string
   readonly candidates?: readonly string[]
-  /** Windows 上 npm 生成的 `.cmd` 包装脚本对应的入口（相对 node_modules），用 node 直接运行它，不经 shell。 */
+  /**
+   * Entry behind the `.cmd` wrapper npm generates on Windows (relative to node_modules); run directly with node,
+   * not through a shell.
+   */
   readonly windowsNpmEntry?: string
 }
 
-/** 实例配置里一个可选目录，作为环境变量传给 Agent。 */
+/** An optional directory in instance config, passed to the Agent as an environment variable. */
 export interface PathSetting {
   readonly key: string
   readonly title: string
@@ -38,71 +46,82 @@ export interface DialectContext {
   readonly settings: JsonObject
 }
 
-/** 启动准备钩子的输入（v2 `AgentContext`）。 */
+/** Input to the launch preparation hook. */
 export interface LaunchContext {
   readonly instanceId: string
   readonly sessionNamespace: string
-  /** 校验过的实例配置。 */
+  /** Validated instance config. */
   readonly settings: JsonObject
-  /** 模型网关：由定义注入为环境变量或私有配置，从不经实例配置透传 env。 */
+  /**
+   * Model gateway: injected by the definition as environment variables or private config, never passed through as
+   * env from instance config.
+   */
   readonly modelGateway?: ModelGatewayConfig
-  /** 实例数据目录（进程工作目录、私有缓存）。 */
+  /** Instance data directory (process working directory, private cache). */
   readonly dataDir: string
-  /** 按工作目录分进程时的工作目录。 */
+  /** Working directory, when processes are split per working directory. */
   readonly scope?: { readonly cwd: string }
   readonly platform?: Platform
 }
 
 export interface AcpAgentDefinition {
-  /** 与 v2 runtime_type 一致（会话 ID、Timeline ID 的输入）。 */
+  /** Runtime type; an input to session IDs and Timeline IDs, so it must stay stable. */
   readonly runtime: RuntimeType
   readonly displayName: string
   readonly description?: string
   readonly executable: Executable
-  /** 固定的 ACP 启动参数，例如 `['acp']`。 */
+  /** Fixed ACP launch arguments, e.g. `['acp']`. */
   readonly arguments: readonly string[]
-  /** 启动前确认 ACP 入口可用的命令参数（非 0 退出即不可用）。 */
+  /** Arguments that confirm the ACP entry works before launch (a non-zero exit means unavailable). */
   readonly check?: readonly string[]
-  /** 读被驱动 Agent 版本的命令参数（取输出的最后一行）。 */
+  /** Arguments that read the driven Agent's version (the last line of output is used). */
   readonly version?: readonly string[]
-  /** 读适配器版本的命令参数（可执行文件是适配器、Agent 在它里面时，例如 claude-agent-acp）。 */
+  /**
+   * Arguments that read the adapter version (when the executable is an adapter with the Agent inside it, e.g.
+   * claude-agent-acp).
+   */
   readonly adapterVersion?: readonly string[]
-  /** 进程在会话工作目录里启动（每个工作目录一个进程）；否则在实例数据目录。 */
+  /** Start the process in the session's working directory (one process per directory); otherwise in the instance data directory. */
   readonly launchInWorkspace?: boolean
-  /** 列出 Agent 的原生会话（`session/list`）；缺省 true（v2 `native_inventory`）。 */
+  /** List the Agent's native sessions (`session/list`); defaults to true. */
   readonly nativeInventory?: boolean
   readonly settings?: readonly PathSetting[]
-  /** 实例配置；不给时由 `executable` 和 `settings` 生成。 */
+  /** Instance config; generated from `executable` and `settings` when not given. */
   readonly configSchema?: ConfigSchema
-  /** 建会话前就能列出的权限选项：[值, 名称]。 */
+  /** Permission options that can be listed before a session exists: [value, name]. */
   readonly permissionOptions?: ReadonlyArray<readonly [string, string]>
-  /** 完整的权限目录（带 v2 元数据），可按当前会话配置过滤；优先于 permissionOptions。 */
+  /** Full permission catalog (with catalog metadata), optionally filtered by the session config; takes precedence over permissionOptions. */
   permissionCatalog?(config: readonly ConfigOption[]): readonly ProtocolPermissionItem[]
-  /** 设备详情里展示的额外事实（v2 `metadata`）。 */
+  /** Extra facts shown in device details. */
   readonly metadata?: JsonObject
   readonly maturity?: string
   /**
-   * 在通用环境边界（supervisor/environment.ts）之后调整 Agent 进程的环境变量：剔除宿主带来的变量、
-   * 注入模型网关。设置项映射出的变量在它之后合并，不会被它剔除。
+   * Adjusts the Agent process environment after the generic environment boundary (supervisor/environment.ts):
+   * removes variables inherited from a host and injects the model gateway. Variables mapped from settings are
+   * merged afterwards and are not removed by it.
    */
   environment?(env: NodeJS.ProcessEnv, instance: RuntimeInstanceConfig): NodeJS.ProcessEnv
-  /** 会话方言；每个运行实例一份。 */
+  /** Session dialect; one per running instance. */
   dialect(context: DialectContext): AcpDialect
   /**
-   * 启动准备（v2 `prepare_launch`）：Agent 不是一个现成的本机可执行文件时（例如要先装 npm 运行时、给适配器打补丁），
-   * 由它在每次拉起进程前给出命令、参数和环境变量；不给时按 `executable` 找本机命令（`localLaunch`）。
-   * 返回的命令与参数仍只由定义决定，实例配置不能携带它们。
+   * Launch preparation: when the Agent is not a ready-made local executable (e.g. an npm runtime must be installed
+   * first or the adapter patched), this supplies the command, arguments and environment before each process start;
+   * without it the local command is found from `executable` (`localLaunch`). The returned command and arguments are
+   * still decided by the definition alone; instance config cannot carry them.
    */
   prepareLaunch?(context: LaunchContext): Promise<LocalLaunch>
-  /** 没有会话时进程空闲多久回收；0 表示常驻（Codex：codex-acp 要一直跟随 Codex App 的会话）。缺省用进程池的默认值。 */
+  /**
+   * How long a process with no sessions stays idle before it is reclaimed; 0 keeps it running (Codex: codex-acp keeps
+   * following Codex App sessions). Defaults to the process pool's default.
+   */
   readonly idleMs?: number
-  /** 方言之外的运行时级能力上限（附件等）。 */
+  /** Runtime-level capability limits outside the dialect (attachments, etc.). */
   readonly extraCapabilities?: readonly Capability[]
   /** Prepares workspaces: the Agent session opens when the new-session page picks a directory, before the first message. */
   readonly workspacePreparation?: boolean
 }
 
-/** 实例配置 schema（v2 `AcpAgentDefinition.instance_schema`）。 */
+/** Instance config schema. */
 export function instanceSchema(definition: AcpAgentDefinition): ConfigSchema {
   if (definition.configSchema !== undefined) return definition.configSchema
   const properties: Record<string, JsonObject> = {
@@ -120,7 +139,7 @@ export function instanceSchema(definition: AcpAgentDefinition): ConfigSchema {
   }
 }
 
-/** 拒绝实例配置可能携带启动指令的定义（v2 `check_definition`）。 */
+/** Rejects a definition whose instance config could carry launch instructions. */
 export function checkDefinition(definition: AcpAgentDefinition): void {
   const schema = instanceSchema(definition).schema
   const properties = (schema.properties ?? {}) as Record<string, unknown>
@@ -130,8 +149,9 @@ export function checkDefinition(definition: AcpAgentDefinition): void {
 }
 
 /**
- * 按 schema 检查实例配置。定义生成的 schema 只有 `type: object`、`additionalProperties: false` 和
- * 带 `maxLength` 的字符串字段，这里只实现这些（不引入 JSON Schema 依赖）。报错不回显值：值里可能有凭据。
+ * Checks instance config against the schema. Schemas generated by definitions only use `type: object`,
+ * `additionalProperties: false` and string fields with `maxLength`, so only those are implemented (no JSON Schema
+ * dependency). Errors never echo the value: it may contain credentials.
  */
 export function validateSettings(schema: JsonObject, values: JsonObject): string | undefined {
   const properties = (schema.properties ?? {}) as Record<string, JsonObject>

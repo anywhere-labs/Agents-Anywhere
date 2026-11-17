@@ -1,9 +1,9 @@
-// 端到端测试（server/tests/test_v3_e2e.py）用的进程级假 ACP Agent（ndjson over stdio）。
-// 按 prompt 的文字决定行为：
-//   含 "#slow"：先回一段文字，然后一直等到 session/cancel（或 60 秒）；
-//   含 "#plan"：发一份 Markdown 计划（plan_update）再回复；
+// Process-level fake ACP Agent (ndjson over stdio) for the end-to-end test (server/tests/test_v3_e2e.py).
+// Behaviour depends on the prompt text:
+//   contains "#slow": replies with some text, then waits for session/cancel (or 60 seconds);
+//   contains "#plan": sends a Markdown plan (plan_update), then replies;
 //   otherwise: replies "echo: <text> [model=<model> permission=<permission>] sessions-in-cwd=<session/new calls in that cwd>".
-// session/new 之后上报斜杠命令目录（available_commands_update）。
+// After session/new it reports the slash command catalog (available_commands_update).
 import { createInterface } from 'node:readline'
 
 /** @param {Record<string, unknown>} message */

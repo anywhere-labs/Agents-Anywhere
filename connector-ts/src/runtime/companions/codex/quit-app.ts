@@ -1,15 +1,18 @@
-// 退出 Codex App（v2 `/kill-chatgpt`），按 codex-acp docs/session-ownership.md「Last-resort termination flow」：
+// Quits the Codex App, following codex-acp docs/session-ownership.md "Last-resort termination flow":
 //
-// 1. 先刷新归属判定：线程能跟随（route follow）就不需要退出 App；
-// 2. 拟定具体计划：要结束哪些进程（带身份）、会影响哪些线程、宽限多久、是否允许强制；
-// 3. 用户对这份计划明确同意（单次有效、有过期时间；计划变了要重新同意）；
-// 4. 发信号前复核进程身份（PID + 启动时间 + 可执行文件 + 用户）和线程关系，变了就不发；
-// 5. 先请求有序退出，宽限期后仍在且用户同意过强制时才强制；
-// 6. 确认进程确实退出、写锁确实释放；
-// 7. 重新判定归属：别的客户端可能已经接手；
-// 8. 之后由会话引擎按正常路线重新打开同一线程（这里只报告，不自动 resume）。
+// 1. Refresh the ownership check first: if the thread can be followed (route follow), there is no need to quit;
+// 2. draft a concrete plan: which processes to end (with identities), which threads are affected, the grace period,
+//    and whether forcing is allowed;
+// 3. the user explicitly agrees to this plan (single use, with an expiry; a changed plan needs new agreement);
+// 4. before signalling, recheck process identities (PID + start time + executable + user) and thread relations, and
+//    send nothing if they changed;
+// 5. request an orderly exit first, and force only if processes remain after the grace period and the user agreed
+//    to forcing;
+// 6. confirm the processes really exited and the write lock really was released;
+// 7. check ownership again: another client may have taken over;
+// 8. afterwards the session engine reopens the same thread on the normal route (this only reports, never resumes).
 //
-// 伴随层从不删除写锁文件。
+// The companion layer never deletes write lock files.
 
 import { randomUUID } from 'node:crypto'
 
@@ -35,13 +38,13 @@ export interface QuitPlan {
   readonly planId: string
   readonly createdAt: number
   readonly expiresAt: number
-  /** 要结束的 App 主进程。 */
+  /** App main processes to end. */
   readonly processes: readonly ProcessInfo[]
-  /** 主进程的子进程：随主进程退出（Windows 上一起结束），退出后要复核。 */
+  /** Children of the main processes: they exit with them (ended together on Windows) and are rechecked afterwards. */
   readonly children: readonly ProcessInfo[]
-  /** 目标线程（用户要接手的）在拟定计划时的状态。 */
+  /** State of the target thread (the one the user wants to take over) when the plan was drafted. */
   readonly threads: readonly QuitPlanThread[]
-  /** App 里正在加载的其它线程都会被一起释放，这里无法逐一列出（Codex App 不公开清单）。 */
+  /** Every other thread loaded in the App is released too; they cannot be listed here (the Codex App does not expose the list). */
   readonly releasesAllAppThreads: true
   readonly gracePeriodMs: number
   readonly platform: NodeJS.Platform
@@ -49,30 +52,30 @@ export interface QuitPlan {
 
 export type QuitPrepareResult =
   | { readonly status: 'plan'; readonly plan: QuitPlan }
-  /** 线程可以跟随或已经无人持有，不需要退出 App。 */
+  /** The thread can be followed or is no longer held: no need to quit the App. */
   | { readonly status: 'not_needed'; readonly threads: readonly QuitPlanThread[] }
   | { readonly status: 'app_not_running' }
   | { readonly status: 'platform_unsupported' }
   | { readonly status: 'process_table_unavailable' }
 
 export interface QuitConsent {
-  /** 宽限期后仍未退出时允许强制结束（SIGKILL / taskkill /F）。 */
+  /** Allow a forced end (SIGKILL / taskkill /F) if processes remain after the grace period. */
   readonly force: boolean
 }
 
 export type QuitStatus =
-  /** 进程已退出，目标线程写锁已释放（或平台无法判定时为 unknown，见 threads）。 */
+  /** The processes exited and the target thread's write lock was released (unknown when the platform cannot tell, see threads). */
   | 'completed'
-  /** 线程已经被释放，没有发信号。 */
+  /** The thread was already released; no signal sent. */
   | 'already_released'
-  /** 计划不存在、已用过或已过期，需要重新拟定并征得同意。 */
+  /** The plan does not exist, was used or has expired; it must be drafted and agreed to again. */
   | 'unknown_plan'
   | 'plan_expired'
-  /** 进程身份或数量变了（PID 复用、App 重启、多了一个实例），没有发信号。 */
+  /** Process identities or count changed (PID reuse, App restart, an extra instance); no signal sent. */
   | 'plan_changed'
-  /** 宽限期后仍有主进程存活，且用户没有同意强制。 */
+  /** A main process is still alive after the grace period and the user did not agree to forcing. */
   | 'survivors'
-  /** 进程都退出了，但写锁仍被持有（别的进程接手了，或子进程还在）。 */
+  /** The processes all exited but the write lock is still held (another process took over, or a child is still alive). */
   | 'lock_still_held'
 
 export interface QuitOutcome {
@@ -80,7 +83,7 @@ export interface QuitOutcome {
   readonly terminated: readonly number[]
   readonly killed: readonly number[]
   readonly survivors: readonly number[]
-  /** 退出后仍在的子进程（只报告，不另发信号）。 */
+  /** Children still alive after the exit (reported only, no extra signal). */
   readonly childSurvivors: readonly number[]
   readonly threads: readonly QuitPlanThread[]
 }
@@ -88,12 +91,12 @@ export interface QuitOutcome {
 export interface CodexAppQuitterOptions {
   readonly table: ProcessTable
   readonly signaller: ProcessSignaller
-  /** 只读归属判定（`_codex/session/inspect`）。 */
+  /** Read-only ownership check (`_codex/session/inspect`). */
   readonly inspect: (threadId: string) => Promise<CodexInspection>
   readonly platform?: NodeJS.Platform
   readonly uid?: number
   readonly gracePeriodMs?: number
-  /** 计划多久内必须确认。 */
+  /** How long a plan stays confirmable. */
   readonly planTtlMs?: number
   readonly pollMs?: number
   readonly now?: () => number
@@ -127,7 +130,7 @@ export class CodexAppQuitter {
     return quitSupported(this.platform)
   }
 
-  /** 第一步：拟定计划，不发任何信号。 */
+  /** Step one: draft the plan without sending any signal. */
   async prepare(threadIds: readonly string[]): Promise<QuitPrepareResult> {
     if (!this.supported) return { status: 'platform_unsupported' }
     const threads = await Promise.all(threadIds.map(async id => threadState(id, await this.options.inspect(id))))
@@ -154,12 +157,12 @@ export class CodexAppQuitter {
     return { status: 'plan', plan }
   }
 
-  /** 放弃一份计划（用户拒绝或关闭了确认）。 */
+  /** Discards a plan (the user refused or closed the confirmation). */
   discard(planId: string): void {
     this.plans.delete(planId)
   }
 
-  /** 第二步：用户同意后执行。计划单次有效。 */
+  /** Step two: execute after the user agrees. A plan is single use. */
   async execute(planId: string, consent: QuitConsent): Promise<QuitOutcome> {
     const plan = this.plans.get(planId)
     this.plans.delete(planId)
@@ -167,7 +170,7 @@ export class CodexAppQuitter {
     if (plan === undefined) return { status: 'unknown_plan', ...empty, threads: [] }
     if (this.now() > plan.expiresAt) return { status: 'plan_expired', ...empty, threads: plan.threads }
 
-    // 复核：进程身份与计划一致，目标线程仍被持有。
+    // Recheck: process identities match the plan and the target thread is still held.
     const table = await this.options.table.list()
     if (table === undefined) return { status: 'plan_changed', ...empty, threads: plan.threads }
     const planned = new Set(plan.processes.map(processKey))
@@ -179,7 +182,7 @@ export class CodexAppQuitter {
     }
     if (current.length === 0) return { status: 'already_released', ...empty, threads: before }
 
-    // 有序退出，宽限期内轮询进程表（按身份判断，不按 PID）。
+    // Orderly exit; poll the process table during the grace period (by identity, not by PID).
     for (const p of current) await this.options.signaller.terminate(p)
     let alive = await this.waitForExit(current, plan.gracePeriodMs)
     const killed: number[] = []
@@ -195,7 +198,7 @@ export class CodexAppQuitter {
     const childSurvivors = (await this.alive(plan.children)).map(p => p.pid)
     const after = await this.inspectAll(plan)
     if (survivors.length > 0) return { status: 'survivors', terminated, killed, survivors, childSurvivors, threads: after }
-    // route 为 follow 说明别的客户端已经接手，交给会话引擎按 auto 路线跟随它；只有写锁仍 held 才算失败。
+    // route follow means another client took over; leave it to the session engine to follow on the auto route. Only a write lock still held counts as failure.
     const stillHeld = after.some(t => t.writerLock === 'held')
     return { status: stillHeld ? 'lock_still_held' : 'completed', terminated, killed, survivors, childSurvivors, threads: after }
   }
@@ -213,7 +216,7 @@ export class CodexAppQuitter {
   private async alive(processes: readonly ProcessInfo[]): Promise<ProcessInfo[]> {
     if (processes.length === 0) return []
     const table = await this.options.table.list()
-    // 读不到进程表时不能断言已经退出。
+    // Without a process table we cannot assert the processes exited.
     if (table === undefined) return [...processes]
     const present = new Set(table.map(processKey))
     return processes.filter(p => present.has(processKey(p)))
@@ -230,7 +233,7 @@ export class CodexAppQuitter {
   }
 }
 
-/** 给用户看的计划说明（确认卡片正文）。 */
+/** Plan description shown to the user (confirmation card body). */
 export function describeQuitPlan(plan: QuitPlan): string {
   const lines = [
     '退出 Codex App 会释放它正在使用的所有线程，App 里未保存的输入和正在运行的回合会中断。',

@@ -17,7 +17,7 @@ const recording = (name: string) => parseRecording(readFileSync(fileURLToPath(ne
 type Opened = Extract<RuntimeEvent, { type: 'interaction.opened' }>
 type Tool = Extract<RuntimeEvent, { type: 'tool.started' | 'tool.updated' }>
 
-/** 回放 Hermes 写入审批：新建会话 → 两项初始选择 → prompt → 允许一次 → 回复。 */
+/** Replays a Hermes write approval: new session -> two initial selections -> prompt -> allow once -> reply. */
 async function replayHermesAllow(dialect: AcpDialect, selections: Record<string, string>) {
   const { peer, agent } = replayPeer(recording('hermes-allow.jsonl'), memoryTransportPair())
   const handle = new AcpRuntimeHandle({
@@ -52,7 +52,7 @@ describe('ACP recording replay: Hermes write approval', () => {
     expect(agent.mismatches).toEqual([])
     expect(agent.done).toBe(true)
     const types = events.map(event => event.type)
-    // session/new 之后、prompt 之前只有会话级事件（命令列表、配置），没有 Timeline 条目
+    // between session/new and the prompt there are only session-level events (command list, configuration), no Timeline items
     const start = types.indexOf('turn.started')
     expect(types.slice(0, start).every(t => t === 'commands.updated' || t === 'config.updated' || t === 'session.info')).toBe(true)
     expect(types).toContain('tool.started')
@@ -60,8 +60,8 @@ describe('ACP recording replay: Hermes write approval', () => {
     expect(events.at(-1)).toMatchObject({ type: 'turn.ended', reason: 'end_turn' })
     const reply = events.filter((e): e is Extract<RuntimeEvent, { type: 'message.delta' }> => e.type === 'message.delta').map(e => e.text).join('')
     expect(reply.length).toBeGreaterThan(0)
-    // Hermes 的审批卡用独立的 toolCallId（edit-approval-1），在请求之前没出现过：不关联条目。
-    // 通用方言下，关闭卡片的 tool_call_update 会多落一个条目；Hermes 方言把它吞掉（下一个用例）。
+    // Hermes's approval card uses its own toolCallId (edit-approval-1) that did not appear before the request: it is not tied to an item.
+    // with the generic dialect the tool_call_update that closes the card adds an extra item; the Hermes dialect swallows it (next case).
     const opened = events.find((e): e is Opened => e.type === 'interaction.opened')!
     expect(opened.itemId).toBeUndefined()
     const tools = new Set(events.filter((e): e is Tool => e.type === 'tool.started' || e.type === 'tool.updated').map(e => e.itemId))
@@ -73,13 +73,13 @@ describe('ACP recording replay: Hermes write approval', () => {
     const { handle, session, agent, events } = await replayHermesAllow(hermesDialect(), { model: 'custom:fixture', permission: 'ask' })
     expect(agent.mismatches).toEqual([])
     expect(agent.done).toBe(true)
-    // 编辑审批策略从 mode 改到 permission 类别，所以 `permission` 选择能落到它上面
+    // the edit approval policy moves from the mode category to the permission category, so the `permission` selection applies to it
     expect(session.configOptions.find(o => o.id === 'edit_approval_policy')?.category).toBe('permission')
-    // 关闭审批卡的更新被吞掉：只剩真正的工具调用一个条目
+    // the update closing the approval card is swallowed: only the real tool call item remains
     const tools = new Set(events.filter((e): e is Tool => e.type === 'tool.started' || e.type === 'tool.updated').map(e => e.itemId))
     expect(tools.size).toBe(1)
     expect(events.at(-1)).toMatchObject({ type: 'turn.ended', reason: 'end_turn' })
-    // 建会话前的权限目录来自定义
+    // the permission catalog before session creation comes from the definition
     const catalogs = await handle.catalogs()
     expect(catalogs.permissions?.permissions?.map(p => p.selectionId)).toEqual(['ask', 'workspace_session', 'session'])
     expect(handle.capabilities().items.find(c => c.id === 'session.steer')?.supported).toBe(true)

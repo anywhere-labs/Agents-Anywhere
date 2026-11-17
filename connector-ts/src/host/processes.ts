@@ -1,6 +1,7 @@
+// ported from effi-crew cloud/agentd/src/single.ts @30f8334 (commandLine)
+// ported from Agents-Anywhere v2 connector/connector/core/runtime_owner.py @98dd0e6e5 (start-time identity)
+//
 // Process liveness for the runtime record (contracts/local-machine/2.0): pid, start time and command line.
-// ported from effi-crew cloud/agentd/src/single.ts @30f8334 (`commandLine`), with the start-time identity of v2
-// connector/core/runtime_owner.py.
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
@@ -18,7 +19,7 @@ export interface ProcessProbe {
   commandLine(pid: number): Promise<string | null>
 }
 
-/** v2's legacy identity for one start time (`ps -o lstart=` in UTC), which v2 Python can verify. */
+/** The legacy identity for one start time (`ps -o lstart=` in UTC), which the 2.x Python Connector can verify. */
 export function legacyIdentity(epochSeconds: number): string {
   const date = new Date(epochSeconds * 1000)
   const day = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][date.getUTCDay()]!
@@ -42,7 +43,7 @@ export function ticksToEpoch(ticks: string): number | null {
   return Math.floor((Number(BigInt(ticks.trim()) - 621355968000000000n) / 1e7))
 }
 
-/** Whether a recorded identity (v2 `unix:<float>`, the legacy `ps` text, or Windows ticks) names this start time. */
+/** Whether a recorded identity (2.x `unix:<float>`, the legacy `ps` text, or Windows ticks) names this start time. */
 export function identityMatches(identity: string, startedAt: number): boolean {
   if (identity.startsWith('unix:')) {
     const seconds = Number(identity.slice(5))
@@ -60,8 +61,8 @@ export function commandDigest(commandLine: string): string {
 }
 
 /**
- * v2 entry points (`anywhere-cli`, `agent-connector`, `python -m connector.cli`): a v2 owner is only recognised by
- * its command line, as v2 does.
+ * Entry points of the 2.x Python Connector (`anywhere-cli`, `agent-connector`, `python -m connector.cli`): a 2.x
+ * owner is recognised only by its command line, the same check the 2.x Connector applies.
  */
 export function isV2ConnectorCommand(commandLine: string): boolean {
   const parts = commandLine.trim().split(/\s+/u)

@@ -1,6 +1,7 @@
-// `_codex/session/inspect`：codex-acp 的只读归属判定（docs/session-ownership.md），从不 resume。
-// 三个维度相互独立：ownership（谁持有）、execution（在不在跑）、control（有没有可用的控制路径），
-// route 是 codex-acp 据此给出的打开路线。写锁观察只在 route 走到写锁判定时才有。
+// `_codex/session/inspect`: codex-acp's read-only ownership check (docs/session-ownership.md); never resumes.
+// The three dimensions are independent: ownership (who holds it), execution (whether it is running) and control
+// (whether a usable control path exists); route is the open route codex-acp derives from them. The write lock
+// observation is present only when the route reaches the write lock check.
 
 import { asRecord, type AcpClient } from '../../acp/client.js'
 
@@ -13,10 +14,10 @@ export type CodexRoute = 'local' | 'follow' | 'daemon' | 'resume' | 'blocked'
 
 export interface CodexWriterLockObservation {
   readonly state: 'held' | 'unheld' | 'unknown'
-  /** contended、acquired、missing、unsupported-platform、unavailable、changed、invalid-session-id。 */
+  /** contended, acquired, missing, unsupported-platform, unavailable, changed, invalid-session-id. */
   readonly reason?: string
   readonly observedAt?: number
-  /** 只有 Linux 的 /proc/locks 能给出；PID 不足以作为结束进程的依据。 */
+  /** Only Linux's /proc/locks can provide it; a PID alone is not grounds for ending a process. */
   readonly ownerPid?: number
   readonly fileIdentity?: string
 }
@@ -39,7 +40,7 @@ function pick<T extends string>(allowed: ReadonlySet<T>, value: unknown, fallbac
   return typeof value === 'string' && allowed.has(value as T) ? (value as T) : fallback
 }
 
-/** 解析 inspect 响应；认不出的值一律当作 unknown / blocked，不往乐观方向猜。 */
+/** Parses the inspect response; unrecognized values are treated as unknown / blocked, never guessed optimistically. */
 export function parseInspection(value: unknown): CodexInspection {
   const record = asRecord(value)
   const observation = asRecord(record.writerLockObservation)
@@ -60,19 +61,19 @@ export function parseInspection(value: unknown): CodexInspection {
   }
 }
 
-/** 没有 owner 应答时 codex-acp 要等 IPC discovery 超时（实测约 5 秒），所以超时给得宽一些。 */
+/** With no owner answering, codex-acp waits for the IPC discovery timeout (about 5 seconds measured), so the timeout is generous. */
 export async function inspectThread(client: AcpClient, threadId: string, timeoutMs = 30_000): Promise<CodexInspection> {
   return parseInspection(await client.request(CODEX_INSPECT, { sessionId: threadId }, { timeoutMs }))
 }
 
-/** 写锁仍被别人持有（或无法判定）：外部 owner 还在。 */
+/** The write lock is still held by someone else (or cannot be determined): the external owner is still there. */
 export function heldElsewhere(inspection: CodexInspection): boolean {
   if (inspection.route === 'follow' || inspection.route === 'daemon') return true
   if (inspection.route !== 'blocked') return false
   return inspection.writerLock?.state !== 'unheld'
 }
 
-/** Windows 等平台上 codex-acp 判定不了写锁：blocked 只是因为 unknown，不代表有人持有。 */
+/** On Windows and similar platforms codex-acp cannot check the write lock: blocked only because of unknown, not because someone holds it. */
 export function blockedOnlyByUnknownLock(inspection: CodexInspection): boolean {
   return inspection.route === 'blocked'
     && inspection.ownership === 'unknown'

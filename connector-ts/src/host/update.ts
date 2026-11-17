@@ -1,6 +1,7 @@
-// ported from effi-crew cloud/agentd/src/crew/update.ts @30f8334: signed automatic updates for the CLI and the DSH
-// host, which run under the launcher (connector-ts/installer/launcher.{sh,ps1}) from <app>/current →
-// <app>/versions/<version>. The Connector asks for the release meant for this device, checks the manifest's
+// ported from effi-crew cloud/agentd/src/crew/update.ts @30f8334 (signed updates)
+//
+// Signed automatic updates for the CLI and the DSH host, which run under the launcher
+// (connector-ts/installer/launcher.{sh,ps1}) from <app>/current → <app>/versions/<version>. The Connector asks for the release meant for this device, checks the manifest's
 // Ed25519 signature against the keys built in, downloads the package for its platform, checks size and sha256,
 // unpacks it next to the running version, writes <app>/pending and exits with 75 once no turn is running. The
 // launcher switches `current`; a new version that keeps failing within two minutes is rolled back. A Connector run

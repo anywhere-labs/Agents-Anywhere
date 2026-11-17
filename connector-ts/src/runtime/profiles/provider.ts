@@ -1,5 +1,6 @@
-// 一个 ACP Agent 定义作为 RuntimeProvider：发现、实例配置校验、按需启动进程。
-// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/provider.py
+// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/provider.py @98dd0e6e5 (AcpAgentProvider)
+//
+// An ACP Agent definition as a RuntimeProvider: discovery, instance config validation and on-demand process start.
 
 import { homedir } from 'node:os'
 
@@ -17,11 +18,11 @@ import { checkDefinition, instanceSchema, validateSettings, type AcpAgentDefinit
 import { launchCommand, localLaunch, resolveExecutable, runCheck, type Platform } from './launch.js'
 
 export interface AcpAgentProviderOptions {
-  /** 进程工作目录（v2 的 runtime root）；缺省用户主目录。 */
+  /** Process working directory (the runtime root); defaults to the user's home directory. */
   readonly dataDir?: string
   readonly idleMs?: number
   readonly onStderr?: (instanceId: string, line: string) => void
-  /** 测试替换平台信息。 */
+  /** Platform facts replaced by tests. */
   readonly platform?: Platform
 }
 
@@ -33,7 +34,7 @@ export class AcpAgentProvider implements RuntimeProvider {
     this.type = definition.runtime
   }
 
-  /** 不启动 Agent：只找可执行文件、读版本。ACP 入口检查放到真正启动前。 */
+  /** Does not start the Agent: only finds the executable and reads versions. The ACP entry check waits until a real start. */
   async discover(): Promise<ProviderFacts> {
     const base = {
       type: this.type,
@@ -57,7 +58,7 @@ export class AcpAgentProvider implements RuntimeProvider {
     }
   }
 
-  /** 校验实例配置（v2 `validate_config`）。报错不回显值。 */
+  /** Validates instance config. Errors never echo values. */
   validateSettings(settings: JsonObject): JsonObject {
     const schema = instanceSchema(this.definition)
     const problem = validateSettings(schema.schema, settings)
@@ -65,7 +66,7 @@ export class AcpAgentProvider implements RuntimeProvider {
     return { ...(schema.defaults ?? {}), ...settings }
   }
 
-  /** 进程环境：通用边界 → 定义的调整 → 设置项映射出的变量。 */
+  /** Process environment: generic boundary -> definition's adjustments -> variables mapped from settings. */
   environment(fromSettings: Readonly<Record<string, string>>, instance: RuntimeInstanceConfig): NodeJS.ProcessEnv {
     const base = agentEnvironment({}, this.options.platform ? { base: this.options.platform.env } : {})
     const adjusted = this.definition.environment ? this.definition.environment(base, instance) : base
@@ -82,7 +83,7 @@ export class AcpAgentProvider implements RuntimeProvider {
       type: definition.runtime,
       instanceId: instance.instanceId,
       dialect,
-      // 每次拉起进程前重新解析和检查（v2 `validated_launch`）：用户可能刚升级或卸载了 Agent。
+      // Resolve and check again before every process start: the user may have just upgraded or removed the Agent.
       connect: async scope => {
         const launch = definition.prepareLaunch
           ? await definition.prepareLaunch({

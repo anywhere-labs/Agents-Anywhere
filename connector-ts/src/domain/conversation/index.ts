@@ -1,4 +1,4 @@
-// 会话领域模型：Conversation、TimelineItem、Delivery、Interaction 与逻辑时钟；纯领域，无 I/O，不依赖 domain/trust。
+// Conversation domain model: Conversation, TimelineItem, Delivery, Interaction and the logical clock; pure domain, no I/O, no dependency on domain/trust.
 
 export * from './budget.js'
 export * from './clock.js'

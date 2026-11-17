@@ -1,10 +1,11 @@
+// ported from Agents-Anywhere v2 connector/connector/planning/domain/session.py @98dd0e6e5 (SessionPlanning, content_hash, plan_title)
+//
 import { sha256Hex } from '../identity/hash.js'
 import { planningStableId } from '../identity/planning.js'
 
 /**
- * Planning as an explicit sub-aggregate of the Conversation (02-domain-model.md §5.2, §7 item 2). Ported
- * from v2 `connector/connector/planning/domain/session.py`: mode, document, review and execution are
- * separate facts; every document revision is immutable and carries a content hash.
+ * Planning as an explicit sub-aggregate of the Conversation (02-domain-model.md §5.2, §7 item 2): mode,
+ * document, review and execution are separate facts; every document revision is immutable and carries a content hash.
  */
 export const MAX_PLAN_BYTES = 2 * 1024 * 1024
 
@@ -109,17 +110,17 @@ function utf8Length(text: string): number {
   return Buffer.byteLength(text, 'utf8')
 }
 
-/** v2 `content_hash`: sha256 of the strict UTF-8 text; empty or > 2 MiB plans cannot be reviewed. */
+/** Content hash: sha256 of the strict UTF-8 text; empty or > 2 MiB plans cannot be reviewed. */
 export function planContentHash(text: string): string {
   if (!text.trim() || utf8Length(text) > MAX_PLAN_BYTES) throw new PlanningInvalid('计划正文为空或超过 2 MiB，不能提交审阅。')
   return `sha256:${sha256Hex(text)}`
 }
 
 const MARKDOWN_PREFIX = /^\s*(?:#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|>\s*)/u
-// Python `(?<!\w)_+|_+(?!\w)` with Unicode word characters.
+// Underscore runs at a word boundary, where word characters are Unicode letters, digits and `_`.
 const MARKDOWN_INLINE = /`+|\*+|(?<![\p{L}\p{N}_])_+|_+(?![\p{L}\p{N}_])/gu
 
-/** First heading of any level, else the first line of prose, without Markdown (v2 `plan_title`). */
+/** First heading of any level, else the first line of prose, without Markdown. */
 export function planTitle(text: string): string {
   const lines = text.split(/\r\n|\r|\n/u).map(line => line.trim()).filter(line => line.length > 0)
   const heading = lines.find(line => /^#{1,6}\s+/u.test(line))

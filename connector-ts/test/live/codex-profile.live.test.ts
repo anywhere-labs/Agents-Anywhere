@@ -1,10 +1,10 @@
-// Codex profile 实机测试（默认跳过）：经 provider 拉起真实的 codex-acp，确认 v2 Timeline ID（实时与
-// `_codex/session/read` 历史一致、AA 消息认回）、v2 selection ID、计划模式与计划审阅。
+// Codex profile live test (skipped by default): launches a real codex-acp through the provider and checks Timeline IDs (live and
+// `_codex/session/read` history agree, AA messages are recognized), the permission selection IDs clients use, plan mode and plan review.
 //   AA_LIVE_CODEX=1 AA_CODEX_ACP=/path/to/codex-acp/dist/index.js \
 //   [AA_CODEX_PATH=/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex] \
 //   corepack yarn vitest run test/live/codex-profile.live.test.ts
-// codex-acp 需要包含 anywhere-labs/codex-acp#5（IPC v13）与 #6（`_meta.codex`）。
-// 会在真实 ~/.codex 里新建线程（工作目录在临时目录），并用少量模型额度。
+// codex-acp must include anywhere-labs/codex-acp#5 (IPC v13) and #6 (`_meta.codex`).
+// Creates threads in the real ~/.codex (working directory in a temporary directory) and spends a little model quota.
 
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -41,7 +41,7 @@ function collect(session: RuntimeSession): { events: RuntimeEvent[]; next: (type
   }
 }
 
-// 断言失败时也要停掉 codex-acp：它常驻，不停就会一直持有测试线程。
+// Stop codex-acp even when an assertion fails: it stays resident and would otherwise keep holding the test thread.
 const started: Array<{ stop(): Promise<void> }> = []
 
 async function start(prefix: string) {
@@ -75,7 +75,7 @@ describe.skipIf(!live)('Codex profile against codex-acp', () => {
     const userId = codexClientMessageItemId(session.nativeSessionId, 'aa-live-c1')
     expect(events.find(e => e.type === 'message.completed' && e.role === 'user')).toMatchObject({ itemId: userId })
 
-    // 原生历史（`_codex/session/read`）：同一条助手消息、同一条用户消息得到同一个 ID
+    // native history (`_codex/session/read`): the same assistant message and the same user message get the same IDs
     const history = await handle.readNativeHistory({ nativeSessionId: session.nativeSessionId, locator: workdir }, { limit: 50 })
     const ids = history.items.map(i => (i as { itemId?: string }).itemId)
     expect(ids).toContain(liveId)

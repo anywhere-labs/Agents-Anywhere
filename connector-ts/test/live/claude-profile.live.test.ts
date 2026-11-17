@@ -1,8 +1,8 @@
-// Claude profile 实机测试（默认跳过）：经 provider 拉起真实的 claude-agent-acp，确认环境变量处理、
-// v2 Timeline ID（实时与 JSONL 历史一致）、v2 selection ID、计划审阅。
+// Claude profile live test (skipped by default): launches a real claude-agent-acp through the provider and checks environment handling,
+// Timeline IDs (live and JSONL history agree), the permission selection IDs clients use, and plan review.
 //   AA_LIVE_CLAUDE=1 AA_CLAUDE_ACP=/path/to/node_modules/.bin/claude-agent-acp \
 //   corepack yarn vitest run test/live/claude-profile.live.test.ts
-// 会消耗少量模型额度；会话建在临时目录里。
+// Uses a small amount of model quota; sessions are created in a temporary directory.
 
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -57,14 +57,14 @@ describe.skipIf(!live)('Claude profile against claude-agent-acp', () => {
     const liveId = deltas[0]!.itemId
     expect(liveId).toMatch(/^claude_msg_[0-9a-f]{24}$/)
 
-    // 原生历史（只读 JSONL）里同一条助手消息得到同一个 ID
+    // in the native history (read-only JSONL) the same assistant message gets the same ID
     const history = await handle.readNativeHistory({ nativeSessionId: session.nativeSessionId }, { limit: 20 })
     const assistant = history.items.filter(i => i.type === 'message.completed' && i.role === 'assistant')
     expect(assistant.map(i => i.itemId)).toContain(liveId)
     expect(liveId).toBe(assistant.find(i => i.itemId === liveId)!.itemId)
     expect(claudeMessageItemId({ sessionId: 'x', externalSessionId: session.nativeSessionId }, 'unused')).toMatch(/^claude_msg_/)
 
-    // 目录：v2 的权限 selection ID
+    // catalogs: permission selection IDs
     const catalogs = await handle.catalogs()
     expect(catalogs.permissions?.permissions?.find(p => p.id === 'acceptEdits')?.selectionId).toBe(claudePermissionSelectionId('acceptEdits'))
     expect(handle.capabilities().items.find(c => c.id === 'session.goal')?.supported).toBe(true)

@@ -1,20 +1,20 @@
-// Noise 的密码学原语接口（Noise 规范 §4）。实现只能包装成熟库，不在本仓库里实现原语：
-// Node 用 node:crypto（OpenSSL），浏览器用 WebCrypto；Kotlin、Swift 两端各有对应实现。
-// 套件固定为 25519_AESGCM_SHA256（S8 结论，见 contracts/e2ee/1.0/README.md）。
+// Interface for Noise cryptographic primitives (Noise spec §4). Implementations only wrap mature libraries; primitives are never implemented in this repository:
+// Node uses node:crypto (OpenSSL), browsers use WebCrypto; Kotlin and Swift each have their own implementation.
+// The suite is fixed to 25519_AESGCM_SHA256 (decided in S8, see contracts/e2ee/1.0/README.md).
 
 export const DHLEN = 32
 export const HASHLEN = 32
 export const KEYLEN = 32
 export const TAGLEN = 16
-/** Noise 规范 §3：每条消息（握手或传输）最长 65535 字节。 */
+/** Noise spec §3: every message (handshake or transport) is at most 65535 bytes. */
 export const MAX_MESSAGE_LEN = 65535
-/** 2^64 - 1：保留给 rekey，不能用于普通加密。 */
+/** 2^64 - 1: reserved for rekey, never used for ordinary encryption. */
 export const MAX_NONCE = (1n << 64n) - 1n
 
 type MaybePromise<T> = T | Promise<T>
 
 /**
- * 一个 X25519 密钥对。私钥可以不暴露（例如浏览器里不可导出的 WebCrypto 密钥），只提供 DH 运算。
+ * An X25519 key pair. The private key need not be exposed (e.g. a non-extractable WebCrypto key in a browser); only DH is provided.
  */
 export interface NoiseKeyPair {
   readonly publicKey: Uint8Array
@@ -22,11 +22,11 @@ export interface NoiseKeyPair {
 }
 
 export interface NoiseCrypto {
-  /** 生成临时密钥对（握手里的 `e`）。 */
+  /** Generates an ephemeral key pair (the handshake's `e`). */
   generateKeyPair(): MaybePromise<NoiseKeyPair>
-  /** AES-256-GCM；nonce 为 4 字节 0 + 8 字节大端计数器（Noise 规范 §12.4）。返回密文 + 16 字节标签。 */
+  /** AES-256-GCM; the nonce is 4 zero bytes + an 8-byte big-endian counter (Noise spec §12.4). Returns ciphertext + 16-byte tag. */
   encrypt(key: Uint8Array, nonce: bigint, ad: Uint8Array, plaintext: Uint8Array): MaybePromise<Uint8Array>
-  /** 认证失败时抛出 {@link NoiseDecryptError}。 */
+  /** Throws {@link NoiseDecryptError} when authentication fails. */
   decrypt(key: Uint8Array, nonce: bigint, ad: Uint8Array, ciphertext: Uint8Array): MaybePromise<Uint8Array>
   sha256(data: Uint8Array): MaybePromise<Uint8Array>
   hmacSha256(key: Uint8Array, data: Uint8Array): MaybePromise<Uint8Array>
@@ -36,7 +36,7 @@ export class NoiseError extends Error {
   override readonly name: string = 'NoiseError'
 }
 
-/** 认证标签不符：密文被篡改、密钥不对，或 psk 不一致。 */
+/** Authentication tag mismatch: the ciphertext was tampered with, the key is wrong, or the psk differs. */
 export class NoiseDecryptError extends NoiseError {
   override readonly name = 'NoiseDecryptError'
   constructor(message = 'noise: decryption failed') {

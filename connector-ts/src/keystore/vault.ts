@@ -1,11 +1,14 @@
-// 系统钥匙串里只放一把「保险库密钥」，设备的其余秘密用它加密后存在数据目录（file-secrets.ts）。
-// macOS：Keychain（security 命令，登录钥匙串，不同步 iCloud）；Windows：DPAPI（当前用户）；
-// Linux：Secret Service（secret-tool）。平台没有这些工具时退回 0600 文件，并如实报告。
+// The system keychain holds a single "vault key"; the device's other secrets are sealed with it and stored in the
+// data directory (file-secrets.ts). macOS: Keychain (the `security` command, login keychain, not synced to
+// iCloud); Windows: DPAPI (current user); Linux: Secret Service (secret-tool). When the platform has none of these
+// tools, the 0600 file is used instead and reported as such.
 //
-// 两条规则保护已有的密钥：
-// - 只有保险库明确回答「没有这一项」时才生成新密钥。钥匙串锁着、没有图形界面、DBus 不可用、读出的内容不对，
-//   一律报 `keystore_unavailable`，不生成、不覆盖：覆盖会让 secrets.json 永久解不开，设备身份和授权全部丢失。
-// - 密钥只经子进程的 stdin / stdout 传递，从不出现在命令行参数里（同机其他用户能用 `ps` 看到 argv）。
+// Two rules protect an existing key:
+// - A new key is created only when the vault explicitly answers "no such item". A locked keychain, no graphical
+//   session, DBus unavailable or unexpected content all report `keystore_unavailable` and neither create nor
+//   overwrite: overwriting would leave secrets.json undecryptable forever, losing the device identity and all grants.
+// - The key passes only through a child process's stdin / stdout, never as a command line argument (other users
+//   on the same machine can see argv with `ps`).
 
 import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'

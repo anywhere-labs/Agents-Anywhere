@@ -1,8 +1,8 @@
-// S2 实测：claude-agent-acp 覆盖 v2 Claude 体验（08-migration-and-rollout.md §1）。
-// 默认跳过。运行：
+// S2 field test: claude-agent-acp covers the existing Claude experience (08-migration-and-rollout.md §1).
+// Skipped by default. Run:
 //   AA_LIVE_CLAUDE=1 AA_CLAUDE_ACP=/path/to/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js \
 //   [AA_S2_AIR=1] [AA_S2_WAKEUP=1] [AA_S2_MODE=default] corepack yarn vitest run test/live/claude-s2.live.test.ts
-// 用真实的 Claude Code 登录（~/.claude），在临时目录里新建会话，会用少量模型额度。
+// Uses the real Claude Code login (~/.claude), creates sessions in a temporary directory and spends a little model quota.
 
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs'
@@ -29,7 +29,7 @@ interface Tracked {
 type Answer = (method: string, params: JsonRecord) => unknown
 
 async function startAdapter(): Promise<{ proc: AgentProcess; client: AcpClient; info: Record<string, unknown> }> {
-  // 不把宿主（例如运行本测试的 Claude Code）的 CLAUDE*/ANTHROPIC* 变量漏给适配器：它们会让适配器改走宿主托管的认证。
+  // Do not leak the host's CLAUDE*/ANTHROPIC* variables (for example the Claude Code running this test) to the adapter: they make it switch to host-managed auth.
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(CLAUDE|ANTHROPIC)/.test(key) && key !== 'CLAUDECODE'))
   const proc = new AgentProcess({ command: process.execPath, args: [adapter], cwd: workdir, env })
   const client = new AcpClient(proc.peer)

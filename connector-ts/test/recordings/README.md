@@ -1,9 +1,9 @@
-# ACP 录制回放
+# ACP recording replay
 
-真实 Agent 的 ACP 交互录制，在不安装 Agent 的情况下回放，检查方言与事件翻译（`test/runtime/recording-replay.test.ts`）。
-格式与 v2 `connector/tests/fixtures/acp-recordings` 相同：每行 `{direction, message}`，`outgoing` 是 AA 发给 Agent，`incoming` 是 Agent 发给 AA。
+Recordings of real Agent ACP interactions, replayed without installing the Agent to check dialects and event translation (`test/runtime/recording-replay.test.ts`).
+The format is the same as v2 `connector/tests/fixtures/acp-recordings`: one `{direction, message}` per line; `outgoing` is AA to Agent, `incoming` is Agent to AA.
 
-| 文件 | Agent | 场景 | 来源 |
+| File | Agent | Scenario | Source |
 | --- | --- | --- | --- |
-| `hermes-allow.jsonl` | Hermes（`git.42456cf`） | 允许一次写入审批，Agent 写文件后回复 | 复制自 v2 |
-| `pi-new-prompt.jsonl` | Pi 1.4.0 + `@openma/pi-acp` 0.1.8（AA 补丁后，本机模式） | 新建会话、一轮短 prompt、关闭 | `test/live/pi.live.test.ts` 录制；本机路径已换成 `/home/user`、`/workspace`，守卫路径为 `__AA_PI_GUARD__` |
+| `hermes-allow.jsonl` | Hermes (`git.42456cf`) | Allows one write approval; the Agent writes the file and replies | Copied from v2 |
+| `pi-new-prompt.jsonl` | Pi 1.4.0 + `@openma/pi-acp` 0.1.8 (with AA patches, local mode) | New session, one short prompt, close | Recorded by `test/live/pi.live.test.ts`; local paths replaced with `/home/user` and `/workspace`, guard path is `__AA_PI_GUARD__` |

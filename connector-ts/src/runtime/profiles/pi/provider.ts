@@ -1,5 +1,7 @@
-// Pi 作为 RuntimeProvider：发现、实例配置校验，启动时给出 PiRuntimeHandle。
-// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/pi/provider.py 与 definition.py `runtime`
+// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/pi/provider.py @98dd0e6e5 (PiProvider)
+// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/pi/definition.py @98dd0e6e5 (runtime)
+//
+// Pi as a RuntimeProvider: discovery, instance config validation, and a PiRuntimeHandle on start.
 
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -14,13 +16,16 @@ import { PiLaunchCache, piLayout, preparePiLaunch, type PiLaunchOptions } from '
 import { normalizePiSettings, type PiSettings } from './settings.js'
 
 export interface PiProviderOptions {
-  /** Connector 的数据目录；Pi 的实例目录与 npm / 适配器缓存都在 `<dataDir>/pi` 下。缺省 `~/.agents-anywhere/connector`。 */
+  /**
+   * Connector data directory; Pi's instance directories and npm / adapter caches live under `<dataDir>/pi`.
+   * Defaults to `~/.agents-anywhere/connector`.
+   */
   readonly dataDir?: string
-  /** 会话进程空闲多久回收（ms）。 */
+  /** How long an idle session process lives before it is reclaimed (ms). */
   readonly idleMs?: number
   readonly lockDir?: string
   readonly onStderr?: (instanceId: string, line: string) => void
-  /** 测试替换：本机 pi 解析、进程连接、环境变量、网关取数。 */
+  /** Test overrides: local pi resolution, process connection, environment variables, gateway fetch. */
   readonly resolveLocal?: (settings: JsonObject) => Promise<PiInstallation>
   readonly connect?: PiConnect
   readonly env?: NodeJS.ProcessEnv
@@ -40,7 +45,10 @@ export class PiProvider implements RuntimeProvider {
     return this.options.dataDir ?? join(homedir(), '.agents-anywhere', 'connector')
   }
 
-  /** 不启动 Pi：受管环境总能准备；本机 pi 找得到时报告它的版本，找不到时作为提示（仍可用受管环境）。 */
+  /**
+   * Does not start Pi: the managed environment can always be prepared. Reports the local pi version when found;
+   * otherwise reports it as a notice (the managed environment still works).
+   */
   async discover(): Promise<ProviderFacts> {
     const base = {
       type: this.type,
@@ -59,7 +67,7 @@ export class PiProvider implements RuntimeProvider {
     }
   }
 
-  /** 校验实例配置（schema + 运行环境与模型网关的组合规则）。报错不回显值。 */
+  /** Validates instance config (schema plus the rules combining execution mode and model gateway). Errors never echo values. */
   validateSettings(settings: JsonObject, modelGateway?: ModelGatewayConfig): PiSettings {
     const schema = instanceSchema(PI)
     const problem = validateSettings(schema.schema, settings)
@@ -89,7 +97,8 @@ export class PiProvider implements RuntimeProvider {
       settings,
       layout,
       launch: () => preparePiLaunch(context, launchOptions),
-      // 受管环境第一次要下载 Node 与 npm 包：在后台准备，启动不等它（v2 ManagedPiRuntime）。本机模式只在需要时准备。
+      // The managed environment downloads Node and npm packages the first time: prepare in the background without
+      // blocking start. Local mode prepares only when needed.
       warmUp: layout.managed && this.options.connect === undefined,
       ...(this.options.connect ? { connect: this.options.connect } : {}),
       ...(this.options.idleMs !== undefined ? { idleMs: this.options.idleMs } : {}),

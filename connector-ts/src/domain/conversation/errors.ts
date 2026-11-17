@@ -1,5 +1,5 @@
 /**
- * Domain rule violations. `code` is the AA error code clients already know (v2 queue codes, conflicts),
+ * Domain rule violations. `code` is the AA error code clients already know (queue codes, conflicts),
  * so the application layer can hand it to the Server unchanged.
  */
 export type ConversationErrorCode =

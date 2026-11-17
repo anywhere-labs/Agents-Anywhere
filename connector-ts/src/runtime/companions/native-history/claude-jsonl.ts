@@ -1,10 +1,11 @@
-// Claude 原生历史的只读读取：直接解析 Claude Code 的 JSONL（`~/.claude/projects/<目录>/<会话>.jsonl`）。
+// Read-only access to Claude native history: parses Claude Code's JSONL directly (`~/.claude/projects/<dir>/<session>.jsonl`).
 //
-// 不能用 ACP `session/load` 浏览历史：claude-agent-acp 加载会话时会往 JSONL 末尾追加记录（S2 实测）。
-// 条目 ID 沿用 v2 claude/sessions/reader.py（v2 用 Claude Agent SDK 的只读 getSessionMessages）：
-// - 回合 ID：`claudeHistoryTurnId(会话, 开启回合的用户消息 uuid)`；
-// - 用户消息：`claudeMessageItemId(会话, uuid)`；助手消息：`claudeMessageItemId(会话, API 消息 ID)`，
-//   同一条 API 消息分在多行时合并成一个条目；思考块：`claudeSystemItemId`；工具：`claudeToolItemId(会话, tool_use id)`。
+// ACP `session/load` cannot be used to browse history: claude-agent-acp appends records to the JSONL when it loads a
+// session (measured in S2). Item IDs follow the Claude identity rules existing timelines use:
+// - turn ID: `claudeHistoryTurnId(session, uuid of the user message that opens the turn)`;
+// - user message: `claudeMessageItemId(session, uuid)`; assistant message: `claudeMessageItemId(session, API message ID)`,
+//   and one API message split across several lines is merged into one item; thinking block: `claudeSystemItemId`;
+//   tool: `claudeToolItemId(session, tool_use id)`.
 
 import { createReadStream } from 'node:fs'
 import { readdir, stat } from 'node:fs/promises'
@@ -30,7 +31,7 @@ export function claudeProjectsDir(env: NodeJS.ProcessEnv = process.env): string 
   return join(env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'projects')
 }
 
-/** 在各项目目录里找 `<会话>.jsonl`。会话 ID 只允许安全字符，不会拼出目录之外的路径。 */
+/** Finds `<session>.jsonl` in the project directories. Session IDs allow only safe characters, so no path outside the directories can be built. */
 export async function findClaudeTranscript(nativeSessionId: string, projectsDir = claudeProjectsDir()): Promise<string | undefined> {
   if (!SESSION_ID.test(nativeSessionId)) return undefined
   let projects: string[]
@@ -44,7 +45,7 @@ export async function findClaudeTranscript(nativeSessionId: string, projectsDir 
     try {
       if ((await stat(file)).isFile()) return file
     } catch {
-      // 不在这个项目里
+      // not in this project
     }
   }
   return undefined
@@ -86,12 +87,12 @@ function textOf(content: unknown): string {
   return content.map(record).filter(b => b.type === 'text' && typeof b.text === 'string').map(b => String(b.text)).join('\n')
 }
 
-/** 把一个 JSONL 文件投影成历史条目（从旧到新）。 */
+/** Projects one JSONL file into history items (oldest to newest). */
 export async function readClaudeTranscript(file: string, scope: ClaudeSessionScope): Promise<HistoryItem[]> {
   const items: HistoryItem[] = []
   const position = new Map<string, number>()
   const put = (item: HistoryItem) => {
-    // 只合并消息（同一条 API 消息分多行写入）；工具的开始与结果是两个事件，都要保留。
+    // Only messages are merged (one API message written across several lines); a tool's start and result are two events and both are kept.
     if (item.type !== 'message.completed') {
       items.push(item)
       return
@@ -103,7 +104,7 @@ export async function readClaudeTranscript(file: string, scope: ClaudeSessionSco
       return
     }
     const previous = items[at]!
-    // 同一条 API 消息分多行写入：文本接起来（实时流也是按到达顺序拼接）。
+    // One API message written across several lines: concatenate the text (the live stream also joins in arrival order).
     items[at] = previous.type === 'message.completed' ? { ...item, text: previous.text + item.text } : item
   }
   const external = scope.externalSessionId ?? scope.sessionId
@@ -159,7 +160,7 @@ export async function readClaudeTranscript(file: string, scope: ClaudeSessionSco
     const text = textOf(message.content)
     if (text !== '') put({ type: 'message.completed', turnId, itemId: claudeMessageItemId(scope, nativeId), role: 'assistant', text })
   }
-  // 工具结果合并进工具条目：started + updated → 一个条目的最终状态
+  // Tool results merge into the tool item: started + updated -> the final state of one item
   return mergeToolResults(items)
 }
 
@@ -182,6 +183,6 @@ function mergeToolResults(items: HistoryItem[]): HistoryItem[] {
   return out
 }
 
-/** 按窗口取一页：缺省最新 `limit` 条；`cursor` 是上一页开头的位置，向更早翻。 */
+/** Takes one page by window: by default the newest `limit` items; `cursor` is the start of the previous page, paging toward older items. */
 
 export { historyPage } from './page.js'

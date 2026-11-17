@@ -1,7 +1,8 @@
+// ported from Agents-Anywhere v2 connector/connector/goals/service.py @98dd0e6e5 (GoalService)
+//
 /**
- * The session goal as an explicit sub-aggregate (02-domain-model.md §5.3). Distilled from v2
- * `connector/connector/goals/service.py`: writes carry `expectedRevision` (CAS), every write has an
- * `operationId` and runs once, and an observed native goal either continues the current target or
+ * The session goal as an explicit sub-aggregate (02-domain-model.md §5.3): writes carry `expectedRevision`
+ * (CAS), every write has an `operationId` and runs once, and an observed native goal either continues the current target or
  * replaces it. Runtime-specific reconciliation (Claude's elapsed-time carry, pause recovery against the
  * native peer) stays in the Runtime profile; this file holds the rules every Runtime shares.
  */

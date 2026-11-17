@@ -6,8 +6,7 @@ import type { ToolContent, ToolStatus, TimelineItemEvent } from './ports/index.j
 /**
  * Projects Runtime events onto timeline drafts (04-connector.md §4: projection is the Conversation's job, not
  * the adapter's). Item ids come from the adapter (v2 identity rules); the projector keeps the in-flight state of
- * streaming items, assigns `orderSeq`, and produces the v2 content shapes clients already render
- * (`connector/runtimes/acp/infrastructure/projection.py`).
+ * streaming items, assigns `orderSeq`, and produces the v2 content shapes clients already render.
  */
 type MessageCompleted = Extract<TimelineItemEvent, { type: 'message.completed' }>
 
@@ -192,7 +191,7 @@ function toolStatus(status: ToolStatus): TimelineItemStatus {
   return status
 }
 
-/** v2 ACP projection details: commands show their command line, diffs become file changes. */
+/** ACP tool details: commands show their command line, diffs become file changes. */
 function shapeTool(content: Record<string, JsonValue>, toolKind: string): void {
   const input = content.input
   if (toolKind === 'command') {

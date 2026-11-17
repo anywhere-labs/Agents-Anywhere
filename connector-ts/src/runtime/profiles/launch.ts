@@ -1,5 +1,7 @@
-// 找到定义里的本机可执行文件，启动前确认 ACP 入口可用。这里的失败都发生在任何 Agent 进程之前，是确定的失败。
-// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/infrastructure/launch.py
+// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/infrastructure/launch.py @98dd0e6e5 (candidates, resolve_executable, launch_command, run_check, local_launch)
+//
+// Finds a definition's local executable and confirms its ACP entry works before launch. Failures here all happen
+// before any Agent process exists and are deterministic.
 
 import { execFile } from 'node:child_process'
 import { statSync } from 'node:fs'
@@ -14,13 +16,13 @@ import type { AcpAgentDefinition } from './definition.js'
 const CHECK_TIMEOUT_MS = 60_000
 
 export interface LocalLaunch {
-  /** 绝对路径；Windows npm 包装脚本解析成 `node.exe`。 */
+  /** Absolute path; a Windows npm wrapper script resolves to `node.exe`. */
   readonly command: string
-  /** 入口前缀（Windows npm 入口脚本）加定义的固定参数。 */
+  /** Entry prefix (Windows npm entry script) plus the definition's fixed arguments. */
   readonly args: readonly string[]
-  /** 设置项映射出的环境变量（还没合并进程环境）。 */
+  /** Environment variables mapped from settings (not yet merged with the process environment). */
   readonly environment: Readonly<Record<string, string>>
-  /** `<runtime>-<版本>`，v2 `LaunchDefinition.release_id`。 */
+  /** `<runtime>-<version>`. */
   readonly releaseId: string
   readonly version?: string
 }
@@ -41,7 +43,7 @@ function isFile(path: string): boolean {
   }
 }
 
-/** `~`、`$VAR`、`${VAR}`、`%VAR%`（os.path.expandvars + expanduser）。未定义的变量保持原样。 */
+/** Expands `~`, `$VAR`, `${VAR}` and `%VAR%`. Undefined variables are left as they are. */
 export function expandPath(path: string, platform: Platform = currentPlatform()): string {
   const expanded = path
     .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g, (match, braced: string | undefined, bare: string | undefined) => platform.env[braced ?? bare ?? ''] ?? match)
@@ -51,7 +53,7 @@ export function expandPath(path: string, platform: Platform = currentPlatform())
   return expanded
 }
 
-/** shutil.which：在 PATH 里找可执行文件（Windows 依次试 PATHEXT）。 */
+/** Finds an executable on PATH (on Windows, tries each PATHEXT in turn). */
 export function which(name: string, platform: Platform = currentPlatform()): string | undefined {
   const path = platform.env.PATH ?? platform.env.Path ?? ''
   const extensions = platform.platform === 'win32'
@@ -91,7 +93,10 @@ export function resolveExecutable(definition: AcpAgentDefinition, settings: Json
   return resolve(path)
 }
 
-/** Windows 上 `.cmd`/`.bat`/`.ps1` 不能不经 shell 直接运行：已知的 npm 包装脚本改成 node + 包入口。 */
+/**
+ * On Windows `.cmd`/`.bat`/`.ps1` cannot run without a shell: known npm wrapper scripts are replaced by node plus
+ * the package entry.
+ */
 export function launchCommand(definition: AcpAgentDefinition, path: string, platform: Platform = currentPlatform()): string[] {
   if (platform.platform !== 'win32' || !['.cmd', '.bat', '.ps1'].includes(extname(path).toLowerCase())) return [path]
   const entry = definition.executable.windowsNpmEntry
@@ -99,7 +104,7 @@ export function launchCommand(definition: AcpAgentDefinition, path: string, plat
     let node: string | undefined = join(dirname(path), 'node.exe')
     if (!isFile(node)) node = which('node', platform)
     let script = join(dirname(path), 'node_modules', entry)
-    if (!isFile(script)) script = join(dirname(dirname(path)), entry) // 项目内 node_modules/.bin
+    if (!isFile(script)) script = join(dirname(dirname(path)), entry) // project-local node_modules/.bin
     if (node !== undefined && isFile(script)) return [resolve(node), script]
   }
   return fail('agent_cli_unsupported', `无法直接启动 ${definition.executable.name} 的批处理入口，请确认 Node.js 与 CLI 安装完整，或填写实际可执行文件的路径。`)
@@ -137,7 +142,7 @@ export function runCheck(definition: AcpAgentDefinition, command: readonly strin
   })
 }
 
-/** 解析可执行文件、检查 ACP 入口、读版本（v2 `local_launch`）。 */
+/** Resolves the executable, checks the ACP entry and reads the version. */
 export async function localLaunch(definition: AcpAgentDefinition, settings: JsonObject, platform: Platform = currentPlatform()): Promise<LocalLaunch> {
   const path = resolveExecutable(definition, settings, platform)
   const command = launchCommand(definition, path, platform)

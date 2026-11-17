@@ -1,5 +1,6 @@
-// 会话的斜杠命令目录：Runtime 每次上报 commands.updated（ACP available_commands_update），会话层把它作为
-// runtime.status 的 fact 经 LiveEvents 发出；这里记住每个会话最近的一份，供 Runtime/catalogs 的 catalogs.commands。
+// Slash command catalog per session: each time the Runtime reports commands.updated (ACP
+// available_commands_update), the session layer emits it as a runtime.status fact through LiveEvents. This keeps
+// the latest one per session for `catalogs.commands` in Runtime/catalogs.
 
 /** One slash command as the Runtime reported it (`commands.updated`). */
 export interface SessionCommand {

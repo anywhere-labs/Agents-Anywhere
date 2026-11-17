@@ -1,7 +1,7 @@
-// ported from effi-crew cloud/agentd/src/conv/mapping.ts @30f8334
+// ported from effi-crew cloud/agentd/src/conv/mapping.ts @30f8334 (ACP update translation)
 //
-// ACP `session/update` → 内部 RuntimeEvent。agentd 直接改写 Message parts；这里只翻译成事件，
-// 投影成 TimelineItem 是 Conversation 的事。Timeline 条目 ID 由方言的 ItemIdentity 按 v2 规则给出。
+// ACP `session/update` -> internal RuntimeEvent. This only translates into events; projecting them into
+// TimelineItems is the Conversation's job. Timeline item IDs come from the dialect's ItemIdentity.
 
 import type {
   ConfigOption,
@@ -16,7 +16,7 @@ import { asRecord, type JsonRecord } from './client.js'
 import { normalizeConfig } from './config.js'
 import type { ItemIdentity } from './dialect.js'
 
-/** 内容块的文本（agentd `contentText`）。 */
+/** Text of a content block. */
 export function contentText(raw: unknown): string | undefined {
   const block = asRecord(raw)
   switch (block.type) {
@@ -39,7 +39,7 @@ export function contentText(raw: unknown): string | undefined {
 
 const TOOL_KINDS = new Set<ToolKind>(['command', 'file_change', 'read', 'search', 'fetch', 'web_search', 'mcp', 'agent_call', 'think', 'other'])
 
-/** ACP ToolKind（read / edit / delete / move / search / execute / think / fetch / switch_mode / other）→ AA。 */
+/** ACP ToolKind (read / edit / delete / move / search / execute / think / fetch / switch_mode / other) -> AA. */
 export function toolKind(raw: unknown): ToolKind {
   switch (raw) {
     case 'execute':
@@ -115,15 +115,15 @@ export interface TranslateContext {
   readonly identity: ItemIdentity
   readonly turnId?: string
   readonly replay?: boolean
-  /** 当前回合里用户消息已由 AA 自己写入：回显不再落条目。 */
+  /** AA itself has written the user message of the current turn: echoes no longer create items. */
   readonly suppressUserEcho: boolean
-  /** 当前配置（`current_mode_update` 要改写成 config.updated）。 */
+  /** Current config (`current_mode_update` is rewritten as config.updated). */
   readonly config: readonly ConfigOption[]
-  /** 承载旧 session modes 的配置项 ID（缺省 `mode`）。 */
+  /** ID of the config option carrying legacy session modes (defaults to `mode`). */
   readonly modesOptionId?: string
 }
 
-/** 是否算「接纳证据」：回合开始后第一个助手、思考、工具或计划更新（v2 公共引擎的接纳判定）。 */
+/** Whether the update counts as "acceptance evidence": the first assistant, thought, tool or plan update after the turn starts. */
 export function isAcceptanceEvidence(update: JsonRecord): boolean {
   switch (update.sessionUpdate) {
     case 'agent_message_chunk':
@@ -138,7 +138,7 @@ export function isAcceptanceEvidence(update: JsonRecord): boolean {
   }
 }
 
-/** 是否是会产出内容的更新（回合外到达时说明 Agent 自己开了一轮）。 */
+/** Whether the update produces content (arriving outside a turn means the Agent started a turn on its own). */
 export function isContentUpdate(update: JsonRecord): boolean {
   if (update.sessionUpdate === 'agent_message_chunk' || update.sessionUpdate === 'agent_thought_chunk') {
     const text = contentText(update.content)
@@ -147,7 +147,7 @@ export function isContentUpdate(update: JsonRecord): boolean {
   return update.sessionUpdate === 'tool_call' || update.sessionUpdate === 'tool_call_update' || update.sessionUpdate === 'plan'
 }
 
-/** 通用翻译。返回的事件不含 turn.* 边界（由会话引擎负责）。 */
+/** Generic translation. The returned events contain no turn.* boundaries (the session engine handles those). */
 export function translateUpdate(update: JsonRecord, context: TranslateContext): RuntimeEvent[] {
   const base = {
     ...(context.turnId !== undefined ? { turnId: context.turnId } : {}),

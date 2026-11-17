@@ -1,3 +1,3 @@
-// Runtime Integration（防腐层）：进程监督、ACP Client Core、各 Runtime profile 与 companion，实现 RuntimeSession 端口。
+// Runtime Integration (anti-corruption layer): process supervision, ACP Client Core, the Runtime profiles and companions, implementing the RuntimeSession port.
 
 export {}

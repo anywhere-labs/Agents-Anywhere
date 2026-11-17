@@ -15,13 +15,13 @@ export type AdmissionDecision =
   /** Put it in the queue; `interrupt` asks the running turn to stop so it goes next. */
   | { readonly kind: 'enqueue'; readonly interrupt: boolean }
   /**
-   * Refuse. `legacy` keeps v2's plain-text `session is <status>` for clients that did not send `queue`;
+   * Refuse. `legacy` keeps the plain-text `session is <status>` error for clients that did not send `queue`;
    * otherwise the structured `session_busy`.
    */
   | { readonly kind: 'reject'; readonly code: 'session_busy'; readonly legacy: boolean; readonly status: SessionStatus }
 
 /**
- * Invariant 4 (one active turn) applied to a new message, using v2's table for the `queue` field. A queue
+ * Invariant 4 (one active turn) applied to a new message, decided by the `queue` field. A queue
  * that already holds messages keeps order even when the session happens to be idle.
  */
 export function admitMessage(input: { status: SessionStatus; queueLength: number; queue: QueueMode | null; queueAvailable: boolean }): AdmissionDecision {
@@ -32,7 +32,7 @@ export function admitMessage(input: { status: SessionStatus; queueLength: number
   return { kind: 'enqueue', interrupt: input.queue === 'interrupt' }
 }
 
-/** Steering goes into the running turn and bypasses the queue (v2: allowed while `running` or `waiting_approval`). */
+/** Steering goes into the running turn and bypasses the queue (allowed while `running` or `waiting_approval`). */
 export function admitSteer(input: { status: SessionStatus; steerSupported: boolean }): void {
   if (!input.steerSupported) throw new ConversationError('invalid_transition', 'this Runtime cannot steer a running turn')
   if (input.status !== 'running' && input.status !== 'waiting_approval') {

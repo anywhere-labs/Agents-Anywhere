@@ -1,4 +1,4 @@
-// Request parameter helpers with the behaviour of v2 connector/local/common.py.
+// Helpers that read and validate workspace request parameters.
 import { stat } from 'node:fs/promises'
 import { dirname, isAbsolute, resolve } from 'node:path'
 

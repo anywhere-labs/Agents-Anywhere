@@ -1,4 +1,5 @@
-// Pi profile：`@openma/pi-acp` 经 ACP 接入，本机模式与 AA 受管环境、原生历史浏览与交接。
+// Pi profile: `@openma/pi-acp` over ACP, with local mode and the AA managed environment, native history browsing
+// and handoff.
 
 export { PI, PI_CONFIG_SCHEMA, PI_PERMISSION_OPTIONS } from './definition.js'
 export { PiSessionAliases } from './aliases.js'

@@ -167,7 +167,7 @@ export function clear(queue: SessionQueue): { queue: SessionQueue; removed: Queu
   return { queue: changed(queue, keep, false), removed }
 }
 
-/** Busy statuses from v2: a message cannot start a new turn while the session is in one of them. */
+/** Busy statuses: a message cannot start a new turn while the session is in one of them. */
 export const BUSY_STATUSES: ReadonlySet<string> = new Set(['running', 'waiting', 'pending', 'waiting_approval', 'blocked', 'stopping'])
 
 export type DispatchDecision =

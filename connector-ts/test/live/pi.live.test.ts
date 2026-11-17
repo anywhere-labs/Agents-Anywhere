@@ -1,8 +1,8 @@
-// Pi 本机模式实测：真实的 pi（本机 npm 安装）+ 打过补丁的 @openma/pi-acp。
-// 默认跳过。运行：
-//   AA_LIVE_PI=1 [AA_PI_BUNDLED_RUNTIME=<预装的 package.json + node_modules 目录>] corepack yarn vitest run test/live/pi.live.test.ts
-// 用本机 ~/.pi/agent 的模型与登录，在临时目录里新建会话，跑两轮很短的 prompt（中间让进程空闲回收一次）。
-// 只读浏览用户已有的会话；测试结束删除本测试新建的那个会话文件，核对其他会话文件与设置没有变化。
+// Pi local-mode field test: the real pi (local npm install) + the patched @openma/pi-acp.
+// Skipped by default. Run:
+//   AA_LIVE_PI=1 [AA_PI_BUNDLED_RUNTIME=<prebuilt package.json + node_modules directory>] corepack yarn vitest run test/live/pi.live.test.ts
+// Uses the models and login in the local ~/.pi/agent, creates a session in a temporary directory and runs two very short prompts (with one idle reclaim of the process in between).
+// Browses the user's existing sessions read-only; at the end it deletes the session file this test created and checks that other session files and settings are unchanged.
 
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
@@ -55,7 +55,7 @@ describe.skipIf(!live)('Pi live (local mode)', () => {
     const before = snapshot(agentDir)
     const work = mkdtempSync(join(tmpdir(), 'aa-pi-live-'))
     const dataDir = mkdtempSync(join(tmpdir(), 'aa-pi-data-'))
-    // 没给预装包时用 v2 Desktop 留下的同清单缓存（有的话），省掉网络下载。
+    // Without a prebuilt package, reuse the same-manifest cache left by the v2 Desktop (if present) to skip the network download.
     const v2Cache = join(homedir(), 'Library/Application Support/Agents Anywhere/connector/pi-npm-runtimes/2a767d2905f93e2908db')
     const bundle = process.env.AA_PI_BUNDLED_RUNTIME ?? (existsSync(v2Cache) ? v2Cache : undefined)
     const env = { ...process.env, AA_PI_NPM_ROOT: join(dataDir, 'npm'), ...(bundle ? { AA_PI_BUNDLED_RUNTIME: bundle } : {}) }
@@ -91,7 +91,7 @@ describe.skipIf(!live)('Pi live (local mode)', () => {
       console.log('turn 1', ended.reason, JSON.stringify(assistantText(events, 0)))
       expect(ended.reason).toBe('end_turn')
 
-      // 空闲回收：进程停掉，会话休眠；下一轮自动带着原生文件拉起（不发 session.lost）。
+      // idle reclaim: the process stops and the session sleeps; the next turn relaunches it with the native file (no session.lost).
       expect(await session.checkIdle(Date.now() + 24 * 3600_000)).toBe(true)
       const mark = events.length
       const second = await session.prompt({ text: 'Reply with exactly the word: pong2' }, { deliveryId: 'd2', clientMessageId: 'live-c2' })
@@ -113,7 +113,7 @@ describe.skipIf(!live)('Pi live (local mode)', () => {
       await handle.stop()
     } finally {
       if (stderr.length) console.log('stderr tail', stderr.slice(-20).join('\n'))
-      // 只删本测试新建的会话文件（它的 cwd 是本测试的临时目录）。
+      // delete only the session file this test created (its cwd is this test's temporary directory).
       if (created && created.startsWith(join(agentDir, 'sessions')) && readFileSync(created, 'utf8').split('\n')[0]!.includes(JSON.stringify(work).slice(1, -1))) {
         rmSync(created)
         const directory = dirname(created)
@@ -125,7 +125,7 @@ describe.skipIf(!live)('Pi live (local mode)', () => {
     const after = snapshot(agentDir)
     const changed = [...new Set([...before.keys(), ...after.keys()])].filter(path => before.get(path) !== after.get(path))
     console.log('changed under ~/.pi/agent', changed)
-    // Pi 自己可能刷新登录令牌（auth.json）；已有的会话文件与设置必须原样。
+    // Pi may refresh its own login token (auth.json); existing session files and settings must stay as they were.
     expect(changed.filter(path => before.has(path) && (path.includes(`${join('agent', 'sessions')}`) || path.endsWith('settings.json')))).toEqual([])
   })
 })
@@ -149,7 +149,7 @@ describe.skipIf(!live)('Pi live (aliases, attachments, interrupted messages)', (
         for await (const event of session.events) events.push(event)
       })()
       const first = session.nativeSessionId
-      // 还没写过原生文件就被回收：醒来只能开新的原生会话。
+      // reclaimed before writing a native file: on wake it can only open a new native session.
       expect(await session.checkIdle(Date.now() + 24 * 3600_000)).toBe(true)
       const notes = join(work, 'notes.txt')
       writeFileSync(notes, 'The secret word is: avocado\n')
@@ -169,7 +169,7 @@ describe.skipIf(!live)('Pi live (aliases, attachments, interrupted messages)', (
       const user = events.find((e): e is Extract<RuntimeEvent, { type: 'message.completed' }> => e.type === 'message.completed' && e.role === 'user')
       expect(user?.timelineAttachments).toEqual([info])
 
-      // 中断一条正在输出的消息
+      // interrupt a message that is still streaming
       const mark = events.length
       await session.prompt({ text: 'Count from 1 to 300, one number per line, nothing else.' }, { deliveryId: 'd2', clientMessageId: 'live2-c2' })
       const deadline = Date.now() + 120_000
@@ -209,9 +209,9 @@ describe.skipIf(!live)('Pi live (aliases, attachments, interrupted messages)', (
   })
 })
 
-// 录制一轮真实的 Pi 交互给回放测试用（test/recordings/pi-new-prompt.jsonl）。运行：
+// Records one real Pi interaction for the replay test (test/recordings/pi-new-prompt.jsonl). Run:
 //   AA_LIVE_PI=1 AA_PI_RECORD=test/recordings/pi-new-prompt.jsonl corepack yarn vitest run test/live/pi.live.test.ts -t records
-// 录制前把本机路径换成占位符：主目录 → /home/user，工作目录 → /workspace，守卫路径 → __AA_PI_GUARD__。
+// Before recording, local paths are replaced with placeholders: home directory -> /home/user, working directory -> /workspace, guard path -> __AA_PI_GUARD__.
 describe.skipIf(!live || !process.env.AA_PI_RECORD)('Pi live recording', () => {
   it('records a short turn', { timeout: 300_000 }, async () => {
     const work = mkdtempSync(join(tmpdir(), 'aa-pi-rec-'))
@@ -256,7 +256,7 @@ describe.skipIf(!live || !process.env.AA_PI_RECORD)('Pi live recording', () => {
     const escape = (text: string): string => JSON.stringify(text).slice(1, -1)
     let text = entries.map(entry => JSON.stringify(entry)).join('\n') + '\n'
     for (const [from, to] of [[escape(GUARD), '__AA_PI_GUARD__'], [escape(work), '/workspace'], [escape(dataDir), '/aa-data'], [escape(homedir()), '/home/user']] as const) text = text.replaceAll(from, to)
-    // Pi 按工作目录命名的会话子目录（临时目录展开后的名字）
+    // Pi's session subdirectory named after the working directory (the expanded temporary directory name)
     text = text.replace(/sessions\/--[^/"]*aa-pi-rec-[^/"]*--\//g, 'sessions/--workspace--/')
     writeFileSync(process.env.AA_PI_RECORD!, text)
     rmSync(work, { recursive: true, force: true })

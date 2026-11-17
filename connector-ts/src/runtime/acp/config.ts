@@ -1,30 +1,32 @@
-// ported from effi-crew cloud/agentd/src/conv/session-config.ts @30f8334
+// ported from effi-crew cloud/agentd/src/conv/session-config.ts @30f8334 (ACP config option normalization)
+// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/domain/catalogs.py @98dd0e6e5 (decode_selection)
+// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/domain/configuration.py @98dd0e6e5 (merge_legacy)
 //
-// 一个 ACP Agent 的会话设置（模式、模型、思考强度…），整理成端口里的 ConfigOption 列表。
-// 来源优先级：
-//   1. `configOptions`（session/new|load|resume 响应、`config_option_update`、`session/set_config_option` 响应）；
-//   2. 旧的 `modes`（→ id "mode"，用 `session/set_mode` 设置，`current_mode_update` 更新）与不稳定的
-//      `models`（→ id "model"，用 `session/set_model` 设置），给没有 (1) 的 Agent。
-// 与 agentd 的差别：category 映射到 AA 的 model / effort / permission / mode / collaboration_mode / other；
-// 布尔项保留布尔值（端口的 ConfigOption.type = 'boolean'）。
+// The session settings of an ACP Agent (mode, model, reasoning effort...), organized as the port's ConfigOption list.
+// Source precedence:
+//   1. `configOptions` (session/new|load|resume responses, `config_option_update`, `session/set_config_option` responses);
+//   2. legacy `modes` (-> id "mode", set with `session/set_mode`, updated by `current_mode_update`) and unstable
+//      `models` (-> id "model", set with `session/set_model`), for Agents without (1).
+// Categories map to the AA model / effort / permission / mode / collaboration_mode / other categories;
+// boolean options stay boolean (port ConfigOption.type = 'boolean').
 
 import type { ConfigOption } from '../../application/ports/runtime-session.js'
 import type { SelectionCodec } from './dialect.js'
 import { fail } from './errors.js'
 import { asRecord, type JsonRecord } from './client.js'
 
-/** 一个设置怎么下发给 Agent。 */
+/** How a setting is sent to the Agent. */
 export type ConfigApply = 'option' | 'boolean' | 'set_mode' | 'set_model'
 
 export interface NormalizedConfig {
   readonly options: ConfigOption[]
-  /** config id → 下发方式。 */
+  /** config id -> how it is sent. */
   readonly apply: Record<string, ConfigApply>
-  /** Agent 给了 configOptions（此时忽略旧的 modes / models）。 */
+  /** The Agent sent configOptions (legacy modes / models are then ignored). */
   readonly native: boolean
 }
 
-/** session/new|load|resume 响应里关于设置的部分。 */
+/** The settings part of a session/new|load|resume response. */
 export interface AgentConfigState {
   readonly configOptions?: unknown
   readonly modes?: unknown
@@ -35,7 +37,7 @@ function text(value: unknown): string | undefined {
   return typeof value === 'string' && value !== '' ? value : undefined
 }
 
-/** ACP category（以及常见的 id）→ AA 目录类别。方言可以在 normalize 之后再改。 */
+/** ACP category (and common ids) -> AA catalog category. Dialects can adjust it after normalize. */
 export function aaCategory(category: string | undefined, id: string): ConfigOption['category'] {
   switch (category) {
     case 'model':
@@ -83,13 +85,13 @@ function value(o: JsonRecord, group?: string): NonNullable<ConfigOption['values'
   }
 }
 
-/** 整理一个 ACP 配置项；看不懂的形状返回 undefined。 */
+/** Normalizes one ACP config option; returns undefined for shapes it does not understand. */
 export function fromConfigOption(raw: unknown): { option: ConfigOption; apply: ConfigApply } | undefined {
   const option = asRecord(raw)
   const id = text(option.id)
   if (id === undefined) return undefined
   const description = text(option.description)
-  // ACP 的 category 是保留枚举；AA 自己的类别放在 `_meta.aa.selectionCategory`（v2 ConfigurationService.observe）。
+  // ACP's category is a reserved enum; AA's own category lives in `_meta.aa.selectionCategory`.
   const declared = text(asRecord(asRecord(option._meta).aa).selectionCategory)
   const head = {
     id,
@@ -105,8 +107,9 @@ export function fromConfigOption(raw: unknown): { option: ConfigOption; apply: C
 }
 
 /**
- * 旧的 session modes 以什么配置项出现。缺省是 `mode` / Mode / mode 类别，且只在 Agent 没给 configOptions 时出现；
- * 方言给了这个说明时，即使有 configOptions，只要其中没有同类别的项，也把 modes 补成一项（v2 Command Code 把权限放在 modes 里）。
+ * How legacy session modes appear as a config option. By default as `mode` / Mode / the mode category, and only when
+ * the Agent sent no configOptions. When the dialect provides this description, modes are added as an option even
+ * alongside configOptions, as long as none of them has the same category (Command Code puts permissions in modes).
  */
 export interface LegacyModesSpec {
   readonly id: string
@@ -150,7 +153,7 @@ export function fromModels(raw: unknown): ConfigOption | undefined {
   }
 }
 
-/** 会话报告的设置。`configOptions` 优先于旧的 modes / models。 */
+/** The settings the session reports. `configOptions` take precedence over legacy modes / models. */
 export function normalizeConfig(state: AgentConfigState | null | undefined, legacyModes?: LegacyModesSpec): NormalizedConfig {
   const options: ConfigOption[] = []
   const apply: Record<string, ConfigApply> = {}
@@ -182,12 +185,12 @@ export function normalizeConfig(state: AgentConfigState | null | undefined, lega
   return { options, apply, native: false }
 }
 
-/** 按 id 找设置；找不到时按 AA 类别找第一个（不同 Agent 的 id 不同时，选择仍能落到对应的选择器上）。 */
+/** Finds a setting by id; otherwise the first one in the AA category (so a selection still lands on the matching picker when Agents use different ids). */
 export function findOption(config: readonly ConfigOption[], id: string): ConfigOption | undefined {
   return config.find(o => o.id === id) ?? config.find(o => o.category === id)
 }
 
-/** `value` 不是 `id` 的合法选择时的原因；合法时 undefined。 */
+/** Why `value` is not a valid choice for `id`; undefined when it is valid. */
 export function choiceError(config: readonly ConfigOption[], id: string, value: string | boolean): string | undefined {
   const option = findOption(config, id)
   if (option === undefined) return `unknown setting ${id} (available: ${config.map(o => o.id).join(', ') || 'none'})`
@@ -198,7 +201,7 @@ export function choiceError(config: readonly ConfigOption[], id: string, value: 
   return undefined
 }
 
-/** `config` 的副本，`id` 的当前值改成 `value`（未知 id 不变）。 */
+/** A copy of `config` with the current value of `id` set to `value` (unknown ids are left unchanged). */
 export function withCurrent(config: readonly ConfigOption[], id: string, value: string | boolean): ConfigOption[] {
   return config.map(o => (o.id === id ? { ...o, currentValue: value } : o))
 }
@@ -209,7 +212,7 @@ export function sameConfig(a: readonly ConfigOption[], b: readonly ConfigOption[
 
 const SELECTION_PREFIX = 'acp-selection:'
 
-/** acp/domain/catalogs.py `decode_selection`：模型选择 ID 可能同时编码了推理强度。 */
+/** A model selection ID may also encode the reasoning effort. */
 export function decodeAcpSelection(value: string): { model: string; effort?: string } {
   if (!value.startsWith(SELECTION_PREFIX)) return { model: value }
   try {
@@ -218,15 +221,16 @@ export function decodeAcpSelection(value: string): { model: string; effort?: str
       return { model: decoded[0], effort: decoded[1] }
     }
   } catch {
-    // 落到下面的错误
+    // fall through to the error below
   }
   fail('invalid_selection', '模型与推理强度选择无效。')
 }
 
 
 /**
- * acp/domain/configuration.py `merge_legacy`：按类别给出的初始选择（model / effort / permission…）
- * 落到会话配置项上。每个类别必须恰好对应一个配置项，值必须在可选范围内。返回按类别顺序的赋值。
+ * Applies initial per-category selections (model / effort / permission...) to the session config options.
+ * Each category must map to exactly one option, and the value must be within the allowed range. Returns the
+ * assignments in category order.
  */
 export function selectionsToConfig(config: readonly ConfigOption[], selections: Readonly<Record<string, string | null>>, codec?: SelectionCodec): Array<{ optionId: string; value: string }> {
   const flat: Record<string, string | null> = { ...selections }
@@ -271,8 +275,9 @@ function decodePermissionSelection(config: readonly ConfigOption[], selectionId:
 }
 
 /**
- * 用 Agent 新报告的完整配置替换当前配置：由旧 modes / models 得来的项（`set_mode` / `set_model`）
- * 不在 configOptions 里，新列表没有它们时保留原样，直到 Agent 报告新的 modes 状态。
+ * Replaces the current config with the full config the Agent just reported: options derived from legacy
+ * modes / models (`set_mode` / `set_model`) are not in configOptions, so they are kept as they are when the new list
+ * lacks them, until the Agent reports a new modes state.
  */
 export function replaceConfig(current: NormalizedConfig, next: NormalizedConfig): NormalizedConfig {
   const kept = current.options.filter(o => (current.apply[o.id] === 'set_mode' || current.apply[o.id] === 'set_model')

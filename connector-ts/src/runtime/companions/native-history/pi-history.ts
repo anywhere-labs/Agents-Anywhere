@@ -1,8 +1,11 @@
-// 只读解析 Pi 的 JSONL 原生历史：不导入、不运行 Pi、扩展或任何配置代码，从不写源文件。
-// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/pi/history.py
+// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/pi/history.py @98dd0e6e5 (history parsing)
 //
-// 条目 ID 沿用 v2 规则（domain/identity `piHistoryItemId`），同一条原生记录重读后 ID 不变。
-// 与 v2 的差别：v2 产出 Timeline 条目字典；这里先得到同形的中间条目，再翻译成端口的 HistoryItem 事件。
+// Read-only parsing of Pi's JSONL native history: never imports or runs Pi, its extensions or any config code, and
+// never writes the source file.
+//
+// Item IDs follow the shared identity rules (domain/identity `piHistoryItemId`), so rereading the same native record
+// yields the same ID. Records are first turned into intermediate items shaped like Timeline items, then translated
+// into the port's HistoryItem events.
 
 import { createHash } from 'node:crypto'
 import { open, realpath } from 'node:fs/promises'
@@ -40,9 +43,9 @@ export class PiHistory {
     readonly path: string,
     readonly header: Entry,
     readonly entries: readonly Entry[],
-    /** `sha256:<源文件字节的摘要>`；与 SDK bridge 的写入校验同一格式。 */
+    /** `sha256:<digest of the source file bytes>`; the same format the SDK bridge uses to verify writes. */
     readonly revision: string,
-    /** 读取期间文件没变、每行都能解析、条目 ID 不重复。 */
+    /** The file did not change while being read, every line parsed, and item IDs are unique. */
     readonly complete: boolean,
   ) {}
 
@@ -80,12 +83,12 @@ export class PiHistory {
     return this.createdAt
   }
 
-  /** AA（含 v2）发过消息的会话：用户消息上有 AA 的消息 ID。 */
+  /** A session AA has sent messages in (by any Connector version): its user messages carry AA message IDs. */
   get ownedByAgentsAnywhere(): boolean {
     return this.entries.some(entry => typeof record(entry.message).aaClientMessageId === 'string')
   }
 
-  /** 能交给 Pi 继续写：完整、格式版本 3、工作目录还在。 */
+  /** Can be handed to Pi to continue writing: complete, format version 3, and the working directory still exists. */
   requireResumable(): void {
     if (!this.complete) fail('pi_history_incomplete', '原生历史正在写入或存在损坏记录，请稍后重试。')
     if (this.header.version !== 3) fail('pi_history_migration_required', '此历史需要格式迁移，当前仅开放浏览，未修改源文件。')
@@ -101,7 +104,7 @@ export class PiHistory {
 
 const decoder = new TextDecoder('utf-8', { fatal: true })
 
-/** 读一个历史文件；文件必须解析到某个来源目录之内（符号链接不能逃出来源）。 */
+/** Reads one history file; it must resolve inside some source directory (symlinks cannot escape a source). */
 export async function readPiHistory(path: string, roots: readonly string[]): Promise<PiHistory> {
   let resolved: string
   try {
@@ -114,7 +117,7 @@ export async function readPiHistory(path: string, roots: readonly string[]): Pro
     try {
       sources.push(await realpath(root))
     } catch {
-      // 不存在的来源
+      // missing source
     }
   }
   if (!sources.some(root => within(resolved, root))) fail('pi_history_outside_source', '历史位置已超出配置的来源目录。')
@@ -159,7 +162,7 @@ export async function readPiHistory(path: string, roots: readonly string[]): Pro
   return new PiHistory(resolved, header, entries.slice(1), `sha256:${createHash('sha256').update(data).digest('hex')}`, complete)
 }
 
-/** Python `bytes.splitlines()`：按 \r\n、\r、\n 分行，不含行尾。 */
+/** Splits on \r\n, \r and \n (like `bytes.splitlines()`), without line endings. */
 function splitLines(data: Buffer): Buffer[] {
   const lines: Buffer[] = []
   let start = 0
@@ -175,7 +178,7 @@ function splitLines(data: Buffer): Buffer[] {
 }
 
 // ---------------------------------------------------------------------------------------------
-// 时间线（v2 `timeline`）
+// Timeline
 // ---------------------------------------------------------------------------------------------
 
 export interface PiTimelineItem {
@@ -188,7 +191,7 @@ export interface PiTimelineItem {
   readonly orderSeq: number
 }
 
-/** 保留整棵条目树（分支、压缩都按原节点出现），每条原生记录拆成一个或多个条目。 */
+/** Keeps the whole entry tree (branches and compactions appear as their original nodes); each native record becomes one or more items. */
 export function piTimeline(history: PiHistory, sessionId: string, runtime = 'pi'): PiTimelineItem[] {
   const result: PiTimelineItem[] = []
   const tools = new Map<string, PiTimelineItem>()
@@ -210,7 +213,7 @@ export function piTimeline(history: PiHistory, sessionId: string, runtime = 'pi'
       const role = message.role
       let blocks: JsonValue | undefined = 'content' in message ? message.content : []
       if (role === 'user' || role === 'assistant' || role === 'custom') {
-        // SDK 文本里带着执行资源路径；AA 发的消息保留它原来的显示文本。
+        // The SDK text carries execution resource paths; messages sent by AA keep their original display text.
         if (role === 'user' && typeof message.aaDisplayText === 'string') blocks = [{ type: 'text', text: message.aaDisplayText }]
         if (typeof blocks === 'string') blocks = [{ type: 'text', text: blocks }]
         if (!Array.isArray(blocks)) return
@@ -225,7 +228,7 @@ export function piTimeline(history: PiHistory, sessionId: string, runtime = 'pi'
               text: (thinking ? block.thinking : block.text) ?? fallback,
             }
             if (message.aaClientMessageId) content.clientMessageId = message.aaClientMessageId
-            // v2 用 Python 的真值判断：空列表不算有附件。
+            // An empty list does not count as having attachments.
             if (role === 'user' && index === 0 && Array.isArray(message.aaAttachments) && message.aaAttachments.length > 0) content.attachments = message.aaAttachments
             add(index, 'message', role === 'user' ? 'user' : 'assistant', content, messageStatus(message))
           } else if (block.type === 'toolCall') {
@@ -238,8 +241,8 @@ export function piTimeline(history: PiHistory, sessionId: string, runtime = 'pi'
             tools.set(String(block.id), add(index, 'tool', 'tool', content, 'pending'))
           }
         })
-        // 模型报错时 Pi 把原因记在 errorMessage 上（正文常常是空的）：单独给一条错误提示，免得失败的一轮在历史里
-        // 什么都看不到。v2 没有这一条；派生键 `error` 不会和内容块的下标撞上。
+        // When the model errors, Pi records the reason in errorMessage (the body is often empty): emit a separate error
+        // notice so a failed turn is not invisible in the history. The derived key `error` cannot collide with content block indexes.
         const failure = role === 'assistant' && message.stopReason === 'error' && typeof message.errorMessage === 'string' ? message.errorMessage.trim() : ''
         if (failure) add('error', 'message', 'assistant', { kind: 'markdown', format: 'markdown', text: failure, nativeEntryType: 'error' }, 'failed')
       } else if (role === 'toolResult') {
@@ -260,12 +263,12 @@ export function piTimeline(history: PiHistory, sessionId: string, runtime = 'pi'
   return result
 }
 
-/** v2：模型报错的消息算失败，被中断的算取消。 */
+/** A message the model errored on counts as failed; an interrupted one counts as cancelled. */
 function messageStatus(message: Entry): PiTimelineItem['status'] {
   return message.stopReason === 'error' ? 'failed' : message.stopReason === 'aborted' ? 'cancelled' : 'done'
 }
 
-/** 原生记录里的 `aaAttachments`（v2 的 Timeline 附件形状）；不认识的条目跳过。 */
+/** `aaAttachments` in native records (the Timeline attachment shape); unrecognized entries are skipped. */
 export function attachmentInfos(value: JsonValue | undefined): AttachmentInfo[] {
   if (!Array.isArray(value)) return []
   const infos: AttachmentInfo[] = []
@@ -287,7 +290,7 @@ function jsonText(value: JsonValue | undefined): string {
   return typeof value === 'string' ? value : value === undefined || value === null ? '' : String(value)
 }
 
-/** 中间条目 → 端口事件（全部标 replay）。工具条目给出最终状态；有输出时再跟一条 tool.updated。 */
+/** Intermediate items -> port events (all marked replay). Tool items carry their final state, followed by a tool.updated when there is output. */
 export function piHistoryEvents(items: readonly PiTimelineItem[]): HistoryItem[] {
   const events: HistoryItem[] = []
   for (const item of items) {
@@ -332,8 +335,8 @@ export function piHistoryEvents(items: readonly PiTimelineItem[]): HistoryItem[]
 }
 
 /**
- * 历史窗口：按中间条目分页（同一个工具的开始与结果不会被拆开）。游标是条目下标；不给时取最新一页，
- * `older` 取游标之前，`newer` 取游标之后。
+ * History window: pages by intermediate item (a tool's start and result are never split). The cursor is an item
+ * index; without one the newest page is returned, `older` takes items before the cursor and `newer` after it.
  */
 export function piHistoryPage(items: readonly PiTimelineItem[], window: HistoryWindow): NativeHistoryPage {
   const limit = window.limit > 0 ? window.limit : items.length

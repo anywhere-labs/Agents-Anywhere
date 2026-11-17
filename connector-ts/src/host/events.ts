@@ -1,3 +1,5 @@
+// ported from Agents-Anywhere v2 connector/connector/mesh/events.py @98dd0e6e5 (EventHub, Subscription, Sequenced)
+
 /** One published item; `seq` grows by one per item of the hub. */
 export interface Sequenced<T> {
   readonly seq: number
@@ -55,7 +57,7 @@ class Subscription<T> {
 }
 
 /**
- * A ring of recent events plus live subscribers (ported from the v2 Connector's `mesh/events.py`): a subscriber
+ * A ring of recent events plus live subscribers: a subscriber
  * replays what it missed after `since`, then follows; each has a bounded queue that drops its oldest item, and the
  * coalescing kinds keep only their newest item.
  */

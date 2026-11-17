@@ -1,14 +1,14 @@
-// 由 initialize 协商结果得出的能力（通用 ACP：只读能力完全来自协商，04 §5.5）。
+// Capabilities derived from the initialize negotiation (generic ACP: read-only capabilities come entirely from negotiation, 04 §5.5).
 
 import type { Capability } from '../../application/ports/runtime-session.js'
 import { asRecord, type AgentInfo } from './client.js'
 
 export interface NegotiationOptions {
-  /** 方言是否提供运行中插话。 */
+  /** Whether the dialect supports steering a running turn. */
   readonly steer: boolean
-  /** 客户端是否声明了 elicitation 表单。 */
+  /** Whether the client declared elicitation forms. */
   readonly forms?: boolean
-  /** 是否有建会话前就能列出的权限选项。 */
+  /** Whether permission options can be listed before a session is created. */
   readonly permissionCatalog?: boolean
 }
 

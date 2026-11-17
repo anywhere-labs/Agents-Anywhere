@@ -1,3 +1,3 @@
-// 入站适配：Server 命令、安全通道请求 → 同一组用例（调用者身份不同）。
+// Inbound adapters: Server commands and secure channel requests map to the same use cases (with different caller identities).
 
 export * from './commands.js'

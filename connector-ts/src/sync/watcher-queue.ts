@@ -2,7 +2,7 @@
 //
 // One watcher's outbound queue: it keeps only the latest pending event per key, so a slow consumer never
 // holds up the Runtime or other consumers. `push` replaces a queued event for the same key in place (keeping
-// its position); `next` waits for the next event. v3 uses it for every server stream the device serves
+// its position); `next` waits for the next event. Every server stream the device serves uses it
 // (`Sessions/watch`, `Link/attach`): what is sent is the state at send time, the latest by construction.
 
 export class WatcherQueue<E> {

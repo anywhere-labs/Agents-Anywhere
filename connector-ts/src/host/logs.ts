@@ -1,11 +1,10 @@
-// The Connector's runtime log journal, the format and retention of v2 connector/core/runtime_logs.py: rotating
-// JSONL segments (`runtime-<seq>.jsonl`, one JSON array per batch), `state.json` holding the next sequence, at
-// most 10,000 records / 32 MiB / 7 days, `(producer, eventId)` deduplication, fsync before acknowledging a
-// durable batch, a torn tail truncated on load. Records are redacted before they are written.
+// The Connector's runtime log journal: rotating JSONL segments (`runtime-<seq>.jsonl`, one JSON array per batch),
+// `state.json` holding the next sequence, at most 10,000 records / 32 MiB / 7 days, `(producer, eventId)`
+// deduplication, fsync before acknowledging a durable batch, a torn tail truncated on load. Records are redacted before they are written.
 //
 // v3 keeps its journal under its own data directory (`~/.agents-anywhere/v3/logs`); v2's `logs/` stays where it
-// is (04-connector.md §6.2). Only the process holding the runtime lease writes, so the file lock v2 needed for
-// several RPC hosts is replaced by serialising inside this process.
+// is (04-connector.md §6.2). Only the process holding the runtime lease writes, so writes are serialised inside
+// this process instead of behind a file lock.
 import { randomUUID } from 'node:crypto'
 import { appendFile, chmod, mkdir, open, readFile, readdir, rename, rm, truncate } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -67,7 +66,7 @@ export interface LogPolicy {
 
 const FIELD_LIMITS: Record<keyof LogRecord, number> = { time: 80, level: 20, name: 200, message: 16_000, exception: 16_000, details: 16_000 }
 
-/** Bounds and redacts one record (v2 `LogRecord` limits). */
+/** Bounds each field of one record (`FIELD_LIMITS`) and redacts it. */
 export function cleanRecord(record: LogRecord): LogRecord {
   const out: Record<string, unknown> = {}
   for (const key of Object.keys(FIELD_LIMITS) as (keyof LogRecord)[]) {

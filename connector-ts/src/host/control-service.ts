@@ -1,5 +1,8 @@
-// aa.local.v2.Control and aa.local.v2.Logs (contracts/local-machine/2.0) on the local Router, ported from the v2
-// Connector's connector/mesh/control.py and connector/mesh/logs.py; plus `Control/requestHandover` (v3, §9.1).
+// ported from Agents-Anywhere v2 connector/connector/mesh/control.py @98dd0e6e5 (ControlService, ControlEvents)
+// ported from Agents-Anywhere v2 connector/connector/mesh/logs.py @98dd0e6e5 (LogsService)
+//
+// aa.local.v2.Control and aa.local.v2.Logs (contracts/local-machine/2.0) on the local Router, plus
+// `Control/requestHandover` (04-connector.md §9.1).
 import { readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -45,7 +48,7 @@ function wirePairing(status: PairingStatus): PairingStatus {
 /** Client pairing failures a host can act on (say what to do), passed through with their code. */
 const PAIRING_CODES = new Set(['connector_not_running', 'connector_offline', 'e2ee_off', 'pairing_limit', 'not_available'])
 
-/** v2 mapping: AA codes stay; `connector_busy` is not retryable; bad input is invalid_argument; the rest connector_error. */
+/** The error mapping local-machine 2.0 hosts expect: AA codes stay; `connector_busy` is not retryable; bad input is invalid_argument; the rest connector_error. */
 function asControlError(error: unknown): unknown {
   if (error instanceof MeshCallError) return error
   const code = (error as { code?: unknown })?.code

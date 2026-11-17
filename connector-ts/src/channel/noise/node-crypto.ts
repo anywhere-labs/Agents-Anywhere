@@ -1,4 +1,4 @@
-// NoiseCrypto 的 Node 实现：全部原语来自 node:crypto（OpenSSL）。
+// Node implementation of NoiseCrypto: every primitive comes from node:crypto (OpenSSL).
 
 import {
   createCipheriv,
@@ -24,7 +24,7 @@ import {
 const PKCS8_X25519_PREFIX = Buffer.from('302e020100300506032b656e04220420', 'hex')
 const SPKI_X25519_PREFIX = Buffer.from('302a300506032b656e032100', 'hex')
 
-/** 持有原始私钥的 X25519 密钥对（设备身份密钥从 keystore 读出后用它）。 */
+/** An X25519 key pair holding the raw private key (used for the device identity key once read from the keystore). */
 export interface X25519KeyPair extends NoiseKeyPair {
   readonly secretKey: Uint8Array
 }
@@ -45,7 +45,7 @@ export function x25519FromSecret(secretKey: Uint8Array): X25519KeyPair {
       try {
         return new Uint8Array(diffieHellman({ privateKey, publicKey: publicKeyObject(remotePublicKey) }))
       } catch (error) {
-        // OpenSSL 对低阶点直接报错；统一成 NoiseError，与其他两端的行为一致。
+        // OpenSSL rejects low-order points outright; normalize to NoiseError so behaviour matches the other two platforms.
         if (error instanceof NoiseError) throw error
         throw new NoiseError('noise: invalid DH result')
       }

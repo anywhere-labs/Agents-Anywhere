@@ -9,7 +9,7 @@ import { StoreError, type SyncStore } from './sqlite-store.js'
 /**
  * The store's thread protocol. The worker owns SQLite and the blob files; the main thread only sends
  * `{repo, method, args}` and gets structured-cloned results back, so it never does synchronous disk I/O
- * (04-connector.md §6.1, v2 debt item 7).
+ * (04-connector.md §6.1).
  */
 export const REPOSITORIES = ['sessions', 'timeline', 'deliveries', 'queues', 'interactions', 'planning', 'goals', 'commands', 'outbox', 'blobs', 'kv', 'preparations'] as const
 export type RepositoryName = (typeof REPOSITORIES)[number]

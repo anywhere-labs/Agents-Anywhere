@@ -49,7 +49,7 @@ export interface ConversationDeps {
   readonly runtimes: RuntimeHandles
   readonly clock: Clock
   readonly ids: IdSource
-  /** Streaming commit window per item (v2: 100 ms). */
+  /** Streaming commit window per item. */
   readonly coalesceMs?: number
   /** Resolves a Server file id to a local path once the attachment is downloaded (workspace). */
   readonly attachments?: (sessionId: string, ref: AttachmentRef) => Promise<PromptAttachment>
@@ -106,9 +106,9 @@ export interface CreateSessionCommand {
   content: string
   attachments?: AttachmentRef[]
   takeover?: boolean
-  /** v2 `/plan`: the first message runs in plan mode; the mode is switched on before it is sent. */
+  /** `/plan`: the first message runs in plan mode; the mode is switched on before it is sent. */
   planningIntent?: CreationIntent | null
-  /** v2 `/goal`: the first message is the session goal's objective, not a prompt. */
+  /** `/goal`: the first message is the session goal's objective, not a prompt. */
   goalIntent?: CreationIntent | null
   /** runtime-workflows 1.2 `configuration`: Agent options set before the first message. */
   configuration?: Record<string, string | boolean>
@@ -626,7 +626,7 @@ export class ConversationService {
   }
 
   /**
-   * `/plan` on a new session (v2 `prepare_creation`): plan mode is on before the first message goes out; a
+   * `/plan` on a new session: plan mode is on before the first message goes out; a
    * Runtime without a planning mode, or a switch that fails, rejects the message instead of sending it plainly.
    */
   private async enterPlanForCreation(sessionId: string): Promise<void> {
@@ -637,7 +637,7 @@ export class ConversationService {
   }
 
   /**
-   * `/goal` on a new session (v2 `prepare_goal_creation`): the first message becomes the goal's objective and
+   * `/goal` on a new session: the first message becomes the goal's objective and
    * is not sent as a prompt; the Runtime works toward the goal on its own.
    */
   private async deliverGoal(sessionId: string, clientMessageId: string, objective: string): Promise<void> {
@@ -711,7 +711,7 @@ export class ConversationService {
     await this.writeFailedUserMessage(sessionId, clientMessageId, content, code, (error as Error).message ?? String(error))
   }
 
-  /** A send that never reached the Runtime is still shown, as a failed user message (v2 behaviour). */
+  /** A send that never reached the Runtime is still shown, as a failed user message. */
   private async writeFailedUserMessage(sessionId: string, clientMessageId: string, text: string, code: string, message: string): Promise<void> {
     await this.putUserMessage(sessionId, platformUserItemId(sessionId, clientMessageId), clientMessageId, text, 'failed', { error: { code, message } })
   }
@@ -802,8 +802,8 @@ export class ConversationService {
   }
 
   /**
-   * v2 `session.selections.update`: `{model, permission, ...}` by catalog type, applied one after another (a
-   * null value keeps the current choice). Answers v2's result: `updated`, `applied` (false when a change
+   * `session.selections.update`: `{model, permission, ...}` by catalog type, applied one after another (a
+   * null value keeps the current choice). Answers with `updated`, `applied` (false when a change
    * waits for the next turn), the values applied and the runtime `state` with the selections after them.
    */
   public async updateSelections(sessionId: string, selections: Readonly<Record<string, string | boolean | null>>): Promise<Record<string, unknown>> {

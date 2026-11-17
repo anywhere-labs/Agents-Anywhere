@@ -1,4 +1,4 @@
-// 设备上所有安全通道的登记处：撤销时立即关闭该客户端的通道，列表密钥轮换时把新密钥推给其余通道。
+// Registry of every secure channel on the device: revoking a client closes its channels at once, and a directory key rotation pushes the new key to the remaining channels.
 
 import type { TrustEvent } from '../domain/trust/index.js'
 import { DeviceSecureChannel, type DeviceChannelDeps, type SecureChannelOpen } from './device-channel.js'

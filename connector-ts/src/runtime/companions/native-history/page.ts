@@ -1,4 +1,4 @@
-// 原生历史的分页：游标是条目下标，从最新往前取 limit 条。
+// Native history paging: the cursor is an item index, and pages take limit items from the newest backwards.
 
 import type { HistoryItem, HistoryWindow, NativeHistoryPage } from '../../../application/ports/runtime-session.js'
 

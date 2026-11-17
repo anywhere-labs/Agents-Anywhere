@@ -1,4 +1,4 @@
-// 宿主：单实例租约、本地控制接口、配置、日志与网络出口。
+// Host: single-instance lease, local control interface, configuration, logs and network egress.
 
 export {
   CONNECTOR_ALREADY_RUNNING,

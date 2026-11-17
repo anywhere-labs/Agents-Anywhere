@@ -1,5 +1,5 @@
-// 设备端安全通道：一条 Secure/channel 调用对应一个实例。握手时向 Device Trust 询问授权，
-// 握手后把解密出的请求交给 TunnelApi（与普通模式同一组用例），信任管理请求在这里处理。
+// Device-side secure channel: one instance per Secure/channel call. During the handshake it asks Device Trust for authorization;
+// afterwards it hands decrypted requests to TunnelApi (the same use cases as normal mode) and handles trust management requests here.
 
 import type { ChannelCaller, TunnelApi, TunnelSubscription } from '../application/inbound/tunnel-api.js'
 import type { DeviceTrustService } from '../application/trust/device-trust-service.js'

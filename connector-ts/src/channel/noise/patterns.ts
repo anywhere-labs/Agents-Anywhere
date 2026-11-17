@@ -1,5 +1,5 @@
-// 握手模式（Noise 规范 §7）与协议名解析。AA 只用 XXpsk0（配对）与 KK（重连）；
-// 其他基本模式只为跑官方测试向量，证明状态机按规范实现。
+// Handshake patterns (Noise spec §7) and protocol name parsing. AA only uses XXpsk0 (pairing) and KK (reconnect);
+// the other fundamental patterns exist only to run the official test vectors, showing the state machine follows the spec.
 
 import { NoiseError } from './crypto.js'
 
@@ -7,9 +7,9 @@ export type Token = 'e' | 's' | 'ee' | 'es' | 'se' | 'ss' | 'psk'
 
 export interface HandshakePattern {
   readonly name: string
-  /** [发起方的预消息, 响应方的预消息] */
+  /** [initiator's pre-messages, responder's pre-messages] */
   readonly preMessages: readonly [readonly Token[], readonly Token[]]
-  /** 依次为 发起方 → 响应方 → 发起方 … */
+  /** In order: initiator -> responder -> initiator ... */
   readonly messages: readonly (readonly Token[])[]
   readonly oneWay: boolean
 }
@@ -34,7 +34,7 @@ const BASE: Readonly<Record<string, Base>> = {
   IX: { pre: [[], []], messages: [['e', 's'], ['e', 'ee', 'se', 's', 'es']] },
 }
 
-/** 解析 `XXpsk0`、`KK`、`NNpsk0+psk2` 这样的模式名。 */
+/** Parses pattern names like `XXpsk0`, `KK`, `NNpsk0+psk2`. */
 export function parsePattern(name: string): HandshakePattern {
   const match = /^([NKXI]{1,2})((?:psk\d)(?:\+psk\d)*)?$/.exec(name)
   const base = match ? BASE[match[1]!] : undefined
@@ -62,7 +62,7 @@ export interface ProtocolName {
 
 export const SUITE = '25519_AESGCM_SHA256'
 
-/** 只接受 `Noise_<pattern>_25519_AESGCM_SHA256`。 */
+/** Accepts only `Noise_<pattern>_25519_AESGCM_SHA256`. */
 export function parseProtocolName(full: string): ProtocolName {
   const prefix = 'Noise_'
   const suffix = `_${SUITE}`

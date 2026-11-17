@@ -1,4 +1,5 @@
-// Store/readBlob 的来源：时间线大字段（blob_<sha256>，在 store 的 BlobRepository 里）或会话附件（本机已取走的 file_…）。
+// Sources for Store/readBlob: large timeline fields (blob_<sha256>, in the store's BlobRepository) or session
+// attachments (file_... already fetched to this device).
 import type { BlobRepository } from '../application/ports/index.js'
 
 /** One file `Store/readBlob` can send; the first stream item is `{name, mediaType, size, sha256}` of it. */

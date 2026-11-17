@@ -76,7 +76,7 @@ const draft = (patch: Partial<TimelineDraft> = {}): TimelineDraft => ({
 
 describe('timeline', () => {
   it('matches v2 timeline_content_hash byte for byte', () => {
-    // Expected values come from connector/connector/runtime_protocol/timeline.py (Python 3).
+    // Expected values come from the Python reference `timeline_content_hash` (connector/connector/runtime_protocol/timeline.py, Python 3).
     expect(timelineContentHash('message', 'done', 'user', { text: '你好 world', clientMessageId: 'm1' }))
       .toBe('sha256:5fe08520ab1d16a60c06462ade233ed46c8a1731dfe72ff3ac347fbbd3c83e00')
     expect(timelineContentHash('tool', 'running', null, { name: 'bash', input: { cmd: 'ls -la', n: 1.5, big: 1e16 } }))

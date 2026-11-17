@@ -1,4 +1,4 @@
-// Noise 协议框架（规范修订 34）的握手状态机；原语经 NoiseCrypto 注入。
+// Handshake state machine of the Noise Protocol Framework (revision 34); primitives are injected through NoiseCrypto.
 
 export * from './crypto.js'
 export * from './handshake.js'

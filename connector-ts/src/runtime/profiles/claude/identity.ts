@@ -1,6 +1,8 @@
-// Claude 的 Timeline ID：沿用 v2 claude/timeline/messages.py 的规则，同一条原生消息在 v2 与 v3 得到同一个 ID。
-// claude-agent-acp 在消息与思考块上带 `messageId`（Anthropic API 消息 ID，缺失时为 JSONL uuid），
-// 工具调用的 toolCallId 就是 tool_use id。
+// ported from Agents-Anywhere v2 connector/connector/runtimes/claude/timeline/messages.py @98dd0e6e5 (Timeline ID rules)
+//
+// Claude Timeline IDs. The same native message always gets the same ID, matching IDs already stored for
+// existing sessions. claude-agent-acp puts `messageId` on message and thought chunks (the Anthropic API message ID,
+// or the JSONL uuid when missing); a tool call's toolCallId is the tool_use id.
 
 import {
   claudeMessageItemId,
@@ -16,8 +18,8 @@ import { defaultIdentity } from '../../acp/session.js'
 export function claudeIdentity(context: SessionContext): ItemIdentity {
   const scope: ClaudeSessionScope = { sessionId: context.sessionId, externalSessionId: context.nativeSessionId }
   const fallback = defaultIdentity(context)
-  // 同一条 API 消息里第几个思考块。ACP 不带内容块序号；Claude Code 每个内容块单独成一条消息，
-  // 所以几乎总是 0（v2 用的是块在消息 content 里的下标）。
+  // Index of the thought block within one API message. ACP carries no content block index; Claude Code emits each
+  // content block as its own message, so this is almost always 0.
   const thoughtIndex = new Map<string, number>()
   let lastThought: string | undefined
   const text = (update: JsonRecord) => asRecord(update.content).type === 'text'
@@ -50,7 +52,7 @@ export function claudeIdentity(context: SessionContext): ItemIdentity {
           return fallback.itemFor(update)
       }
     },
-    // v2 的实时用户消息把随机的回合 ID 也算进去，本来就不可复现；这里用同一组成分去掉回合 ID。
+    // Same components as the live user message ID, minus the random turn ID, so the ID is reproducible.
     userItemId: clientMessageId => claudeStableId('message', context.sessionId, context.nativeSessionId, 'user', clientMessageId),
   }
 }

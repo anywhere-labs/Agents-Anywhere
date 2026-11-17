@@ -49,7 +49,7 @@ describe('RuntimeRegistry', () => {
     const [a, b] = await Promise.all([registry.handle('codex'), registry.handle('codex')])
     expect(a).toBe(b)
     expect(codex.started).toHaveLength(1)
-    // The legacy instance keeps the bare connector id as its namespace (v2 RuntimeInstanceHost).
+    // The legacy instance keeps the bare connector id as its namespace.
     expect(codex.started[0]!.config).toMatchObject({ instanceId: 'codex', sessionNamespace: 'dev_1', settings: {} })
     expect(await registry.handle('rti_unknown')).toBeNull()
   })

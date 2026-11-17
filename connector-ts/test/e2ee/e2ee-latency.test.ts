@@ -27,7 +27,7 @@ import {
   type ContentPath,
 } from '../../scripts/e2ee-latency.js'
 
-// 自检 E-7 测量脚本：统计、判定，以及加密路径经真实安全通道（进程内设备）测首屏和流式延迟。
+// Self-test of the E-7 measurement script: statistics, verdict, and first-screen and streaming latency on the encrypted path through a real secure channel (in-process device).
 
 class MemoryRepository implements TrustRepository {
   state: DeviceTrustState | null = null
@@ -56,7 +56,7 @@ class MemorySecrets implements DeviceSecrets {
   }
 }
 
-/** 设备侧的会话 API：快照固定返回；发消息后推 3 个事件，`emittedAt` 比当前早 5 ms，最后一个表示这一轮结束。 */
+/** Device-side session API: the snapshot is fixed; after a message it pushes 3 events with `emittedAt` 5 ms in the past, and the last one ends the round. */
 class StreamingApi implements TunnelApi {
   readonly emitters = new Map<string, (event: Record<string, unknown>) => void>()
   readonly requests: string[] = []
@@ -110,7 +110,7 @@ async function device() {
 
 type Device = Awaited<ReturnType<typeof device>>
 
-/** 进程内的 Server：在客户端通道与设备 hub 之间转发 {n, ct}。 */
+/** In-process Server: forwards {n, ct} between the client channel and the device hub. */
 function link(dev: Device, identity: X25519KeyPair, ch: string) {
   let client: ClientSecureChannel | null = null
   let deviceChannel: ReturnType<SecureChannelHub['open']> | null = null
@@ -163,8 +163,8 @@ function fakePlain(delayMs: number): () => Promise<ContentPath> {
   })
 }
 
-describe('E-7 测量脚本：统计与判定', () => {
-  it('百分位取最近秩，P95 增加不超过 20% 才通过', () => {
+describe('E-7 measurement script: statistics and verdict', () => {
+  it('percentiles use nearest rank; passes only when P95 grows by at most 20%', () => {
     const values = Array.from({ length: 100 }, (_, i) => i + 1)
     expect(percentile(values, 50)).toBe(50)
     expect(percentile(values, 95)).toBe(95)
@@ -174,26 +174,26 @@ describe('E-7 测量脚本：统计与判定', () => {
     expect(compareP95(summarize([]), summarize([1])).pass).toBe(false)
   })
 
-  it('一轮结束：runtime.state.updated 且状态回到 idle', () => {
+  it('a round ends on runtime.state.updated with the status back to idle', () => {
     expect(turnFinished({ type: 'runtime.state.updated', payload: { state: { status: 'idle' } } })).toBe(true)
     expect(turnFinished({ type: 'runtime.state.updated', payload: { state: { status: 'running' } } })).toBe(false)
     expect(turnFinished({ type: 'timeline.item_created' })).toBe(false)
   })
 })
 
-describe('E-7 测量脚本：加密路径经真实安全通道', () => {
-  it('热首屏只算请求，冷首屏每次都做 KK 握手', async () => {
+describe('E-7 measurement script: encrypted path through a real secure channel', () => {
+  it('warm first screen times only the request; cold first screen does a KK handshake every time', async () => {
     const { factory, dev, directoryKey } = await pairedFactory()
     const open = encryptedPath(factory, { deviceId: 'dev_e7', directoryKey })
     const warm = await measureFirstScreen(open, 's1', 20, 'warm')
     const cold = await measureFirstScreen(open, 's1', 5, 'cold')
     expect(warm.n).toBe(20)
     expect(cold.n).toBe(5)
-    // 预热 1 次 + 20 次热 + 5 次冷
+    // 1 warm-up + 20 warm + 5 cold
     expect(dev.api.requests.filter((r) => r.endsWith('/snapshot'))).toHaveLength(26)
   })
 
-  it('流式：发消息前先登记命令，延迟按 emittedAt 计，订阅前的积压不计', async () => {
+  it('streaming: registers the command before sending, measures from emittedAt, ignores backlog from before the subscription', async () => {
     const { factory, directoryKey } = await pairedFactory()
     const registered: { commandId: string; digest: string }[] = []
     const open = encryptedPath(factory, {
@@ -213,7 +213,7 @@ describe('E-7 测量脚本：加密路径经真实安全通道', () => {
     }
   })
 
-  it('完整一次 runE7：报告含首屏、流式与结论', async () => {
+  it('a full runE7: the report has first screen, streaming and the conclusion', async () => {
     const { factory, directoryKey } = await pairedFactory()
     const report = await runE7(
       {
@@ -221,7 +221,7 @@ describe('E-7 测量脚本：加密路径经真实安全通道', () => {
         plain: { serverUrl: 'http://unused', accessToken: '', sessionId: 's1' },
         encrypted: { serverUrl: 'http://unused', accessToken: '', sessionId: 's1', identityFile: '/dev/null' },
         stream: { message: 'hi', rounds: 2, timeoutMs: 2_000 },
-        limit: 1_000, // 进程内对比没有意义，这里只检查报告的形状
+        limit: 1_000, // an in-process comparison is meaningless; this only checks the report shape
       },
       { plain: fakePlain(1), encrypted: encryptedPath(factory, { deviceId: 'dev_e7', directoryKey }) },
     )

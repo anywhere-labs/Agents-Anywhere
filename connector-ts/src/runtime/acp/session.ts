@@ -1,9 +1,12 @@
-// 通用 ACP 会话引擎：把一条 ACP 会话包装成 RuntimeSession 端口。
+// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/application/prompts.py @98dd0e6e5 (acceptance rules)
+// ported from effi-crew cloud/agentd/src/conv/conversation.ts @30f8334 (steer loop, first-answer-wins interactions)
 //
-// 接纳判定沿用 v2 公共引擎（connector/connector/runtimes/acp/application/prompts.py）：prompt 之后第一个
-// 助手、思考、工具、计划或交互事件，或 session/prompt 正常返回，算接纳；之前确定的 JSON-RPC 错误算拒绝；
-// 连接断开或进程退出算结果未知（不重发）。插话、计划审阅、Goal 等差异全部经方言钩子。
-// 部分逻辑参考 effi-crew cloud/agentd/src/conv/conversation.ts @30f8334（插话循环、交互先到先得）。
+// Generic ACP session engine: wraps one ACP session as the RuntimeSession port.
+//
+// Acceptance: the first assistant, thought, tool, plan or interaction event after the prompt, or a normal return of
+// session/prompt, counts as accepted; a definite JSON-RPC error before that counts as rejected; a dropped connection
+// or an exited process counts as outcome unknown (never resent). Steering, plan review, Goals and other differences
+// all go through dialect hooks.
 
 import { randomUUID } from 'node:crypto'
 
@@ -38,7 +41,7 @@ import { isAcceptanceEvidence, isContentUpdate, translateUpdate } from './mappin
 import { RuntimeFailure } from './errors.js'
 import { EventQueue } from './queue.js'
 
-/** v2 通用 ACP 规则的条目身份（AcpProjectionIdentity），用户消息用 clientMessageId 的指纹。 */
+/** Item identity under the generic ACP rules (AcpProjectionIdentity); user messages use a fingerprint of clientMessageId. */
 export function defaultIdentity(context: SessionContext): ItemIdentity {
   const projection = new AcpProjectionIdentity(context.sessionId, context.epoch)
   const verified = Array.isArray(asRecord(context.info.meta.aa).guarantees)
@@ -63,7 +66,7 @@ export function runtimeError(error: unknown, fallbackCode = 'runtime_error'): Ru
   return { code: fallbackCode, message: error instanceof Error ? error.message : String(error) }
 }
 
-/** 结果未知：请求已发出但对端没有确定答复（超时、断线、进程退出）。 */
+/** Outcome unknown: the request was sent but the peer gave no definite answer (timeout, disconnect, process exit). */
 function isUnknownOutcome(error: unknown): boolean {
   return error instanceof RequestTimeoutError || error instanceof ConnectionClosedError
     || (error instanceof Error && /agent process exited|failed to start/.test(error.message))
@@ -81,7 +84,7 @@ interface ActiveTurn {
   readonly clientMessageId?: string
   accepted: boolean
   resolveAcceptance?: ((acceptance: PromptAcceptance) => void) | undefined
-  /** 自主回合在没有 prompt 时靠静默计时结束。 */
+  /** Without a prompt, an autonomous turn ends on a silence timer. */
   quietTimer?: ReturnType<typeof setTimeout> | undefined
 }
 
@@ -100,9 +103,9 @@ export interface AcpSessionOptions {
   readonly nativeSessionId: string
   readonly info: AgentInfo
   readonly config: NormalizedConfig
-  /** session/close 是否可用。 */
+  /** Whether session/close is available. */
   readonly canClose: boolean
-  /** 自主回合多久没有更新就算结束（ms）。 */
+  /** How long an autonomous turn can go without updates before it counts as ended (ms). */
   readonly autonomousQuietMs?: number
 }
 
@@ -122,7 +125,7 @@ export class AcpRuntimeSession implements RuntimeSession {
   private capabilityRevision = 1
   private turn: ActiveTurn | undefined
   private readonly idleWaiters: Array<() => void> = []
-  /** toolCallId → 已经落到 Timeline 的工具条目。审批只关联这些（Hermes 的审批卡 id 不是工具调用）。 */
+  /** toolCallId -> tool items already on the Timeline. Approvals link only to these (Hermes approval card ids are not tool calls). */
   private readonly toolItems = new Map<string, string>()
   private readonly interactions = new Map<string, PendingInteraction>()
   private readonly detach: () => void
@@ -151,8 +154,8 @@ export class AcpRuntimeSession implements RuntimeSession {
 
   get capabilities(): SessionCapabilities {
     const items: Capability[] = this.dialect.sessionCapabilities?.(this.options.info, this.config.options) ?? this.dialect.capabilities(this.options.info)
-    // A session whose configuration has a model or permission option can switch it (v2 acp/runtime.py: the
-    // session's `catalog.model` / `catalog.permission`); the Server checks these before `session.select`.
+    // A session whose configuration has a model or permission option can switch it (the session's
+    // `catalog.model` / `catalog.permission`); the Server checks these before `session.select`.
     // A dialect that turned one off with a reason (DSH's direct route) keeps it off.
     for (const category of ['model', 'permission'] as const) {
       if (!this.config.options.some(option => option.category === category)) continue
@@ -190,7 +193,7 @@ export class AcpRuntimeSession implements RuntimeSession {
     return this.turn !== undefined || this.interactions.size > 0
   }
 
-  /** 把更新当作历史回放推出去（附着时 replay: 'full'）。 */
+  /** Pushes updates out as history replay (replay: 'full' on attach). */
   replay(updates: readonly JsonRecord[]): void {
     for (const update of updates) {
       for (const event of this.translate(update, true)) this.events.push(event)
@@ -200,9 +203,9 @@ export class AcpRuntimeSession implements RuntimeSession {
   async prompt(input: PromptInput, delivery: DeliveryRef): Promise<PromptAcceptance> {
     if (this.closed) return { outcome: 'rejected', error: { code: 'session_closed', message: 'session is closed' } }
     if (this.turn !== undefined) return { outcome: 'rejected', error: { code: 'session_busy', message: 'a turn is already running' } }
-    // 正在交接写锁：明确拒绝（不会执行），上层换到新路由后重发。
+    // Handing over the write lock: reject explicitly (nothing runs); the caller resends after switching to the new route.
     if (this.releasing) return { outcome: 'rejected', error: { code: 'runtime_route_switching', message: 'the session is being handed over to another route', retryable: true } }
-    // 先构造参数再占用回合：方言转换附件时可能同步抛错（DSH 读不到附件文件），这时 Runtime 什么都没收到，明确拒绝，会话保持空闲。
+    // Build params before taking the turn: the dialect may throw synchronously while converting attachments (DSH cannot read an attachment file); then the Runtime received nothing, so reject explicitly and keep the session idle.
     let params: JsonRecord
     try {
       params = {
@@ -248,7 +251,7 @@ export class AcpRuntimeSession implements RuntimeSession {
     if (turn === undefined) return { outcome: 'prompt_required' }
     const userItemId = this.identity.userItemId(delivery.clientMessageId)
     if (this.dialect.steer === 'text-command') {
-      // Hermes：运行中的 `/steer <text>` 文本命令。
+      // Hermes: the `/steer <text>` text command while running.
       if (input.attachments?.length && this.dialect.steerAttachments !== true) {
         return { outcome: 'rejected', error: { code: 'invalid_argument', message: '运行中插话不支持附件，请等本轮结束后再发送。' } }
       }
@@ -289,7 +292,7 @@ export class AcpRuntimeSession implements RuntimeSession {
     const turn = this.turn
     if (turn === undefined) return
     if (expectedTurnId !== undefined && turn.turnId !== expectedTurnId) return
-    // ACP：取消时客户端要把所有待答的权限请求回 cancelled。
+    // ACP: on cancel the client must answer every pending permission request with cancelled.
     for (const [id, pending] of this.interactions) {
       if (pending.method === 'session/request_permission') {
         pending.resolve({ outcome: { outcome: 'cancelled' } })
@@ -300,7 +303,7 @@ export class AcpRuntimeSession implements RuntimeSession {
     try {
       this.client.notify('session/cancel', { sessionId: this.nativeSessionId })
     } catch {
-      // 连接已断：回合会以 session.lost 结束
+      // connection dropped: the turn ends with session.lost
     }
   }
 
@@ -308,7 +311,7 @@ export class AcpRuntimeSession implements RuntimeSession {
     const pending = this.interactions.get(interactionId)
     if (!pending) throw new JsonRpcError(-32602, `no pending interaction ${interactionId}`)
     const turnId = this.turn?.turnId
-    // 先算出答复并校验（无效选项、方言抛错），全部通过才摘掉挂起的交互：校验失败时交互仍在，Agent 还在等，用户可以重答。
+    // Compute and validate the answer first (invalid option, dialect error); only when everything passes is the pending interaction removed: on a validation failure the interaction stays, the Agent keeps waiting and the user can answer again.
     let result: unknown
     let after: (() => void) | undefined
     let registerFollowUp: (() => void) | undefined
@@ -323,7 +326,7 @@ export class AcpRuntimeSession implements RuntimeSession {
         if (then?.action === 'steer') {
           after = () => void this.steer?.({ text: then.text }, { deliveryId: `plan-feedback-${interactionId}`, clientMessageId: `plan-feedback-${interactionId}` })
         } else if (then?.action === 'prompt') {
-          // 答复后立刻登记：当前回合结束（拒绝计划使它结束）后立刻发出。
+          // Registered right after answering: sent as soon as the current turn ends (rejecting the plan ends it).
           registerFollowUp = () => void this.whenIdle().then(() => this.prompt({ text: then.text }, { deliveryId: `plan-feedback-${interactionId}`, clientMessageId: `plan-feedback-${interactionId}` }))
         } else if (then?.action === 'cancel') {
           after = () => void this.cancel(turnId)
@@ -393,8 +396,9 @@ export class AcpRuntimeSession implements RuntimeSession {
   }
 
   /**
-   * 在回合之间释放会话（04 §5.6「路由切换要交接写锁」）：没有回合时立即 `session/close`，有回合时等它结束再关。
-   * 等待期间不再接受新的 prompt，避免回合结束后又开一轮、一直拿着写锁。返回时会话已关闭。
+   * Releases the session between turns (04 §5.6 "route switches hand over the write lock"): `session/close` at once
+   * when there is no turn, otherwise after the turn ends. No new prompts are accepted while waiting, so a new turn
+   * cannot start after this one and keep holding the write lock. When this returns the session is closed.
    */
   async releaseBetweenTurns(): Promise<void> {
     if (this.closed) return
@@ -405,13 +409,13 @@ export class AcpRuntimeSession implements RuntimeSession {
 
   private releasing = false
 
-  /** 连接断了（进程退出）：结束当前回合，通知会话需要重新 open。 */
+  /** The connection dropped (process exited): ends the current turn and signals that the session must be reopened. */
   lost(reason: string): void {
     if (this.closed) return
     const error: RuntimeError = { code: 'runtime_disconnected', message: reason, retryable: true }
     if (this.turn) {
       if (!this.turn.accepted) this.turn.resolveAcceptance?.({ outcome: 'unknown', error })
-      // 已接纳的回合中途断开：结果未知（可能已经执行了一部分），由上层合成失败卡片，不自动重发。
+      // An accepted turn dropped midway: outcome unknown (part of it may have run); the caller synthesizes a failure card, with no automatic resend.
       this.endTurn(this.turn, 'failed', this.turn.accepted ? { ...error, retryable: false, details: { outcome: 'unknown' } } : error)
     }
     for (const [id, pending] of this.interactions) {
@@ -466,7 +470,7 @@ export class AcpRuntimeSession implements RuntimeSession {
     for (const resolve of waiters) resolve()
   }
 
-  /** 当前没有回合时立即返回，否则等它结束。 */
+  /** Returns at once when there is no turn, otherwise waits for it to end. */
   private whenIdle(): Promise<void> {
     if (this.turn === undefined) return Promise.resolve()
     return new Promise(resolve => this.idleWaiters.push(resolve))
@@ -498,7 +502,7 @@ export class AcpRuntimeSession implements RuntimeSession {
     }
   }
 
-  /** 方言声明的会话级通知（handle 按 sessionId 路由过来）。 */
+  /** Session-level notifications the dialect declares (routed here by the handle by sessionId). */
   dialectNotification(method: string, params: JsonRecord): void {
     if (!this.closed) this.dialect.onNotification?.(method, params, this.hooks())
   }
@@ -509,7 +513,7 @@ export class AcpRuntimeSession implements RuntimeSession {
       for (const event of this.translate(update, true)) this.events.push(event)
       return
     }
-    // 回合外出现内容：Agent 自己开了一轮（定时唤醒、后台任务结束、外部写者）。
+    // Content outside a turn: the Agent started a turn on its own (scheduled wakeup, background task finished, external writer).
     if (this.turn === undefined && isContentUpdate(update)) {
       const turnId = `turn_${randomUUID()}`
       this.turn = { turnId, origin: 'autonomous', accepted: true }
@@ -603,7 +607,7 @@ export class AcpRuntimeSession implements RuntimeSession {
     }
   }
 
-  /** 替换配置；计划模式从别的值切进来时记下原值（批准计划后回到它，v2 claude/planning.py）。 */
+  /** Replaces the config; when plan mode is entered from another value, records the original (restored after the plan is approved). */
   private setConfig(next: NormalizedConfig): void {
     const spec = this.dialect.planMode?.(next.options)
     if (spec) {
@@ -639,11 +643,11 @@ export class AcpRuntimeSession implements RuntimeSession {
 }
 
 function sha256(text: string): string {
-  // 只用于计划文档的内容哈希（审阅时核对没被改过）；domain/identity 的哈希只接受严格 UTF-8，这里用宽松版本。
+  // Only for the content hash of plan documents (checked during review to confirm they were not edited); the domain/identity hash accepts strict UTF-8 only, so a lenient version is used here.
   return acpFingerprint(text as JsonValue)
 }
 
-/** 通用计划审阅：同意选第一个 allow，其余回 reject；修改计划时把意见 steer 进去，暂不执行时中断回合。 */
+/** Generic plan review: approve picks the first allow option, anything else answers reject; revising steers the feedback in, and not proceeding interrupts the turn. */
 export function genericPlanReview(answer: Extract<InteractionAnswer, { kind: 'plan_review' }>, options: readonly JsonRecord[]): { optionId?: string; then?: { action: 'steer'; text: string } | { action: 'cancel' } } {
   const allow = options.find(o => o.kind === 'allow_once') ?? options.find(o => o.kind === 'allow_always')
   const reject = options.find(o => o.kind === 'reject_once') ?? options.find(o => o.kind === 'reject_always')
@@ -654,7 +658,7 @@ export function genericPlanReview(answer: Extract<InteractionAnswer, { kind: 'pl
   return { ...(reject ? { optionId: String(reject.optionId) } : {}), then: { action: 'cancel' } }
 }
 
-/** 通用的输入转换：文本，图片内联，文件给 resource_link（file:// URI）。 */
+/** Generic input conversion: text, inline images, and files as resource_link (file:// URIs). */
 export function promptBlocks(input: PromptInput): JsonRecord[] {
   const blocks: JsonRecord[] = []
   if (input.text !== '') blocks.push({ type: 'text', text: input.text })

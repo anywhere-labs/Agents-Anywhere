@@ -1,5 +1,7 @@
-// ported from the v2 Connector's connector/control.py (Agents Anywhere 2.x): the lifecycle behind
-// aa.local.v2.Control (local-machine 2.0), plus the v3 handover between Connector versions (04-connector.md §9.1).
+// ported from Agents-Anywhere v2 connector/connector/control.py @98dd0e6e5 (ConnectorController)
+//
+// The Connector lifecycle behind aa.local.v2.Control (local-machine 2.0), plus the handover between Connector
+// versions (04-connector.md §9.1).
 import { ConfigError, ConfigFile, settingsFrom, type ConnectorSettings } from './config.js'
 import { ConnectorAlreadyRunning, compareVersions, type ClaimResult, type OwnerView, type RuntimeLease } from './lease.js'
 import { pollPairing, resolvePairServerUrl, startPairing, type FetchJson } from './pairing.js'

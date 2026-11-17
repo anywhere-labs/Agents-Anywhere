@@ -1,13 +1,19 @@
-// Pi 会话：一个 AA 会话一个 Pi 进程，包着通用 ACP 会话（runtime/acp/session.ts）。
-// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/pi/dialect.py（审批表单、计划审阅、合成的
-// 权限 / 计划配置项、`/bash` 授权）与 native_runtime.py（交接：锁、写入校验、来源核对）。
+// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/pi/dialect.py @98dd0e6e5 (PiDialect.interaction, plan_review, prompt_cancelled, authorize_bash, classify_error)
+// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/pi/native_runtime.py @98dd0e6e5 (NativePiRuntime handoff, _check_source)
 //
-// 相对 v2 改掉的三个体验债（04-connector.md §5.4）：
-// - 进程按会话空闲回收：空闲 `idleMs` 后停掉进程，会话进入休眠；下一次 prompt / configure / command 自动带着
-//   最新的原生文件重新拉起，端口上看不出断开（不发 session.lost）。
-// - Connector 重启后不再要求手动「恢复」：open(existing) 直接以只读核对过的原生文件拉起进程；v2 要求的
-//   「确认 CLI 已退出」改为由 SDK bridge 的写入校验兜底（别的写者改过文件，AA 拒绝继续写并同步最新历史）。
-// - 单轮没有硬超时：通用引擎的 session/prompt 不设超时，回合由 Runtime 的结束或中断驱动。
+// Pi session: one Pi process per AA session, wrapping the generic ACP session (runtime/acp/session.ts). It handles
+// approval forms, plan review, the synthesized permission / plan config options, `/bash` authorization, and handoff
+// (locks, write verification, source checks).
+//
+// Behaviour (04-connector.md §5.4):
+// - Processes are reclaimed per session when idle: after `idleMs` the process stops and the session goes dormant; the
+//   next prompt / configure / command restarts it from the latest native file, with no visible disconnect on the port
+//   (no session.lost).
+// - No manual resume after a Connector restart: open(existing) starts the process directly from a native file checked
+//   read-only. The SDK bridge's write verification covers other writers (if another writer changed the file, AA
+//   refuses to keep writing and syncs the latest history).
+// - A turn has no hard timeout: the generic engine sets no timeout on session/prompt; turns are driven by the
+//   Runtime's end or an interrupt.
 
 import { createHash, randomUUID } from 'node:crypto'
 import { access, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
@@ -66,7 +72,10 @@ const PLAN_CAPABILITIES: readonly Capability[] = [
 
 const PERMISSION_LABELS: Readonly<Record<PiPermission, string>> = { ask: '写入与命令审批', ask_all: '全部工具审批', readonly: '只读' }
 
-/** 按原生会话 ID 记的权限模式（守卫在每次工具调用时读这个文件）。同一实例内串行读改写。 */
+/**
+ * Permission mode per native session ID (the guard reads this file on every tool call). Read-modify-write is serialised
+ * within an instance.
+ */
 export class PermissionStore {
   private chain: Promise<unknown> = Promise.resolve()
 
@@ -97,23 +106,23 @@ export class PermissionStore {
   }
 }
 
-/** Pi 会话从所属实例拿到的东西。 */
+/** What a Pi session gets from its instance. */
 export interface PiSessionHost {
   readonly instanceId: string
   readonly index: PiNativeIndex
   readonly permissions: PermissionStore
-  /** 原生会话 ID 别名：会话换了原生 ID 时记下，对外一直报告最初的 ID。 */
+  /** Native session ID aliases: recorded when a session changes native ID, so the original ID is always reported. */
   readonly aliases: PiSessionAliases
-  /** 计划模式标记目录（守卫读同一个目录）。 */
+  /** Plan mode marker directory (the guard reads the same directory). */
   readonly planningDir: string
-  /** 写入校验文件（SDK bridge 每次写原生文件后报告摘要）所在目录。 */
+  /** Directory of write verification files (the SDK bridge reports a digest after each write to the native file). */
   readonly stateDir: string
-  /** 同一原生文件只允许一个 AA 进程写（跨 Connector 实例）。 */
+  /** Only one AA process may write a given native file (across Connector instances). */
   readonly lockDir: string
   readonly idleMs: number
-  /** 一个新的单进程 handle；进程带着会话专属的环境变量，在第一次 open 时启动。 */
+  /** A new single-process handle; the process gets session-specific environment variables and starts on the first open. */
   spawn(environment: Readonly<Record<string, string>>, dialect: AcpDialect): AcpRuntimeHandle
-  /** 会话拿到了新的能力与配置（实例的目录与能力跟着更新）。 */
+  /** The session received new capabilities and config (the instance's catalog and capabilities follow). */
   observe(capabilities: readonly Capability[], config: readonly ConfigOption[]): void
   released(session: PiRuntimeSession): void
 }
@@ -122,7 +131,7 @@ interface Active {
   readonly handle: AcpRuntimeHandle
   readonly inner: AcpRuntimeSession
   readonly dialect: PiDialectState
-  /** 以原生文件拉起时：钉住的文件、写入校验文件。 */
+  /** When started from a native file: the pinned file and the write verification file. */
   readonly pinned?: { readonly path: string; readonly stateFile: string }
   readonly pump: Promise<void>
 }
@@ -154,19 +163,22 @@ export interface PiOpenExisting {
 export class PiRuntimeSession implements RuntimeSession {
   readonly events = new EventQueue<RuntimeEvent>()
   readonly planning: PlanningPort
-  /** 当前 Pi 进程里的真实原生 ID（进程、锁、权限、计划标记、写入校验都按它）。 */
+  /** Actual native ID in the current Pi process (used for the process, locks, permission, plan markers, write verification). */
   private native = ''
-  /** 对外报告的原生 ID：最初的那个，之后换了原生会话也不变（aliases.ts）。 */
+  /** Native ID reported externally: the original one, unchanged even after the native session changes (aliases.ts). */
   private external = ''
   private cwd = ''
-  /** 已知的原生文件（新会话在 Pi 第一次写入后才有内容）。 */
+  /** Known native file (a new session has one only after Pi's first write). */
   private file: string | undefined
   private active: Active | undefined
   private waking: Promise<Active> | undefined
   private state: 'starting' | 'active' | 'dormant' | 'closed' = 'starting'
-  /** 进程即将按计划停下（休眠、关闭）：这时的 session.lost 不往外报。 */
+  /** The process is about to stop on purpose (dormancy, close): session.lost is not reported then. */
   private retiring = false
-  /** 休眠时原生文件的摘要：醒来发现变了，说明别的写者续写过，同步一次完整历史。 */
+  /**
+   * Native file digest at dormancy: if it changed on wakeup, another writer continued the session, so the full history
+   * is synced once.
+   */
   private dormantRevision: string | undefined
   private releaseLock: (() => Promise<void>) | undefined
   private innerConfig: readonly ConfigOption[] = []
@@ -176,9 +188,12 @@ export class PiRuntimeSession implements RuntimeSession {
   private capabilityRevision = 1
   private readonly toolItems = new Map<string, string>()
   private readonly synthetic = new Map<string, Synthetic>()
-  /** 当前回合里用户暂不执行计划：Pi 以中断结束这一轮，回合算取消而不是失败（v2 `prompt_cancelled`）。 */
+  /**
+   * The user chose not to run the plan in the current turn: Pi ends the run with an interrupt, and the turn counts as
+   * cancelled, not failed.
+   */
   private planDismissed = false
-  /** 正在进行的回合（通用会话报告的）：进程被提前停掉时由这里补上回合结束。 */
+  /** Turn in progress (as reported by the generic session): if the process stops early, the turn end is emitted from here. */
   private openTurn: string | undefined
   private lastActivity = Date.now()
   private idleTimer: ReturnType<typeof setInterval> | undefined
@@ -196,7 +211,7 @@ export class PiRuntimeSession implements RuntimeSession {
     }
   }
 
-  /** 新建或附着一个会话；失败时已经释放进程与锁。 */
+  /** Creates or attaches a session; on failure the process and lock have already been released. */
   static async open(host: PiSessionHost, sessionId: string, target: PiOpenNew | PiOpenExisting): Promise<PiRuntimeSession> {
     const session = new PiRuntimeSession(sessionId, host)
     try {
@@ -241,7 +256,7 @@ export class PiRuntimeSession implements RuntimeSession {
   }
 
   // ------------------------------------------------------------------------------------------
-  // 打开
+  // Open
   // ------------------------------------------------------------------------------------------
 
   private async startNew(spec: NewSessionSpec): Promise<void> {
@@ -287,7 +302,7 @@ export class PiRuntimeSession implements RuntimeSession {
     this.emitConfig()
   }
 
-  /** 以原生文件拉起 Pi 进程并 resume（交接、Connector 重启后、休眠醒来都走这里）。 */
+  /** Starts a Pi process from the native file and resumes (used for handoff, after a Connector restart, and on wakeup). */
   private async activate(): Promise<Active> {
     const file = this.file
     if (file === undefined) fail('pi_source_missing', '原生历史来源暂时不可用。')
@@ -306,7 +321,7 @@ export class PiRuntimeSession implements RuntimeSession {
     }, piDialect(dialectState))
     let inner: AcpRuntimeSession
     try {
-      // 通用引擎把 locator 当作 session/load|resume 的 cwd。
+      // The generic engine uses the locator as the cwd of session/load|resume.
       inner = await handle.open({ kind: 'existing', ref: { nativeSessionId: this.native, locator: history.cwd } }, { sessionId: this.sessionId, replay: 'none' })
       const reported = dialectState.sessionFiles.get(this.native)
       if (!reported || !(await samePath(reported, history.path))) fail('pi_source_mismatch', '恢复返回的原生历史位置不匹配，已停止执行。')
@@ -338,7 +353,7 @@ export class PiRuntimeSession implements RuntimeSession {
   }
 
   // ------------------------------------------------------------------------------------------
-  // 休眠与唤醒
+  // Dormancy and wakeup
   // ------------------------------------------------------------------------------------------
 
   private watchIdle(): void {
@@ -347,7 +362,7 @@ export class PiRuntimeSession implements RuntimeSession {
     this.idleTimer.unref?.()
   }
 
-  /** 没有回合、待答交互时空闲够久就停掉进程（会话不关闭）。 */
+  /** Stops the process after enough idle time with no turn or pending interaction (the session stays open). */
   async checkIdle(now = Date.now()): Promise<boolean> {
     if (this.state !== 'active' || this.active === undefined || this.waking !== undefined || this.busy) return false
     if (now - this.lastActivity < this.host.idleMs) return false
@@ -379,7 +394,7 @@ export class PiRuntimeSession implements RuntimeSession {
     }
   }
 
-  /** 拿到活着的进程；休眠中就带着最新原生文件重新拉起。 */
+  /** Returns a live process; when dormant, restarts it from the latest native file. */
   private async awake(): Promise<Active> {
     if (this.state === 'closed') fail('session_closed', 'session is closed')
     if (this.active) return this.active
@@ -396,7 +411,7 @@ export class PiRuntimeSession implements RuntimeSession {
     return active
   }
 
-  /** 新会话还没写过原生文件就休眠了：没有可续的内容，开一个新的原生会话接上。 */
+  /** A new session went dormant before writing its native file: nothing to resume, so a new native session takes over. */
   private async restartEmpty(): Promise<Active> {
     const dialectState = piDialectState()
     const handle = this.host.spawn({}, piDialect(dialectState))
@@ -407,7 +422,8 @@ export class PiRuntimeSession implements RuntimeSession {
       await handle.stop().catch(() => undefined)
       throw classifyOpen(error)
     }
-    // 原生 ID 换了：记进别名表（写盘后才继续），对外仍是最初的 ID。
+    // The native ID changed: record it in the alias table (continue only after the write); externally it is still the
+    // original ID.
     const previous = this.native
     this.native = inner.nativeSessionId
     try {
@@ -424,7 +440,7 @@ export class PiRuntimeSession implements RuntimeSession {
     return this.attach({ handle, inner, dialect: dialectState, pump: Promise.resolve() })
   }
 
-  /** 原生文件在 AA 之外变了：按 v2 历史规则重放完整历史（同一记录的 ID 不变）。 */
+  /** The native file changed outside AA: replay the full history with the history ID rules (the same record keeps its ID). */
   private resetHistory(history: PiHistory): void {
     const revision = history.revision
     this.events.push({ type: 'history.reset', phase: 'begin', revision })
@@ -436,7 +452,7 @@ export class PiRuntimeSession implements RuntimeSession {
     return piHistoryEvents(piTimeline(history, this.sessionId))
   }
 
-  /** 钉住原生文件时，发出新输入前核对没有别的写者（v2 `_check_source`）。 */
+  /** With a pinned native file, checks that no other writer exists before sending new input. */
   private async checkSource(active: Active): Promise<void> {
     const pinned = active.pinned
     if (!pinned) return
@@ -451,22 +467,23 @@ export class PiRuntimeSession implements RuntimeSession {
       return state.conflict !== true && state.revision === history.revision && history.nativeId === this.native
     }
     if (await consistent()) return
-    // 自己的写入和写入校验文件的原子替换可能正好跨过这次读取。
+    // Our own write and the atomic replacement of the write verification file may straddle this read.
     await new Promise(resolve => setTimeout(resolve, 50))
     if (await consistent()) return
-    // 别的写者（终端里的 pi）续写过：停掉进程、同步最新历史；下一次输入以新内容为准。
+    // Another writer (pi in a terminal) continued the session: stop the process and sync the latest history; the next
+    // input builds on the new content.
     await this.retire()
     try {
       if (this.file !== undefined) this.resetHistory(await this.host.index.read(this.file))
       this.dormantRevision = undefined
     } catch {
-      // 读不到就等下一次唤醒时再核对
+      // If it cannot be read, check again at the next wakeup
     }
     fail('pi_source_conflict', '原生历史在 AA 之外有新内容，已同步最新历史；请确认终端里的 pi 已退出后重新发送。')
   }
 
   // ------------------------------------------------------------------------------------------
-  // 事件
+  // Events
   // ------------------------------------------------------------------------------------------
 
   private async pump(inner: AcpRuntimeSession): Promise<void> {
@@ -495,7 +512,7 @@ export class PiRuntimeSession implements RuntimeSession {
         this.host.observe(this.capabilities.items, this.configOptions)
         return { ...event, options: this.configOptions }
       case 'planning.mode_changed':
-        // 守卫在计划通过后删掉标记并报告 normal。
+        // After the plan is approved the guard removes the marker and reports normal.
         this.planMode = event.mode === 'plan'
         this.events.push({ type: 'config.updated', options: this.configOptions })
         return event
@@ -513,7 +530,8 @@ export class PiRuntimeSession implements RuntimeSession {
           return { type: 'turn.ended', turnId: event.turnId, reason: 'cancelled' }
         }
         this.planDismissed = false
-        // 模型报错：把原因作为错误提示放进 Timeline（历史里同一种失败也有一条，见 pi-history.ts）。
+        // Model error: put the reason on the Timeline as an error notice (history has a matching item for the same
+        // failure, see pi-history.ts).
         if (event.reason === 'failed' && event.error?.details?.assistantError === true) {
           this.events.push({
             type: 'notice', turnId: event.turnId, itemId: acpFingerprint([this.sessionId, 'pi-turn-error', event.turnId]), level: 'error', kind: 'error',
@@ -532,7 +550,7 @@ export class PiRuntimeSession implements RuntimeSession {
     }
   }
 
-  /** 守卫的表单请求改写成 AA 的审批与计划审阅（v2 `PiDialect.interaction`、`plan_review`）。 */
+  /** Rewrites the guard's form requests into AA approvals and plan reviews. */
   private interactionOpened(event: Extract<RuntimeEvent, { type: 'interaction.opened' }>): RuntimeEvent {
     if (event.kind !== 'form') return event
     if (event.title.startsWith(TOOL_PERMISSION_PREFIX)) {
@@ -540,7 +558,7 @@ export class PiRuntimeSession implements RuntimeSession {
       try {
         tool = JSON.parse(event.title.slice(TOOL_PERMISSION_PREFIX.length)) as typeof tool
       } catch {
-        // 解析不了也照样要求审批，回答按拒绝处理之外的路径不会放行
+        // Approval is still required when the request cannot be parsed; no path other than an explicit answer lets it through
       }
       this.synthetic.set(event.interactionId, { kind: 'tool' })
       const itemId = typeof tool.id === 'string' ? this.toolItems.get(tool.id) : undefined
@@ -561,7 +579,7 @@ export class PiRuntimeSession implements RuntimeSession {
       const markdown = asRecord(asRecord(asRecord(event.schema?.properties).value)).description
       this.synthetic.set(event.interactionId, { kind: 'plan' })
       if (!toolCallId || typeof markdown !== 'string' || markdown.trim() === '') {
-        // 没有可审阅的正文：按暂不执行回答，不让回合卡住。
+        // No plan text to review: answer "not now" so the turn does not hang.
         void this.respond(event.interactionId, { kind: 'plan_review', action: 'dismiss' })
         return { type: 'notice', ...(event.turnId !== undefined ? { turnId: event.turnId } : {}), itemId: `pi-plan:${event.interactionId}`, level: 'warning', kind: 'warning', text: 'Pi 未提供有效的计划正文。' }
       }
@@ -581,7 +599,8 @@ export class PiRuntimeSession implements RuntimeSession {
   }
 
   private async guardFailed(): Promise<void> {
-    // v2：守卫异常即停止执行。中断这一轮，等它结束（最多 5 秒）后停掉进程；下一次输入重新载入守卫。
+    // A guard failure stops execution: interrupt the run, wait for it to end (at most 5 seconds), then stop the
+    // process; the next input reloads the guard.
     const inner = this.active?.inner
     await inner?.cancel().catch(() => undefined)
     for (let waited = 0; inner?.busy === true && waited < 5000; waited += 50) await new Promise(resolve => setTimeout(resolve, 50))
@@ -589,7 +608,8 @@ export class PiRuntimeSession implements RuntimeSession {
   }
 
   private async lost(): Promise<void> {
-    // 进程意外退出：通用会话已经结束回合并报告 session.lost；会话需要重新 open。
+    // The process exited unexpectedly: the generic session has already ended the turn and reported session.lost; the
+    // session must be opened again.
     this.state = 'closed'
     this.active = undefined
     this.stopIdle()
@@ -614,7 +634,7 @@ export class PiRuntimeSession implements RuntimeSession {
     try {
       active = await this.awake()
       await this.checkSource(active)
-      // Pi 原生的 /bash 不经工具守卫：在发出前按同样的规则核对。
+      // Pi's native /bash bypasses the tool guard: check it with the same rules before sending.
       const bash = bashCommand(input.text)
       if (bash !== undefined && !(await this.authorizeBash(bash))) fail('permission_denied', '当前权限或用户审批未允许此命令。')
     } catch (error) {
@@ -627,7 +647,8 @@ export class PiRuntimeSession implements RuntimeSession {
 
   readonly steer = async (input: PromptInput, delivery: DeliveryRef): Promise<SteerResult> => {
     this.touch()
-    // 休眠中没有回合可插话；Pi 也不会自己开新回合（`_session/steering` 回 promptRequired）。
+    // A dormant session has no turn to steer into, and Pi does not start a new turn by itself (`_session/steering`
+    // answers promptRequired).
     const inner = this.active?.inner
     if (inner?.steer === undefined) return { outcome: 'prompt_required' }
     return inner.steer(input, delivery)
@@ -685,7 +706,7 @@ export class PiRuntimeSession implements RuntimeSession {
       await this.setPlanMode(change.value === 'plan')
       this.emitConfig()
       this.events.push({ type: 'planning.mode_changed', mode: this.planMode ? 'plan' : 'normal' })
-      // 计划模式在下一轮开始时生效（守卫在 before_agent_start 读标记）。
+      // Plan mode takes effect when the next run starts (the guard reads the marker in before_agent_start).
       return { options: this.configOptions, appliesFrom: this.busy ? 'next_turn' : 'now' }
     }
     const active = await this.awake()
@@ -736,7 +757,7 @@ export class PiRuntimeSession implements RuntimeSession {
     this.releaseLock = undefined
   }
 
-  /** 进程停掉时还没结束的回合与交接交互：补上结束事件，端口上不留悬空的回合。 */
+  /** Turns and interactions still open when the process stops: emit their end events so no turn is left dangling on the port. */
   private finishOpenTurn(): void {
     this.expireSynthetic()
     const turnId = this.openTurn
@@ -759,7 +780,7 @@ export class PiRuntimeSession implements RuntimeSession {
   }
 
   // ------------------------------------------------------------------------------------------
-  // 合成配置项：权限（守卫读文件）、计划模式（标记文件）
+  // Synthesized config options: permission (file read by the guard), plan mode (marker file)
   // ------------------------------------------------------------------------------------------
 
   private permissionOption(): ConfigOption {
@@ -804,7 +825,7 @@ export class PiRuntimeSession implements RuntimeSession {
     this.planMode = plan
   }
 
-  /** `/bash` 授权：计划模式与只读一律拒绝，否则请用户审批（v2 `authorize_bash`）。 */
+  /** `/bash` authorization: always refused in plan mode and read-only; otherwise asks the user for approval. */
   private async authorizeBash(command: string): Promise<boolean> {
     if (this.planMode || (await this.planMarkerExists()) || this.permission === 'readonly') return false
     const interactionId = `interaction_${randomUUID()}`
@@ -817,14 +838,14 @@ export class PiRuntimeSession implements RuntimeSession {
   }
 }
 
-/** AA 发出的用户消息：带平台身份的附件同时以 Timeline 形状给出（与历史里读回来的一致）。 */
+/** User message sent by AA: attachments with a platform identity are also given in Timeline shape (matching what history reads back). */
 function withTimelineAttachments(event: Extract<RuntimeEvent, { type: 'message.completed' }>): RuntimeEvent {
   if (event.timelineAttachments !== undefined || event.attachments === undefined) return event
   const infos = event.attachments.flatMap(attachment => (attachment.info !== undefined ? [attachment.info] : []))
   return infos.length > 0 ? { ...event, timelineAttachments: infos } : event
 }
 
-/** `/bash <command>` 的命令部分；不是 /bash 时 undefined。 */
+/** The command part of `/bash <command>`; undefined when it is not /bash. */
 export function bashCommand(text: string): string | undefined {
   const trimmed = text.trimStart()
   const head = trimmed.split(/\s+/, 1)[0]
@@ -859,7 +880,7 @@ async function samePath(a: string, b: string): Promise<boolean> {
   }
 }
 
-/** 打开时的错误归类（v2 `classify_error` 的 open / resume 阶段）。 */
+/** Error classification while opening (open / resume phases). */
 export function classifyOpen(error: unknown): RuntimeFailure {
   if (error instanceof RuntimeFailure) return error
   const problem: RuntimeError | undefined = piDialect().classifyError?.(error)

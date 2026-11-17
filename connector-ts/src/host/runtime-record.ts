@@ -1,6 +1,6 @@
-// The machine-wide Connector record `~/.agents-anywhere/connector-runtime.json` (contracts/local-machine/2.0), with
-// the reading, validation and legacy folding of v2 connector/core/runtime_owner.py. Unknown fields are kept as
-// they are; a damaged record or an unknown version is an error and is never overwritten.
+// The machine-wide Connector record `~/.agents-anywhere/connector-runtime.json` (contracts/local-machine/2.0): reading,
+// validation and the one-time folding of legacy machine files. Unknown fields are kept as they are;
+// a damaged record or an unknown version is an error and is never overwritten.
 import { randomUUID } from 'node:crypto'
 import { open, readFile, rename, rm, unlink } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -75,7 +75,7 @@ function validOwner(value: unknown): RuntimeOwnerRecord {
   return owner as RuntimeOwnerRecord
 }
 
-/** Reads the record (an empty v2 record when there is none), upgrading the pre-v2 single-owner form. */
+/** Reads the record (an empty version-2 record when there is none), upgrading the older unversioned single-owner form. */
 export async function readRuntimeState(path: string): Promise<RuntimeState> {
   const value = await readJson(path)
   if (value === null) return { version: 2, connectorIds: [] }
@@ -110,7 +110,7 @@ async function writeState(path: string, state: RuntimeState): Promise<void> {
 
 /**
  * Reads, changes and atomically replaces the record inside the shared short file transaction. Legacy
- * `~/.agentsanywhere/machine.json` and `desktop/install.json` are folded in once, as v2 does.
+ * `~/.agentsanywhere/machine.json` and `desktop/install.json` are folded in once.
  */
 export async function runtimeTransaction<T>(path: string, update: (state: RuntimeState) => T | Promise<T>): Promise<T> {
   return withMachineStateLock(path, async () => {

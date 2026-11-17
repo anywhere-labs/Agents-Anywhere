@@ -1,4 +1,4 @@
-// 回放真实的 openma-pi-acp 0.1.8 + Pi 1.4.0 交互（test/recordings/pi-new-prompt.jsonl，由 test/live/pi.live.test.ts 录制）。
+// Replays a real openma-pi-acp 0.1.8 + Pi 1.4.0 interaction (test/recordings/pi-new-prompt.jsonl, recorded by test/live/pi.live.test.ts).
 
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -17,7 +17,7 @@ import { tick } from '../support/fake-acp-agent.js'
 
 describe('ACP recording replay: Pi new session and one turn', () => {
   it('replays real openma-pi-acp traffic through the Pi profile', async () => {
-    // 录制里守卫路径是占位符，换成本机的
+    // the recording has a placeholder guard path; replace it with the local one
     const text = readFileSync(fileURLToPath(new URL('../recordings/pi-new-prompt.jsonl', import.meta.url)), 'utf8')
     const entries = parseRecording(text.replaceAll('__AA_PI_GUARD__', JSON.stringify(GUARD).slice(1, -1)))
     const root = mkdtempSync(join(tmpdir(), 'aa-pi-replay-'))
@@ -51,7 +51,7 @@ describe('ACP recording replay: Pi new session and one turn', () => {
       await tick(5)
       const deltas = events.filter((e): e is Extract<RuntimeEvent, { type: 'message.delta' }> => e.type === 'message.delta')
       expect(deltas.map(d => d.text).join('')).toBe('pong')
-      // Pi 的 messageId 稳定：条目 ID 由原生 ID 算出（v2 aaProjectionVerified）
+      // Pi's messageId is stable: item IDs are derived from the native ID (`aaProjectionVerified`)
       expect(deltas[0]!.itemId).toBe(acpFingerprint(['aa_pi', 'agent_message_chunk', '86a10990:1']))
       expect(events.at(-1)).toMatchObject({ type: 'turn.ended', reason: 'end_turn' })
       expect(events.some(e => e.type === 'usage.updated')).toBe(true)

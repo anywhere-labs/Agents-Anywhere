@@ -1,5 +1,5 @@
-// 进程级假 ACP Agent（ndjson over stdio）。测试 provider 的发现、启动、环境变量边界时用。
-// prompt 的回复是它看到的部分环境变量（JSON），方便断言。
+// Process-level fake ACP Agent (ndjson over stdio), used to test provider discovery, launch and the environment variable boundary.
+// Its prompt reply is the subset of environment variables it sees (JSON), for easy assertions.
 import { createInterface } from 'node:readline'
 
 /** @param {Record<string, unknown>} message */

@@ -25,7 +25,7 @@ import { FakeAcpAgent, tick, type Json } from '../support/fake-acp-agent.js'
 const NATIVE = 'native-1'
 const scope = { sessionId: 'aa_c1', externalSessionId: NATIVE }
 
-/** claude-agent-acp 0.107.2 的配置项形状（S2）。 */
+/** Shape of the claude-agent-acp 0.107.2 configuration options (S2). */
 function claudeAgent(): FakeAcpAgent {
   const agent = new FakeAcpAgent()
   agent.configOptions = [
@@ -101,7 +101,7 @@ describe('Claude selections and catalogs (v2 selection ids)', () => {
     const opus = catalogs.models?.models?.find(m => m.id === "opus")
     expect(opus?.selectionId).toBe(claudeModelSelectionId('opus'))
     expect(opus?.reasoningItems?.map(r => [r.id, r.selectionId])).toEqual([['low', claudeModelSelectionId('opus', 'low')], ['high', claudeModelSelectionId('opus', 'high')]])
-    // dontAsk 不在适配器的模式里：不列出
+    // dontAsk is not among the adapter's modes: not listed
     expect(catalogs.permissions?.permissions?.map(p => p.id)).toEqual(['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions'])
     expect(catalogs.permissions?.permissions?.[1]?.selectionId).toBe(claudePermissionSelectionId('acceptEdits'))
     expect(catalogs.permissions?.permissions?.[1]?.metadata).toMatchObject({ i18n: { labelKey: 'dashboard.new.permissionModes.claude.acceptEdits.label' } })

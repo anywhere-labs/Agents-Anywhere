@@ -1,6 +1,8 @@
-// Pi 原生会话的只读索引：盘点来源目录里的 JSONL，只重读签名变了的文件。
-// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/pi/history.py `discover_history_files`
-// 与 native_runtime.py `scan`、`list_sessions` 里浏览的部分（交接部分在 profiles/pi/session.ts）。
+// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/pi/history.py @98dd0e6e5 (discover_history_files)
+// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/pi/native_runtime.py @98dd0e6e5 (scan, list_sessions)
+//
+// Read-only index of Pi native sessions: inventories the JSONL in the source directories and rereads only files whose
+// signature changed. Browsing lives here; handover is in profiles/pi/session.ts.
 
 import { open } from 'node:fs/promises'
 
@@ -12,11 +14,11 @@ import { readPiHistory, type PiHistory } from './pi-history.js'
 export const PAGE_SIZE = 100
 
 export interface PiSource {
-  /** 文件头里的会话 ID（真实 ID）。 */
+  /** Session ID from the file header (the real ID). */
   readonly nativeSessionId: string
-  /** 对外报告的会话 ID：会话换过原生 ID 时是最初那个（profiles/pi/aliases.ts），否则同 nativeSessionId。 */
+  /** Session ID reported externally: the original one when the session changed native IDs (profiles/pi/aliases.ts), else the same as nativeSessionId. */
   readonly externalSessionId: string
-  /** 解析过符号链接的文件路径。 */
+  /** File path with symlinks resolved. */
   readonly path: string
   readonly cwd: string
   readonly title: string
@@ -26,11 +28,11 @@ export interface PiSource {
   readonly version?: unknown
   readonly complete: boolean
   readonly ownedByAgentsAnywhere: boolean
-  /** 多个文件声明同一个会话身份。 */
+  /** Several files claim the same session identity. */
   ambiguous: boolean
 }
 
-/** 原生会话 ID 别名（Pi profile 维护）：对外 ID 与文件头里的真实 ID 互查。 */
+/** Native session ID aliases (maintained by the Pi profile): maps between external IDs and the real IDs in file headers. */
 export interface PiAliasLookup {
   original(actual: string): string
   actual(original: string): string
@@ -85,15 +87,15 @@ export class PiNativeIndex {
   private scanning: Promise<PiSource[]> | undefined
   lastErrors: readonly WalkError[] = []
 
-  /** `roots`：每次盘点时重新求值（settings.json 的 sessionDir 可能变了）。 */
+  /** `roots`: re-evaluated on every inventory (the sessionDir in settings.json may have changed). */
   constructor(private readonly roots: () => readonly string[], private readonly aliases: PiAliasLookup = NO_ALIASES) {}
 
-  /** 加上对外 ID（别名在缓存之后才可能记下，所以每次取用时现算）。 */
+  /** Adds the external ID (an alias may be recorded after caching, so it is computed on every read). */
   private external(source: PiSource): PiSource {
     return { ...source, externalSessionId: this.aliases.original(source.nativeSessionId) }
   }
 
-  /** 盘点一遍（同时来的调用共用一次）。来源暂时读不了不算删除：它下面已知的会话从结果里消失，但不报错。 */
+  /** Takes an inventory (concurrent calls share one). A source that is temporarily unreadable is not a deletion: its known sessions drop out of the result, without an error. */
   scan(): Promise<PiSource[]> {
     this.scanning ??= this.scanOnce().finally(() => {
       this.scanning = undefined
@@ -128,7 +130,7 @@ export class PiNativeIndex {
     return sources
   }
 
-  /** 原生会话目录：按最近更新倒序，每页 100 个；游标是偏移量。 */
+  /** Native session inventory: most recently updated first, 100 per page; the cursor is an offset. */
   async list(cursor?: string): Promise<NativeSessionPage> {
     const sources = (await this.scan()).sort((a, b) => {
       const left = a.updatedAt ?? ''
@@ -144,8 +146,9 @@ export class PiNativeIndex {
   }
 
   /**
-   * 找到引用指向的文件：有位置时按位置（必须在来源内且身份一致），否则按会话 ID（多处同名时拒绝）。
-   * 引用里的 ID 是对外 ID，先按别名换成真实 ID 再比对。
+   * Finds the file a reference points to: by location when given (it must be inside a source with a matching
+   * identity), otherwise by session ID (rejected when several match). IDs in references are external IDs and are
+   * mapped to real IDs through aliases before comparing.
    */
   async find(ref: NativeSessionRef): Promise<PiSource> {
     const sources = await this.scan()

@@ -1,4 +1,6 @@
-// 设备 MeshCall 连接：HTTPS hello/ready 取 token 与连接代次，在 Router 上注册 aa.device.v1.*（targeted，instance_id = deviceId），断线、吊销、Router 重启后自动恢复；经 RouterBridge 走代理与系统证书。连接循环移植自 effi-crew agentd mesh.ts（D10）。
+// Device MeshCall link: HTTPS hello/ready for the token and connection generation, aa.device.v1.* registered on the
+// Router (targeted, instance_id = deviceId), automatic recovery after disconnects, revocation and Router restarts;
+// traffic goes through RouterBridge for proxies and system certificates.
 
 export {
   NO_SYSTEM_PROXY,

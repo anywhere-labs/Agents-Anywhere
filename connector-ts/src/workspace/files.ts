@@ -1,7 +1,10 @@
-// ported from effi-crew cloud/agentd/src/workspace/files.ts @30f8334 and cloud/agentd/src/workspace/write.ts @30f8334
-// (atomic writes, MIME table, chunked download), with the request and response shapes of v2 connector/local/file_ops.py
-// (`fs.readDir`, `fs.readText`, `fs.writeFile`, `fs.prepareDownload`): at most 500 entries, 4 MiB reads, `ifMatch`
-// optimistic locking, Windows drive letters. Paths are checked against the allowed roots (04-connector.md §8).
+// ported from effi-crew cloud/agentd/src/workspace/files.ts @30f8334 (MIME table, chunked download)
+// ported from effi-crew cloud/agentd/src/workspace/write.ts @30f8334 (atomic writes)
+// ported from Agents-Anywhere v2 connector/connector/local/file_ops.py @98dd0e6e5 (FileOps)
+//
+// The workspace file methods (`fs.readDir`, `fs.readText`, `fs.writeFile`, `fs.prepareDownload`) with the 2.x
+// request and response shapes: at most 500 entries, 4 MiB reads, `ifMatch` optimistic locking, Windows drive
+// letters. Paths are checked against the allowed roots (04-connector.md §8).
 import { createHash, randomBytes } from 'node:crypto'
 import { constants, createReadStream, existsSync } from 'node:fs'
 import { access, chmod, lstat, open, readdir, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises'
@@ -231,7 +234,7 @@ export class FileOps {
   /**
    * `fs.writeFile`: UTF-8 text, written to a temp file and renamed into place (keeping the mode of the file it
    * replaces, writing through a symlink to its target). With `ifMatch` the file must still have that sha256
-   * (`stale` otherwise); as in v2, `ifMatch: ""` skips the comparison when the file exists and accepts a missing file.
+   * (`stale` otherwise); `ifMatch: ""` skips the comparison when the file exists and accepts a missing file.
    */
   public async writeFile(params: Params): Promise<WriteFileResult> {
     const path = resolvePath(workspaceRoot(params), requiredString(params, 'path'))

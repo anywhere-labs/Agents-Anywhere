@@ -25,8 +25,8 @@ const client = (seed: number, label = `c${seed}`): NewClient => ({
   platform: 'ios',
 })
 
-describe('DeviceTrust 不变量', () => {
-  it('配对只能完成一次，过期后不能用', () => {
+describe('DeviceTrust invariants', () => {
+  it('a pairing completes only once and cannot be used after it expires', () => {
     let state = startPairing(newDeviceTrust('dev', pub(9), 'dk_0'), 'pair_1', T0).state
     state = completePairing(state, 'pair_1', client(1), T0 + 1, iso(T0)).state
     expect(() => completePairing(state, 'pair_1', client(2), T0 + 2, iso(T0))).toThrow(expect.objectContaining({ code: 'pairing_expired' }))
@@ -36,7 +36,7 @@ describe('DeviceTrust 不变量', () => {
     )
   })
 
-  it(`最多 ${MAX_OPEN_PAIRINGS} 个打开的配对，过期的不占名额`, () => {
+  it(`at most ${MAX_OPEN_PAIRINGS} open pairings; expired ones do not count`, () => {
     let state = newDeviceTrust('dev', pub(9), 'dk_0')
     for (let i = 0; i < MAX_OPEN_PAIRINGS; i++) state = startPairing(state, `p${i}`, T0).state
     expect(() => startPairing(state, 'p9', T0)).toThrow(expect.objectContaining({ code: 'pairing_limit' }))
@@ -44,14 +44,14 @@ describe('DeviceTrust 不变量', () => {
     expect(later.events.filter((event) => event.type === 'PairingExpired')).toHaveLength(MAX_OPEN_PAIRINGS)
   })
 
-  it('clientId 必须由公钥派生', () => {
+  it('clientId must be derived from the public key', () => {
     const state = startPairing(newDeviceTrust('dev', pub(9), 'dk_0'), 'pair_1', T0).state
     expect(() => completePairing(state, 'pair_1', { ...client(1), clientId: client(2).clientId }, T0, iso(T0))).toThrow(
       expect.objectContaining({ code: 'client_id_mismatch' }),
     )
   })
 
-  it('撤销立即生效并轮换列表密钥', () => {
+  it('revocation takes effect at once and rotates the list key', () => {
     let state = startPairing(newDeviceTrust('dev', pub(9), 'dk_0'), 'pair_1', T0).state
     state = completePairing(state, 'pair_1', client(1), T0, iso(T0)).state
     const { state: revoked, events } = revokeClient(state, client(1).clientId, iso(T0), 'dk_1')
@@ -60,7 +60,7 @@ describe('DeviceTrust 不变量', () => {
     expect(() => authorizeClient(revoked, client(1).clientId)).toThrow(expect.objectContaining({ code: 'e2ee_not_paired' }))
   })
 
-  it('批准需要授权客户端发起并经本机确认', () => {
+  it('approval must come from an authorized client and be confirmed locally', () => {
     let state = startPairing(newDeviceTrust('dev', pub(9), 'dk_0'), 'pair_1', T0).state
     state = completePairing(state, 'pair_1', client(1), T0, iso(T0)).state
     expect(() => approveClient(state, client(5).clientId, client(2), iso(T0), true)).toThrow(
@@ -74,7 +74,7 @@ describe('DeviceTrust 不变量', () => {
     )
   })
 
-  it('Server 的声明只能收紧，本机确认才能放松', () => {
+  it('the Server can only tighten; only local confirmation can relax', () => {
     let state = newDeviceTrust('dev', pub(9), 'dk_0')
     expect(effectiveMode(state, 'off')).toBe('off')
     state = declareServerMode(state, 'required', iso(T0)).state

@@ -1,48 +1,51 @@
-// 找到 Codex App 的主进程，并结束它。
-// ported from Agents-Anywhere v2 connector/connector/runtimes/codex/ipc/desktop_app.py
+// ported from Agents-Anywhere v2 connector/connector/runtimes/codex/ipc/desktop_app.py @98dd0e6e5 (desktop app process)
 //
-// macOS 上 Codex App 在 ChatGPT.app 里（也有单独的 Codex.app）。主进程持有 IPC 窗口和 app-server，
-// app-server 持有线程写锁，所以主进程退出就会释放 App 加载过的所有线程。macOS / Linux 上辅助进程是
-// 主进程的子进程，随它退出；Windows 上不会，所以那里要结束整棵进程树。
+// Finds the Codex App main process and ends it.
 //
-// 与 v2 的差别：
-// - 进程表带「身份」（PID + 启动时间 + 可执行文件 + 用户），复核时防 PID 复用（session-ownership.md 第 4 步）；
-// - 只认当前用户的进程；
-// - 进程表和信号都可注入，单测不碰真实进程；结束的时机和确认流程在 quit-app.ts。
+// On macOS the Codex App lives inside ChatGPT.app (there is also a standalone Codex.app). The main process holds the
+// IPC window and the app-server, and the app-server holds the thread write locks, so the main process exiting
+// releases every thread the App loaded. On macOS / Linux the helper processes are children of the main process and
+// exit with it; on Windows they do not, so the whole process tree is ended there.
+//
+// - The process table carries an identity (PID + start time + executable + user), so a recheck guards against PID
+//   reuse (session-ownership.md step 4);
+// - only processes of the current user are considered;
+// - the process table and signals are injectable, so unit tests never touch real processes; when to end the App and
+//   how it is confirmed live in quit-app.ts.
 
 import { execFile } from 'node:child_process'
 
 const PROBE_TIMEOUT_MS = 5_000
 
-/** 各平台主进程可执行文件路径的结尾。 */
+/** Suffix of the main process executable path per platform. */
 export const DESKTOP_PROCESS_MARKERS: Readonly<Partial<Record<NodeJS.Platform, readonly string[]>>> = {
   darwin: ['/ChatGPT.app/Contents/MacOS/ChatGPT', '/Codex.app/Contents/MacOS/Codex'],
   linux: ['/chatgpt', '/codex-desktop', '/Codex'],
 }
 
-/** Windows：Codex 包（WindowsApps 下的 OpenAI.Codex_*）里的 ChatGPT.exe。 */
+/** Windows: ChatGPT.exe in the Codex package (OpenAI.Codex_* under WindowsApps). */
 const WINDOWS_PACKAGE_MARKER = '\\windowsapps\\openai.codex_'
 const WINDOWS_EXECUTABLE = 'chatgpt.exe'
 
 export interface ProcessInfo {
   readonly pid: number
   readonly ppid: number
-  /** 平台给出的启动时间文本（ps lstart / Win32 CreationDate），与 PID 一起作为身份。 */
+  /** Start time text from the platform (ps lstart / Win32 CreationDate); together with the PID it forms the identity. */
   readonly startedAt: string
   readonly executable: string
-  /** POSIX 用户 ID；Windows 上没有。 */
+  /** POSIX user ID; absent on Windows. */
   readonly uid?: number
 }
 
 export interface ProcessTable {
-  /** 当前进程表；读不到时返回 undefined（不当作「没有 App」）。 */
+  /** The current process table; undefined when it cannot be read (not treated as "no App"). */
   list(): Promise<readonly ProcessInfo[] | undefined>
 }
 
 export interface ProcessSignaller {
-  /** 请求有序退出：POSIX SIGTERM；Windows 结束整棵树（不加 /F）。 */
+  /** Requests an orderly exit: SIGTERM on POSIX; on Windows ends the whole tree (without /F). */
   terminate(process: ProcessInfo): Promise<void>
-  /** 强制结束：POSIX SIGKILL；Windows taskkill /T /F。 */
+  /** Forces the end: SIGKILL on POSIX; taskkill /T /F on Windows. */
   kill(process: ProcessInfo): Promise<void>
 }
 
@@ -54,7 +57,7 @@ export function processKey(process: ProcessInfo): string {
   return `${process.pid}\u0000${process.startedAt}\u0000${process.executable}\u0000${process.uid ?? ''}`
 }
 
-/** Codex App 主进程（不含辅助进程）。uid 给出时只认这个用户的进程。 */
+/** Codex App main processes (helpers excluded). When uid is given, only that user's processes count. */
 export function desktopAppProcesses(table: readonly ProcessInfo[], platform: NodeJS.Platform, uid?: number): ProcessInfo[] {
   const mine = (p: ProcessInfo) => uid === undefined || p.uid === undefined || p.uid === uid
   if (platform === 'win32') {
@@ -68,7 +71,7 @@ export function desktopAppProcesses(table: readonly ProcessInfo[], platform: Nod
   return table.filter(p => mine(p) && markers.some(marker => p.executable.endsWith(marker)))
 }
 
-/** 某个进程的全部后代（按 ppid）。 */
+/** All descendants of a process (by ppid). */
 export function descendants(table: readonly ProcessInfo[], root: ProcessInfo): ProcessInfo[] {
   const children = new Map<number, ProcessInfo[]>()
   for (const p of table) children.set(p.ppid, [...(children.get(p.ppid) ?? []), p])
@@ -86,7 +89,7 @@ export function descendants(table: readonly ProcessInfo[], root: ProcessInfo): P
   return result
 }
 
-/** 解析 `ps -axo pid=,ppid=,uid=,lstart=,comm=`：lstart 固定五段（例如 `Mon Nov 16 18:19:54 2026`）。 */
+/** Parses `ps -axo pid=,ppid=,uid=,lstart=,comm=`: lstart always has five fields (e.g. `Mon Nov 16 18:19:54 2026`). */
 export function parsePsListing(listing: string): ProcessInfo[] {
   const result: ProcessInfo[] = []
   for (const line of listing.split('\n')) {
@@ -97,7 +100,7 @@ export function parsePsListing(listing: string): ProcessInfo[] {
   return result
 }
 
-/** 解析 PowerShell `ConvertTo-Json` 输出的 Win32_Process（一条时是对象，多条时是数组）。 */
+/** Parses Win32_Process from PowerShell `ConvertTo-Json` output (an object for one entry, an array for several). */
 export function parseWindowsListing(json: string): ProcessInfo[] {
   let parsed: unknown
   try {
@@ -121,12 +124,12 @@ function run(command: string, args: readonly string[], timeoutMs: number): Promi
   })
 }
 
-/** 系统进程表。Linux 用 args 的第一段当可执行文件（comm 被截断成 15 个字符）；Linux 上没有实测过。 */
+/** The system process table. On Linux the first field of args is the executable (comm is truncated to 15 characters); untested on Linux. */
 export function systemProcessTable(platform: NodeJS.Platform = process.platform, timeoutMs = PROBE_TIMEOUT_MS): ProcessTable {
   return {
     async list() {
       if (platform === 'win32') {
-        // 先按名字过滤：枚举全部进程再取父进程很慢（v2 实测几十秒）。
+        // Filter by name first: enumerating every process and then fetching parents takes tens of seconds.
         const script = "Get-CimInstance Win32_Process -Filter \"Name='ChatGPT.exe' OR Name='codex.exe'\" | "
           + "Select-Object ProcessId,ParentProcessId,@{n='CreationDate';e={$_.CreationDate.ToString('o')}},ExecutablePath | ConvertTo-Json -Compress"
         const out = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], timeoutMs)
@@ -142,7 +145,7 @@ export function systemProcessTable(platform: NodeJS.Platform = process.platform,
 
 export function systemSignaller(platform: NodeJS.Platform = process.platform): ProcessSignaller {
   if (platform === 'win32') {
-    // Windows 没有 SIGTERM；taskkill 不带 /F 时向窗口发关闭请求，/T 带上子进程（app-server 是 ChatGPT.exe 的子进程）。
+    // Windows has no SIGTERM; taskkill without /F sends a close request to the windows, and /T includes children (the app-server is a child of ChatGPT.exe).
     return {
       terminate: async p => { await run('taskkill.exe', ['/PID', String(p.pid), '/T'], PROBE_TIMEOUT_MS) },
       kill: async p => { await run('taskkill.exe', ['/PID', String(p.pid), '/T', '/F'], PROBE_TIMEOUT_MS) },
@@ -152,7 +155,7 @@ export function systemSignaller(platform: NodeJS.Platform = process.platform): P
     try {
       process.kill(p.pid, signal)
     } catch {
-      // 已经退出，或没有权限；退出与否由复核进程表判断。
+      // Already exited, or no permission; whether it exited is decided by rechecking the process table.
     }
   }
   return {
@@ -161,7 +164,7 @@ export function systemSignaller(platform: NodeJS.Platform = process.platform): P
   }
 }
 
-/** 当前用户的 uid；Windows 上没有。 */
+/** The current user's uid; absent on Windows. */
 export function currentUid(): number | undefined {
   return typeof process.getuid === 'function' ? process.getuid() : undefined
 }

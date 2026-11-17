@@ -1,4 +1,6 @@
-// Claude 的权限目录：沿用 v2 claude/domain/permissions.py 的条目、selection ID 和 i18n 键。
+// ported from Agents-Anywhere v2 connector/connector/runtimes/claude/domain/permissions.py @98dd0e6e5 (permission catalog)
+//
+// Claude permission catalog. Entries, selection IDs and i18n keys match what clients already use.
 
 import type { ConfigOption } from '../../../application/ports/runtime-session.js'
 import { claudePermissionSelectionId } from '../../../domain/identity/index.js'
@@ -40,7 +42,7 @@ function item(mode: PermissionMode): ProtocolPermissionItem {
   }
 }
 
-/** 已知会话配置时只列出适配器实际提供的模式（claude-agent-acp 0.107 没有 dontAsk）。 */
+/** With a known session config, lists only modes the adapter offers (claude-agent-acp 0.107 has no dontAsk). */
 export function claudePermissionCatalog(config: readonly ConfigOption[]): ProtocolPermissionItem[] {
   const offered = config.find(o => o.category === 'permission' && o.type === 'select')?.values?.map(v => v.value)
   return CLAUDE_PERMISSION_MODES.filter(mode => offered === undefined || offered.includes(mode.id)).map(item)

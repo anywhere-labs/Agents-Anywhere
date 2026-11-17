@@ -93,7 +93,7 @@ export function orderSeqOf(nativeIndex: number, subIndex = 0): number {
 }
 
 /**
- * v2 `runtime_protocol/timeline.py` `timeline_content_hash`: sha256 of
+ * The timeline content hash: sha256 of
  * `json.dumps({type,status,role,content}, ensure_ascii=False, sort_keys=True, separators=(',', ':'))`.
  * It identifies the current state only; equal hashes never mean "same item" (ids do).
  */
@@ -102,7 +102,7 @@ export function timelineContentHash(type: TimelineItemType, status: TimelineItem
   return `sha256:${sha256Hex(escapeLoneSurrogates(encoded))}`
 }
 
-/** JavaScript keeps a lone surrogate as `\udXXX`; v2 mirrors that before hashing so plugin and Python agree. */
+/** JavaScript keeps a lone surrogate as `\udXXX`; it is escaped the same way before hashing so the plugin and Python agree. */
 function escapeLoneSurrogates(text: string): string {
   if (text.isWellFormed()) return text
   let out = ''

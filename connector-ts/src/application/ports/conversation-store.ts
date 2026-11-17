@@ -156,7 +156,7 @@ export interface ReceiveMessageInput {
   inputDigest: string
   /**
    * The pending user message item shown at once (status `pending`); null when the message is queued, because
-   * a queued message enters the timeline only when it is dispatched (v2 behaviour).
+   * a queued message enters the timeline only when it is dispatched, which clients expect.
    */
   userItem: TimelineDraft | null
   /** When the admission decided to queue: the queue entry and its position mode. */
@@ -195,7 +195,7 @@ export interface ReceiveMessageResult {
 }
 
 export interface DeliveryRepository {
-  /** Delivery, user message item, queue entry and command record in one transaction ("落盘才确认"). */
+  /** Delivery, user message item, queue entry and command record in one transaction (acknowledged only once persisted). */
   receive(input: ReceiveMessageInput): Promise<ReceiveMessageResult>
   get(sessionId: string, clientMessageId: string): Promise<Delivery | null>
   transition(sessionId: string, clientMessageId: string, to: DeliveryState, details: { nativeRef?: string | null; errorCode?: string | null; at: string }): Promise<Delivery>
@@ -331,7 +331,7 @@ export interface BlobRepository {
   referencedBy(sessionId: string, blobId: string): Promise<boolean>
 }
 
-/** Runtime bookkeeping (replaces v2 sync-state.json / kv.json). */
+/** Per-Runtime key/value bookkeeping. */
 export interface RuntimeKv {
   get(runtimeId: string, key: string): Promise<unknown>
   set(runtimeId: string, key: string, value: unknown): Promise<void>

@@ -1,6 +1,9 @@
-// Pi 的 RuntimeHandle：原生会话目录与只读历史来自原生历史伴随层；每个 AA 会话一个 Pi 进程（PiRuntimeSession）。
-// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/pi/native_runtime.py（浏览部分）与 runtime.py
-// （受管环境在后台准备，不阻塞启动）。
+// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/pi/native_runtime.py @98dd0e6e5 (NativePiRuntime, history browsing)
+// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/pi/runtime.py @98dd0e6e5 (ManagedPiRuntime)
+//
+// Pi's RuntimeHandle: the native session inventory and read-only history come from the native history companion
+// layer; one Pi process per AA session (PiRuntimeSession). The managed environment is prepared in the background
+// without blocking start.
 
 import { mkdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -40,31 +43,37 @@ import type { PiLayout } from './launch.js'
 import { PermissionStore, PiRuntimeSession, type PiSessionHost } from './session.js'
 import { updateDefaultModel, type PiSettings } from './settings.js'
 
-/** 每个会话的进程空闲这么久就停掉（会话休眠，下次输入自动拉起）。 */
+/** A session's process is stopped after this much idle time (the session sleeps and restarts on the next input). */
 export const DEFAULT_SESSION_IDLE_MS = 10 * 60_000
-/** 交给通用进程池的空闲时间：Pi 会话自己管空闲，池子不要先动手。 */
+/** Idle time handed to the generic process pool: Pi sessions manage idleness themselves, so the pool must not act first. */
 const POOL_IDLE_MS = 2 ** 31 - 1
 
-/** 起一个 Pi 进程的连接（测试替换成内存连接）。 */
+/** Connection that starts a Pi process (tests replace it with an in-memory connection). */
 export type PiConnect = (environment: Readonly<Record<string, string>>, dialect: AcpDialect) => Promise<AcpConnection>
 
 export interface PiHandleOptions {
   readonly instanceId: string
   readonly settings: PiSettings
   readonly layout: PiLayout
-  /** 每次拉起进程前的启动准备（会复核安装、补丁、执行来源）。 */
+  /** Launch preparation before every process start (re-verifies the installation, patch and execution source). */
   readonly launch: () => Promise<LocalLaunch>
   readonly connect?: PiConnect
   readonly idleMs?: number
-  /** 原生会话锁目录（缺省 ~/.cache/agents-anywhere/pi-native-locks，与同机其他 Connector 共用）。 */
+  /**
+   * Native session lock directory (defaults to ~/.cache/agents-anywhere/pi-native-locks, shared with other Connectors
+   * on the same machine).
+   */
   readonly lockDir?: string
   readonly onStderr?: (line: string) => void
-  /** 受管环境在后台先准备一次（下载 Node / npm 包可能很久），状态经 events 报告。 */
+  /**
+   * Prepare the managed environment once in the background (downloading Node / npm packages can take long); status
+   * is reported through events.
+   */
   readonly warmUp?: boolean
   readonly env?: NodeJS.ProcessEnv
 }
 
-/** 还没起过进程时的能力：Pi 一定有的那些（真正的值在第一个会话握手后更新）。 */
+/** Capabilities before any process has started: those Pi always has (real values are updated after the first session handshake). */
 const INITIAL_CAPABILITIES: readonly Capability[] = [
   { id: 'session.send_message', supported: true },
   { id: 'session.interrupt', supported: true },
@@ -137,14 +146,15 @@ export class PiRuntimeHandle implements RuntimeHandle {
     }
   }
 
-  /** 只读盘点原生 JSONL；不启动 Pi。 */
+  /** Read-only inventory of native JSONL files; does not start Pi. */
   listNativeSessions(cursor?: string): Promise<NativeSessionPage> {
     return this.index.list(cursor)
   }
 
   /**
-   * 只读历史：直接解析原生文件，不 resume、不抢锁、不写源文件。条目 ID 用 v2 浏览原生会话时的平台会话 ID
-   * （`pi_native_<…>`，domain/identity `piNativeSessionId`）计算；会话换过原生 ID 时用对外的（最初的）ID。
+   * Read-only history: parses native files directly, without resume, locks or writes to the source file. Item IDs
+   * are computed from the platform session ID used when browsing native sessions (`pi_native_<...>`, domain/identity
+   * `piNativeSessionId`), which clients already know; a session that changed native ID uses its external (original) ID.
    */
   async readNativeHistory(ref: NativeSessionRef, window: HistoryWindow): Promise<NativeHistoryPage> {
     const source = await this.index.find(ref)
@@ -192,8 +202,9 @@ export class PiRuntimeHandle implements RuntimeHandle {
   }
 
   /**
-   * 只改了网关的默认模型时，受管环境不必重启：改私有 settings.json，之后新开的会话（各自的 Pi 进程启动时读它）
-   * 用新模型，已有会话保留自己的模型（v2 `apply_model_setting`）。不是受管环境、或环境还没准备好时返回 false。
+   * When only the gateway's default model changed, the managed environment needs no restart: the private
+   * settings.json is updated, sessions opened afterwards (each Pi process reads it at start) use the new model, and
+   * existing sessions keep theirs. Returns false when not in the managed environment or it is not ready yet.
    */
   async applyDefaultModel(model: string | undefined): Promise<boolean> {
     if (!this.options.layout.managed) return false
@@ -205,7 +216,7 @@ export class PiRuntimeHandle implements RuntimeHandle {
     }
   }
 
-  /** 会话数（测试与诊断）。 */
+  /** Number of sessions (tests and diagnostics). */
   get openSessions(): number {
     return this.sessions.size
   }

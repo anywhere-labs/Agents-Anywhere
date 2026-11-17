@@ -11,9 +11,8 @@ function objectOrEmpty(value: JsonValue): JsonObject {
 }
 
 /**
- * Identity half of acp/infrastructure/projection.py `Projection.apply`, one instance per
- * (session, connection epoch). `apply` returns the item id the update lands on, or null when v2
- * returns no item.
+ * The identity side of ACP timeline projection, one instance per (session, connection epoch).
+ * `apply` returns the item id the update lands on, or null when the update lands on no item.
  *
  * - A verified `_meta.aa.timelineItem` wins and keeps the Agent's id; stale revisions are dropped.
  * - Verified messageId / toolCallId give replay-stable ids.
@@ -70,7 +69,7 @@ export class AcpProjectionIdentity {
   }
 
   /**
-   * Identity half of projection.py `Projection.finish`: the turn is over, so the next message
+   * The turn is over, so the next message
    * update starts a new item even when it has the same kind as the last one (the user echo that
    * would otherwise separate two assistant messages is filtered on live delivery).
    */

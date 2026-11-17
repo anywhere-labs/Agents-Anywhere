@@ -1,6 +1,7 @@
-// ported from effi-crew cloud/agentd/src/workspace/files.ts @30f8334 (fsError), with v2 connector/local error codes.
+// ported from effi-crew cloud/agentd/src/workspace/files.ts @30f8334 (fsError)
+// ported from Agents-Anywhere v2 connector/connector/local/common.py @98dd0e6e5 (error codes)
 
-/** A coded workspace failure; `code` is what the caller sees (v2 used `stale` for a failed `ifMatch`). */
+/** A coded workspace failure; `code` is what the caller sees (clients expect `stale` for a failed `ifMatch`). */
 export class WorkspaceError extends Error {
   public constructor(
     public readonly code: string,

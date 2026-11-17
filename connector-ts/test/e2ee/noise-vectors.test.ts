@@ -57,7 +57,7 @@ async function party(vector: Vector, prefix: 'init' | 'resp'): Promise<Handshake
   })
 }
 
-/** 按向量跑完握手与传输，逐字节比对。 */
+/** Runs a vector through the handshake and transport, comparing byte for byte. */
 async function run(vector: Vector): Promise<void> {
   const initiator = await party(vector, 'init')
   const responder = await party(vector, 'resp')
@@ -93,7 +93,7 @@ async function run(vector: Vector): Promise<void> {
   }
 }
 
-/** 跑一个反例，返回读失败的消息序号。 */
+/** Runs a negative case and returns the index of the message whose read fails. */
 async function runNegative(negative: Negative): Promise<number | null> {
   const base = aa.vectors.find((vector) => vector.name === negative.base)!
   const vector: Vector = { ...base, ...negative.override }
@@ -133,8 +133,8 @@ async function runNegative(negative: Negative): Promise<number | null> {
   return null
 }
 
-describe('Noise 官方测试向量（cacophony、snow，25519_AESGCM_SHA256）', () => {
-  it('覆盖了 AA 用到的 KK 与 XX 的 psk0 变体', () => {
+describe('official Noise test vectors (cacophony, snow, 25519_AESGCM_SHA256)', () => {
+  it('covers the KK and XX psk0 variants AA uses', () => {
     const names = new Set(official.vectors.map((vector) => vector.protocol_name))
     expect(names).toContain('Noise_KK_25519_AESGCM_SHA256')
     expect(names).toContain('Noise_XXpsk0+psk1_25519_AESGCM_SHA256')
@@ -145,12 +145,12 @@ describe('Noise 官方测试向量（cacophony、snow，25519_AESGCM_SHA256）',
   }
 })
 
-describe('AA 测试向量（contracts/e2ee/1.0/vectors/aa-noise.json）', () => {
+describe('AA test vectors (contracts/e2ee/1.0/vectors/aa-noise.json)', () => {
   for (const vector of aa.vectors) {
     it(vector.name!, () => run(vector))
   }
   for (const negative of aa.negative) {
-    it(`反例 ${negative.name}`, async () => {
+    it(`negative case ${negative.name}`, async () => {
       expect(await runNegative(negative)).toBe(negative.fail_at)
     })
   }

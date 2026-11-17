@@ -8,7 +8,7 @@ import { newDeviceTrust } from '../../src/domain/trust/index.js'
 const fixedVault = (key = new Uint8Array(32).fill(7)): VaultKeyProvider => ({ kind: 'keychain', getOrCreate: async () => key })
 
 describe('keystore', () => {
-  it('身份密钥跨进程稳定；文件 0600、有保险库时整份加密', async () => {
+  it('identity key is stable across processes; file is 0600 and fully encrypted when a vault exists', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'aa-trust-'))
     const first = await new FileDeviceSecrets(dir, fixedVault()).identityKey()
     await new FileDeviceSecrets(dir, fixedVault()).putDirectoryKey('dk_1', new Uint8Array(32).fill(1))
@@ -23,7 +23,7 @@ describe('keystore', () => {
     await expect(new FileDeviceSecrets(dir, fixedVault(new Uint8Array(32).fill(8))).identityKey()).rejects.toThrow()
   })
 
-  it('没有系统保险库时如实标记为 none', async () => {
+  it('marks the vault as none when there is no system vault', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'aa-trust-'))
     const secrets = new FileDeviceSecrets(dir, noVault())
     await secrets.identityKey()
@@ -31,7 +31,7 @@ describe('keystore', () => {
     expect(secrets.protection).toBe('none')
   })
 
-  it('信任列表的读写', async () => {
+  it('reads and writes the trust list', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'aa-trust-'))
     const repository = new FileTrustRepository(dir)
     expect(await repository.load()).toBeNull()

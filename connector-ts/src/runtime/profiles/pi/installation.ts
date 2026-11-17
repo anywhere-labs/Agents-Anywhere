@@ -1,5 +1,6 @@
-// 把本机 pi 解析到它自己的 SDK；从不往用户的包里安装东西。
-// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/pi/installation.py
+// ported from Agents-Anywhere v2 connector/connector/runtimes/acp/profiles/pi/installation.py @98dd0e6e5 (resolve_local, probe_sdk, installation_identity)
+//
+// Resolves the local pi to its own SDK; never installs anything into the user's packages.
 
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -15,16 +16,16 @@ import { expandPath } from '../launch.js'
 import { atLeast, nodeEnvironment, versionTuple, whichExecutable } from '../../supervisor/npm-runtime.js'
 
 export const PACKAGE = '@earendil-works/pi-coding-agent'
-/** 本机交接脚本验证过的下限；1.1.0 的安装导入不了自己的 SDK。 */
+/** Minimum verified by the local handoff script; a 1.1.0 install cannot import its own SDK. */
 export const MINIMUM_SDK: readonly [number, number, number] = [1, 2, 0]
 export const SUPPORTED_MAJOR = 1
 const MINIMUM_NODE = [22, 19, 0]
 
 export interface PiInstallation {
-  /** pi 入口（解析后的绝对路径）。 */
+  /** pi entry (resolved absolute path). */
   readonly cli: string
   readonly node: string
-  /** SDK 包根目录（含 package.json、dist/index.js）。 */
+  /** SDK package root (contains package.json and dist/index.js). */
   readonly sdk: string
   readonly version: string
 }
@@ -52,20 +53,20 @@ function text(value: unknown): string | undefined {
   return typeof value === 'string' && value !== '' ? value : undefined
 }
 
-/** Pi 的配置目录：实例配置、`PI_CODING_AGENT_DIR`、`~/.pi/agent`。 */
+/** Pi's config directory: instance config, then `PI_CODING_AGENT_DIR`, then `~/.pi/agent`. */
 export function agentDirectory(settings: JsonObject, env: NodeJS.ProcessEnv = process.env): string {
   const configured = text(settings.agentDir) ?? text(env.PI_CODING_AGENT_DIR) ?? '~/.pi/agent'
   return resolve(expandPath(configured))
 }
 
-/** 原生历史的来源目录：`<agentDir>/sessions`、settings.json 的 `sessionDir`、实例配置里的额外目录。 */
+/** Native history source directories: `<agentDir>/sessions`, `sessionDir` from settings.json, and extra directories from instance config. */
 export function historyDirectories(settings: JsonObject, agentDir: string): string[] {
   const paths = [join(agentDir, 'sessions')]
   try {
     const setting = (JSON.parse(readFileSync(join(agentDir, 'settings.json'), 'utf8')) as { sessionDir?: unknown }).sessionDir
     if (typeof setting === 'string' && setting !== '') paths.push(expandPath(setting))
   } catch {
-    // 没有或读不了 settings.json
+    // settings.json missing or unreadable
   }
   for (const value of Array.isArray(settings.historyDirs) ? settings.historyDirs : []) if (typeof value === 'string' && value !== '') paths.push(expandPath(value))
   return [...new Set(paths.map(path => resolve(path)))]
@@ -100,7 +101,10 @@ export interface ResolveOptions {
   readonly platform?: NodeJS.Platform
 }
 
-/** 解析本机 pi：指定路径，或 PATH，或常见安装位置（多处都有时要求用户指定）；再找 Node 22.19+ 与它自带的 SDK。 */
+/**
+ * Resolves the local pi: the given path, else PATH, else common install locations (the user must choose when several
+ * exist); then finds Node 22.19+ and the SDK bundled with pi.
+ */
 export async function resolveLocal(settings: JsonObject, options: ResolveOptions = {}): Promise<PiInstallation> {
   const env = options.env ?? process.env
   const home = options.home ?? homedir()
@@ -144,7 +148,8 @@ export async function resolveLocal(settings: JsonObject, options: ResolveOptions
   if (node === undefined) fail('pi_node_incompatible', '本机 Pi 需要可用的 Node 22.19 或更高版本。')
   const shim = join(dirname(cli), nodeName)
   if (root === undefined && specified === undefined && isFile(shim) && sameFile(shim, cli)) {
-    // 版本管理器的 shim（例如 nvmd）和当前 Node 共用 bin 目录：只看当前那份安装，不挑任意版本。
+    // A version manager shim (e.g. nvmd) shares the bin directory with the current Node: only that install is used,
+    // never an arbitrary version.
     for (const entry of [join(dirname(node), 'pi'), join(dirname(node), 'pi.cmd')]) {
       const found = isFile(entry) ? packageFor(entry) : undefined
       if (found !== undefined) {
@@ -155,7 +160,7 @@ export async function resolveLocal(settings: JsonObject, options: ResolveOptions
     }
   }
   if (root === undefined && ['.cmd', '.ps1'].includes(extname(cli).toLowerCase())) {
-    // npm 的 Windows 启动脚本指向旁边的 node_modules，不是符号链接。
+    // npm's Windows launcher scripts point to the adjacent node_modules; they are not symlinks.
     const candidate = join(dirname(cli), 'node_modules', PACKAGE)
     if (isFile(join(candidate, 'package.json'))) root = candidate
   }
@@ -204,7 +209,7 @@ try {
 console.log(JSON.stringify({version, missing}));
 `
 
-/** 载入一次 SDK，检查 AA 的 bridge 要包装的入口都在。 */
+/** Loads the SDK once and checks that every entry point AA's bridge wraps is present. */
 export async function probeSdk(installation: PiInstallation): Promise<void> {
   let report: { error?: unknown; missing?: unknown }
   try {
@@ -221,7 +226,7 @@ export async function probeSdk(installation: PiInstallation): Promise<void> {
   }
 }
 
-/** 包内发布的文件（含原生模块）的摘要，不含嵌套的包。 */
+/** Digest of a package's published files (native modules included), excluding nested packages. */
 export async function treeDigest(root: string): Promise<string> {
   const digest = createHash('sha256')
   const walk = async (directory: string): Promise<void> => {
@@ -262,7 +267,7 @@ while(pending.length){
 console.log(JSON.stringify([...seen.values()]));
 `
 
-/** 安装来源的完整身份：入口、Node、SDK 与它依赖的每个包（路径、版本、文件摘要）。 */
+/** Full identity of the install source: entry, Node, SDK and every package it depends on (path, version, file digest). */
 export async function installationIdentity(installation: PiInstallation): Promise<JsonObject> {
   let packages: Array<{ path: string; name?: string; version?: string; sha256?: string }>
   try {

@@ -57,12 +57,12 @@ describe('Command Code', () => {
     expect(option).toMatchObject({ category: 'permission', currentValue: 'acceptEdits' })
     expect(agent.received.filter(r => r.method === 'session/set_mode').map(r => r.params.modeId)).toEqual(['acceptEdits'])
 
-    // Agent 自己切了模式
+    // the Agent switched modes itself
     agent.update('native-1', { sessionUpdate: 'current_mode_update', currentModeId: 'yolo' })
     await tick()
     expect(session.configOptions.find(o => o.id === COMMAND_CODE_PERMISSION_MODE)?.currentValue).toBe('yolo')
 
-    // 完整的 configOptions 更新里没有权限项：保留由 modes 得来的那一项
+    // a full configOptions update without a permission option: keep the one derived from modes
     agent.update('native-1', { sessionUpdate: 'config_option_update', configOptions: agent.configOptions })
     await tick()
     expect(session.configOptions.map(o => o.id)).toEqual(['model', COMMAND_CODE_PERMISSION_MODE])

@@ -1,4 +1,4 @@
-// 迁移自 v2 connector/tests/test_pi_native_history.py 中不依赖 v2 引擎的部分。
+// ported from Agents-Anywhere v2 connector/tests/test_pi_native_history.py @98dd0e6e5 (engine-independent parts)
 
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -148,7 +148,7 @@ describe('Pi native history (read-only)', () => {
   })
 })
 
-/** v2 测试里的 `adapter_release`：一个够打补丁的假发布包。 */
+/** A fake adapter release that is complete enough to patch (`adapter_release`). */
 function adapterRelease(root: string, options: { version?: string; steer?: boolean } = {}): string {
   const dist = join(root, 'pi-acp', 'dist')
   mkdirSync(dist, { recursive: true })
@@ -181,7 +181,7 @@ describe('Pi adapter patch', () => {
     expect(readFileSync(join(first.entry, '..', '..', 'sdk-bridge.mjs'), 'utf8')).toContain(pathToFileURL(join(root, 'sdk', 'dist/index.js')).href)
     const second = await prepareAdapter(entry, join(root, 'sdk'), join(root, 'cache'))
     expect(second.entry).toBe(first.entry)
-    // 缓存被改过就拒绝使用
+    // refuse a cache that was modified
     writeFileSync(join(first.entry, '..', 'chunk-NEWBUILD.js'), 'tampered')
     expect(await code(prepareAdapter(entry, join(root, 'sdk'), join(root, 'cache')))).toBe('pi_adapter_cache_corrupt')
   })
@@ -257,7 +257,7 @@ describe('Pi settings and launch', () => {
 
 const posix = process.platform !== 'win32'
 
-/** v2 测试里的 `fake_sdk`。 */
+/** A fake Pi SDK (`fake_sdk`). */
 function fakeSdk(root: string, managerMethods = '_persist(){} _rewriteFile(){} getSessionFile(){} getSessionId(){}'): string {
   const sdk = join(root, 'sdk')
   mkdirSync(join(sdk, 'dist'), { recursive: true })

@@ -1,5 +1,5 @@
-// Credential redaction before anything is written to a log, the rules of v2 connector/mesh/log_redaction.py; shared
-// with Desktop and the DSH plugin (04-connector.md §8), so it stays a dependency-free module.
+// Credential redaction before anything is written to a log. The rules are shared with Desktop and the DSH plugin
+// (04-connector.md §8), so this stays a dependency-free module.
 
 const KEY = /\bmk_[A-Za-z0-9_-]+/gu
 // Bearer/Basic values are unambiguous scheme tokens; `Connector` is only a scheme next to an authorization field

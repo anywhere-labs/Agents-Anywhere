@@ -11,15 +11,15 @@ import {
   type E7Config,
 } from '../../scripts/e2ee-latency.js'
 
-// E-7 对真实部署的测量。没有 AA_E7_CONFIG 时跳过（CI 不跑）：
+// E-7 measurement against a real deployment. Skipped without AA_E7_CONFIG (CI does not run it):
 //   AA_E7_CONFIG=/path/e7.json [AA_E7_REPORT=/path/report.json] corepack yarn vitest run test/e2ee/e7-live.test.ts
-// 配置字段见 scripts/e2ee-latency.ts 的 E7Config。
+// For the configuration fields see E7Config in scripts/e2ee-latency.ts.
 
 const configPath = process.env['AA_E7_CONFIG']
 
-describe.runIf(configPath)('E-7：真实部署上加密模式与普通模式的首屏、流式 P95', () => {
+describe.runIf(configPath)('E-7: first-screen and streaming P95 of encrypted vs plain mode on a real deployment', () => {
   it(
-    'P95 增加不超过 20%',
+    'P95 grows by at most 20%',
     async () => {
       const config = JSON.parse(await readFile(configPath!, 'utf8')) as E7Config
       const identity = await loadIdentity(config.encrypted)

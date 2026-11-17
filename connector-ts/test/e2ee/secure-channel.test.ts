@@ -144,8 +144,8 @@ beforeEach(() => {
   now = Date.parse('2026-11-16T12:00:00Z')
 })
 
-describe('扫码配对（XXpsk0）与重连（KK）', () => {
-  it('配对后拿到列表密钥，请求与订阅走同一组用例', async () => {
+describe('QR pairing (XXpsk0) and reconnect (KK)', () => {
+  it('gets the list key after pairing; requests and subscriptions run the same cases', async () => {
     const dev = await device()
     const { channel, directoryKey, identity } = await pairClient(dev)
     expect(channel.ready.clientId).toBe(clientIdFor(identity.publicKey))
@@ -166,7 +166,7 @@ describe('扫码配对（XXpsk0）与重连（KK）', () => {
     expect(events).toEqual([{ type: 'timeline.item_created', seq: 1 }])
   })
 
-  it('rekey 只发生在消息之间：大消息正好跨过 rekey 时间点也不会断开', async () => {
+  it('rekey happens only between messages: a large message crossing the rekey deadline does not disconnect', async () => {
     const dev = await device()
     const invitation = await dev.trust.startPairing('https://aa.example.com', 'required')
     const link = relay(dev, generateX25519(), 'c_rekey_edge')
@@ -184,7 +184,7 @@ describe('扫码配对（XXpsk0）与重连（KK）', () => {
     expect(channel.closed).toBeNull()
   })
 
-  it('大消息分片，双向 rekey 后照常收发', async () => {
+  it('large messages are fragmented; traffic continues after rekey in both directions', async () => {
     const dev = await device()
     const { channel } = await pairClient(dev)
     const big = 'x'.repeat(200_000)
@@ -195,7 +195,7 @@ describe('扫码配对（XXpsk0）与重连（KK）', () => {
     expect((await channel.request('GET', '/api/v2/after-time-rekey')).status).toBe(200)
   })
 
-  it('配对码只能用一次，10 分钟后过期', async () => {
+  it('a pairing code works once and expires after 10 minutes', async () => {
     const dev = await device()
     const invitation = await dev.trust.startPairing('https://aa.example.com', 'required')
     const payload = parsePairingUri(invitation.uri)
@@ -214,13 +214,13 @@ describe('扫码配对（XXpsk0）与重连（KK）', () => {
     })
   })
 
-  it('同一时刻最多 3 个打开的配对', async () => {
+  it('at most 3 open pairings at a time', async () => {
     const dev = await device()
     for (let i = 0; i < 3; i++) await dev.trust.startPairing('https://aa.example.com', 'required')
     await expect(dev.trust.startPairing('https://aa.example.com', 'required')).rejects.toMatchObject({ code: 'pairing_limit' })
   })
 
-  it('KK 重连：新 ch、钉住的设备公钥', async () => {
+  it('KK reconnect: new ch, pinned device public key', async () => {
     const dev = await device()
     const { identity, payload } = await pairClient(dev)
     const link = relay(dev, identity, 'c_again')
@@ -229,7 +229,7 @@ describe('扫码配对（XXpsk0）与重连（KK）', () => {
     expect((await channel.request('GET', '/api/v2/sessions')).status).toBe(200)
   })
 
-  it('未授权的客户端 KK 被拒（e2ee_not_paired）', async () => {
+  it('KK from an unauthorized client is refused (e2ee_not_paired)', async () => {
     const dev = await device()
     const devicePub = (await dev.secrets.identityKey()).publicKey
     const link = relay(dev, generateX25519(), 'c_x')
@@ -237,8 +237,8 @@ describe('扫码配对（XXpsk0）与重连（KK）', () => {
   })
 })
 
-describe('E-2：Server 无法中间人配对', () => {
-  it('没有 psk：Server 用自己猜的 psk 冒充客户端，设备拒绝', async () => {
+describe('E-2: the Server cannot man-in-the-middle pairing', () => {
+  it('no psk: the device refuses a Server posing as the client with a guessed psk', async () => {
     const dev = await device()
     const real = parsePairingUri((await dev.trust.startPairing('https://aa.example.com', 'required')).uri)
     const forged: PairingPayload = { ...real, psk: Buffer.from(randomBytes(32)).toString('base64url') }
@@ -251,7 +251,7 @@ describe('E-2：Server 无法中间人配对', () => {
     await ClientSecureChannel.pair(real, { ...ok.options, label: 'real', platform: 'ios' })
   })
 
-  it('Server 把配对握手转给自己控制的设备身份：没有 psk，配对失败', async () => {
+  it('the Server redirects the pairing handshake to a device identity it controls: without the psk, pairing fails', async () => {
     const dev = await device()
     const real = parsePairingUri((await dev.trust.startPairing('https://aa.example.com', 'required')).uri)
     const evil = await device() // another identity the Server controls, knowing nothing of the psk
@@ -261,7 +261,7 @@ describe('E-2：Server 无法中间人配对', () => {
     expect(evil.trust.trustList().grants).toEqual([])
   })
 
-  it('篡改第 2 条握手消息里的设备公钥：客户端拒绝', async () => {
+  it('tampering with the device public key in handshake message 2: the client refuses', async () => {
     const dev = await device()
     const payload = parsePairingUri((await dev.trust.startPairing('https://aa.example.com', 'required')).uri)
     const link = relay(dev, generateX25519(), 'c_t', {
@@ -277,7 +277,7 @@ describe('E-2：Server 无法中间人配对', () => {
     expect(dev.trust.trustList().grants).toEqual([])
   })
 
-  it('改写路由里的 clientId：握手失败，不会把公钥登记到别的 clientId 下', async () => {
+  it('rewriting the clientId in the route: the handshake fails and the key is not registered under another clientId', async () => {
     const dev = await device()
     const payload = parsePairingUri((await dev.trust.startPairing('https://aa.example.com', 'required')).uri)
     const other = clientIdFor(generateX25519().publicKey)
@@ -287,7 +287,7 @@ describe('E-2：Server 无法中间人配对', () => {
     expect(dev.trust.trustList().grants).toEqual([])
   })
 
-  it('重放传输帧：设备关闭通道', async () => {
+  it('replaying a transport frame: the device closes the channel', async () => {
     const dev = await device()
     const { identity, payload } = await pairClient(dev)
     const seen: ChannelItem[] = []
@@ -301,8 +301,8 @@ describe('E-2：Server 无法中间人配对', () => {
   })
 })
 
-describe('E-4：撤销', () => {
-  it('撤销后立即断开、无法重新握手，列表密钥轮换且只发给仍被授权的客户端', async () => {
+describe('E-4: revocation', () => {
+  it('revocation disconnects at once and blocks new handshakes; the list key rotates and goes only to clients still authorized', async () => {
     const dev = await device()
     const alice = await pairClient(dev, 'Alice')
     const bob = await pairClient(dev, 'Bob')
@@ -331,8 +331,8 @@ describe('E-4：撤销', () => {
   })
 })
 
-describe('E-3：降级保护（设备侧）', () => {
-  it('Server 改成 off 不会让设备放松；只有本机确认才能降级', async () => {
+describe('E-3: downgrade protection (device side)', () => {
+  it('the Server switching to off does not relax the device; only local confirmation can downgrade', async () => {
     const dev = await device()
     expect(dev.trust.effectiveMode('off')).toBe('required')
     await dev.trust.declareServerMode('off')
@@ -343,8 +343,8 @@ describe('E-3：降级保护（设备侧）', () => {
   })
 })
 
-describe('§7.2：已授权客户端批准新客户端', () => {
-  it('本机确认后新客户端可以 KK 连接；未确认则拒绝', async () => {
+describe('§7.2: an authorized client approves a new client', () => {
+  it('after local confirmation the new client can connect with KK; without it, it is refused', async () => {
     const dev = await device()
     const alice = await pairClient(dev, 'Alice')
     const newcomer = generateX25519()
@@ -363,8 +363,8 @@ describe('§7.2：已授权客户端批准新客户端', () => {
   })
 })
 
-describe('展示信封', () => {
-  it('用当前列表密钥加密；轮换后旧信封仍能用保留的旧密钥打开', async () => {
+describe('display envelope', () => {
+  it('seals with the current list key; after rotation old envelopes still open with the retained old key', async () => {
     const dev = await device()
     const sealed = await dev.trust.sealDisplay('sess_1', 'device', { title: '修复登录页' })
     expect(sealed.payload).not.toContain('修复')
@@ -375,8 +375,8 @@ describe('展示信封', () => {
   })
 })
 
-describe('E-1：Server 转发的内容里没有任何明文（进程内金丝雀）', () => {
-  it('消息、回复、事件、标题、附件、客户端名称里的金丝雀都不出现在经 Server 的字节里', async () => {
+describe('E-1: nothing the Server relays contains plaintext (in-process canary)', () => {
+  it('canaries in messages, replies, events, titles, attachments and client names never appear in bytes passing through the Server', async () => {
     const canary = `canary-${randomBytes(12).toString('hex')}`
     const needle = Buffer.from(canary, 'utf8')
     const seen: Buffer[] = []
@@ -425,8 +425,8 @@ describe('E-1：Server 转发的内容里没有任何明文（进程内金丝雀
   })
 })
 
-describe('E-7：通道开销（进程内，不含网络）', () => {
-  it('2 KiB 请求往返与 1 MiB 快照的加密开销', async () => {
+describe('E-7: channel overhead (in-process, no network)', () => {
+  it('encryption overhead of a 2 KiB request round trip and a 1 MiB snapshot', async () => {
     const dev = await device()
     const { channel } = await pairClient(dev)
     const body = { content: 'x'.repeat(2048) }

@@ -39,7 +39,7 @@ export const DEFAULT_LIMITS: Readonly<Record<CallClass, number>> = {
 }
 
 /**
- * The Server's `CRITICAL_METHODS` (v2 #484's critical channel: approvals, notices, session creation and workspace
+ * The Server's `CRITICAL_METHODS` (the critical channel: approvals, notices, session creation and workspace
  * preparation prompts), plus the link's own streams and receipt lookups.
  */
 const CRITICAL = new Set([
@@ -317,7 +317,7 @@ export class DeviceServices {
 
   /**
    * `aa.device.v1.Workspace` (normal mode only; encrypted mode runs the same handlers inside `Secure/channel`):
-   * `call` runs a whitelisted v2 workspace method, `terminalOutput` streams a terminal like the v2 relay.
+   * `call` runs a whitelisted workspace method, `terminalOutput` streams a terminal's output.
    */
   private workspaceMethods(): MethodDef[] {
     const S = 'aa.device.v1.Workspace'

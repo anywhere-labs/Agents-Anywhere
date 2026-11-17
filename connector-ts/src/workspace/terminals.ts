@@ -1,7 +1,9 @@
-// terminals-v2 with the behaviour of v2 connector/local/terminal.py (512 KiB scrollback replayed by sequence number,
-// 30-minute idle timeout, 24-hour persistent lease, closed terminals kept 15 minutes, at most 32 records) on node-pty.
-// ported from effi-crew cloud/agentd/src/terminals/tmux.ts @30f8334: `ensurePtyHelper` (node-pty's macOS
-// spawn-helper loses its execute bit in npm installs, so every spawn failed with posix_spawnp) and the shell choice.
+// ported from Agents-Anywhere v2 connector/connector/local/terminal.py @98dd0e6e5 (TerminalBackend)
+// ported from effi-crew cloud/agentd/src/terminals/tmux.ts @30f8334 (ensurePtyHelper, shell choice)
+//
+// terminals-v2 on node-pty: 512 KiB scrollback replayed by sequence number, 30-minute idle timeout, 24-hour
+// persistent lease, closed terminals kept 15 minutes, at most 32 records. `ensurePtyHelper` restores the execute
+// bit that node-pty's macOS spawn-helper loses in npm installs; without it every spawn fails with posix_spawnp.
 import { chmodSync, existsSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
@@ -413,7 +415,7 @@ export class Terminals {
     this.records.delete(record.id)
   }
 
-  /** Idle and lease expiry, and forgetting closed terminals (v2 `_reap_terminal`). */
+  /** Idle and lease expiry, and forgetting closed terminals. */
   public reap(): void {
     const now = this.now()
     for (const record of [...this.records.values()]) {

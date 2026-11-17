@@ -74,7 +74,7 @@ export function isWriterHeld(error: unknown): boolean {
 
 /**
  * The write lock as AA sees it. Without the plugin AA cannot take the session from DSH Desktop
- * or `dsh web`; it can only say so (04 §5.6 "DSH Desktop 开着但没装插件：只提示").
+ * or `dsh web`; it can only say so (04 §5.6: DSH Desktop open without the plugin only gets a notice).
  */
 export function writerHeld(nativeSessionId: string): RuntimeError {
   return { code: 'writer_held', retryable: true,

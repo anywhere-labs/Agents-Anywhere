@@ -1,8 +1,8 @@
-// JSON-RPC 2.0 对等端：ACP 的线路层（ndjson，一行一条消息）。
+// JSON-RPC 2.0 peer: the ACP wire layer (ndjson, one message per line).
 //
-// 自己实现而不用 SDK 的运行时客户端：需要完整控制反向扩展请求（`_codex/session/history_reset` 等）、
-// 未知方法的回退、v1/v2 协商与录制回放。单条消息上限沿用 agentd 的 256 MiB（超限即断开连接，
-// 由监督层结束进程），见 effi-evo cloud/agentd/src/conv/agent-process.ts @95b52ec。
+// Implemented here instead of using the SDK's runtime client, to fully control reverse extension requests
+// (`_codex/session/history_reset`, etc.), the fallback for unknown methods, v1/v2 negotiation and recording replay.
+// A single message is capped at 256 MiB (exceeding it drops the connection, and the supervisor ends the process).
 
 import type { Readable, Writable } from 'node:stream'
 
@@ -36,11 +36,11 @@ export const ErrorCodes = {
   methodNotFound: -32601,
   invalidParams: -32602,
   internalError: -32603,
-  /** ACP：需要认证。 */
+  /** ACP: authentication required. */
   authRequired: -32000,
-  /** ACP：资源不存在。 */
+  /** ACP: resource not found. */
   resourceNotFound: -32002,
-  /** LSP / ACP v2：请求被取消。 */
+  /** LSP / ACP v2: request cancelled. */
   requestCancelled: -32800,
 } as const
 
@@ -59,7 +59,7 @@ export class JsonRpcError extends Error {
   }
 }
 
-/** 连接已断开（对端退出、超限、手动关闭）。 */
+/** The connection is closed (peer exited, limit exceeded, closed manually). */
 export class ConnectionClosedError extends Error {
   constructor(readonly reason: string) {
     super(`ACP connection closed: ${reason}`)
@@ -67,7 +67,7 @@ export class ConnectionClosedError extends Error {
   }
 }
 
-/** 请求在规定时间内没有回应：结果未知，调用方不得自动重试写操作。 */
+/** The request got no response in time: the result is unknown, and callers must not retry writes automatically. */
 export class RequestTimeoutError extends Error {
   constructor(readonly method: string, readonly timeoutMs: number) {
     super(`${method} timed out after ${timeoutMs} ms`)
@@ -76,20 +76,20 @@ export class RequestTimeoutError extends Error {
 }
 
 // ---------------------------------------------------------------------------------------------
-// 传输
+// Transport
 // ---------------------------------------------------------------------------------------------
 
 export interface MessageTransport {
   send(message: JsonRpcMessage): void
-  /** 只能设置一次。 */
+  /** Can be set only once. */
   start(onMessage: (message: JsonRpcMessage) => void, onClose: (reason: string) => void): void
   close(reason?: string): void
 }
 
-/** 默认单条消息上限：256 MiB。 */
+/** Default per-message limit: 256 MiB. */
 export const DEFAULT_MAX_MESSAGE_BYTES = 256 * 1024 * 1024
 
-/** stdio ndjson 传输。超过上限或出现不是 JSON 的行时关闭连接（不尝试跳过：对端状态已不可信）。 */
+/** stdio ndjson transport. Closes the connection on a line over the limit or a line that is not JSON (no skipping: the peer state can no longer be trusted). */
 export function ndjsonTransport(input: Readable, output: Writable, maxMessageBytes = DEFAULT_MAX_MESSAGE_BYTES): MessageTransport {
   let closed = false
   let onClose: ((reason: string) => void) | undefined
@@ -99,8 +99,9 @@ export function ndjsonTransport(input: Readable, output: Writable, maxMessageByt
     input.removeAllListeners('data')
     onClose?.(reason)
   }
-  // 对端已退出时写入会异步报 EPIPE / ERR_STREAM_DESTROYED：没有监听就是未捕获异常，整个 Connector 退出。
-  // 这里把它转成连接关闭，挂着的请求得到 ConnectionClosedError（runtime_disconnected）。
+  // Writing after the peer exited reports EPIPE / ERR_STREAM_DESTROYED asynchronously: without a listener it is an
+  // uncaught exception and the whole Connector exits. It is turned into a connection close here, and pending
+  // requests get ConnectionClosedError (runtime_disconnected).
   output.on('error', error => finish(`ACP write failed: ${error.message}`))
   return {
     send(message) {
@@ -154,7 +155,7 @@ export function ndjsonTransport(input: Readable, output: Writable, maxMessageByt
   }
 }
 
-/** 进程内的一对传输（测试、录制回放）。消息经 JSON 往返，模拟线路上的序列化。 */
+/** A pair of in-process transports (tests, recording replay). Messages make a JSON round trip to mimic wire serialization. */
 export function memoryTransportPair(): [MessageTransport, MessageTransport] {
   interface End {
     handler?: (message: JsonRpcMessage) => void
@@ -196,11 +197,11 @@ export function memoryTransportPair(): [MessageTransport, MessageTransport] {
 }
 
 // ---------------------------------------------------------------------------------------------
-// 对等端
+// Peer
 // ---------------------------------------------------------------------------------------------
 
 export interface RequestContext {
-  /** 对端取消请求（`$/cancel_request`）或连接关闭时触发。 */
+  /** Fires when the peer cancels the request (`$/cancel_request`) or the connection closes. */
   readonly signal: AbortSignal
   readonly method: string
 }
@@ -242,7 +243,7 @@ export class JsonRpcPeer {
     return this.closedReason !== undefined
   }
 
-  /** 连接关闭时 resolve（原因）。 */
+  /** Resolves (with the reason) when the connection closes. */
   whenClosed(): Promise<string> {
     if (this.closedReason !== undefined) return Promise.resolve(this.closedReason)
     return new Promise(resolve => this.closedWaiters.push(resolve))
@@ -266,7 +267,7 @@ export class JsonRpcPeer {
     return this
   }
 
-  /** 没注册的请求交给它；不设时回 method_not_found。 */
+  /** Handles unregistered requests; when unset, they get method_not_found. */
   onUnknownRequest(handler: RequestHandler): this {
     this.fallbackRequest = handler
     return this
@@ -324,7 +325,7 @@ export class JsonRpcPeer {
     try {
       this.send(message)
     } catch {
-      // 连接已关闭
+      // connection already closed
     }
   }
 
@@ -359,7 +360,7 @@ export class JsonRpcPeer {
     try {
       handler(message.params, message.method)
     } catch {
-      // 通知没有回应；处理器的错误不影响连接
+      // notifications get no response; handler errors do not affect the connection
     }
   }
 

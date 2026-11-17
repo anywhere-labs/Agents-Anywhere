@@ -1,7 +1,8 @@
-// ported from effi-crew cloud/agentd/src/ports.ts @30f8334: listening TCP ports from /proc/net/tcp{,6} on Linux,
-// `lsof` on macOS and BSD, `netstat` + `tasklist` on Windows. v3 drops the container assumptions (openvscode-server,
-// Docker's embedded DNS), runs the tools asynchronously so the event loop never blocks, and adds the pid and a
-// watcher for the `port.listening` / `port.closed` events (09-port-preview.md).
+// ported from effi-crew cloud/agentd/src/ports.ts @30f8334 (listening port discovery)
+//
+// Listening TCP ports from /proc/net/tcp{,6} on Linux, `lsof` on macOS and BSD, `netstat` + `tasklist` on Windows,
+// with the owning pid. The tools run asynchronously so the event loop never blocks; a watcher emits the
+// `port.listening` / `port.closed` events (09-port-preview.md).
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { readFile, readdir, readlink } from 'node:fs/promises'

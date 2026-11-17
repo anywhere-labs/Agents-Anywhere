@@ -1,6 +1,5 @@
 /**
- * Calls into a 2.0 plugin's `aa.dsh.v2.Bridge` through the local Router
- * (v2 `connector/runtimes/dsh/bridge/client.py`).
+ * Calls into a 2.0 plugin's `aa.dsh.v2.Bridge` through the local Router.
  */
 import { DeadlineExceededError, MeshCallClient, MeshCallError, UnavailableError, type CallOptions } from 'meshcall'
 import type { Bridge2Calls, Json } from './relay.js'

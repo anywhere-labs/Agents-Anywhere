@@ -1,5 +1,5 @@
-// e2ee 1.0 的字节格式（contracts/e2ee/1.0/README.md，向量 vectors/aa-formats.json）：
-// prologue、传输帧（flag + body）、分段密文、输入摘要、展示信封密封。原语来自 node:crypto。
+// Byte formats of e2ee 1.0 (contracts/e2ee/1.0/README.md, vectors in vectors/aa-formats.json):
+// prologue, transport frames (flag + body), segmented ciphertext, input digest, display envelope sealing. Primitives come from node:crypto.
 
 import { createCipheriv, createDecipheriv, createHmac, randomBytes } from 'node:crypto'
 import type { ContentSealer } from '../application/ports/trust.js'

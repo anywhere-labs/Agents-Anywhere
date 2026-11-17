@@ -1,5 +1,5 @@
 // How the Connector reaches its Server: which proxy, and which trust store (04-connector.md §8). The decision
-// follows v2 connector/server/network.py, whose comments list the traps it avoids; each is a test here:
+// avoids these traps, each covered by a test:
 // - a lone NO_PROXY makes the environment look configured, so the system proxy would be skipped;
 // - the system bypass list (macOS exceptions, Windows ProxyOverride) must apply;
 // - some NO_PROXY spellings (`[::1]`) break other libraries, so NO_PROXY is rewritten for the whole process tree;

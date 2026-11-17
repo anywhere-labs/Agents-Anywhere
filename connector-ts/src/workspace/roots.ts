@@ -7,10 +7,10 @@ import { WorkspaceError, invalid } from './errors.js'
 /**
  * Which directories the workspace methods may touch (04-connector.md §8: configurable allowed roots, by default
  * the user's home). `extra` adds roots known at call time, such as the working directories of the sessions on
- * this device, so a project outside the home that already has a session keeps working as it did in v2.
+ * this device, so a project outside the home that already has a session keeps working.
  */
 export interface RootPolicyOptions {
-  /** `'any'` lifts the restriction (v2 behaviour). */
+  /** `'any'` lifts the restriction. */
   readonly roots: readonly string[] | 'any'
   readonly extra?: () => Promise<readonly string[]> | readonly string[]
   readonly platform?: NodeJS.Platform
