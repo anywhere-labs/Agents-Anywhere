@@ -319,6 +319,8 @@ export interface BlobRepository {
   read(blobId: string, range?: { offset: number; length: number }): Promise<Uint8Array | null>
   /** Absolute path of the blob file, for zero-copy uploads. */
   path(blobId: string): Promise<string | null>
+  /** Whether an item of this session points at the blob (`Store/readBlob` serves a session only its own blobs). */
+  referencedBy(sessionId: string, blobId: string): Promise<boolean>
 }
 
 /** Runtime bookkeeping (replaces v2 sync-state.json / kv.json). */

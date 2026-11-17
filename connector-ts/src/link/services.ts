@@ -7,6 +7,8 @@ import { REGISTERED_SERVICES } from '../generated/device-meshcall/v1_0/e2ee-regi
 import { chunkJson, outboxStream, scrubForE2ee, watchSession, type DeviceReaders, type OutboxStreamOptions, type WatchDeps } from '../sync/index.js'
 import { defineService, type MethodDef } from '../mesh/index.js'
 import type { AttachHub } from './attach.js'
+import type { LocalBlob } from './blobs.js'
+import type { BlobTransfer, TransferUpload } from './device-files.js'
 
 export const CONNECTION_METADATA = 'aa-connection-id'
 
@@ -69,6 +71,11 @@ export interface DeviceServicesDeps {
   readonly limits?: Partial<Record<CallClass, number>>
   /** A command settled (its `command.result` is in the outbox). */
   readonly onCommand?: () => void
+  /** `Store/readBlob`: where blobs and attachments are found and how their bytes reach the relay. Absent: unimplemented. */
+  readonly blobs?: {
+    readonly find: (sessionId: string, blobRef: string) => Promise<LocalBlob | null>
+    readonly upload: TransferUpload
+  }
 }
 
 
@@ -246,9 +253,34 @@ export class DeviceServices {
       this.unary(S, 'read', 'Paged history by orderSeq, bounded by count and bytes.', async request => readers.read(request as never)),
       this.unary(S, 'changesSince', 'Changes after a clock position, or snapshotRequired.', async request => readers.changesSince(request as never)),
       this.unary(S, 'planDocument', 'An immutable plan revision.', async request => readers.planDocument(request as never)),
-      unimplemented('readBlob'),
+      this.readBlobMethod(S, unimplemented),
       unimplemented('exportShare'),
     ]
+  }
+
+  /**
+   * `Store/readBlob` (06-protocols.md §5): the first item is `{name, mediaType, size, sha256}`, on which the
+   * Server starts relaying to its client; the bytes then go up as one `PUT` to the transfer, read from disk as
+   * they are sent; `{done: true}` ends the stream. Cancelling the call (the client left) aborts the upload.
+   */
+  private readBlobMethod(S: string, unimplemented: (name: string) => MethodDef): MethodDef {
+    const blobs = this.deps.blobs
+    if (blobs === undefined) return unimplemented('readBlob')
+    const request = z.looseObject({
+      sessionId: z.string().min(1),
+      blobRef: z.string().min(1),
+      transfer: z.looseObject({ transferId: z.string().min(1), token: z.string().min(1), path: z.string().min(1) }),
+    })
+    return this.stream(S, 'readBlob', 'A stored blob or attachment: metadata on the stream, bytes over the HTTP relay.', async function* (raw, context) {
+      const sessionId = String(raw.sessionId)
+      const blobRef = String(raw.blobRef)
+      const transfer = raw.transfer as unknown as BlobTransfer
+      const blob = await blobs.find(sessionId, blobRef)
+      if (blob === null) throw new MeshCallError('not_found', `${blobRef} is not on this device`)
+      yield { seq: 0, chunk: { name: blob.name, mediaType: blob.mediaType, size: blob.size, sha256: blob.sha256 }, end: false }
+      await blobs.upload(transfer, { path: blob.path, size: blob.size, mediaType: blob.mediaType }, context.signal)
+      yield { seq: 1, chunk: { done: true }, end: true }
+    }, { request })
   }
 
   private runtimeMethods(): MethodDef[] {

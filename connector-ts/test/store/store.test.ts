@@ -233,6 +233,15 @@ describe('blob lifecycle', () => {
     expect(blobRows()).toBe(1)
   })
 
+  it('knows which session points at a blob', async () => {
+    await createSession()
+    await createSession('sess_2')
+    const item = (await store.timeline.apply('sess_1', { upserts: [tool('t1', 'r'.repeat(STRING_MAX + 1), 'done')], at: now() })).changed[0]!
+    const blobId = item.blobRefs![0]!.blobId
+    expect(await store.blobs.referencedBy('sess_1', blobId)).toBe(true)
+    expect(await store.blobs.referencedBy('sess_2', blobId)).toBe(false)
+  })
+
   it('fills the references of items stored before the reference table', async () => {
     await createSession()
     const item = (await store.timeline.apply('sess_1', { upserts: [tool('t1', 'q'.repeat(STRING_MAX + 1), 'done')], at: now() })).changed[0]!

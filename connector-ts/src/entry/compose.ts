@@ -5,7 +5,7 @@ import { CommandInbox, type CommandHandler } from '../application/inbound/index.
 import { ConversationService, NativeHistory } from '../application/index.js'
 import type { LiveEvents, RuntimeHandle, RuntimeHandleEvent, RuntimeProvider } from '../application/ports/index.js'
 import { legacyDataDir, type ConnectorRuntime, type ConnectorSettings, type RuntimeFactory } from '../host/index.js'
-import { ControlPlane, DeviceLink, deviceAttachmentFetcher, readSystemProxySettings, resolveEgress, type Egress, type LinkLogger } from '../link/index.js'
+import { ControlPlane, DeviceLink, blobLookup, deviceAttachmentFetcher, deviceTransferUploader, readSystemProxySettings, resolveEgress, type Egress, type LinkLogger } from '../link/index.js'
 import { openStoreWorker, inProcessStore, openSqliteStore, type RemoteStore } from '../store/index.js'
 import { DeviceReaders, DeviceTunnelApi, MemoryChangeFeed, OutboxSignal, capabilitySet, plainSealer, type RuntimeFacts, type SessionFacts } from '../sync/index.js'
 import { AttachmentCache, FileOps, RootPolicy, ShellOps, Terminals, nodePtySpawner, rootsFromEnv, workspaceMethods } from '../workspace/index.js'
@@ -140,7 +140,18 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
           connectorVersion: options.connectorVersion,
           os: process.platform,
         })
-        const attachments = new AttachmentCache(join(options.dataDir, 'attachments'), deviceAttachmentFetcher(settings.serverUrl, handshake, egress), openSealedUpload)
+        const outboxSignal = new OutboxSignal()
+        const attachments = new AttachmentCache(join(options.dataDir, 'attachments'), deviceAttachmentFetcher(settings.serverUrl, handshake, egress), openSealedUpload, {
+          // The file is on disk: the Server may drop its staged copy (06-protocols.md §5).
+          onStored: async ({ sessionId, fileId, sha256 }) => {
+            try {
+              await store.outbox.append('attachment.consumed', sessionId, { fileId, sha256 }, clock.nowIso())
+              outboxSignal.poke()
+            } catch (error) {
+              log('warn', `attachment.consumed for ${fileId}: ${message(error)}`)
+            }
+          },
+        })
         const conversation = new ConversationService({
           store,
           feed,
@@ -212,7 +223,6 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
           track?.trust?.(trust)
         }
         const deviceTrust = trust
-        const outboxSignal = new OutboxSignal()
         const logger: LinkLogger = {
           debug: text => options.log('debug', text),
           info: text => options.log('info', text),
@@ -230,6 +240,10 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
             outbox: { outbox: store.outbox, sealer: deviceTrust?.sealer() ?? plainSealer, signal: outboxSignal },
             watch,
             readers,
+            blobs: {
+              find: blobLookup({ blobs: store.blobs, attachment: (sessionId, fileId) => attachments.find(sessionId, fileId) }),
+              upload: deviceTransferUploader(settings.serverUrl, handshake, egress),
+            },
             ...(deviceTrust !== null ? { secure: deviceTrust.secure } : {}),
           },
           egress,

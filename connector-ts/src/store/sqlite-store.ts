@@ -954,6 +954,9 @@ export function openSqliteStore(options: OpenStoreOptions): SyncStore {
       const row = get('SELECT sha256 FROM blobs WHERE blob_id = ?', blobId)
       return row === undefined ? null : blobs.pathOf(String(row.sha256))
     },
+    referencedBy(sessionId, blobId) {
+      return get('SELECT 1 AS hit FROM blob_refs WHERE session_id = ? AND blob_id = ? LIMIT 1', sessionId, blobId) !== undefined
+    },
   }
 
   const kv: Sync<RuntimeKv> = {

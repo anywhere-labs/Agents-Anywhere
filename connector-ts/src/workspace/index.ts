@@ -5,7 +5,7 @@ import type { Params } from './params.js'
 import { ShellOps } from './shell.js'
 import type { Terminals } from './terminals.js'
 
-export { AttachmentCache, safeFileName, type AttachmentSource, type FetchFile, type LocalAttachment, type OpenSealed } from './attachments.js'
+export { ATTACHMENT_META, AttachmentCache, safeFileName, type AttachmentCacheOptions, type AttachmentSource, type AttachmentStored, type FetchFile, type LocalAttachment, type OpenSealed, type StoredAttachment } from './attachments.js'
 export { WorkspaceError, fsError } from './errors.js'
 export { FILE_CHUNK_MAX_BYTES, FileOps, mimeOf, type DirEntry, type FileChunk, type PreparedDownload, type ReadDirResult, type ReadTextResult, type WriteFileResult } from './files.js'
 export { MAX_DIR_ENTRIES, MAX_OUTPUT_CHARS, MAX_READ_TEXT_BYTES, type Params } from './params.js'
