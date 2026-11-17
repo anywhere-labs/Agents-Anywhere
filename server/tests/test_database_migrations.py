@@ -1028,9 +1028,9 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(tmp_path,
     )
 
 
-def test_current_schema_version_is_v2_65() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_65"
-    assert CURRENT_SCHEMA_VERSION == "2.65"
+def test_current_schema_version_is_v2_66() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_66"
+    assert CURRENT_SCHEMA_VERSION == "2.66"
 
 
 def test_v2_57_starts_the_seq_ceiling_above_v2_sequences(fresh_database_url) -> None:
@@ -3007,3 +3007,42 @@ def test_v2_65_merges_e2ee_registrations_into_device_commands(fresh_database_url
     }
     assert receipts == {"c_server"}
 
+
+def test_v2_66_drops_channel_device_gates(fresh_database_url) -> None:
+    url = fresh_database_url
+    upgrade_database(db_url=url, revision="v2_66")
+    engine = create_engine(_sync_url(url))
+    try:
+        assert not inspect(engine).has_table("channel_device_gates")
+        with engine.begin() as connection:
+            connection.execute(text("DROP TABLE alembic_version"))
+    finally:
+        engine.dispose()
+    assert asyncio.run(classify_database(url)) == UnversionedDatabase("v2", "v2_66")
+
+    command.stamp(_alembic_config(url), "v2_66")
+    command.downgrade(_alembic_config(url), "v2_65")
+    engine = create_engine(_sync_url(url))
+    try:
+        inspector = inspect(engine)
+        assert inspector.has_table("channel_device_gates")
+        assert {column["name"] for column in inspector.get_columns("channel_device_gates")} == {
+            "connector_id", "connection_id", "expires_at",
+        }
+        assert inspector.get_pk_constraint("channel_device_gates")["constrained_columns"] == ["connector_id"]
+        [foreign_key] = inspector.get_foreign_keys("channel_device_gates")
+        assert (foreign_key["referred_table"], foreign_key["options"].get("ondelete")) == ("connectors", "CASCADE")
+        with engine.begin() as connection:
+            assert connection.execute(text("SELECT COUNT(*) FROM channel_device_gates")).scalar() == 0
+            connection.execute(text("DROP TABLE alembic_version"))
+    finally:
+        engine.dispose()
+    assert asyncio.run(classify_database(url)) == UnversionedDatabase("v2", "v2_65")
+
+    command.stamp(_alembic_config(url), "v2_65")
+    upgrade_database(db_url=url, revision="v2_66")
+    engine = create_engine(_sync_url(url))
+    try:
+        assert not inspect(engine).has_table("channel_device_gates")
+    finally:
+        engine.dispose()

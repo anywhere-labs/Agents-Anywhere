@@ -8,6 +8,7 @@
 
 - 不用 Compose、手动部署 MeshCall Router 的环境，升级 Server 后要重新执行一次 Router 的 `init-auth`，否则 v3 设备连不上；Compose 部署每次启动会自动重新生成，不用处理。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - Server 需要执行 `v2_64` 数据库迁移：操作记录里保存的消息原文、排队文本和计划反馈会被清除，只保留结果状态；之后用同一个操作重试时只返回是否成功，不再返回设备当时的完整结果。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
+- Server 需要执行 `v2_65`、`v2_66` 数据库迁移：加密模式的命令记录并入操作记录表，并删除一张不再使用的渠道表，已有会话和设置不受影响。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - Server 需要执行 `v2_62` 数据库迁移，删除记录终端工作目录的表，终端的工作目录改由设备自己记录。（[#739](https://github.com/anywhere-labs/Agents-Anywhere/pull/739)、[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 端口预览需要 Server 执行 `v2_61` 数据库迁移（只新增预览表），并配置单独注册的预览域名 `AGENT_SERVER_PREVIEW_DOMAIN`（不能是 AA 站点的子域名）和至少 32 个字符、只含字母和数字的随机 `AGENT_SERVER_PREVIEW_INTERNAL_TOKEN`（可用 `openssl rand -hex 32` 生成，它不再出现在请求路径和访问日志里）；预览域名要有通配符 DNS 记录和通配符证书（需要 DNS-01 验证，在网关前终止 TLS）。自托管 Compose 默认带上 frps 和 preview-auth，网关同时承载预览域名，填好这两项即开启；没有配置时端口预览在各端隐藏，其他功能不受影响。加密模式下预览流量不在端到端加密范围内，可用 `AGENT_SERVER_E2EE_PREVIEW=deny` 关闭。（[#734](https://github.com/anywhere-labs/Agents-Anywhere/pull/734)、[#735](https://github.com/anywhere-labs/Agents-Anywhere/pull/735)、[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - Server 需要执行 `v2_60` 数据库迁移，迁移会删除 Server 上保存的会话内容（对话记录、计划、目标和排队消息）且不能降级，升级前请备份数据库：会话列表、标题、归档、置顶和分享都会保留，v3 设备连上后会从电脑上的原始记录重新生成内容；以前上传的附件在 Server 启动后于后台删除，分享里用到的文件保留；升级前已读的会话保持已读，未读的保持未读，直到设备升级到 v3 后随新的回合更新。（[#733](https://github.com/anywhere-labs/Agents-Anywhere/pull/733)）

@@ -752,10 +752,6 @@ channel_rotation_intents = Table("channel_rotation_intents", metadata,
     Column("profile_id", Text, nullable=False), Column("key_id", Text, nullable=False),
     Column("state", Text, nullable=False), Column("updated_at", Text, nullable=False))
 
-channel_device_gates = Table("channel_device_gates", metadata,
-    Column("connector_id", Text, ForeignKey("connectors.id", ondelete="CASCADE"), primary_key=True),
-    Column("connection_id", Text, nullable=False), Column("expires_at", Text, nullable=False))
-
 
 # One durable receipt per command (device-meshcall 1.0). ``origin``: ``server`` (the Server sends it on
 # ``Commands/*``), ``client`` (a client API command forwarded with ``Client/call``) or ``sealed`` (registered before
