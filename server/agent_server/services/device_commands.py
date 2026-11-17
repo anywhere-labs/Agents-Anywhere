@@ -20,6 +20,11 @@
   payload only of deferrable commands (``DEFERRABLE_COMMANDS``, replayed on
   hello), and of the outcome only the error code. The device's ``r`` goes to the
   caller waiting on the call; a replay returns the outcome with an empty result.
+
+One table holds the receipts of every origin (docs/v3/14-unified-client-path.md §C): ``server`` (``send``),
+``client`` (client API commands forwarded with ``Client/call``, ``services.client_forward``) and ``sealed``
+(commands registered before they travel inside an E2EE secure channel, ``services.e2ee_commands``). ``register``,
+``record_result`` and ``reconcile_one`` serve all three.
 """
 
 from __future__ import annotations
@@ -29,7 +34,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 
 from loguru import logger
 from pydantic import ValidationError
@@ -51,6 +56,8 @@ from agent_server.infra.device_mesh import DeviceCallError, DeviceMesh
 # How old a ``pending`` receipt must be before the Server treats "the device does not know
 # it" as final: younger ones may still be in flight (the command timeout is 30 s).
 UNSEEN_PENDING_AGE = timedelta(minutes=2)
+
+CommandOrigin = Literal["server", "client", "sealed"]
 
 
 class DeviceCommandError(Exception):
@@ -108,15 +115,106 @@ class DeviceCommandService:
     def __init__(
         self,
         store: Any,
-        mesh: DeviceMesh,
-        hub: DeviceLinkHub,
+        mesh: DeviceMesh | None,
+        hub: DeviceLinkHub | None,
         *,
         e2ee_settings: Callable[[], E2eeSettings] = E2eeSettings,
     ) -> None:
+        """``mesh`` and ``hub`` may be None for a service that only registers and records (``sealed``)."""
+
         self._store = store
         self._mesh = mesh
         self._hub = hub
         self._e2ee_settings = e2ee_settings
+
+    # -- receipts of every origin ---------------------------------------------------
+
+    async def register(
+        self,
+        *,
+        origin: CommandOrigin,
+        user_id: str,
+        device_id: str,
+        command_id: str,
+        kind: str,
+        input_digest: str | None,
+        session_id: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], bool]:
+        """Record a ``pending`` receipt; returns ``(receipt, created)``. An existing receipt is returned as is
+        (for ``sealed``, possibly another user's: the caller compares ``userId``)."""
+
+        return await self._store.record_device_command(
+            user_id=user_id,
+            command_id=command_id,
+            kind=kind,
+            device_id=device_id,
+            session_id=session_id,
+            input_digest=input_digest,
+            payload=payload,
+            origin=origin,
+        )
+
+    async def record_result(
+        self,
+        device_id: str,
+        command_id: str,
+        outcome: str,
+        error: dict[str, Any] | None = None,
+        *,
+        user_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Settle a receipt from an outcome the device reported. The first outcome wins; returns the receipt
+        (settled now or before), or None when this device has no receipt with that id."""
+
+        result = {"e": error} if error else None
+        settled = await self._settle_receipt(
+            device_id=device_id, command_id=command_id, user_id=user_id, state=outcome, result=result
+        )
+        if settled is not None or user_id is None:
+            return settled
+        current = await self._store.get_device_command(user_id, command_id)
+        return current if current is not None and current["deviceId"] == device_id else None
+
+    async def forget(self, receipt: dict[str, Any]) -> None:
+        """Drop a ``pending`` receipt whose command never reached the device."""
+
+        await self._store.delete_device_command(receipt["userId"], receipt["commandId"], only_state="pending")
+
+    async def settle(
+        self,
+        receipt: dict[str, Any],
+        state: str,
+        result: dict[str, Any] | None,
+        *,
+        only_from: tuple[str, ...] = ("pending", "unknown"),
+    ) -> dict[str, Any] | None:
+        """Move ``receipt`` to ``state``; returns the stored receipt (the one settled first wins)."""
+
+        settled = await self._settle(receipt, state, result, only_from=only_from)
+        if settled is None:
+            settled = await self._store.get_device_command(receipt["userId"], receipt["commandId"])
+        return settled
+
+    async def _settle_receipt(
+        self,
+        *,
+        device_id: str,
+        command_id: str,
+        user_id: str | None,
+        state: str,
+        result: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if result is not None and self._e2ee_settings().required:
+            result = scrub_for_e2ee("command.result", result)
+        return await self._store.settle_device_command(
+            device_id=device_id, command_id=command_id, user_id=user_id, state=state, result=result
+        )
+
+    def _require_link(self) -> tuple[DeviceMesh, DeviceLinkHub]:
+        if self._mesh is None or self._hub is None:
+            raise RuntimeError("this DeviceCommandService only registers receipts")
+        return self._mesh, self._hub
 
     async def send(
         self,
@@ -152,16 +250,17 @@ class DeviceCommandService:
     async def _deliver(
         self, receipt: dict[str, Any], payload: dict[str, Any], *, timeout: float | None
     ) -> CommandOutcome:
+        mesh, hub = self._require_link()
         device_id = receipt["deviceId"]
         command_id = receipt["commandId"]
-        connection_id = await self._hub.current_connection(device_id)
+        connection_id = await hub.current_connection(device_id)
         if connection_id is None:
             await self._store.delete_device_command(receipt["userId"], command_id, only_state="pending")
             raise DeviceCommandOffline()
-        timeout = timeout or self._mesh.settings.command_timeout_seconds
+        timeout = timeout or mesh.settings.command_timeout_seconds
         deadline = datetime.now(UTC) + timedelta(seconds=timeout)
         try:
-            ack = await self._mesh.unary(
+            ack = await mesh.unary(
                 device_id,
                 command_route(receipt["kind"]),
                 CommandCall(
@@ -263,15 +362,17 @@ class DeviceCommandService:
         """Ask the device (read-only) about an unsettled receipt; returns the updated receipt.
 
         ``settle_unseen``: a ``pending`` receipt the device does not know, and that is old
-        enough not to be in flight, becomes ``rejected`` (``command_not_delivered``).
+        enough not to be in flight, becomes ``rejected`` (``command_not_delivered``). Never for ``sealed``
+        receipts: the client registers before it sends through its channel, and may send later.
         """
 
+        mesh, hub = self._require_link()
         device_id = receipt["deviceId"]
-        connection_id = await self._hub.current_connection(device_id)
+        connection_id = await hub.current_connection(device_id)
         if connection_id is None:
             return None
         try:
-            status = await self._mesh.unary(
+            status = await mesh.unary(
                 device_id,
                 REQUEST_METHODS["command.status"],
                 CommandStatusRequest(commandId=receipt["commandId"]),
@@ -283,7 +384,8 @@ class DeviceCommandService:
             return None
         if not status.known or status.outcome in (None, "unknown"):
             cutoff = (datetime.now(UTC) - UNSEEN_PENDING_AGE).isoformat()
-            if settle_unseen and receipt["state"] == "pending" and not status.known and receipt["createdAt"] < cutoff:
+            unseen = receipt["state"] == "pending" and not status.known and receipt["createdAt"] < cutoff
+            if settle_unseen and unseen and receipt.get("origin") != "sealed":
                 # The device never saw it and nobody is waiting on it any more.
                 return await self._settle(
                     receipt,

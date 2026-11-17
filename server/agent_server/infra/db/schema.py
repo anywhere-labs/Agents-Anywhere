@@ -757,7 +757,9 @@ channel_device_gates = Table("channel_device_gates", metadata,
     Column("connection_id", Text, nullable=False), Column("expires_at", Text, nullable=False))
 
 
-# One durable receipt per state-changing device command (device-meshcall 1.0).
+# One durable receipt per command (device-meshcall 1.0). ``origin``: ``server`` (the Server sends it on
+# ``Commands/*``), ``client`` (a client API command forwarded with ``Client/call``) or ``sealed`` (registered before
+# it travels inside an E2EE secure channel; its id is unique across users). Ids, a digest and the outcome only.
 device_commands = Table(
     "device_commands",
     metadata,
@@ -778,7 +780,15 @@ device_commands = Table(
         "state IN ('pending','accepted','rejected','unknown')",
         name="ck_device_commands_state",
     ),
+    Column("origin", Text, nullable=False, server_default="server"),
+    CheckConstraint("origin IN ('server','client','sealed')", name="ck_device_commands_origin"),
     Index("idx_device_commands_device_state", "device_id", "state"),
+    Index(
+        "uq_device_commands_sealed_command",
+        "command_id",
+        unique=True,
+        postgresql_where=text("origin = 'sealed'"),
+    ),
 )
 
 # One login (a device or browser) per row: the refresh token chain and whether it was revoked.
@@ -820,20 +830,4 @@ previews = Table(
     UniqueConstraint("device_id", "port", name="uq_previews_device_port"),
     Index("idx_previews_user", "user_id"),
     Index("idx_previews_state_expires", "state", "expires_at"),
-)
-
-# E2EE required mode: the plaintext side channel of a command sent through a secure channel
-# (contracts/e2ee/1.0 CommandRegistration). Only ids, a keyed digest and the outcome; never content.
-e2ee_command_registrations = Table(
-    "e2ee_command_registrations",
-    metadata,
-    Column("command_id", Text, primary_key=True),
-    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
-    Column("device_id", Text, ForeignKey("connectors.id", ondelete="CASCADE"), nullable=False),
-    Column("input_digest", Text, nullable=False),
-    Column("created_at", Text, nullable=False),
-    Column("outcome", Text),
-    Column("error_code", Text),
-    Column("finished_at", Text),
-    Index("idx_e2ee_command_registrations_device_created", "device_id", "created_at"),
 )

@@ -52,7 +52,6 @@ from agent_server.services.device_commands import (
     DeviceCommandRejected,
 )
 from agent_server.services.device_runtimes import device_runtime_entry
-from agent_server.services.e2ee_commands import E2eeCommandService
 
 LINK_CONTRACT = f"device-meshcall/{DEVICE_MESHCALL_VERSION}"
 REQUIRED_SERVICES = frozenset({"aa.device.v1.Link", "aa.device.v1.Commands"})
@@ -311,18 +310,14 @@ class DeviceLinkService:
                     await self._apply_summary(device_id, summary)
             elif item.m == "command.result":
                 result = CommandResultOut.model_validate(item.p)
+                # One receipt table for every origin: this settles Server, forwarded client and sealed
+                # (E2EE) commands alike; the first outcome wins.
                 await self._store.settle_device_command(
                     device_id=device_id,
                     command_id=result.commandId,
                     state=result.outcome,
                     result={"r": result.r, "e": result.e.model_dump() if result.e else None},
                 )
-                if required:
-                    # Encrypted commands converge through ``GET /api/v3/e2ee/commands/{id}``; ids it did not
-                    # register are ignored (normal-mode commands use their own receipts).
-                    await E2eeCommandService(self._store).record_result(
-                        device_id, result.commandId, result.outcome, result.e.code if result.e else None
-                    )
             elif item.m == "attachment.consumed":
                 consumed = AttachmentConsumedOut.model_validate(item.p)
                 await self._attachment_consumed(device_id, consumed)

@@ -287,6 +287,7 @@ def test_v2_0_database_upgrades_through_current_revision(fresh_database_url) -> 
         ("v2_61", "v2_62"),
         ("v2_62", "v2_63"),
         ("v2_63", "v2_64"),
+        ("v2_64", "v2_65"),
     ],
 )
 def test_every_adjacent_schema_upgrade(tmp_path,
@@ -1027,9 +1028,9 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(tmp_path,
     )
 
 
-def test_current_schema_version_is_v2_64() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_64"
-    assert CURRENT_SCHEMA_VERSION == "2.64"
+def test_current_schema_version_is_v2_65() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_65"
+    assert CURRENT_SCHEMA_VERSION == "2.65"
 
 
 def test_v2_57_starts_the_seq_ceiling_above_v2_sequences(fresh_database_url) -> None:
@@ -2919,3 +2920,90 @@ def test_v2_64_removes_conversation_content_from_command_receipts(fresh_database
     assert json.loads(stored["c_plan"][1]) == {"r": {"execution": "started"}}
     # A deferrable command keeps the payload it is replayed with on hello.
     assert json.loads(stored["c_apply"][0]) == {"runtimeId": "codex", "active": True}
+
+
+def test_v2_65_merges_e2ee_registrations_into_device_commands(fresh_database_url) -> None:
+    url = fresh_database_url
+    upgrade_database(db_url=url, revision="v2_64")
+    engine = create_engine(_sync_url(url))
+    try:
+        with engine.begin() as connection:
+            _insert_required(connection, "users", {"id": "alice"})
+            _insert_required(connection, "connectors", {"id": "c1", "user_id": "alice"})
+            _insert_required(connection, "device_commands", {
+                "user_id": "alice", "command_id": "c_server", "kind": "session.sendMessage", "device_id": "c1",
+                "state": "accepted", "input_digest": "sha256:s",
+            })
+            for command_id, outcome, error_code in (("e_open", None, None), ("e_done", "rejected", "runtime_busy")):
+                connection.execute(
+                    text(
+                        "INSERT INTO e2ee_command_registrations (command_id, user_id, device_id, input_digest, "
+                        "created_at, outcome, error_code, finished_at) VALUES (:id, 'alice', 'c1', 'hmac:d', "
+                        "'2026-11-16T10:00:00Z', :outcome, :code, :finished)"
+                    ),
+                    {"id": command_id, "outcome": outcome, "code": error_code,
+                     "finished": "2026-11-16T10:00:05Z" if outcome else None},
+                )
+    finally:
+        engine.dispose()
+
+    upgrade_database(db_url=url, revision="v2_65")
+
+    engine = create_engine(_sync_url(url))
+    try:
+        inspector = inspect(engine)
+        assert not inspector.has_table("e2ee_command_registrations")
+        assert "origin" in {column["name"] for column in inspector.get_columns("device_commands")}
+        with engine.begin() as connection:
+            rows = {
+                row.command_id: row
+                for row in connection.execute(
+                    text(
+                        "SELECT command_id, origin, kind, state, input_digest, result_json, updated_at, expires_at "
+                        "FROM device_commands"
+                    )
+                )
+            }
+            assert rows["c_server"].origin == "server"
+            assert (rows["e_open"].origin, rows["e_open"].kind, rows["e_open"].state) == ("sealed", "sealed", "pending")
+            assert rows["e_open"].input_digest == "hmac:d"
+            assert rows["e_done"].state == "rejected"
+            assert json.loads(rows["e_done"].result_json) == {"e": {"code": "runtime_busy", "retryable": False}}
+            assert rows["e_done"].updated_at == "2026-11-16T10:00:05Z"
+            assert rows["e_open"].expires_at.startswith("2026-11-23T10:00:00")
+            # A sealed id is unique across users, as the registration table's key was.
+            _insert_required(connection, "users", {"id": "bob"})
+            with pytest.raises(Exception, match="uq_device_commands_sealed_command"):
+                with connection.begin_nested():
+                    _insert_required(connection, "device_commands", {
+                        "user_id": "bob", "command_id": "e_open", "kind": "sealed", "device_id": "c1",
+                        "state": "pending", "origin": "sealed",
+                    })
+            connection.execute(text("DROP TABLE alembic_version"))
+    finally:
+        engine.dispose()
+    assert asyncio.run(classify_database(url)) == UnversionedDatabase("v2", "v2_65")
+
+    command.stamp(_alembic_config(url), "v2_65")
+    command.downgrade(_alembic_config(url), "v2_64")
+    engine = create_engine(_sync_url(url))
+    try:
+        inspector = inspect(engine)
+        assert inspector.has_table("e2ee_command_registrations")
+        assert "origin" not in {column["name"] for column in inspector.get_columns("device_commands")}
+        with engine.begin() as connection:
+            registrations = {
+                row.command_id: (row.outcome, row.error_code, row.finished_at)
+                for row in connection.execute(
+                    text("SELECT command_id, outcome, error_code, finished_at FROM e2ee_command_registrations")
+                )
+            }
+            receipts = {row.command_id for row in connection.execute(text("SELECT command_id FROM device_commands"))}
+    finally:
+        engine.dispose()
+    assert registrations == {
+        "e_open": (None, None, None),
+        "e_done": ("rejected", "runtime_busy", "2026-11-16T10:00:05Z"),
+    }
+    assert receipts == {"c_server"}
+

@@ -2,8 +2,9 @@
 
 - Directory fields a v3 device reports for its sessions (never content).
 - ``seq_ceiling`` and the per-session floors handed to the device on hello.
-- ``device_commands``: durable command receipts. No conversation content (D1): the payload only
-  for commands replayed on hello (``DEFERRABLE_COMMANDS``), and of the outcome only the error code.
+- ``device_commands``: durable command receipts of every origin (``server``, ``client``, ``sealed``). No
+  conversation content (D1): the payload only for commands replayed on hello (``DEFERRABLE_COMMANDS``), and of
+  the outcome only the error code.
 """
 
 from __future__ import annotations
@@ -49,6 +50,7 @@ def _receipt_view(row: Any) -> dict[str, Any]:
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"],
         "expiresAt": row["expires_at"],
+        "origin": row["origin"],
     }
 
 
@@ -284,10 +286,13 @@ class DeviceLinkRepositoryMixin:
         session_id: str | None,
         input_digest: str | None,
         payload: dict[str, Any] | None,
+        origin: str = "server",
     ) -> tuple[dict[str, Any], bool]:
         """Insert a ``pending`` receipt; returns ``(receipt, created)``. An existing one is returned as is.
 
         ``payload`` is kept only for deferrable commands (``receipt_payload``); replays compare ``input_digest``.
+        A ``sealed`` command id is unique across users: when another user holds it, their receipt is returned
+        (``created`` False) so the caller reports a conflict.
         """
 
         now = datetime.now(UTC)
@@ -304,24 +309,59 @@ class DeviceLinkRepositoryMixin:
             "created_at": now.isoformat(),
             "updated_at": now.isoformat(),
             "expires_at": (now + COMMAND_RECEIPT_TTL).isoformat(),
+            "origin": origin,
         }
+        insert = pg_insert(device_commands).values(**row)
+        # A sealed id may collide on the partial unique index as well as on the primary key.
+        insert = (
+            insert.on_conflict_do_nothing()
+            if origin == "sealed"
+            else insert.on_conflict_do_nothing(index_elements=["user_id", "command_id"])
+        )
         async with self._engine.begin() as conn:
-            inserted = (
-                await conn.execute(
-                    pg_insert(device_commands)
-                    .values(**row)
-                    .on_conflict_do_nothing(index_elements=["user_id", "command_id"])
-                    .returning(device_commands.c.command_id)
-                )
-            ).first()
+            inserted = (await conn.execute(insert.returning(device_commands.c.command_id))).first()
             existing = (
                 await conn.execute(
                     select(device_commands).where(
                         device_commands.c.user_id == user_id, device_commands.c.command_id == command_id
                     )
                 )
-            ).mappings().one()
+            ).mappings().first()
+            if existing is None:
+                existing = (
+                    await conn.execute(
+                        select(device_commands).where(
+                            device_commands.c.command_id == command_id, device_commands.c.origin == "sealed"
+                        )
+                    )
+                ).mappings().one()
         return _receipt_view(existing), inserted is not None
+
+    async def get_sealed_command(self, command_id: str) -> dict[str, Any] | None:
+        """The ``sealed`` receipt with this id, whoever registered it."""
+
+        async with read_connection(self._engine) as conn:
+            row = (
+                await conn.execute(
+                    select(device_commands).where(
+                        device_commands.c.command_id == command_id, device_commands.c.origin == "sealed"
+                    )
+                )
+            ).mappings().first()
+        return _receipt_view(row) if row is not None else None
+
+    async def prune_device_commands(self, *, device_id: str, origin: str, before: str) -> int:
+        """Drop one device's receipts of ``origin`` created before ``before``."""
+
+        async with self._engine.begin() as conn:
+            result = await conn.execute(
+                delete(device_commands).where(
+                    device_commands.c.device_id == device_id,
+                    device_commands.c.origin == origin,
+                    device_commands.c.created_at < before,
+                )
+            )
+        return int(result.rowcount or 0)
 
     async def settle_device_command(
         self,
