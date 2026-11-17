@@ -1127,9 +1127,23 @@ def _client_protocol_at_least(value: str | None, minimum: tuple[int, int]) -> bo
     return (major, minor) >= minimum
 
 
+async def _sync_device_takeover(conn: HTTPConnection, session: SessionView) -> None:
+    """Takeover lives on the Server, and a v3 device needs it too (its queue dispatches only taken-over
+    sessions): send it now, or when the device links again (``DeviceLinkService.push_takeover``)."""
+
+    device_link = getattr(conn.app.state, "device_link", None)
+    if device_link is None:
+        return
+    try:
+        await device_link.push_takeover(session.connectorId, session.id)
+    except Exception:  # noqa: BLE001 - the Server's value stands; the device catches up when it links again
+        logger.opt(exception=True).warning("takeover sync failed session_id={}", session.id)
+
+
 @router.post("/{session_id}/takeover", response_model=TakeoverResponse)
 async def enable_takeover(
     session_id: str,
+    conn: HTTPConnection,
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
@@ -1141,6 +1155,7 @@ async def enable_takeover(
     try:
         await db.get_session(session_id, user_id=user_id)
         session = await db.set_takeover(session_id, True)
+        await _sync_device_takeover(conn, session)
         await _publish_session_protocol_update(
             db,
             broker,
@@ -1158,6 +1173,7 @@ async def enable_takeover(
 @router.delete("/{session_id}/takeover", response_model=TakeoverResponse)
 async def disable_takeover(
     session_id: str,
+    conn: HTTPConnection,
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
@@ -1169,6 +1185,7 @@ async def disable_takeover(
     try:
         await db.get_session(session_id, user_id=user_id)
         session = await db.set_takeover(session_id, False)
+        await _sync_device_takeover(conn, session)
         await _publish_session_protocol_update(
             db,
             broker,

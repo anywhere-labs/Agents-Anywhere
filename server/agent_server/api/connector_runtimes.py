@@ -285,14 +285,18 @@ async def get_connector_runtime_capabilities(
         runtime = await service.ensure_active_running(
             connector_id, runtime_id, user_id=user_id
         )
-        result = await request_runtime_rpc(
-            manager,
-            connector_id,
-            "runtime.capabilities",
-            runtime=runtime.runtimeType,
-            runtime_id=runtime.runtimeId,
-            limit=None,
-        )
+        if await service.is_v3_device(connector_id):
+            # device-meshcall has no capability read: the set the device reported with the instance.
+            result = {"capabilitySet": await service.runtime_capabilities(connector_id, runtime.runtimeId)}
+        else:
+            result = await request_runtime_rpc(
+                manager,
+                connector_id,
+                "runtime.capabilities",
+                runtime=runtime.runtimeType,
+                runtime_id=runtime.runtimeId,
+                limit=None,
+            )
     except DeviceRuntimeError as exc:
         _raise_device_runtime_error(exc)
     capability_set = parse_runtime_capability_response(result)
@@ -419,6 +423,12 @@ async def request_runtime_rpc(
     except ConnectorOfflineError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ConnectorRpcError as exc:
+        if exc.code == "device_method_unsupported":
+            # A v3 device has no runtime-level catalog or command list before a session exists.
+            raise HTTPException(
+                status_code=409,
+                detail={"code": exc.code, "message": exc.message or exc.code},
+            ) from exc
         raise HTTPException(
             status_code=502,
             detail={"code": exc.code, "message": exc.message or exc.code},

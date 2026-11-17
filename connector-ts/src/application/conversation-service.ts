@@ -6,6 +6,7 @@ import {
   admitSteer,
   interaction as interactionRules,
   queue as queueRules,
+  runtimeStateWire,
   statusAfterTurn,
   type QueueAttachment,
   type QueueMode,
@@ -13,11 +14,12 @@ import {
   type SessionQueue,
   type TimelineDraft,
 } from '../domain/conversation/index.js'
-import { checkRequest as checkGoalRequest, initialGoalState, observe as observeGoal, type GoalRequest } from '../domain/goals/index.js'
+import { checkRequest as checkGoalRequest, goalWire, initialGoalState, observe as observeGoal, type GoalRequest, type GoalState } from '../domain/goals/index.js'
 import {
   finalize as finalizePlan,
   initialPlanning,
   observeMode,
+  planningWire,
   requireReview,
   setReviewStatus,
   type PlanningState,
@@ -28,6 +30,7 @@ import type {
   ChangeFeed,
   Clock,
   CommandReceipt,
+  ConfigOption,
   ConversationStore,
   IdSource,
   LiveEvents,
@@ -103,6 +106,25 @@ export interface CreateSessionCommand {
   content: string
   attachments?: AttachmentRef[]
   takeover?: boolean
+  /** v2 `/plan`: the first message runs in plan mode; the mode is switched on before it is sent. */
+  planningIntent?: CreationIntent | null
+  /** v2 `/goal`: the first message is the session goal's objective, not a prompt. */
+  goalIntent?: CreationIntent | null
+}
+
+/** `planningIntent` / `goalIntent` of `session.creation.begin` (runtime-workflows 1.2). */
+export interface CreationIntent {
+  readonly mode: 'plan' | 'goal'
+  readonly operationId: string
+}
+
+/** How `handOff` opens a new Runtime session; kept with the delivery (`PendingDelivery.open`) across a restart. */
+interface OpenSpec {
+  readonly cwd: string
+  readonly title?: string
+  readonly selections?: Record<string, string | null>
+  readonly planningIntent?: CreationIntent
+  readonly goalIntent?: CreationIntent
 }
 
 export type SendResult =
@@ -421,6 +443,15 @@ export class ConversationService {
 
   /** `session.creation.begin`: the Server allocated the id; the device creates the Conversation and sends the first message. */
   public async createSession(command: CreateSessionCommand, context: CommandContext): Promise<SendResult> {
+    if (command.planningIntent != null && command.goalIntent != null) throw new UseCaseError('invalid_argument', 'A new session takes a planning intent or a goal intent, not both.')
+    if (command.goalIntent != null && command.content.trim() === '') throw new UseCaseError('invalid_argument', 'The goal of a new session cannot be empty.')
+    const open: OpenSpec = {
+      cwd: command.cwd,
+      ...(command.title != null ? { title: command.title } : {}),
+      ...(command.selections !== undefined ? { selections: command.selections } : {}),
+      ...(command.planningIntent != null ? { planningIntent: command.planningIntent } : {}),
+      ...(command.goalIntent != null ? { goalIntent: command.goalIntent } : {}),
+    }
     return this.serial(command.sessionId, async () => {
       const at = this.deps.clock.nowIso()
       await this.deps.store.sessions.create({
@@ -445,14 +476,14 @@ export class ConversationService {
         pending: {
           content: command.content,
           attachments: (command.attachments ?? []) as unknown as Record<string, unknown>[],
-          open: { cwd: command.cwd, ...(command.title != null ? { title: command.title } : {}), ...(command.selections !== undefined ? { selections: command.selections } : {}) },
+          open,
         },
         commandId: context.commandId,
         receipt: withResult(context.receipt, { sessionId: command.sessionId, delivery: 'accepted', clientMessageId: command.clientMessageId }),
         at,
       })
       if (received.duplicate) return { delivery: 'duplicate', clientMessageId: command.clientMessageId, state: received.delivery.state }
-      this.handOff(command.sessionId, command.clientMessageId, command.content, command.attachments ?? [], { cwd: command.cwd, ...(command.title != null ? { title: command.title } : {}), ...(command.selections !== undefined ? { selections: command.selections } : {}) })
+      this.handOff(command.sessionId, command.clientMessageId, command.content, command.attachments ?? [], open)
       return { delivery: 'accepted', clientMessageId: command.clientMessageId }
     })
   }
@@ -513,18 +544,48 @@ export class ConversationService {
    * The Runtime hand-off of an accepted delivery, after the ack (and again after a restart, from what the
    * delivery kept). `open` creates the Runtime session first (`session.creation.begin`).
    */
-  private handOff(sessionId: string, clientMessageId: string, content: string, refs: AttachmentRef[], open?: { cwd: string; title?: string; selections?: Record<string, string | null> }): void {
+  private handOff(sessionId: string, clientMessageId: string, content: string, refs: AttachmentRef[], open?: OpenSpec): void {
     void this.serial(sessionId, async () => {
       try {
         if (open !== undefined && !this.bindings.has(sessionId)) {
           const binding = await this.open(sessionId, open)
           this.bindings.set(sessionId, binding)
         }
+        if (open?.goalIntent !== undefined) {
+          await this.deliverGoal(sessionId, clientMessageId, content)
+          return
+        }
+        if (open?.planningIntent !== undefined) await this.enterPlanForCreation(sessionId)
         await this.deliver(sessionId, clientMessageId, content, refs)
       } catch (error) {
         await this.failDelivery(sessionId, clientMessageId, content, error)
       }
     })
+  }
+
+  /**
+   * `/plan` on a new session (v2 `prepare_creation`): plan mode is on before the first message goes out; a
+   * Runtime without a planning mode, or a switch that fails, rejects the message instead of sending it plainly.
+   */
+  private async enterPlanForCreation(sessionId: string): Promise<void> {
+    const binding = await this.binding(sessionId)
+    if (binding.session.planning === undefined) throw new UseCaseError('planning_unavailable', 'This Runtime has no planning mode.')
+    await binding.session.planning.setMode('plan')
+    await this.savePlanning(sessionId, observeMode(await this.planningOf(sessionId), 'plan'))
+  }
+
+  /**
+   * `/goal` on a new session (v2 `prepare_goal_creation`): the first message becomes the goal's objective and
+   * is not sent as a prompt; the Runtime works toward the goal on its own.
+   */
+  private async deliverGoal(sessionId: string, clientMessageId: string, objective: string): Promise<void> {
+    const binding = await this.binding(sessionId)
+    const port = binding.session.goal
+    if (port === undefined) throw new UseCaseError('goal_unavailable', 'This Runtime has no session goal.')
+    await this.deps.store.deliveries.transition(sessionId, clientMessageId, 'sending', { at: this.deps.clock.nowIso() })
+    await port.set(objective.trim())
+    await this.deps.store.deliveries.transition(sessionId, clientMessageId, 'started', { at: this.deps.clock.nowIso() })
+    await this.onGoalUpdated(sessionId, (await port.get()) as unknown as Record<string, unknown> | null)
   }
 
   /**
@@ -678,6 +739,41 @@ export class ConversationService {
     })
   }
 
+  /**
+   * v2 `session.selections.update`: `{model, permission, ...}` by catalog type, applied one after another (a
+   * null value keeps the current choice). Answers v2's result: `updated`, `applied` (false when a change
+   * waits for the next turn), the values applied and the runtime `state` with the selections after them.
+   */
+  public async updateSelections(sessionId: string, selections: Readonly<Record<string, string | boolean | null>>): Promise<Record<string, unknown>> {
+    const entries = Object.entries(selections).filter((entry): entry is [string, string | boolean] => entry[1] !== null && entry[1] !== undefined)
+    if (Object.keys(selections).length === 0) throw new UseCaseError('invalid_argument', 'selections is required')
+    return this.serial(sessionId, async () => {
+      await this.requireSession(sessionId)
+      const changed: Record<string, string> = {}
+      let options: readonly ConfigOption[] | null = null
+      let applied = true
+      if (entries.length > 0) {
+        const binding = await this.binding(sessionId)
+        for (const [optionId, value] of entries) {
+          const result = await binding.session.configure({ optionId, value })
+          options = result.options
+          if (result.appliesFrom !== 'now') applied = false
+          changed[optionId] = String(value)
+        }
+        this.emitSessionStatus(sessionId, { event: 'config.updated', options: (options ?? []) as unknown as Record<string, unknown>[] })
+      }
+      const session = await this.requireSession(sessionId)
+      return {
+        updated: true,
+        applied,
+        sessionId,
+        externalSessionId: session.externalSessionId,
+        selections: changed,
+        state: runtimeStateWire(session, { ...selectionsOf(options ?? []), ...changed }),
+      }
+    })
+  }
+
   public async interrupt(sessionId: string): Promise<{ interrupted: boolean }> {
     const session = await this.requireSession(sessionId)
     const binding = this.bindings.get(sessionId) ?? await this.binding(sessionId)
@@ -824,9 +920,17 @@ export class ConversationService {
         default:
           throw new UseCaseError('invalid_argument', `unknown planning command ${request.command}`)
       }
-      const result = { operationId: request.operationId, revision: state.revision }
+      // A v2 `PlanningResponse` (`CommandAck.r`), the body the secure channel returns as is; the state is the one saved.
+      const result = {
+        operationId: request.operationId,
+        outcome: 'applied',
+        ok: true,
+        ...(request.command === 'approve_and_execute' ? { execution: 'accepted' } : {}),
+        state: planningWire(state),
+      }
       const commit = await this.deps.store.planning.save(state, null, withResult(receipt, result))
       this.publish(commit)
+      this.emitPlanning(sessionId, state)
       return result
     })
   }
@@ -844,23 +948,48 @@ export class ConversationService {
     })
     if (!result.changed) return
     this.publish(await this.deps.store.planning.save(result.state, result.document))
-    this.emitSessionStatus(sessionId, { event: 'planning.state.updated', revision: result.state.revision })
+    this.emitPlanning(sessionId, result.state)
   }
 
   public async onPlanningMode(sessionId: string, mode: 'plan' | 'normal'): Promise<void> {
-    const state = await this.planningOf(sessionId)
-    const next = observeMode(state, mode)
-    if (next !== state) this.publish(await this.deps.store.planning.save(next, null))
+    await this.savePlanning(sessionId, observeMode(await this.planningOf(sessionId), mode))
+  }
+
+  /** Saves a changed planning state (no new document) and tells the session's subscribers. */
+  private async savePlanning(sessionId: string, next: PlanningState): Promise<void> {
+    const current = await this.deps.store.planning.load(sessionId)
+    if (current !== null && JSON.stringify(current) === JSON.stringify(next)) return
+    this.publish(await this.deps.store.planning.save(next, null))
+    this.emitPlanning(sessionId, next)
+  }
+
+  /**
+   * `planning.state.updated` / `goal.state.updated` on `runtime.status` (device-meshcall 1.0 `RuntimeStatusEvent`):
+   * the v2 event name and the client-shaped state, both inside `status`.
+   */
+  private emitPlanning(sessionId: string, state: PlanningState): void {
+    this.emitSessionStatus(sessionId, { event: 'planning.state.updated', revision: state.revision, state: planningWire(state) })
+  }
+
+  private emitGoal(sessionId: string, state: GoalState, takeover: boolean): void {
+    this.emitSessionStatus(sessionId, { event: 'goal.state.updated', revision: state.revision, state: goalWire(state, takeover) })
   }
 
   public async goal(sessionId: string, request: GoalRequest, receipt?: CommandReceipt | null): Promise<Record<string, unknown>> {
     return this.serial(sessionId, async () => {
       const session = await this.requireSession(sessionId)
-      const state = (await this.deps.store.goals.load(sessionId)) ?? initialGoalState({ sessionId, runtime: session.runtimeType, runtimeId: session.runtimeId, sourceEpoch: this.deps.ids.newId('ep_') })
-      checkGoalRequest(state, request)
       const binding = await this.binding(sessionId)
       const port = binding.session.goal
       if (port === undefined) throw new UseCaseError('runtime_capability_unsupported', 'This Runtime has no session goal.')
+      let state = await this.deps.store.goals.load(sessionId)
+      if (state === null || state.freshness !== 'fresh') {
+        // Nothing observed yet (a client acted on the capabilities alone): the native goal first, so the
+        // request is checked against what the Runtime really has.
+        await this.onGoalUpdated(sessionId, (await port.get()) as unknown as Record<string, unknown> | null)
+        state = await this.deps.store.goals.load(sessionId)
+      }
+      state ??= initialGoalState({ sessionId, runtime: session.runtimeType, runtimeId: session.runtimeId, sourceEpoch: this.deps.ids.newId('ep_') })
+      checkGoalRequest(state, request)
       switch (request.action) {
         case 'set':
         case 'edit':
@@ -878,13 +1007,14 @@ export class ConversationService {
       }
       const observed = await port.get()
       // The goal state the Runtime reported commits with the receipt (when it changed; otherwise nothing local did).
-      await this.onGoalUpdated(sessionId, observed as unknown as Record<string, unknown> | null, revision => withResult(receipt, { operationId: request.operationId, revision }))
-      const saved = await this.deps.store.goals.load(sessionId)
-      return { operationId: request.operationId, revision: saved?.revision ?? state.revision }
+      // A v2 `GoalResponse` (`CommandAck.r`), the body the secure channel returns as is.
+      const resultOf = (saved: GoalState) => ({ operationId: request.operationId, outcome: 'applied', ok: true, state: goalWire(saved, session.takeover) })
+      await this.onGoalUpdated(sessionId, observed as unknown as Record<string, unknown> | null, saved => withResult(receipt, resultOf(saved)))
+      return resultOf((await this.deps.store.goals.load(sessionId)) ?? state)
     })
   }
 
-  public async onGoalUpdated(sessionId: string, wire: Record<string, unknown> | null, receiptFor?: (revision: number) => CommandReceipt | null): Promise<void> {
+  public async onGoalUpdated(sessionId: string, wire: Record<string, unknown> | null, receiptFor?: (state: GoalState) => CommandReceipt | null): Promise<void> {
     const session = await this.requireSession(sessionId)
     const state = (await this.deps.store.goals.load(sessionId)) ?? initialGoalState({ sessionId, runtime: session.runtimeType, runtimeId: session.runtimeId, sourceEpoch: this.deps.ids.newId('ep_') })
     const native = (wire?.goal ?? null) as Record<string, unknown> | null
@@ -899,8 +1029,8 @@ export class ConversationService {
       empty: native === null,
     }, { newId: () => this.deps.ids.newId('goal_'), now: this.deps.clock.nowIso() })
     if (next.revision !== state.revision || JSON.stringify(next) !== JSON.stringify(state)) {
-      this.publish(await this.deps.store.goals.save(next, receiptFor?.(next.revision) ?? null))
-      this.emitSessionStatus(sessionId, { event: 'goal.state.updated', revision: next.revision })
+      this.publish(await this.deps.store.goals.save(next, receiptFor?.(next) ?? null))
+      this.emitGoal(sessionId, next, session.takeover)
     }
   }
 
@@ -946,6 +1076,7 @@ export class ConversationService {
       const state = await this.planningOf(sessionId)
       const result = finalizePlan(state, { nativeId: event.plan.planId, text: event.plan.markdown, turnId: event.turnId ?? null, at, nativeReview: { noticeId: event.interactionId }, reviewActions: ['approve_and_execute', 'request_revision', 'dismiss_review'] })
       this.publish(await this.deps.store.planning.save(result.state, result.document))
+      this.emitPlanning(sessionId, result.state)
     }
     if (event.kind === 'approval') await this.patchSession(sessionId, { status: 'waiting_approval' })
     this.deps.live.emit('runtime.notice.updated', { sessionId, notice })
@@ -1048,4 +1179,16 @@ export class ConversationService {
   public isBound(sessionId: string): boolean {
     return this.bindings.has(sessionId)
   }
+}
+
+/** Catalog selections (`{model, permission, ...}`) the Runtime's configuration options currently hold. */
+function selectionsOf(options: readonly ConfigOption[]): Record<string, string> {
+  const selections: Record<string, string> = {}
+  for (const option of options) {
+    if (option.type !== 'select' || typeof option.currentValue !== 'string') continue
+    if (option.category === 'model' || option.category === 'permission' || option.category === 'effort' || option.category === 'mode') {
+      selections[option.category] ??= option.currentValue
+    }
+  }
+  return selections
 }

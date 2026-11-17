@@ -56,6 +56,10 @@ export const REGISTERED_SERVICES = {
       "readBlob",
       "exportShare",
       "planDocument"
+    ],
+    "aa.device.v1.Workspace": [
+      "call",
+      "terminalOutput"
     ]
   },
   "required": {

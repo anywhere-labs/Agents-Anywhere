@@ -96,6 +96,10 @@ DEVICE_MESHCALL = Contract(
         _a("command-status-request", dl.CommandStatusRequest),
         _a("command-status-response", dl.CommandStatusResponse),
         _a("send-message-command", dl.SendMessageCommand),
+        _a("workspace-call-request", dl.WorkspaceCallRequest),
+        _a("workspace-call-response", dl.WorkspaceCallResponse),
+        _a("terminal-output-request", dl.TerminalOutputRequest),
+        _a("terminal-output-item", dl.TerminalOutputItem),
     ),
     carriage=dl.MESHCALL_PROTOCOL,
 )
@@ -188,6 +192,7 @@ CONTRACTS = (DEVICE_MESHCALL, E2EE, PREVIEW, PROTOCOL_1_2)
 RO = {"idempotent": True, "read_only": True, "destructive": False}
 MUTATES = {"idempotent": True, "read_only": False, "destructive": False}
 DUPLEX = {"idempotent": False, "read_only": False, "destructive": False}
+ONCE = {"idempotent": False, "read_only": False, "destructive": False}
 
 
 @dataclass(frozen=True)
@@ -277,10 +282,22 @@ MESH_SERVICES: tuple[tuple[str, str, tuple[MeshMethod, ...]], ...] = (
     (
         "Runtime",
         "Runtime catalogs.",
-        (MeshMethod("catalogs", "Model and permission catalogs.", dl.MethodPayload, dl.MethodPayload,
-                    annotations=RO),),
+        (MeshMethod("catalogs", "Model, permission and slash command catalogs of a session.", dl.MethodPayload,
+                    dl.MethodPayload, annotations=RO),),
     ),
     ("Commands", "State-changing intents with durable receipts.", _commands()),
+    (
+        "Workspace",
+        "Normal mode only: the device's files, terminals and shell, as the v2 workspace methods.",
+        (
+            MeshMethod("call", "One v2 workspace method (WORKSPACE_METHODS) with its v2 params and result. "
+                       "Not retried: writes, terminal input and shell commands are among them.",
+                       dl.WorkspaceCallRequest, dl.WorkspaceCallResponse, annotations=ONCE),
+            MeshMethod("terminalOutput", "Opening subscribes to a terminal's output, cancelling unsubscribes; "
+                       "a scrollback replay first, then output in order, then the exit.",
+                       dl.TerminalOutputRequest, output_item=dl.TerminalOutputItem, annotations=RO),
+        ),
+    ),
     (
         "Secure",
         "E2EE required mode only: opaque Noise channels between a client and this device.",

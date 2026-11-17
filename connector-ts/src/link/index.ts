@@ -52,3 +52,20 @@ export {
   type LinkState,
 } from './device-link.js'
 export { secureChannelVia, type SecureChannelFrame, type SecureChannelHubLike, type SecureChannelLike, type SecureChannelWire } from './secure.js'
+export { MAX_COMMAND_CATALOGS, SessionCommandCatalog, type SessionCommand } from './session-commands.js'
+export {
+  TERMINAL_OUTPUT_ITEM_BYTES,
+  TERMINAL_POLL_MS,
+  TerminalWatchers,
+  WORKSPACE_METHODS,
+  workspaceCall,
+  type TerminalEventSink,
+  type TerminalOutputItem,
+  type TerminalOutputRequest,
+  type TerminalSource,
+  type WorkspaceCallRequest,
+  type WorkspaceCallResponse,
+  type WorkspaceHandler,
+  type WorkspaceMethod,
+  type WorkspaceServiceDeps,
+} from './workspace.js'

@@ -10,6 +10,7 @@ import { openStoreWorker, inProcessStore, openSqliteStore, type RemoteStore } fr
 import { DeviceReaders, DeviceTunnelApi, MemoryChangeFeed, OutboxSignal, capabilitySet, plainSealer, type RuntimeFacts, type SessionFacts } from '../sync/index.js'
 import { AttachmentCache, FileOps, RootPolicy, ShellOps, Terminals, nodePtySpawner, rootsFromEnv, workspaceMethods } from '../workspace/index.js'
 import { importLegacyV2 } from './legacy-import.js'
+import { announceRuntimes, applyDesiredRuntimes, runtimeControlCommands } from './runtime-control.js'
 import { builtinProviders, nativeSessionId, RuntimeRegistry, type RuntimeInstanceSpec } from './runtimes.js'
 import { DeviceTrust, openSealedUpload, type DeviceTrustOptions } from './trust.js'
 
@@ -99,11 +100,15 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
       track?.store(store)
       let link: DeviceLink | null = null
       const sessionFacts = new SessionFactsHub()
+      const outboxSignal = new OutboxSignal()
       // Session facts also go to the session's channel subscribers; attach drops them in encrypted mode.
       const live: LiveEvents = {
         emit: (method, payload) => {
           if (typeof payload.sessionId === 'string') sessionFacts.publish(payload.sessionId, method, payload)
           link?.attach.emit(method, payload)
+          // `session.status` follows a commit that queued `session.summary`; a commit without timeline changes (a
+          // turn that ended) wakes no feed subscriber, so the outbox is told here.
+          if (method === 'runtime.status' && (payload.status as { event?: unknown } | undefined)?.event === 'session.status') outboxSignal.poke()
         },
       }
       const feed = new MemoryChangeFeed()
@@ -140,7 +145,6 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
           connectorVersion: options.connectorVersion,
           os: process.platform,
         })
-        const outboxSignal = new OutboxSignal()
         const attachments = new AttachmentCache(join(options.dataDir, 'attachments'), deviceAttachmentFetcher(settings.serverUrl, handshake, egress), openSealedUpload, {
           // The file is on disk: the Server may drop its staged copy (06-protocols.md §5).
           onStored: async ({ sessionId, fileId, sha256 }) => {
@@ -172,15 +176,15 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
             const session = await store.sessions.get(sessionId)
             if (session === null) return null
             const bound = conversation.boundSession(sessionId)
-            if (bound !== null) return capabilitySet(bound.capabilities, { runtime: session.runtimeId, sessionId })
+            if (bound !== null) return capabilitySet(bound.capabilities, { runtime: session.runtimeType, sessionId })
             const handle = await runtimes.started(session.runtimeId)
-            return handle === null || handle === undefined ? null : capabilitySet(handle.capabilities(), { runtime: session.runtimeId, sessionId: null })
+            return handle === null || handle === undefined ? null : capabilitySet(handle.capabilities(), { runtime: session.runtimeType, sessionId: null })
           },
           selections: sessionId => history.nativeSelections(sessionId),
           catalogs: async sessionId => {
             const session = await store.sessions.get(sessionId)
             const handle = session === null ? null : await runtimes.started(session.runtimeId)
-            return handle === null || handle === undefined ? null : ((await handle.catalogs().catch(() => null)) as Record<string, unknown> | null)
+            return handle === null || handle === undefined ? null : ((await handle.catalogs(sessionId).catch(() => null)) as Record<string, unknown> | null)
           },
         }
         if (options.legacyDataDir !== false) {
@@ -193,7 +197,9 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
           }).catch(error => log('warn', `v2 import failed: ${message(error)}`))
         }
         await conversation.recover()
-        const inbox = new CommandInbox(store, clock, conversation, options.commands ?? {})
+        // Runtime Control 3.0 (runtime.apply, channel.switch, device.settings.apply); a host's own handlers win.
+        const control = runtimeControlCommands({ registry: runtimes, deviceSettings: settings => hooks.deviceSettings(settings) })
+        const inbox = new CommandInbox(store, clock, conversation, { ...control, ...(options.commands ?? {}) })
         const readers = new DeviceReaders(store, clock.nowIso, facts, history)
         const watch = { store, feed, now: clock.nowIso }
         const workspace = workspaceMethods(files, new ShellOps(policy), terminals ?? undefined)
@@ -244,6 +250,14 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
               find: blobLookup({ blobs: store.blobs, attachment: (sessionId, fileId) => attachments.find(sessionId, fileId) }),
               upload: deviceTransferUploader(settings.serverUrl, handshake, egress),
             },
+            // Normal mode: the same workspace handlers as the secure channel, as `aa.device.v1.Workspace`.
+            workspace: {
+              methods: workspace,
+              ...(terminals !== null ? { terminals } : {}),
+              preparedFile: params => files.preparedFile(params),
+              upload: deviceTransferUploader(settings.serverUrl, handshake, egress),
+              onUploadError: (transferId, error) => log('warn', `file download ${transferId} failed: ${message(error)}`),
+            },
             ...(deviceTrust !== null ? { secure: deviceTrust.secure } : {}),
           },
           egress,
@@ -253,11 +267,11 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
             await deviceTrust?.declareServerMode(welcome.e2eeMode)
             const settingsFromServer = welcome.desired?.deviceSettings
             if (settingsFromServer !== undefined && settingsFromServer !== null) hooks.deviceSettings(settingsFromServer)
-            runtimes.apply(welcome.desired?.runtimes ?? [])
+            await applyDesiredRuntimes(runtimes, welcome.desired, log)
           },
           onState: state => {
             options.log('info', `device link ${state}`)
-            if (state === 'online') void announceRuntimes(runtimes, live, options.scanOnStart !== false ? scans : null, log)
+            if (state === 'online') void announceRuntimes(runtimes, live, log, options.scanOnStart !== false ? spec => void scans.now(spec.runtimeId) : undefined)
           },
         })
         options.onLink?.(link)
@@ -359,31 +373,6 @@ class RuntimeScans {
   }
 }
 
-/** Every instance's installation facts as `runtime.status` (lossy; sent again whenever the link is online). */
-async function announceRuntimes(runtimes: RuntimeRegistry, live: LiveEvents, scans: RuntimeScans | null, log: Log): Promise<void> {
-  try {
-    for (const { spec, facts, error } of await runtimes.discover()) {
-      live.emit('runtime.status', {
-        runtimeId: spec.runtimeId,
-        status: {
-          runtimeType: spec.runtimeType,
-          enabled: spec.enabled,
-          installed: facts?.installed ?? false,
-          ...(facts !== null ? { displayName: facts.displayName, instancePolicy: facts.instancePolicy, processScope: facts.processScope, problems: facts.problems } : {}),
-          ...(facts?.agentVersion !== undefined ? { agentVersion: facts.agentVersion } : {}),
-          ...(facts?.adapterVersion !== undefined ? { adapterVersion: facts.adapterVersion } : {}),
-          ...(facts?.extraVersions !== undefined ? { extraVersions: facts.extraVersions } : {}),
-          ...(facts?.configSchema !== undefined ? { configSchema: facts.configSchema } : {}),
-          ...(error !== null ? { error: { code: 'runtime_discovery_failed', message: error } } : {}),
-        },
-      })
-      if (scans !== null && spec.enabled && facts?.installed === true && facts.problems.length === 0) void scans.now(spec.runtimeId)
-    }
-  } catch (error) {
-    log('warn', `runtime discovery failed: ${message(error)}`)
-  }
-}
-
 interface RuntimeEventContext {
   readonly spec: RuntimeInstanceSpec
   readonly handle: RuntimeHandle
@@ -404,7 +393,7 @@ function runtimeEvent(context: RuntimeEventContext): void {
       live.emit('runtime.status', { runtimeId: spec.runtimeId, status: { state: event.status, ...(event.error !== undefined ? { error: event.error } : {}) } })
       return
     case 'capabilities.changed':
-      live.emit('runtime.status', { runtimeId: spec.runtimeId, status: { event: 'capabilities.changed' }, capabilities: capabilitySet(event.capabilities, { runtime: spec.runtimeId, sessionId: null }) as Record<string, unknown> })
+      live.emit('runtime.status', { runtimeId: spec.runtimeId, status: { event: 'capabilities.changed' }, capabilities: capabilitySet(event.capabilities, { runtime: spec.runtimeType, sessionId: null }) as Record<string, unknown> })
       return
     case 'catalogs.changed':
       live.emit('runtime.status', { runtimeId: spec.runtimeId, status: { event: 'catalogs.changed', catalogs: event.catalogs as Record<string, unknown> } })

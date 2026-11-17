@@ -18,8 +18,13 @@ from agent_server.core.runtime_workflows import (
     is_reservation_rejection,
     reservation_rejection,
 )
+from agent_server.infra.connector_rpc import ConnectorRpcError
 from agent_server.services.device_runtimes import DeviceRuntimeService
 from agent_server.services.runtime_workflow_ports import WorkflowRepository
+
+# Errors a v3 device (or the v2 RPC bridge in front of it) gives for a method device-meshcall 1.0 does
+# not carry: a definite "not on this device", never an upstream failure.
+UNSUPPORTED_DEVICE_METHOD_CODES = frozenset({"device_method_unsupported", "method_not_found", "unimplemented"})
 
 
 class WorkflowError(RuntimeError):
@@ -71,10 +76,8 @@ class RuntimeWorkflowService:
         )
         if runtime.status != "running":
             raise WorkflowError("runtime_not_running", "请先启动 Runtime。")
-        capabilities = await self.rpc.request(
-            payload.connectorId,
-            "runtime.capabilities",
-            {"runtime": runtime.runtimeType, "runtimeId": runtime.runtimeId},
+        capabilities = await self._runtime_capabilities(
+            payload.connectorId, runtime.runtimeType, runtime.runtimeId
         )
         if not any(
             item.get("capabilityId") == "runtime.workspace.prepare"
@@ -264,12 +267,21 @@ class RuntimeWorkflowService:
         await self.runtimes.get_runtime(
             row["connector_id"], row["runtime_id"], user_id=row["user_id"]
         )
-        result = await self.rpc.request(
-            row["connector_id"],
-            method,
-            {"runtime": row["runtime_type"], "runtimeId": row["runtime_id"], **values},
-            timeout=20,
-        )
+        try:
+            result = await self.rpc.request(
+                row["connector_id"],
+                method,
+                {"runtime": row["runtime_type"], "runtimeId": row["runtime_id"], **values},
+                timeout=20,
+            )
+        except ConnectorRpcError as error:
+            if error.code in UNSUPPORTED_DEVICE_METHOD_CODES:
+                raise WorkflowError(
+                    "workflow_unsupported",
+                    "这台设备的 Connector 不支持该操作，请改用直接新建会话或升级设备。",
+                    409,
+                ) from error
+            raise
         if not isinstance(result, dict):
             raise WorkflowError(
                 "invalid_runtime_response", "Runtime 返回的操作结果无效。", 502
@@ -287,6 +299,25 @@ class RuntimeWorkflowService:
                 ) from error
         return result
 
+    async def _runtime_capabilities(
+        self, connector_id: str, runtime_type: str, runtime_id: str
+    ) -> dict[str, Any]:
+        """``{capabilitySet}`` of an instance.
+
+        v3 devices have no ``runtime.capabilities`` method: the set is the one the device reported
+        (``DeviceRuntimeService.runtime_capabilities``). A device that does not declare
+        ``runtime.workspace.prepare`` there gets ``workflow_unsupported`` and clients create directly.
+        """
+
+        if await self.runtimes.is_v3_device(connector_id):
+            return {"capabilitySet": await self.runtimes.runtime_capabilities(connector_id, runtime_id)}
+        result = await self.rpc.request(
+            connector_id,
+            "runtime.capabilities",
+            {"runtime": runtime_type, "runtimeId": runtime_id},
+        )
+        return result if isinstance(result, dict) else {}
+
     async def _refresh(
         self, row: dict[str, Any], *, user_id: str, begin: bool
     ) -> WorkflowView:
@@ -302,7 +333,9 @@ class RuntimeWorkflowService:
                     request["preparationId"], user_id=user_id, kind="preparation"
                 )
                 if "planningIntent" in request:
-                    capabilities = await self._call(row, "runtime.capabilities", {})
+                    capabilities = await self._runtime_capabilities(
+                        row["connector_id"], row["runtime_type"], row["runtime_id"]
+                    )
                     if not any(
                         item.get("capabilityId") == "session.planning"
                         and item.get("supported") and item.get("available") and item.get("allowed")

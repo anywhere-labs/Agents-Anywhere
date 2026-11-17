@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import secrets
 from typing import Any
 
@@ -30,6 +32,7 @@ from agent_server.core.models import (
 from agent_server.core.utc import utc_now
 from agent_server.deps import (
     current_user_id,
+    get_device_reads,
     get_rpc,
     get_store,
     get_terminal_broker,
@@ -42,6 +45,7 @@ from agent_server.infra.repositories.facade import Store
 from agent_server.infra.terminal_broker import TerminalBroker, TerminalRelayError
 from agent_server.infra.terminal_roots import TerminalRootStore
 from agent_server.services.connector_rpc import ConnectorUpstreamError
+from agent_server.services.device_reads import DeviceReadService
 from agent_server.services.terminal import (
     TerminalService,
     TerminalServiceError,
@@ -428,6 +432,7 @@ async def connector_terminal_resize_v2(
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
     relay: TerminalRelayService = Depends(get_terminal_relay_service),
+    reads: DeviceReadService = Depends(get_device_reads),
 ) -> RpcResponsePayload:
     await require_owned_online_connector(connector_id, user_id, db, manager)
     try:
@@ -435,6 +440,7 @@ async def connector_terminal_resize_v2(
             connector_id,
             terminal_id,
             {"type": "resize", "cols": payload.cols, "rows": payload.rows},
+            mesh=await reads.is_v3_device(connector_id),
         )
     except TerminalRelayError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
@@ -453,6 +459,7 @@ async def connector_terminal_write_v2(
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
     relay: TerminalRelayService = Depends(get_terminal_relay_service),
+    reads: DeviceReadService = Depends(get_device_reads),
 ) -> RpcResponsePayload:
     await require_owned_online_connector(connector_id, user_id, db, manager)
     data_base64 = payload.get("dataBase64")
@@ -460,7 +467,10 @@ async def connector_terminal_write_v2(
         raise HTTPException(status_code=422, detail="dataBase64 is required")
     try:
         result = await relay.request(
-            connector_id, terminal_id, {"type": "input", "data": data_base64}
+            connector_id,
+            terminal_id,
+            {"type": "input", "data": data_base64},
+            mesh=await reads.is_v3_device(connector_id),
         )
     except TerminalRelayError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
@@ -480,11 +490,15 @@ async def connector_terminal_snapshot_v2(
     manager: ConnectorRpcManager = Depends(get_rpc),
     terminal_roots: TerminalRootStore = Depends(get_terminal_roots),
     relay: TerminalRelayService = Depends(get_terminal_relay_service),
+    reads: DeviceReadService = Depends(get_device_reads),
 ) -> RpcResponsePayload:
     await require_owned_online_connector(connector_id, user_id, db, manager)
     try:
         result = await relay.request(
-            connector_id, terminal_id, {"type": "snapshot", "fromSeq": fromSeq}
+            connector_id,
+            terminal_id,
+            {"type": "snapshot", "fromSeq": fromSeq},
+            mesh=await reads.is_v3_device(connector_id),
         )
     except TerminalRelayError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
@@ -529,9 +543,18 @@ async def connector_terminal_stream_v2(
     manager: ConnectorRpcManager = websocket.app.state.rpc
     hub = websocket.app.state.terminal_stream_hub
     broker = websocket.app.state.terminal_broker
-    relay = TerminalRelayService(websocket.app.state.terminal_roots, manager, broker)
+    relay = TerminalRelayService(
+        websocket.app.state.terminal_roots,
+        manager,
+        broker,
+        getattr(websocket.app.state, "device_rpc_bridge", None),
+    )
+    reads: DeviceReadService = websocket.app.state.device_reads
 
     await websocket.accept()
+    if await reads.is_v3_device(connector_id):
+        await _terminal_stream_v3(websocket, relay, connector_id, terminal_id, fromSeq)
+        return
     await hub.attach(connector_id, terminal_id, websocket)
     try:
         try:
@@ -624,6 +647,72 @@ async def connector_terminal_stream_v2(
         pass
     finally:
         await hub.detach(connector_id, terminal_id, websocket)
+
+
+async def _terminal_stream_v3(
+    websocket: WebSocket,
+    relay: TerminalRelayService,
+    connector_id: str,
+    terminal_id: str,
+    from_seq: int,
+) -> None:
+    """A v3 device's terminal: its ``Workspace/terminalOutput`` stream, frame for frame, on this socket.
+
+    The same frames as the v2 relay (``replay``, ``output``, ``exit``); input and resizing go to the
+    device as ``terminal.write`` and ``terminal.resize``. The output stream lives as long as the socket;
+    when it fails the client gets an ``error`` frame and the socket closes.
+    """
+
+    async def send_error(exc: Exception) -> None:
+        code = getattr(exc, "status_code", 500)
+        detail = getattr(exc, "detail", str(exc))
+        with contextlib.suppress(Exception):
+            await websocket.send_json({"type": "error", "code": code, "message": str(detail)})
+
+    async def pump() -> None:
+        try:
+            async for frame in relay.output(connector_id, terminal_id, from_seq):
+                await websocket.send_json(frame)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - reported to the client, then the socket closes
+            await send_error(exc)
+            with contextlib.suppress(Exception):
+                await websocket.close(code=1011)
+
+    output = asyncio.create_task(pump(), name=f"terminal-output-{terminal_id}")
+    try:
+        while True:
+            message = await websocket.receive_json()
+            mtype = message.get("type")
+            if mtype == "input":
+                data_b64 = message.get("data")
+                if not isinstance(data_b64, str):
+                    continue
+                request: dict[str, Any] = {"type": "input", "data": data_b64}
+            elif mtype == "resize":
+                try:
+                    cols = int(message.get("cols") or 80)
+                    rows = int(message.get("rows") or 24)
+                except (TypeError, ValueError):
+                    continue
+                request = {"type": "resize", "cols": max(1, min(500, cols)), "rows": max(1, min(200, rows))}
+            elif mtype == "ping":
+                await websocket.send_json({"type": "pong"})
+                continue
+            else:
+                continue
+            try:
+                await relay.request(connector_id, terminal_id, request, mesh=True)
+            except Exception as exc:  # noqa: BLE001 - one failed write is reported, the socket stays
+                await send_error(exc)
+    except (WebSocketDisconnect, RuntimeError):
+        # RuntimeError: receiving after the output pump closed the socket.
+        pass
+    finally:
+        output.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await output
 
 
 @router.websocket("/{connector_id}/terminals/{terminal_id}/stream")

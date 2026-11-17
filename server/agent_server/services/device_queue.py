@@ -53,6 +53,9 @@ class DeviceQueueService:
         body = await self._reads.read_method(device_id, "session.queue", {"sessionId": session_id})
         if body is None:
             return empty_queue(session_id, device_offline=True)
+        # The device answers ``{queue: SessionQueueState}``, like its other session reads.
+        if isinstance(body.get("queue"), dict):
+            body = body["queue"]
         body.setdefault("sessionId", session_id)
         body.setdefault("revision", 0)
         body.setdefault("items", [])

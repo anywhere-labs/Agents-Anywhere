@@ -1177,7 +1177,7 @@
             "kind": "round_robin"
           },
           "deprecated": null,
-          "description": "Model and permission catalogs.",
+          "description": "Model, permission and slash command catalogs of a session.",
           "duplex_reason": null,
           "input_item": null,
           "name": "catalogs",
@@ -4773,6 +4773,176 @@
       "name": "aa.device.v1.Commands",
       "source_module": "agent_server.core.device_meshcall",
       "source_qualname": "CommandsService",
+      "targeted": true,
+      "version": "1"
+    },
+    {
+      "balance": {
+        "key": null,
+        "kind": "round_robin"
+      },
+      "description": "Normal mode only: the device's files, terminals and shell, as the v2 workspace methods.",
+      "methods": [
+        {
+          "annotations": {
+            "destructive": false,
+            "idempotent": false,
+            "read_only": false
+          },
+          "balance": {
+            "key": null,
+            "kind": "round_robin"
+          },
+          "deprecated": null,
+          "description": "One v2 workspace method (WORKSPACE_METHODS) with its v2 params and result. Not retried: writes, terminal input and shell commands are among them.",
+          "duplex_reason": null,
+          "input_item": null,
+          "name": "call",
+          "output_item": null,
+          "parameters": [
+            "method",
+            "params"
+          ],
+          "request": {
+            "module": "agent_server.core.device_meshcall",
+            "qualname": "WorkspaceCallRequest",
+            "schema": {
+              "description": "``Workspace/call``: one v2 workspace method; ``params`` is its v2 params object.",
+              "properties": {
+                "method": {
+                  "enum": [
+                    "fs.readDir",
+                    "fs.readText",
+                    "fs.writeFile",
+                    "fs.prepareDownload",
+                    "fs.uploadPreparedDownload",
+                    "terminal.create",
+                    "terminal.list",
+                    "terminal.rename",
+                    "terminal.setPersistent",
+                    "terminal.close",
+                    "terminal.write",
+                    "terminal.resize",
+                    "terminal.snapshot",
+                    "shell.exec"
+                  ],
+                  "title": "Method",
+                  "type": "string"
+                },
+                "params": {
+                  "additionalProperties": true,
+                  "title": "Params",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "method"
+              ],
+              "type": "object"
+            }
+          },
+          "response": {
+            "module": "agent_server.core.device_meshcall",
+            "qualname": "WorkspaceCallResponse",
+            "schema": {
+              "description": "The v2 result object of the method, unchanged.",
+              "properties": {
+                "result": {
+                  "additionalProperties": true,
+                  "title": "Result",
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "stream": "unary"
+        },
+        {
+          "annotations": {
+            "destructive": false,
+            "idempotent": true,
+            "read_only": true
+          },
+          "balance": {
+            "key": null,
+            "kind": "round_robin"
+          },
+          "deprecated": null,
+          "description": "Opening subscribes to a terminal's output, cancelling unsubscribes; a scrollback replay first, then output in order, then the exit.",
+          "duplex_reason": null,
+          "input_item": null,
+          "name": "terminalOutput",
+          "output_item": {
+            "module": "agent_server.core.device_meshcall",
+            "qualname": "TerminalOutputItem",
+            "schema": {
+              "description": "Item of ``Workspace/terminalOutput`` (the v2 terminal relay frames).\n\n* ``terminal.replay`` ``{terminalId, seq, dataBase64, terminal}``: the scrollback (up to 512 KiB)\n  ending at ``seq``. Always the first item; sent again when the reader fell behind the scrollback,\n  and the client then redraws from it.\n* ``terminal.output`` ``{terminalId, seq, dataBase64}``: output after the previous item, in order.\n* ``terminal.exited`` ``{terminalId, exitCode, reason}``: the process exited (``exit``), the\n  terminal was closed (``closed``) or expired; the stream ends after it.",
+              "properties": {
+                "m": {
+                  "enum": [
+                    "terminal.replay",
+                    "terminal.output",
+                    "terminal.exited"
+                  ],
+                  "title": "M",
+                  "type": "string"
+                },
+                "p": {
+                  "additionalProperties": true,
+                  "title": "P",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "m"
+              ],
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "fromSeq",
+            "sessionId",
+            "terminalId"
+          ],
+          "request": {
+            "module": "agent_server.core.device_meshcall",
+            "qualname": "TerminalOutputRequest",
+            "schema": {
+              "description": "``Workspace/terminalOutput``: opening subscribes to a terminal's output, cancelling unsubscribes.\n\n``sessionId`` is the scope the terminal was created in (``terminal.create``'s ``sessionId``).",
+              "properties": {
+                "fromSeq": {
+                  "default": 0,
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "title": "Fromseq",
+                  "type": "integer"
+                },
+                "sessionId": {
+                  "minLength": 1,
+                  "title": "Sessionid",
+                  "type": "string"
+                },
+                "terminalId": {
+                  "minLength": 1,
+                  "title": "Terminalid",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "terminalId",
+                "sessionId"
+              ],
+              "type": "object"
+            }
+          },
+          "response": null,
+          "stream": "server_stream"
+        }
+      ],
+      "name": "aa.device.v1.Workspace",
+      "source_module": "agent_server.core.device_meshcall",
+      "source_qualname": "WorkspaceService",
       "targeted": true,
       "version": "1"
     },

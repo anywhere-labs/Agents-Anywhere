@@ -150,6 +150,17 @@ export class AcpRuntimeSession implements RuntimeSession {
 
   get capabilities(): SessionCapabilities {
     const items: Capability[] = this.dialect.sessionCapabilities?.(this.options.info, this.config.options) ?? this.dialect.capabilities(this.options.info)
+    // A session whose configuration has a model or permission option can switch it (v2 acp/runtime.py: the
+    // session's `catalog.model` / `catalog.permission`); the Server checks these before `session.select`.
+    // A dialect that turned one off with a reason (DSH's direct route) keeps it off.
+    for (const category of ['model', 'permission'] as const) {
+      if (!this.config.options.some(option => option.category === category)) continue
+      const id = `catalog.${category}` as const
+      const index = items.findIndex(item => item.id === id)
+      const item = items[index]
+      if (item === undefined) items.push({ id, supported: true })
+      else if (item.supported !== true && item.unavailableReason === undefined) items[index] = { ...item, supported: true }
+    }
     return { revision: this.capabilityRevision, items }
   }
 

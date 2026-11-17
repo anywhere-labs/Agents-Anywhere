@@ -1,7 +1,7 @@
 import type { ConversationStore } from '../application/ports/index.js'
-import { PAGE_BUDGET, SNAPSHOT_LIMIT, eventCursor, queue as queueRules, toProtocolItem, type Interaction, type Session } from '../domain/conversation/index.js'
-import { goalWire } from '../domain/goals/index.js'
-import { planningWire } from '../domain/planning/index.js'
+import { PAGE_BUDGET, SNAPSHOT_LIMIT, eventCursor, queue as queueRules, runtimeStateWire, toProtocolItem, type Interaction, type Session } from '../domain/conversation/index.js'
+import { GOAL_ACTIONS, goalWire, unobservedGoalState } from '../domain/goals/index.js'
+import { initialPlanning, planningCapabilities, planningWire, type PlanDocument } from '../domain/planning/index.js'
 import type { ChangesSinceResponse } from '../generated/device-meshcall/v1_0/changes-since-response.js'
 import type { CommandStatusResponse } from '../generated/device-meshcall/v1_0/command-status-response.js'
 import type { StoreReadResponse } from '../generated/device-meshcall/v1_0/store-read-response.js'
@@ -123,28 +123,60 @@ export class DeviceReaders {
     return { sessionId: request.sessionId, notices: (await this.store.interactions.list(request.sessionId, true)).map(noticeOf) }
   }
 
+  /** The native report of an unopened session, overlaid with what an open session's Runtime has selected now. */
   private async selections(sessionId: string): Promise<Record<string, string> | null> {
-    return (await this.facts.selections?.(sessionId)) ?? null
+    const [native, catalogs] = await Promise.all([
+      this.facts.selections?.(sessionId) ?? Promise.resolve(null),
+      this.facts.catalogs(sessionId).catch(() => null),
+    ])
+    const live: Record<string, string> = {}
+    const current = catalogs?.selections
+    if (current !== null && typeof current === 'object') {
+      for (const [key, value] of Object.entries(current as Record<string, unknown>)) if (typeof value === 'string') live[key] = value
+    }
+    return native === null && Object.keys(live).length === 0 ? null : { ...(native ?? {}), ...live }
   }
 
   private state(session: Session, selections: Record<string, string> | null): Record<string, unknown> {
-    return {
-      sessionId: session.sessionId,
-      runtime: session.runtimeType,
-      runtimeId: session.runtimeId,
-      externalSessionId: session.externalSessionId,
-      status: session.status,
-      createdAt: session.createdAt,
-      updatedAt: session.lastActivityAt,
-      updatedSeq: session.clock.headSeq,
-      metadata: { activeTurnId: session.activeTurn?.turnId ?? null },
-      ...(selections !== null ? { selections } : {}),
-    }
+    return runtimeStateWire(session, selections)
   }
 
-  public async sessionState(request: { sessionId: string }): Promise<Record<string, unknown>> {
+  /** A session capability (`ProtocolCapabilitySet` item) the Runtime declares and can use now. */
+  private async capability(sessionId: string, capabilityId: string): Promise<Record<string, unknown> | null> {
+    const set = await this.facts.sessionCapabilities(sessionId).catch(() => null)
+    const items = Array.isArray(set?.capabilities) ? (set.capabilities as Record<string, unknown>[]) : []
+    const item = items.find(entry => entry.capabilityId === capabilityId)
+    return item !== undefined && item.supported === true && item.available !== false ? item : null
+  }
+
+  /** `PlanningState` in protocol 1.2, with the commands the session's capabilities allow. */
+  private async planningState(session: Session): Promise<Record<string, unknown>> {
+    const stored = await this.store.planning.load(session.sessionId)
+    const [modes, review] = await Promise.all([this.capability(session.sessionId, 'session.planning'), this.capability(session.sessionId, 'session.plan_review')])
+    const state = stored ?? initialPlanning(session.sessionId, session.runtimeType, '')
+    return { ...planningWire(state), runtimeId: session.runtimeId, capabilities: planningCapabilities({ modes: modes !== null, review: review !== null }) }
+  }
+
+  /** `GoalState` in protocol 1.2. Before the Runtime reported a goal, the actions its capabilities declare. */
+  private async goalState(session: Session): Promise<Record<string, unknown>> {
+    const stored = await this.store.goals.load(session.sessionId)
+    if (stored !== null) return goalWire(stored, session.takeover)
+    const capability = await this.capability(session.sessionId, 'session.goal')
+    const declared = (capability?.parameters as { actions?: unknown } | undefined)?.actions
+    const actions = capability === null ? null : Array.isArray(declared) ? declared.map(String) : [...GOAL_ACTIONS]
+    return goalWire(unobservedGoalState({ sessionId: session.sessionId, runtime: session.runtimeType, runtimeId: session.runtimeId, externalSessionId: session.externalSessionId }, actions), session.takeover)
+  }
+
+  /**
+   * `Sessions/state`: `part: "planning"` answers `{planning}`, `part: "goal"` answers `{goal}` (the v2 client
+   * shapes the Server validates); without `part`, the runtime state `{state}` together with both parts.
+   */
+  public async sessionState(request: { sessionId: string; part?: string | null }): Promise<Record<string, unknown>> {
     const session = await this.session(request.sessionId)
-    return { state: this.state(session, await this.selections(request.sessionId)) }
+    if (request.part === 'planning') return { planning: await this.planningState(session) }
+    if (request.part === 'goal') return { goal: await this.goalState(session) }
+    const [selections, planning, goal] = await Promise.all([this.selections(request.sessionId), this.planningState(session), this.goalState(session)])
+    return { state: this.state(session, selections), planning, goal }
   }
 
   public async capabilities(request: { sessionId: string }): Promise<Record<string, unknown>> {
@@ -162,12 +194,21 @@ export class DeviceReaders {
     return { sessionId: request.sessionId, catalogs: (await this.facts.catalogs(request.sessionId)) ?? {} }
   }
 
-  /** `store.planDocument`: an immutable plan revision, by id and version. */
-  public async planDocument(request: { sessionId: string; planId: string; revision: number }): Promise<Record<string, unknown>> {
+  /**
+   * `store.planDocument`: with `planId` and `revision`, that immutable revision as `{document}`; without
+   * `planId`, every revision as `{plans}`, newest first. A missing revision is `plan_document_not_found`.
+   */
+  public async planDocument(request: { sessionId: string; planId?: string | null; revision?: number | null }): Promise<Record<string, unknown>> {
     await this.session(request.sessionId)
-    const document = await this.store.planning.document(request.sessionId, request.planId, request.revision)
+    if (request.planId === undefined || request.planId === null || request.planId === '') {
+      const state = await this.store.planning.load(request.sessionId)
+      const documents = await Promise.all([...(state?.proposals ?? [])].reverse().map(meta => this.store.planning.document(request.sessionId, meta.planId, meta.revision)))
+      return { plans: documents.filter((document): document is PlanDocument => document !== null) }
+    }
+    const revision = Number(request.revision)
+    const document = Number.isInteger(revision) ? await this.store.planning.document(request.sessionId, request.planId, revision) : null
     if (document === null) {
-      const error = new Error(`plan ${request.planId} revision ${request.revision} not found`) as Error & { code: string }
+      const error = new Error(`plan ${request.planId} revision ${String(request.revision)} not found`) as Error & { code: string }
       error.code = 'plan_document_not_found'
       throw error
     }

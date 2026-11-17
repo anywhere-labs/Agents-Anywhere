@@ -212,3 +212,19 @@ export function goalWire(state: GoalState, allowControl: boolean): Record<string
     pendingOperationId: state.pendingOperationId,
   })
 }
+
+/**
+ * The goal of a session the Runtime has not reported on yet. `actions` are the goal actions the Runtime's
+ * capabilities declare (null: no goal support). With support the state reads as `fresh` without a goal, so a
+ * client may set the first one; the device observes the native goal before applying any action and answers a
+ * conflict when the native side already had one.
+ */
+export function unobservedGoalState(
+  input: { sessionId: string; runtime: string; runtimeId: string | null; externalSessionId: string | null },
+  actions: readonly string[] | null,
+): GoalState {
+  const initial = { ...initialGoalState({ ...input, sourceEpoch: '' }), externalSessionId: input.externalSessionId }
+  if (actions === null) return initial
+  const declared = GOAL_ACTIONS.filter(action => actions.includes(action))
+  return { ...initial, freshness: 'fresh', capabilities: { supported: true, actions: declared } }
+}

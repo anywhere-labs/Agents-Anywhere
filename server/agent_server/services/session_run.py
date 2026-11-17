@@ -7,7 +7,7 @@ import re
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, get_args
 from uuid import uuid4
 
 from agent_server.core.api_namespace import api_v2_path
@@ -1048,7 +1048,8 @@ def _runtime_state_from_selection_result(
                 "runtimeId": runtime_id,
                 "externalSessionId": raw_state.get("externalSessionId")
                 or session.externalSessionId,
-                "status": raw_state.get("status") or "idle",
+                # A v3 device also reports ``unknown`` (nothing heard from the Runtime yet).
+                "status": raw_state.get("status") if raw_state.get("status") in get_args(SessionStatus) else "idle",
                 "selections": raw_state.get("selections")
                 if isinstance(raw_state.get("selections"), dict)
                 else selections,

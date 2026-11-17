@@ -167,7 +167,7 @@ export class DshRuntime implements RuntimeHandle {
     return { revision: this.revision, items }
   }
 
-  async catalogs(): Promise<Catalogs> { return (await this.activeHandle()?.catalogs()) ?? {} }
+  async catalogs(sessionId?: string): Promise<Catalogs> { return (await this.activeHandle()?.catalogs(sessionId)) ?? {} }
 
   async listNativeSessions(cursor?: string): Promise<NativeSessionPage> {
     const host = this.hosts.at(-1)

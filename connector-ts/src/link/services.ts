@@ -9,6 +9,8 @@ import { defineService, type MethodDef } from '../mesh/index.js'
 import type { AttachHub } from './attach.js'
 import type { LocalBlob } from './blobs.js'
 import type { BlobTransfer, TransferUpload } from './device-files.js'
+import type { SessionCommand } from './session-commands.js'
+import { TerminalWatchers, workspaceCall, type WorkspaceServiceDeps } from './workspace.js'
 
 export const CONNECTION_METADATA = 'aa-connection-id'
 
@@ -50,7 +52,7 @@ export function callClass(serviceName: string, methodName: string): CallClass {
   if (CRITICAL.has(methodName)) return 'critical'
   if (serviceName === 'aa.device.v1.Secure') return 'secure'
   if (serviceName === 'aa.device.v1.Commands') return 'command'
-  if (['watch', 'snapshot', 'readBlob', 'exportShare'].includes(methodName)) return 'stream'
+  if (['watch', 'snapshot', 'readBlob', 'exportShare', 'terminalOutput'].includes(methodName)) return 'stream'
   return 'read'
 }
 
@@ -76,6 +78,10 @@ export interface DeviceServicesDeps {
     readonly find: (sessionId: string, blobRef: string) => Promise<LocalBlob | null>
     readonly upload: TransferUpload
   }
+  /** `aa.device.v1.Workspace` (normal mode): files, terminals and shell. Absent: not registered. */
+  readonly workspace?: WorkspaceServiceDeps
+  /** A session's slash commands for `Runtime/catalogs` (`catalogs.commands`); the link keeps them. */
+  readonly sessionCommands?: (sessionId: string) => readonly SessionCommand[]
 }
 
 
@@ -123,12 +129,15 @@ class Limiter {
  */
 export class DeviceServices {
   private readonly limiter: Limiter
+  private readonly terminalWatchers: TerminalWatchers | null
   private outboxController: AbortController | null = null
   /** Encrypted mode: command receipts reach the Server without their result body or error text. */
   private encrypted = false
 
   public constructor(private readonly deps: DeviceServicesDeps) {
     this.limiter = new Limiter({ ...DEFAULT_LIMITS, ...deps.limits })
+    // One per device: every `Workspace/terminalOutput` reader of a terminal shares its attach.
+    this.terminalWatchers = deps.workspace?.terminals !== undefined ? new TerminalWatchers(deps.workspace.terminals) : null
   }
 
   public inflight(kind: CallClass): number {
@@ -236,7 +245,11 @@ export class DeviceServices {
         return watchSession(this.deps.watch, { sessionId: sessionId(request), afterSeq: Number.isFinite(afterSeq) ? afterSeq : 0 }, context.signal)
       }),
       this.unary(S, 'notices', 'The current notices of a session.', async request => readers.notices({ sessionId: sessionId(request) })),
-      this.unary(S, 'state', 'Runtime state of a session.', async request => readers.sessionState({ sessionId: sessionId(request) })),
+      this.unary(S, 'state', 'Runtime state of a session, or one part of it (`planning`, `goal`).', async request => {
+        const part = request.part
+        if (part !== undefined && part !== null && part !== 'planning' && part !== 'goal') throw new MeshCallError('invalid_argument', 'part must be planning or goal')
+        return readers.sessionState({ sessionId: sessionId(request), ...(typeof part === 'string' ? { part } : {}) })
+      }),
       this.unary(S, 'capabilities', 'Effective capabilities of a session.', async request => readers.capabilities({ sessionId: sessionId(request) })),
       this.unary(S, 'queue', 'Queued messages of a session.', async request => readers.queue({ sessionId: sessionId(request) })),
     ]
@@ -284,7 +297,34 @@ export class DeviceServices {
   }
 
   private runtimeMethods(): MethodDef[] {
-    return [this.unary('aa.device.v1.Runtime', 'catalogs', 'Model, mode and command catalogs of a session.', async request => this.deps.readers.catalogs(request as never))]
+    return [this.unary('aa.device.v1.Runtime', 'catalogs', 'Model, permission and slash command catalogs of a session.', async request => {
+      const result = await this.deps.readers.catalogs(request as never)
+      const commands = this.deps.sessionCommands
+      if (commands === undefined || typeof request.sessionId !== 'string') return result
+      // `catalogs.commands`: the session's slash commands as the Runtime last reported them.
+      const catalogs = result.catalogs !== null && typeof result.catalogs === 'object' ? (result.catalogs as Record<string, unknown>) : {}
+      return { ...result, catalogs: { ...catalogs, commands: commands(request.sessionId) } }
+    })]
+  }
+
+  /**
+   * `aa.device.v1.Workspace` (normal mode only; encrypted mode runs the same handlers inside `Secure/channel`):
+   * `call` runs a whitelisted v2 workspace method, `terminalOutput` streams a terminal like the v2 relay.
+   */
+  private workspaceMethods(): MethodDef[] {
+    const S = 'aa.device.v1.Workspace'
+    const deps = this.deps.workspace
+    if (deps === undefined) return []
+    const watchers = this.terminalWatchers
+    return [
+      this.unary(S, 'call', 'One v2 workspace method (files, terminals, shell) with its v2 params and result; never retried.',
+        async request => workspaceCall(deps, request as never),
+        { readOnly: false, idempotent: false, request: z.looseObject({ method: z.string().min(1), params: z.looseObject({}).optional() }) }),
+      this.stream(S, 'terminalOutput', 'Opening subscribes to a terminal, cancelling unsubscribes: a scrollback replay, output in order, then the exit.', (request, context) => {
+        if (watchers === null) throw new MeshCallError('unimplemented', 'terminals are not available on this device')
+        return watchers.stream(request as never, context.signal)
+      }, { request: z.looseObject({ terminalId: z.string().min(1), sessionId: z.string().min(1), fromSeq: z.number().int().min(0).optional() }) }),
+    ]
   }
 
   private commandMethods(names: readonly string[]): MethodDef[] {
@@ -339,6 +379,7 @@ export class DeviceServices {
       'aa.device.v1.Store': () => this.storeMethods(),
       'aa.device.v1.Runtime': () => this.runtimeMethods(),
       'aa.device.v1.Commands': () => this.commandMethods(registration['aa.device.v1.Commands'] ?? []),
+      'aa.device.v1.Workspace': () => this.workspaceMethods(),
       'aa.device.v1.Secure': () => this.secureMethods(),
     }
     const services: object[] = []

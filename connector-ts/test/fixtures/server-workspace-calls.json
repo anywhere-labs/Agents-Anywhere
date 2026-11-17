@@ -1,0 +1,139 @@
+{
+  "calls": [
+    {
+      "method": "fs.writeFile",
+      "params": {
+        "content": "hello\n",
+        "encoding": "utf8",
+        "path": "{root}/notes/a.txt",
+        "root": "{root}",
+        "sessionId": "browse_{deviceId}"
+      }
+    },
+    {
+      "method": "fs.readDir",
+      "params": {
+        "path": "{root}/notes",
+        "root": "{root}",
+        "sessionId": "browse_{deviceId}"
+      }
+    },
+    {
+      "method": "fs.readText",
+      "params": {
+        "maxBytes": 1048576,
+        "path": "{root}/notes/a.txt",
+        "root": "{root}",
+        "sessionId": "browse_{deviceId}"
+      }
+    },
+    {
+      "method": "fs.prepareDownload",
+      "params": {
+        "path": "{root}/notes/a.txt",
+        "root": "{root}",
+        "sessionId": "browse_{deviceId}"
+      }
+    },
+    {
+      "method": "fs.uploadPreparedDownload",
+      "params": {
+        "path": "{root}/notes/a.txt",
+        "root": "{root}",
+        "sessionId": "browse_{deviceId}",
+        "token": "{token}",
+        "transferId": "{transferId}",
+        "uploadUrl": "/api/v3/device/transfers/{transferId}"
+      }
+    },
+    {
+      "method": "terminal.create",
+      "params": {
+        "args": [],
+        "cols": 100,
+        "command": null,
+        "cwd": "{root}",
+        "env": {},
+        "label": "Build",
+        "outputTransport": "relay",
+        "persistent": false,
+        "profile": null,
+        "root": "{root}",
+        "rows": 30,
+        "sessionId": "browse_{deviceId}",
+        "shell": null,
+        "terminalId": "{terminalId}"
+      }
+    },
+    {
+      "method": "terminal.list",
+      "params": {
+        "sessionId": "browse_{deviceId}"
+      }
+    },
+    {
+      "method": "terminal.rename",
+      "params": {
+        "label": "Renamed",
+        "sessionId": "browse_{deviceId}",
+        "terminalId": "{terminalId}"
+      }
+    },
+    {
+      "method": "terminal.setPersistent",
+      "params": {
+        "persistent": true,
+        "sessionId": "browse_{deviceId}",
+        "terminalId": "{terminalId}"
+      }
+    },
+    {
+      "method": "terminal.resize",
+      "params": {
+        "cols": 120,
+        "rows": 40,
+        "sessionId": "browse_{deviceId}",
+        "terminalId": "{terminalId}"
+      }
+    },
+    {
+      "method": "terminal.write",
+      "params": {
+        "dataBase64": "ZWNobyBoaQo=",
+        "sessionId": "browse_{deviceId}",
+        "terminalId": "{terminalId}"
+      }
+    },
+    {
+      "method": "terminal.snapshot",
+      "params": {
+        "fromSeq": 0,
+        "sessionId": "browse_{deviceId}",
+        "terminalId": "{terminalId}"
+      }
+    },
+    {
+      "method": "shell.exec",
+      "params": {
+        "command": "echo hi",
+        "cwd": "{root}",
+        "root": "{root}",
+        "sessionId": "browse_{deviceId}",
+        "timeoutMs": 5000
+      }
+    },
+    {
+      "method": "terminal.close",
+      "params": {
+        "sessionId": "browse_{deviceId}",
+        "terminalId": "{terminalId}"
+      }
+    }
+  ],
+  "comment": "Workspace/call requests the Server sends for the v2 routes (server/tests/test_device_workspace.py); replayed by connector-ts/test/link/workspace.test.ts.",
+  "terminalOutput": {
+    "fromSeq": 0,
+    "sessionId": "browse_{deviceId}",
+    "terminalId": "{terminalId}"
+  }
+}

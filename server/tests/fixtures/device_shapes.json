@@ -1,0 +1,337 @@
+{
+  "requests": {
+    "select": {
+      "sessionId": "sess_shape",
+      "runtime": "codex",
+      "runtimeId": "codex",
+      "selections": {
+        "model": "gpt-5-mini",
+        "permission": "auto"
+      },
+      "externalSessionId": "thr_sess_shape"
+    },
+    "creationPlan": {
+      "sessionId": "sess_shape_plan",
+      "runtimeId": "codex",
+      "runtimeType": "codex",
+      "cwd": "/repo",
+      "clientMessageId": "m_create_plan",
+      "content": "design the cache",
+      "takeover": true,
+      "planningIntent": {
+        "mode": "plan",
+        "operationId": "m_create_plan"
+      }
+    },
+    "creationGoal": {
+      "sessionId": "sess_shape_goal",
+      "runtimeId": "codex",
+      "runtimeType": "codex",
+      "cwd": "/repo",
+      "clientMessageId": "m_create_goal",
+      "content": "ship the release",
+      "takeover": true,
+      "goalIntent": {
+        "mode": "goal",
+        "operationId": "m_create_goal"
+      }
+    }
+  },
+  "select.result": {
+    "updated": true,
+    "applied": true,
+    "sessionId": "sess_shape",
+    "externalSessionId": "thr_sess_shape",
+    "selections": {
+      "model": "gpt-5-mini",
+      "permission": "auto"
+    },
+    "state": {
+      "sessionId": "sess_shape",
+      "runtime": "codex",
+      "runtimeId": "codex",
+      "externalSessionId": "thr_sess_shape",
+      "status": "idle",
+      "createdAt": "2026-11-16T00:00:00.000Z",
+      "updatedAt": "2026-11-16T00:00:00.000Z",
+      "updatedSeq": 0,
+      "metadata": {
+        "activeTurnId": null
+      },
+      "selections": {
+        "model": "gpt-5-mini",
+        "permission": "auto",
+        "effort": "medium"
+      }
+    }
+  },
+  "state.goal.unobserved": {
+    "goal": {
+      "sessionId": "sess_shape",
+      "runtime": "codex",
+      "runtimeId": "codex",
+      "externalSessionId": "thr_sess_shape",
+      "revision": 0,
+      "bindingGeneration": 0,
+      "sourceEpoch": "",
+      "sourceRevision": 0,
+      "freshness": "fresh",
+      "capabilities": {
+        "supported": true,
+        "actions": [
+          "set",
+          "pause",
+          "resume",
+          "clear"
+        ]
+      },
+      "goal": null,
+      "lastOutcome": null,
+      "pendingOperationId": null
+    }
+  },
+  "planning.result": {
+    "operationId": "op_plan_1",
+    "outcome": "applied",
+    "ok": true,
+    "state": {
+      "sessionId": "sess_shape",
+      "runtime": "codex",
+      "effectiveMode": "plan",
+      "requestedMode": null,
+      "freshness": "fresh",
+      "revision": 1,
+      "epoch": "ep_1",
+      "draft": null,
+      "proposal": null,
+      "review": null,
+      "operation": null,
+      "execution": null,
+      "executionProgress": null
+    }
+  },
+  "event.planning": {
+    "runtimeId": "codex",
+    "sessionId": "sess_shape",
+    "status": {
+      "event": "planning.state.updated",
+      "revision": 2,
+      "state": {
+        "sessionId": "sess_shape",
+        "runtime": "codex",
+        "effectiveMode": "plan",
+        "requestedMode": null,
+        "freshness": "fresh",
+        "revision": 2,
+        "epoch": "ep_1",
+        "draft": null,
+        "proposal": {
+          "planId": "plan_e394a29a6e510c34e883f305ddc6b64e",
+          "revision": 1,
+          "contentHash": "sha256:e1a702b299ac41840c4d77a19e595b03853538fdd932c8e794f66e515bb13934",
+          "title": "Plan",
+          "markdown": "# Plan\n\n- step one",
+          "sourceTurnId": "turn_1",
+          "contentState": "ready",
+          "createdAt": "2026-11-16T00:00:01.000Z"
+        },
+        "review": {
+          "reviewId": "review_c8f64a0496e94464dd0b5f7e9963a319",
+          "planId": "plan_e394a29a6e510c34e883f305ddc6b64e",
+          "planRevision": 1,
+          "contentHash": "sha256:e1a702b299ac41840c4d77a19e595b03853538fdd932c8e794f66e515bb13934",
+          "status": "open",
+          "actions": [
+            "approve_and_execute",
+            "request_revision",
+            "dismiss_review"
+          ]
+        },
+        "operation": null,
+        "execution": null,
+        "executionProgress": null
+      }
+    }
+  },
+  "state.planning": {
+    "planning": {
+      "sessionId": "sess_shape",
+      "runtime": "codex",
+      "effectiveMode": "plan",
+      "requestedMode": null,
+      "freshness": "fresh",
+      "revision": 2,
+      "epoch": "ep_1",
+      "draft": null,
+      "proposal": {
+        "planId": "plan_e394a29a6e510c34e883f305ddc6b64e",
+        "revision": 1,
+        "contentHash": "sha256:e1a702b299ac41840c4d77a19e595b03853538fdd932c8e794f66e515bb13934",
+        "title": "Plan",
+        "markdown": "# Plan\n\n- step one",
+        "sourceTurnId": "turn_1",
+        "contentState": "ready",
+        "createdAt": "2026-11-16T00:00:01.000Z"
+      },
+      "review": {
+        "reviewId": "review_c8f64a0496e94464dd0b5f7e9963a319",
+        "planId": "plan_e394a29a6e510c34e883f305ddc6b64e",
+        "planRevision": 1,
+        "contentHash": "sha256:e1a702b299ac41840c4d77a19e595b03853538fdd932c8e794f66e515bb13934",
+        "status": "open",
+        "actions": [
+          "approve_and_execute",
+          "request_revision",
+          "dismiss_review"
+        ]
+      },
+      "operation": null,
+      "execution": null,
+      "executionProgress": null,
+      "runtimeId": "codex",
+      "capabilities": {
+        "supported": true,
+        "actions": [
+          "enter_plan",
+          "exit_plan",
+          "approve_and_execute",
+          "request_revision",
+          "dismiss_review"
+        ],
+        "contentStreaming": "final_only",
+        "reason": null
+      }
+    }
+  },
+  "planDocument.list": {
+    "plans": [
+      {
+        "planId": "plan_e394a29a6e510c34e883f305ddc6b64e",
+        "revision": 1,
+        "contentHash": "sha256:e1a702b299ac41840c4d77a19e595b03853538fdd932c8e794f66e515bb13934",
+        "title": "Plan",
+        "markdown": "# Plan\n\n- step one",
+        "sourceTurnId": "turn_1",
+        "contentState": "ready",
+        "createdAt": "2026-11-16T00:00:01.000Z"
+      }
+    ]
+  },
+  "planDocument.one": {
+    "document": {
+      "planId": "plan_e394a29a6e510c34e883f305ddc6b64e",
+      "revision": 1,
+      "contentHash": "sha256:e1a702b299ac41840c4d77a19e595b03853538fdd932c8e794f66e515bb13934",
+      "title": "Plan",
+      "markdown": "# Plan\n\n- step one",
+      "sourceTurnId": "turn_1",
+      "contentState": "ready",
+      "createdAt": "2026-11-16T00:00:01.000Z"
+    }
+  },
+  "goal.result": {
+    "operationId": "op_goal_1",
+    "outcome": "applied",
+    "ok": true,
+    "state": {
+      "sessionId": "sess_shape",
+      "runtime": "codex",
+      "runtimeId": "codex",
+      "externalSessionId": null,
+      "revision": 1,
+      "bindingGeneration": 0,
+      "sourceEpoch": "ep_2",
+      "sourceRevision": 1,
+      "freshness": "fresh",
+      "capabilities": {
+        "supported": true,
+        "actions": [
+          "set",
+          "edit",
+          "pause",
+          "resume",
+          "clear"
+        ]
+      },
+      "goal": {
+        "objective": "ship it",
+        "status": "active",
+        "updatedAt": "2026-11-16T00:00:00.000Z",
+        "createdAt": "2026-11-16T00:00:00.000Z",
+        "id": "goal_3"
+      },
+      "lastOutcome": null,
+      "pendingOperationId": null
+    }
+  },
+  "event.goal": {
+    "runtimeId": "codex",
+    "sessionId": "sess_shape",
+    "status": {
+      "event": "goal.state.updated",
+      "revision": 1,
+      "state": {
+        "sessionId": "sess_shape",
+        "runtime": "codex",
+        "runtimeId": "codex",
+        "externalSessionId": null,
+        "revision": 1,
+        "bindingGeneration": 0,
+        "sourceEpoch": "ep_2",
+        "sourceRevision": 1,
+        "freshness": "fresh",
+        "capabilities": {
+          "supported": true,
+          "actions": [
+            "set",
+            "edit",
+            "pause",
+            "resume",
+            "clear"
+          ]
+        },
+        "goal": {
+          "objective": "ship it",
+          "status": "active",
+          "updatedAt": "2026-11-16T00:00:00.000Z",
+          "createdAt": "2026-11-16T00:00:00.000Z",
+          "id": "goal_3"
+        },
+        "lastOutcome": null,
+        "pendingOperationId": null
+      }
+    }
+  },
+  "state.goal": {
+    "goal": {
+      "sessionId": "sess_shape",
+      "runtime": "codex",
+      "runtimeId": "codex",
+      "externalSessionId": null,
+      "revision": 1,
+      "bindingGeneration": 0,
+      "sourceEpoch": "ep_2",
+      "sourceRevision": 1,
+      "freshness": "fresh",
+      "capabilities": {
+        "supported": true,
+        "actions": [
+          "set",
+          "edit",
+          "pause",
+          "resume",
+          "clear"
+        ]
+      },
+      "goal": {
+        "objective": "ship it",
+        "status": "active",
+        "updatedAt": "2026-11-16T00:00:00.000Z",
+        "createdAt": "2026-11-16T00:00:00.000Z",
+        "id": "goal_3"
+      },
+      "lastOutcome": null,
+      "pendingOperationId": null
+    }
+  }
+}

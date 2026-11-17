@@ -31,6 +31,8 @@ export interface AttachHubOptions {
   readonly onOpened?: (connectionId: string) => void
   /** It ended for `reason`; `cancelled` and `stalled` mean the device should call `ready` again. */
   readonly onEnded?: (connectionId: string, reason: AttachEnd) => void
+  /** Sees every emitted event, before the mode filter (the session command catalog keeps what it needs). */
+  readonly observe?: (method: string, payload: Record<string, unknown>) => void
 }
 
 function eventKey(method: string, payload: Record<string, unknown>): string {
@@ -82,6 +84,7 @@ export class AttachHub implements LiveEvents {
   }
 
   public emit(method: string, payload: Record<string, unknown>): void {
+    this.options.observe?.(method, payload)
     if (!this.passes(method, payload)) return
     const key = eventKey(method, payload)
     this.pending.delete(key)

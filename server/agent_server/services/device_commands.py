@@ -175,7 +175,7 @@ class DeviceCommandService:
         settled = await self._settle_ack(receipt, ack.outcome, ack.r, ack.e)
         live = {"r": ack.r, "e": ack.e.model_dump(mode="json") if ack.e is not None else None}
         if self._e2ee_settings().required:
-            live = scrub_for_e2ee("command.ack", live)
+            live = scrub_for_e2ee("command.ack", live, command=receipt["kind"])
         return self._finish(receipt, settled, replayed=False, live=live)
 
     async def _replay(self, receipt: dict[str, Any], *, kind: str, device_id: str, digest: str) -> CommandOutcome:
@@ -233,7 +233,7 @@ class DeviceCommandService:
     ) -> dict[str, Any] | None:
         if result is not None and self._e2ee_settings().required:
             # Defence in depth: in required mode a receipt keeps the outcome and error code only.
-            result = scrub_for_e2ee("command.result", result)
+            result = scrub_for_e2ee("command.result", result, command=receipt["kind"])
         return await self._store.settle_device_command(
             device_id=receipt["deviceId"],
             command_id=receipt["commandId"],

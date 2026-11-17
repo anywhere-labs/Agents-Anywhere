@@ -1,0 +1,30 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:terminal-output-item",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Item of ``Workspace/terminalOutput`` (the v2 terminal relay frames).\n\n* ``terminal.replay`` ``{terminalId, seq, dataBase64, terminal}``: the scrollback (up to 512 KiB)\n  ending at ``seq``. Always the first item; sent again when the reader fell behind the scrollback,\n  and the client then redraws from it.\n* ``terminal.output`` ``{terminalId, seq, dataBase64}``: output after the previous item, in order.\n* ``terminal.exited`` ``{terminalId, exitCode, reason}``: the process exited (``exit``), the\n  terminal was closed (``closed``) or expired; the stream ends after it.",
+  "properties": {
+    "m": {
+      "enum": [
+        "terminal.replay",
+        "terminal.output",
+        "terminal.exited"
+      ],
+      "title": "M",
+      "type": "string"
+    },
+    "p": {
+      "additionalProperties": true,
+      "title": "P",
+      "type": "object"
+    }
+  },
+  "required": [
+    "m"
+  ],
+  "title": "TerminalOutputItem",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

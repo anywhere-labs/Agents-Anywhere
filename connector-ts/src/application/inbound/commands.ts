@@ -5,7 +5,7 @@ import { GoalConflict, GoalInvalid } from '../../domain/goals/index.js'
 import { PlanningConflict, PlanningInvalid } from '../../domain/planning/index.js'
 import type { CommandAck } from '../../generated/device-meshcall/v1_0/command-ack.js'
 import type { CommandCall } from '../../generated/device-meshcall/v1_0/command-call.js'
-import { UseCaseError, type AttachmentRef, type ConversationService } from '../conversation-service.js'
+import { UseCaseError, type AttachmentRef, type ConversationService, type CreationIntent } from '../conversation-service.js'
 import type { Clock, CommandReceipt, CommandRecord, ConversationStore, InteractionAnswer } from '../ports/index.js'
 
 /**
@@ -85,10 +85,16 @@ export class CommandInbox {
       clientMessageId: text(p.clientMessageId, 'clientMessageId'),
       content: typeof p.content === 'string' ? p.content : '',
     }, context))
-    register('session.select', async p => service.select(text(p.sessionId, 'sessionId'), {
-      optionId: text(p.optionId ?? p.kind, 'optionId'),
-      value: typeof p.value === 'boolean' ? p.value : text(p.value ?? p.selectionId, 'value'),
-    }))
+    // The Server sends v2 `session.selections.update` here: `{selections: {model: ..., permission: ...}}`. A
+    // single `{optionId, value}` (the secure channel's route) is still accepted.
+    register('session.select', async p => {
+      const sessionId = text(p.sessionId, 'sessionId')
+      if (p.selections !== undefined) return service.updateSelections(sessionId, selectionsOf(p.selections))
+      return service.select(sessionId, {
+        optionId: text(p.optionId ?? p.kind, 'optionId'),
+        value: typeof p.value === 'boolean' ? p.value : text(p.value ?? p.selectionId, 'value'),
+      })
+    })
     register('session.interrupt', async p => service.interrupt(text(p.sessionId, 'sessionId')))
     register('session.respondNotice', async (p, context) => service.respondNotice(
       text(p.sessionId, 'sessionId'),
@@ -108,6 +114,8 @@ export class CommandInbox {
       content: typeof p.content === 'string' ? p.content : '',
       attachments: Array.isArray(p.attachments) ? (p.attachments as AttachmentRef[]) : [],
       ...(typeof p.takeover === 'boolean' ? { takeover: p.takeover } : {}),
+      planningIntent: intentOf(p.planningIntent, 'plan', 'planningIntent'),
+      goalIntent: intentOf(p.goalIntent, 'goal', 'goalIntent'),
     }, context)) }))
     register('session.planning', async (p, context) => service.planning(text(p.sessionId, 'sessionId'), {
       command: text(p.command, 'command'),
@@ -210,6 +218,25 @@ function ackOf(record: CommandRecord): CommandAck {
     outcome: 'rejected',
     e: record.error === null ? { code: 'unknown' } : { code: record.error.code, ...(record.error.message !== undefined ? { message: record.error.message } : {}), ...(record.error.retryable !== undefined ? { retryable: record.error.retryable } : {}) },
   }
+}
+
+/** `selections` of v2 `session.selections.update`: catalog type → selection id (null keeps the current one). */
+function selectionsOf(value: unknown): Record<string, string | boolean | null> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new UseCaseError('invalid_argument', 'selections must be an object')
+  const selections: Record<string, string | boolean | null> = {}
+  for (const [key, entry] of Object.entries(value)) {
+    if (entry !== null && typeof entry !== 'string' && typeof entry !== 'boolean') throw new UseCaseError('invalid_argument', `selection ${key} must be a string`)
+    selections[key] = entry
+  }
+  return selections
+}
+
+/** `planningIntent: {mode: "plan", operationId}` / `goalIntent: {mode: "goal", operationId}` of a creation. */
+function intentOf(value: unknown, mode: 'plan' | 'goal', field: string): CreationIntent | null {
+  if (value === undefined || value === null) return null
+  const intent = value as Record<string, unknown>
+  if (typeof value !== 'object' || (intent.mode !== undefined && intent.mode !== mode)) throw new UseCaseError('invalid_argument', `${field}.mode must be ${mode}`)
+  return { mode, operationId: text(intent.operationId, `${field}.operationId`) }
 }
 
 /** v2 notice responses: an action id (approval option), form input, or a cancellation. */

@@ -1,0 +1,298 @@
+{
+  "requests": {
+    "runtimeApply": {
+      "runtimeId": "rti_fixture",
+      "runtimeType": "claude",
+      "name": "Work",
+      "active": true,
+      "config": {
+        "claudeExecutable": "/opt/claude/bin/claude"
+      },
+      "revision": 0,
+      "modelGateway": {
+        "baseUrl": "https://gateway.example/v1",
+        "authToken": "sk-fixture",
+        "protocol": "anthropic"
+      }
+    },
+    "channelSwitch": {
+      "runtimeId": "rti_fixture",
+      "runtimeType": "claude",
+      "name": "Work",
+      "active": true,
+      "config": {
+        "claudeExecutable": "/opt/claude/bin/claude"
+      },
+      "revision": 0,
+      "modelGateway": {
+        "baseUrl": "https://gateway.example/v1",
+        "authToken": "sk-fixture",
+        "protocol": "anthropic"
+      },
+      "operationId": "op_switch_1",
+      "switchRevision": 3
+    },
+    "deviceSettingsApply": {
+      "settings": {
+        "confirmQuitOnShutdown": true
+      }
+    },
+    "runtimeApplyStop": {
+      "runtimeId": "rti_fixture",
+      "runtimeType": "claude",
+      "name": "Work",
+      "active": false,
+      "config": {
+        "claudeExecutable": "/opt/claude/bin/claude"
+      },
+      "revision": 0,
+      "modelGateway": {
+        "baseUrl": "https://gateway.example/v1",
+        "authToken": "sk-fixture",
+        "protocol": "anthropic"
+      }
+    }
+  },
+  "results": {
+    "runtimeApply": {
+      "runtimeId": "rti_work",
+      "status": "running",
+      "revision": 10,
+      "instanceId": "dp_fixture",
+      "capabilities": {
+        "revision": 1,
+        "capabilities": []
+      },
+      "modelConnection": {
+        "state": "applied",
+        "protocol": "anthropic",
+        "scope": "instance",
+        "mode": null,
+        "reason": null,
+        "externalOwner": null
+      }
+    },
+    "runtimeApplyStop": {
+      "runtimeId": "rti_work",
+      "status": "stopped",
+      "revision": 10,
+      "instanceId": "dp_fixture"
+    },
+    "channelSwitch": {
+      "runtimeId": "rti_work",
+      "status": "running",
+      "revision": 10,
+      "instanceId": "dp_fixture",
+      "capabilities": {
+        "revision": 1,
+        "capabilities": []
+      },
+      "modelConnection": {
+        "state": "applied",
+        "protocol": "anthropic",
+        "scope": "instance",
+        "mode": null,
+        "reason": null,
+        "externalOwner": null
+      }
+    },
+    "deviceSettingsApply": {
+      "applied": true
+    }
+  },
+  "deviceReports": {
+    "claudeDescriptor": {
+      "runtimeType": "claude",
+      "displayName": "Claude Code",
+      "description": null,
+      "available": true,
+      "reason": null,
+      "recommended": false,
+      "recommendationRank": null,
+      "implementationType": null,
+      "configSchema": {
+        "revision": 1,
+        "schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "cliPath": {
+              "type": "string",
+              "title": "本机 claude-agent-acp 路径（可选）",
+              "maxLength": 4096,
+              "metadata": {
+                "i18n": {
+                  "labelKey": "dashboard.device.runtimeConfigFields.agentCliPath.label"
+                }
+              }
+            },
+            "claudeExecutable": {
+              "type": "string",
+              "title": "本机 Claude Code 路径（可选）",
+              "maxLength": 4096
+            },
+            "modelGateway": {
+              "type": "object",
+              "title": "Model gateway",
+              "required": [
+                "baseUrl",
+                "apiKey"
+              ],
+              "properties": {
+                "baseUrl": {
+                  "type": "string",
+                  "title": "Gateway URL",
+                  "minLength": 1,
+                  "maxLength": 2048
+                },
+                "apiKey": {
+                  "type": "string",
+                  "title": "API key",
+                  "minLength": 1,
+                  "maxLength": 8192,
+                  "writeOnly": true
+                }
+              }
+            }
+          }
+        },
+        "uiSchema": {
+          "order": [
+            "cliPath",
+            "claudeExecutable",
+            "modelGateway"
+          ],
+          "fields": {
+            "modelGateway": {
+              "component": "modelGateway"
+            }
+          }
+        },
+        "defaults": {},
+        "metadata": {}
+      },
+      "capabilities": {},
+      "metadata": {
+        "processScope": "shared"
+      },
+      "instancePolicy": "multiple",
+      "maxInstances": null,
+      "modelConnection": {
+        "maturity": "beta",
+        "configField": "modelGateway",
+        "protocols": [
+          "anthropic"
+        ],
+        "modes": [],
+        "scope": "instance",
+        "catalog": {
+          "auto": false,
+          "manual": true
+        },
+        "apply": "restart"
+      }
+    },
+    "runtimeTypes": {
+      "runtimeId": "*",
+      "status": {
+        "event": "runtime.types",
+        "runtimeTypes": [
+          {
+            "runtimeType": "claude",
+            "displayName": "Claude Code",
+            "description": null,
+            "available": true,
+            "reason": null,
+            "recommended": false,
+            "recommendationRank": null,
+            "implementationType": null,
+            "configSchema": {
+              "revision": 1,
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "cliPath": {
+                    "type": "string",
+                    "title": "本机 claude-agent-acp 路径（可选）",
+                    "maxLength": 4096,
+                    "metadata": {
+                      "i18n": {
+                        "labelKey": "dashboard.device.runtimeConfigFields.agentCliPath.label"
+                      }
+                    }
+                  },
+                  "claudeExecutable": {
+                    "type": "string",
+                    "title": "本机 Claude Code 路径（可选）",
+                    "maxLength": 4096
+                  },
+                  "modelGateway": {
+                    "type": "object",
+                    "title": "Model gateway",
+                    "required": [
+                      "baseUrl",
+                      "apiKey"
+                    ],
+                    "properties": {
+                      "baseUrl": {
+                        "type": "string",
+                        "title": "Gateway URL",
+                        "minLength": 1,
+                        "maxLength": 2048
+                      },
+                      "apiKey": {
+                        "type": "string",
+                        "title": "API key",
+                        "minLength": 1,
+                        "maxLength": 8192,
+                        "writeOnly": true
+                      }
+                    }
+                  }
+                }
+              },
+              "uiSchema": {
+                "order": [
+                  "cliPath",
+                  "claudeExecutable",
+                  "modelGateway"
+                ],
+                "fields": {
+                  "modelGateway": {
+                    "component": "modelGateway"
+                  }
+                }
+              },
+              "defaults": {},
+              "metadata": {}
+            },
+            "capabilities": {},
+            "metadata": {
+              "processScope": "shared"
+            },
+            "instancePolicy": "multiple",
+            "maxInstances": null,
+            "modelConnection": {
+              "maturity": "beta",
+              "configField": "modelGateway",
+              "protocols": [
+                "anthropic"
+              ],
+              "modes": [],
+              "scope": "instance",
+              "catalog": {
+                "auto": false,
+                "manual": true
+              },
+              "apply": "restart"
+            }
+          }
+        ],
+        "features": [
+          "channelReconcileFence"
+        ]
+      }
+    }
+  }
+}

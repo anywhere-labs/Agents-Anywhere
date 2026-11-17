@@ -7,6 +7,7 @@ import {
   goalWire,
   initialGoalState,
   observe,
+  unobservedGoalState,
 } from '../../src/domain/goals/index.js'
 import {
   PlanningConflict,
@@ -16,6 +17,7 @@ import {
   planContentHash,
   planStateSummary,
   planTitle,
+  planningCapabilities,
   planningWire,
   requireReview,
   setReviewStatus,
@@ -104,5 +106,19 @@ describe('goals', () => {
   it('hides controls from callers that may not write', () => {
     expect((goalWire(fresh, false).capabilities as { actions: unknown[] }).actions).toEqual([])
     expect((goalWire(fresh, true).capabilities as { actions: unknown[] }).actions.length).toBe(5)
+  })
+})
+
+describe('states read before the Runtime reported anything', () => {
+  it('lists the planning commands the capabilities allow', () => {
+    expect(planningCapabilities({ modes: true, review: true }).actions).toEqual(['enter_plan', 'exit_plan', 'approve_and_execute', 'request_revision', 'dismiss_review'])
+    expect(planningCapabilities({ modes: false, review: true })).toMatchObject({ supported: true, actions: ['approve_and_execute', 'request_revision', 'dismiss_review'] })
+    expect(planningCapabilities({ modes: false, review: false })).toMatchObject({ supported: false, actions: [] })
+  })
+
+  it('offers the declared goal actions on a fresh empty goal, or nothing without support', () => {
+    const input = { sessionId: 's', runtime: 'codex', runtimeId: 'codex', externalSessionId: 'thr' }
+    expect(unobservedGoalState(input, ['set', 'clear', 'bogus'])).toMatchObject({ freshness: 'fresh', goal: null, externalSessionId: 'thr', capabilities: { supported: true, actions: ['set', 'clear'] } })
+    expect(unobservedGoalState(input, null)).toMatchObject({ freshness: 'unknown', capabilities: { supported: false, actions: [] } })
   })
 })

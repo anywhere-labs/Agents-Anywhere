@@ -8,18 +8,22 @@ stored settings once its socket is ready, so offline changes are not lost.
 from __future__ import annotations
 
 import asyncio
+import secrets
 from typing import Any, Protocol
 
 from loguru import logger
 
 from agent_server.core.device_settings import (
     DEVICE_SETTINGS_APPLY_METHOD,
+    DEVICE_SETTINGS_COMMAND,
     ConnectorDeviceSettings,
     ConnectorDeviceSettingsPatch,
     apply_device_settings_patch,
+    device_settings_command_payload,
     device_settings_from_stored,
 )
 from agent_server.core.models import ConnectorView
+from agent_server.services.device_runtimes import device_commands_of
 
 # Delivery is a courtesy on top of the stored value; never hold a client
 # request or a connection's startup on a slow device for long.
@@ -74,8 +78,48 @@ async def update_device_settings(
     current = await get_device_settings(store, connector_id, user_id=user_id)
     settings = apply_device_settings_patch(current, patch)
     await store.update_connector_device_settings(connector_id, settings.model_dump())
-    delivered = await deliver_device_settings(requester, connector_id, settings)
+    link_contract = getattr(store, "connector_link_contract", None)
+    if link_contract is not None and await link_contract(connector_id):
+        delivered = await deliver_device_settings_v3(requester, connector_id, settings)
+    else:
+        delivered = await deliver_device_settings(requester, connector_id, settings)
     return settings, delivered
+
+
+async def deliver_device_settings_v3(
+    requester: Any,
+    connector_id: str,
+    settings: ConnectorDeviceSettings,
+    *,
+    commands: Any | None = None,
+) -> bool:
+    """v3 devices: the ``device.settings.apply`` command.
+
+    Offline (or the outcome unknown), the stored value still reaches the device in
+    ``LinkWelcome.desired.deviceSettings`` when it links again, so the change is never lost.
+    """
+    commands = commands or device_commands_of(requester)
+    if commands is None:
+        return False
+    try:
+        outcome = await commands.send(
+            user_id=None,
+            device_id=connector_id,
+            kind=DEVICE_SETTINGS_COMMAND,
+            command_id=f"ds_{secrets.token_urlsafe(16)}",
+            payload=device_settings_command_payload(settings),
+            timeout=DELIVERY_TIMEOUT_SECONDS,
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - offline, unknown outcome or a rejection
+        logger.info(
+            "device settings not delivered connector_id={} error={}",
+            connector_id,
+            getattr(exc, "code", None) or str(exc) or exc.__class__.__name__,
+        )
+        return False
+    return isinstance(outcome.result, dict) and outcome.result.get("applied") is True
 
 
 async def deliver_stored_device_settings(

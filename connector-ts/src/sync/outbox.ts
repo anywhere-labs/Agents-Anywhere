@@ -38,12 +38,19 @@ export async function outboxItem(record: OutboxRecord, sealer: DisplaySealer): P
 /** Wakes outbox streams when something was appended (commits, command receipts). */
 export class OutboxSignal {
   private readonly waiters = new Set<() => void>()
+  /** A poke while nobody waited (the stream was reading the outbox): the next wait returns at once. */
+  private missed = false
 
   public poke(): void {
+    if (this.waiters.size === 0) this.missed = true
     for (const waiter of [...this.waiters]) waiter()
   }
 
   public wait(signal: AbortSignal, timeoutMs: number): Promise<void> {
+    if (this.missed) {
+      this.missed = false
+      return Promise.resolve()
+    }
     return new Promise(resolve => {
       const done = (): void => {
         clearTimeout(timer)

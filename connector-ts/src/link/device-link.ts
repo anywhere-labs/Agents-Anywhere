@@ -18,6 +18,7 @@ import type { ConversationStore } from '../application/ports/index.js'
 import type { LinkWelcome } from '../generated/device-meshcall/v1_0/link-welcome.js'
 import type { OutboxSignal } from '../sync/index.js'
 import { AttachHub, type AttachEnd } from './attach.js'
+import { SessionCommandCatalog } from './session-commands.js'
 import { RouterBridge } from './bridge.js'
 import { HttpError } from './http.js'
 import { MESH_MAX_FRAME_BYTES, meshGrant, type ControlPlane, type MeshGrant } from './control-plane.js'
@@ -138,6 +139,8 @@ function linkRpcLogger(log: LinkLogger): RpcLogger {
 
 export class DeviceLink {
   public readonly attach: AttachHub
+  /** Each session's slash commands, from the Runtime's `commands.updated` facts (`Runtime/catalogs`). */
+  public readonly sessionCommands = new SessionCommandCatalog()
   private readonly services: DeviceServices
   private readonly log: LinkLogger
   private bridgeInstance: RouterBridge | null = null
@@ -159,8 +162,10 @@ export class DeviceLink {
       ...(options.timing?.stallMs !== undefined ? { stallMs: options.timing.stallMs } : {}),
       onOpened: connectionId => this.attachOpened(connectionId),
       onEnded: (connectionId, reason) => this.attachEnded(connectionId, reason),
+      observe: (method, payload) => this.sessionCommands.observe(method, payload),
     })
     this.services = new DeviceServices({
+      sessionCommands: sessionId => this.sessionCommands.get(sessionId),
       ...options.services,
       // Commits wake the outbox stream through the ChangeFeed; polling is only the fallback.
       outbox: { pollMs: OUTBOX_FALLBACK_POLL_MS, ...options.services.outbox },

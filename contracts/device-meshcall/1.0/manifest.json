@@ -247,6 +247,38 @@
       "pydanticMode": "validation",
       "sha256": "e7438ee659961434709a97ffbd7096696d4523022506a670470de6eb20656c71",
       "slug": "send-message-command"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "WorkspaceCallRequest",
+      "path": "schemas/workspace-call-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "49d48b91cd1385e40fbe3927e6c186a5e864200102a4b8d07d122efee12b37b8",
+      "slug": "workspace-call-request"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "WorkspaceCallResponse",
+      "path": "schemas/workspace-call-response.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "7ea19a39999cd893581483c221ca92eaff9959a00717abb91cdf2b4262fc6ea6",
+      "slug": "workspace-call-response"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "TerminalOutputRequest",
+      "path": "schemas/terminal-output-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "392d7c822aa9ce6375a1ccc3be30364cd7511c55da102e737a97a84d1e0dcce0",
+      "slug": "terminal-output-request"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "TerminalOutputItem",
+      "path": "schemas/terminal-output-item.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "274edb6d21cb44e241f05e7ebc211c32e80ca28f60de5a1f74f4040823ea0c88",
+      "slug": "terminal-output-item"
     }
   ],
   "carriage": "meshcall/1",
@@ -254,7 +286,7 @@
   "extras": [
     {
       "path": "device.meshcall.json",
-      "sha256": "d8aa3797de3301909f2870be3485bd08787d1ac627a0145b399bd36f52b101e9"
+      "sha256": "e4bcebaa41460c84340e4b7d070fa67c5a47f8a8a45a5f6d4c24f7e419937679"
     },
     {
       "path": "mesh-errors.json",
@@ -262,7 +294,7 @@
     },
     {
       "path": "e2ee-registration.json",
-      "sha256": "3d7d489c30843f530317dbcf5ef40eec4e33223f2537be47fbfba2b66b7f026a"
+      "sha256": "5b55a8e23d512b132503eeaf39d3b5f9fad4b27223bc874dd66f994c7932996c"
     }
   ],
   "jsonSchemaDraft": "https://json-schema.org/draft/2020-12/schema",

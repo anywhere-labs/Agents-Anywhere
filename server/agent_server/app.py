@@ -440,6 +440,8 @@ def create_app(
         e2ee_settings=_e2ee_settings,
     )
     app.state.device_link.event_listeners.append(app.state.previews.on_device_event)
+    app.state.device_link.event_listeners.append(app.state.device_runtime_service.on_device_event)
+    app.state.device_runtime_service.device_commands = app.state.device_commands
     app.state.device_link.presence_listeners.append(app.state.previews.on_presence)
     app.state.user_tokens = UserTokenService(app.state.store)
     app.state.setup_token = SetupToken()

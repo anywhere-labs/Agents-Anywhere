@@ -11,7 +11,11 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
+# v2 Connector RPC method (the v2 WebSocket only).
 DEVICE_SETTINGS_APPLY_METHOD = "connector.deviceSettings.apply"
+# v3 device command (contracts/device-meshcall/1.0 ``Commands/deviceSettingsApply``); deferrable: an
+# offline device gets the stored settings in ``LinkWelcome.desired.deviceSettings``.
+DEVICE_SETTINGS_COMMAND = "device.settings.apply"
 
 
 class ConnectorDeviceSettings(BaseModel):
@@ -50,3 +54,8 @@ def apply_device_settings_patch(
 ) -> ConnectorDeviceSettings:
     changes = patch.model_dump(exclude_none=True)
     return current.model_copy(update=changes)
+
+
+def device_settings_command_payload(settings: ConnectorDeviceSettings) -> dict[str, Any]:
+    """``device.settings.apply`` payload: the whole settings object, as ``LinkWelcome.desired`` has it."""
+    return {"settings": settings.model_dump()}

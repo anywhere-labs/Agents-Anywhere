@@ -124,6 +124,8 @@ jobs:
                   ;;
                 connector/*) connector=true; acp=true; server=true; plugin=true ;;
                 server/*) server=true; plugin=true ;;
+                # tests/test_v3_e2e.py runs the real TS Connector against the Server.
+                connector-ts/*) server=true ;;
                 web-next/*) web=true ;;
                 desktop-workbench/*) desktop=true ;;
               esac
@@ -311,6 +313,12 @@ jobs:
           git -C "$RUNNER_TEMP/meshcall" checkout -q 93344059ada65735c6cc08fdf3247ea9fb808d6b
           (cd "$RUNNER_TEMP/meshcall/meshcall-router" && CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/bin/meshcall-router" ./cmd/meshcall-router)
           echo "MESHCALL_ROUTER_BINARY=$RUNNER_TEMP/bin/meshcall-router" >> "$GITHUB_ENV"
+      - name: Set up Node and the TS Connector
+        # tests/test_v3_e2e.py runs the real TS Connector (and a fake ACP Agent) against the Server and Router.
+        uses: ./.github/actions/setup-yarn
+        with:
+          project: connector-ts
+          node-version: ${{ env.NODE_VERSION }}
       - name: Restore test dependency baseline
         if: github.event_name == 'workflow_dispatch' && inputs.server_mode != 'verify'
         uses: actions/cache/restore@v4

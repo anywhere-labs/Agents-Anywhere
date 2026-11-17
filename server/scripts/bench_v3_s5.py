@@ -44,7 +44,9 @@ import zlib
 from pathlib import Path
 from typing import Any
 
-SERVICES = tuple(f"aa.device.v1.{name}" for name in ("Link", "Sessions", "Store", "Runtime", "Commands", "Secure"))
+SERVICES = tuple(
+    f"aa.device.v1.{name}" for name in ("Link", "Sessions", "Store", "Runtime", "Commands", "Workspace", "Secure")
+)
 ROUTER_SERVICES = ("meshcall.router.v1.AuthService", "meshcall.router.v1.Registry")
 
 
@@ -185,7 +187,7 @@ async def server_mesh(router: RouterProcess):
 async def issue_device_token(mesh: Any, device_id: str, ttl: int = 900) -> Any:
     from meshcall import RouterScope
 
-    scopes = [RouterScope(service=name, register=True, instance_ids=[device_id]) for name in SERVICES[:5]]
+    scopes = [RouterScope(service=name, register=True, instance_ids=[device_id]) for name in SERVICES if not name.endswith(".Secure")]
     return await mesh.auth.issue_token(scopes, ttl_seconds=ttl)
 
 

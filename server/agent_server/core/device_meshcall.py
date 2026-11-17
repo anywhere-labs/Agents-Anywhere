@@ -23,7 +23,7 @@ Design rules encoded here:
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -451,6 +451,84 @@ class SendMessageCommand(DeviceModel):
     queue: Literal["never", "auto", "interrupt"] | None = None
 
 
+# ---------------------------------------------------------------------------
+# Workspace (normal mode only): the device's files, terminals and shell
+# ---------------------------------------------------------------------------
+#
+# ``Workspace/call`` carries the v2 workspace methods with their v2 params and results unchanged
+# (v2 ``connector/connector/server/local_rpc.py``), so the Server's v2 routes forward them as they are.
+# Terminal output is ``Workspace/terminalOutput``; file bytes never travel on MeshCall: a download is
+# ``fs.prepareDownload`` then ``fs.uploadPreparedDownload``, on which the device ``PUT``s the file to
+# ``/api/v3/device/transfers/{transferId}`` (the relay ``Store/readBlob`` uses). In E2EE ``required``
+# mode the service is not registered: the same methods run inside ``Secure/channel``.
+
+WorkspaceMethod = Literal[
+    "fs.readDir",
+    "fs.readText",
+    "fs.writeFile",
+    "fs.prepareDownload",
+    "fs.uploadPreparedDownload",
+    "terminal.create",
+    "terminal.list",
+    "terminal.rename",
+    "terminal.setPersistent",
+    "terminal.close",
+    "terminal.write",
+    "terminal.resize",
+    "terminal.snapshot",
+    "shell.exec",
+]
+#: What ``Workspace/call`` accepts; the device refuses anything else with ``invalid_argument``.
+#: ``shell.task.*`` stays out: its completion was a v2 notification that has no v3 carrier yet.
+WORKSPACE_METHODS: tuple[str, ...] = get_args(WorkspaceMethod)
+#: Methods that only read: an unknown outcome is ``device_read_timeout``; for the others it is
+#: ``command_outcome_unknown`` and the Server never retries them.
+WORKSPACE_READ_METHODS: frozenset[str] = frozenset(
+    {"fs.readDir", "fs.readText", "fs.prepareDownload", "terminal.list", "terminal.snapshot"}
+)
+#: Where a device ``PUT``s relayed bytes (``Store/readBlob``, ``fs.uploadPreparedDownload``); a path on the Server.
+DEVICE_TRANSFER_PATH = "/api/v3/device/transfers/{transfer_id}"
+
+
+class WorkspaceCallRequest(DeviceModel):
+    """``Workspace/call``: one v2 workspace method; ``params`` is its v2 params object."""
+
+    method: WorkspaceMethod
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkspaceCallResponse(DeviceModel):
+    """The v2 result object of the method, unchanged."""
+
+    result: dict[str, Any] = Field(default_factory=dict)
+
+
+class TerminalOutputRequest(DeviceModel):
+    """``Workspace/terminalOutput``: opening subscribes to a terminal's output, cancelling unsubscribes.
+
+    ``sessionId`` is the scope the terminal was created in (``terminal.create``'s ``sessionId``).
+    """
+
+    terminalId: NonEmpty
+    sessionId: NonEmpty
+    fromSeq: Seq = 0
+
+
+class TerminalOutputItem(DeviceModel):
+    """Item of ``Workspace/terminalOutput`` (the v2 terminal relay frames).
+
+    * ``terminal.replay`` ``{terminalId, seq, dataBase64, terminal}``: the scrollback (up to 512 KiB)
+      ending at ``seq``. Always the first item; sent again when the reader fell behind the scrollback,
+      and the client then redraws from it.
+    * ``terminal.output`` ``{terminalId, seq, dataBase64}``: output after the previous item, in order.
+    * ``terminal.exited`` ``{terminalId, exitCode, reason}``: the process exited (``exit``), the
+      terminal was closed (``closed``) or expired; the stream ends after it.
+    """
+
+    m: Literal["terminal.replay", "terminal.output", "terminal.exited"]
+    p: dict[str, Any] = Field(default_factory=dict)
+
+
 MeshShape = Literal["unary", "server_stream", "duplex"]
 
 
@@ -486,6 +564,9 @@ REQUEST_METHODS: dict[str, MeshRoute] = {
     # v2 critical-channel reads (#484): creation and workspace preparation progress.
     "session.creation.get": _r("Sessions", "creationGet"),
     "workspace.preparation.get": _r("Sessions", "workspacePreparationGet"),
+    # Normal mode only (not in ``E2EE_REQUEST_METHODS``): files, terminals and shell.
+    "workspace.call": _r("Workspace", "call"),
+    "workspace.terminalOutput": _r("Workspace", "terminalOutput", "server_stream"),
 }
 
 COMMAND_METHODS: tuple[str, ...] = (
@@ -522,10 +603,52 @@ COMMAND_METHODS: tuple[str, ...] = (
 DEFERRABLE_COMMANDS: frozenset[str] = frozenset({"runtime.apply", "device.settings.apply", "channel.switch"})
 
 
-def receipt_payload(method: str, payload: dict[str, Any] | None) -> dict[str, Any] | None:
-    """What a command receipt may store of the input: the payload of a deferrable command, else nothing."""
+# What a deferrable receipt keeps of its payload: identifiers and fences only. Instance config, the
+# model gateway and device settings may hold credentials, so they are never copied into a receipt;
+# a replay rebuilds them from the current desired state (``LinkWelcome.desired``).
+RECEIPT_PAYLOAD_FIELDS: dict[str, tuple[str, ...]] = {
+    "runtime.apply": ("runtimeId", "runtimeType", "name", "active", "revision"),
+    "channel.switch": ("runtimeId", "runtimeType", "name", "active", "revision", "operationId", "switchRevision"),
+    "device.settings.apply": (),
+}
+assert set(RECEIPT_PAYLOAD_FIELDS) == DEFERRABLE_COMMANDS
 
-    return payload if method in DEFERRABLE_COMMANDS else None
+
+def receipt_payload(method: str, payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    """What a command receipt may store of the input: the identifiers and fences of a deferrable
+    command (``RECEIPT_PAYLOAD_FIELDS``), else nothing."""
+
+    fields = RECEIPT_PAYLOAD_FIELDS.get(method)
+    if fields is None:
+        return None
+    payload = payload or {}
+    return {key: payload[key] for key in fields if key in payload}
+
+
+def replay_payload(
+    method: str,
+    stored: dict[str, Any] | None,
+    *,
+    runtimes: list[dict[str, Any]],
+    device_settings: dict[str, Any],
+) -> dict[str, Any] | None:
+    """The payload of a deferrable command replayed in ``LinkWelcome.pendingCommands``.
+
+    Built from the current desired state, so the device always gets the newest config (with its
+    ``revision``) and never a stale one; the receipt only contributes the instance and the fences.
+    ``None``: nothing left to apply (the instance was deleted).
+    """
+
+    stored = stored or {}
+    if method == "device.settings.apply":
+        return {"settings": device_settings}
+    if method not in ("runtime.apply", "channel.switch"):
+        return None
+    current = next((item for item in runtimes if item.get("runtimeId") == stored.get("runtimeId")), None)
+    if current is None:
+        return None
+    fences = {key: stored[key] for key in ("operationId", "switchRevision") if key in stored}
+    return {**current, **fences}
 
 
 # Status enums of ``r`` a receipt may keep (``session.planning``: whether execution started).
@@ -643,16 +766,30 @@ def registered_services(mode: E2eeMode) -> dict[str, list[str]]:
     return services
 
 
-def scrub_for_e2ee(method: str, payload: dict[str, Any]) -> dict[str, Any]:
+# What an encrypted-mode ack of a deferrable command keeps of ``r``: the instance status the Server
+# needs for its desired state, never free text.
+DEFERRABLE_RESULT_FIELDS: tuple[str, ...] = (
+    "runtimeId", "instanceId", "status", "revision", "stale", "capabilities", "modelConnection", "applied",
+)
+
+
+def scrub_for_e2ee(method: str, payload: dict[str, Any], *, command: str | None = None) -> dict[str, Any]:
     """Drop content a device must not send in ``required`` mode, before the Server stores or logs it.
 
     Defence in depth for E-1: a correct device already sends nothing here. Applies to outbox
     messages (``OUTBOX_METHODS``) and command receipts (``CommandAck``, ``CommandStatusResponse``).
+    ``command``: the receipt's command. The result of a deferrable command describes Server-owned desired
+    state, not conversation content: its ``DEFERRABLE_RESULT_FIELDS`` are kept.
     """
 
     out = dict(payload)
     if method in {"command.result", "command.ack", "command.status"}:
-        out["r"] = None
+        r = out.get("r")
+        out["r"] = (
+            {key: r[key] for key in DEFERRABLE_RESULT_FIELDS if key in r}
+            if command in DEFERRABLE_COMMANDS and isinstance(r, dict)
+            else None
+        )
         error = out.get("e")
         if isinstance(error, dict):
             out["e"] = {"code": error.get("code", "error"), "message": "", "retryable": bool(error.get("retryable"))}

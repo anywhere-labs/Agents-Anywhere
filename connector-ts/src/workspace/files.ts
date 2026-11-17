@@ -286,6 +286,19 @@ export class FileOps {
     return path
   }
 
+  /**
+   * The file a prepared download sends (`fs.uploadPreparedDownload`): checked like `prepareDownload`, readable, but
+   * not hashed again (the size is what the upload declares).
+   */
+  public async preparedFile(params: Params): Promise<{ path: string; size: number; mediaType: string }> {
+    const path = await this.preparedDownloadPath(params)
+    const { size } = await regularFile(path)
+    await access(path, constants.R_OK).catch((error: unknown) => {
+      throw fsError(error, path)
+    })
+    return { path, size, mediaType: mimeOf(path) ?? 'application/octet-stream' }
+  }
+
   /** The file in chunks of 256 KiB. Checked (exists, readable) before returning so a bad path fails the call. */
   public async openDownload(params: Params, signal?: AbortSignal): Promise<AsyncGenerator<Buffer>> {
     const path = await this.preparedDownloadPath(params)

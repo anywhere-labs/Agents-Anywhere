@@ -140,7 +140,10 @@ export class AcpRuntimeHandle implements RuntimeHandle {
     pool = new AgentPool<AcpConnection>({
       start: async () => {
         const connection = await options.connect(scope === '' ? undefined : { cwd: scope })
+        const known = this.info !== undefined
         this.info = connection.info
+        // The capabilities come from `initialize`: the first connection makes them known (Server's runtime capabilities).
+        if (!known) this.events.push({ type: 'capabilities.changed', capabilities: this.capabilities() })
         this.sessions.set(connection, new Set())
         for (const method of options.dialect.notificationMethods ?? []) {
           connection.client.onNotification(method, params => {
@@ -185,13 +188,21 @@ export class AcpRuntimeHandle implements RuntimeHandle {
     return { revision: 1, items }
   }
 
-  async catalogs(): Promise<Catalogs> {
-    const fromConfig = catalogsFromConfig(this.type, this.lastConfig, this.options.dialect.selections)
+  async catalogs(sessionId?: string): Promise<Catalogs> {
+    // The session's live configuration (it changes on every select), else the most recently opened one's.
+    const config = this.openSession(sessionId)?.configOptions ?? this.lastConfig
+    const fromConfig = catalogsFromConfig(this.type, config, this.options.dialect.selections)
     // acp/runtime.py `list_permission_catalog`
-    const items = this.options.permissionCatalog?.(this.lastConfig)
+    const items = this.options.permissionCatalog?.(config)
       ?? this.options.permissionOptions?.map(([value, title]) => ({ id: value, displayName: title, description: null, default: false, selectionId: value, metadata: {} }))
     if (!items?.length) return fromConfig
     return { ...fromConfig, permissions: { runtime: this.type, revision: 1, permissions: [...items] } }
+  }
+
+  private openSession(sessionId: string | undefined): AcpRuntimeSession | undefined {
+    if (sessionId === undefined) return undefined
+    for (const set of this.sessions.values()) for (const session of set) if (session.sessionId === sessionId) return session
+    return undefined
   }
 
   async listNativeSessions(cursor?: string): Promise<NativeSessionPage> {
@@ -335,7 +346,11 @@ export function catalogsFromConfig(runtime: string, options: readonly ConfigOpti
   const effort = options.find(o => o.category === 'effort' && o.type === 'select')
   const hidden = new Set(codec?.hiddenEfforts ?? [])
   const efforts = (effort?.values ?? []).filter(e => !hidden.has(e.value))
-  const selectionId = codec ? (m: string, e: string | null) => codec.modelSelectionId(m, e) : acpSelectionId
+  // acp/domain/catalogs.py: a model alone is its raw value; only a model with a reasoning effort is encoded
+  // (`decodeAcpSelection` rejects an encoded null effort).
+  const selectionId = codec
+    ? (m: string, e: string | null) => codec.modelSelectionId(m, e)
+    : (m: string, e: string | null) => (e === null ? m : acpSelectionId(m, e))
   const models: ProtocolModelCatalog = {
     runtime,
     revision: 1,
@@ -349,5 +364,11 @@ export function catalogsFromConfig(runtime: string, options: readonly ConfigOpti
     })),
   }
   const currentEffort = effort && !hidden.has(String(effort.currentValue)) ? String(effort.currentValue) : null
-  return { models, selections: { model: selectionId(String(model.currentValue), currentEffort) } }
+  // acp/application/sessions.py `state`: the current value of each model / permission / effort option.
+  const selections: Record<string, string> = { model: selectionId(String(model.currentValue), currentEffort) }
+  for (const category of ['permission', 'effort'] as const) {
+    const option = options.find(o => o.category === category && o.type === 'select')
+    if (typeof option?.currentValue === 'string') selections[category] = option.currentValue
+  }
+  return { models, selections }
 }

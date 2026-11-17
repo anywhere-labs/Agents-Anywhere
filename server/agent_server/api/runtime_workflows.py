@@ -20,6 +20,7 @@ from agent_server.deps import current_user_id, get_runtime_workflow_service
 from agent_server.infra.connector_rpc import ConnectorOfflineError, ConnectorRpcError
 from agent_server.services.device_runtimes import DeviceRuntimeError
 from agent_server.services.runtime_workflows import (
+    UNSUPPORTED_DEVICE_METHOD_CODES,
     RuntimeWorkflowService,
     WorkflowError,
 )
@@ -48,7 +49,17 @@ async def invoke(awaitable):
         ) from error
     except DeviceRuntimeError as error:
         raise HTTPException(error.status_code, error.detail) from error
-    except (ConnectorOfflineError, ConnectorRpcError, TimeoutError) as error:
+    except ConnectorRpcError as error:
+        if error.code in UNSUPPORTED_DEVICE_METHOD_CODES:
+            # The device does not carry this method (a v3 device): a definite answer, not a retry.
+            raise HTTPException(
+                409, {"code": "workflow_unsupported", "message": str(error)}
+            ) from error
+        raise HTTPException(
+            503,
+            {"code": error.code, "message": str(error), "queryBeforeRetry": True},
+        ) from error
+    except (ConnectorOfflineError, TimeoutError) as error:
         raise HTTPException(
             503,
             {

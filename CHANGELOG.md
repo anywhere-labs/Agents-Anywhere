@@ -6,6 +6,7 @@
 
 ### 升级须知
 
+- 不用 Compose、手动部署 MeshCall Router 的环境，升级 Server 后要重新执行一次 Router 的 `init-auth`，否则 v3 设备连不上；Compose 部署每次启动会自动重新生成，不用处理。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - Server 需要执行 `v2_64` 数据库迁移：操作记录里保存的消息原文、排队文本和计划反馈会被清除，只保留结果状态；之后用同一个操作重试时只返回是否成功，不再返回设备当时的完整结果。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - Server 需要执行 `v2_62` 数据库迁移，删除记录终端工作目录的表，改为保存在 Redis（未配置 Redis 时保存在 Server 进程内）；删除设备或运行环境时一并清理。升级时已打开的终端仍在设备上运行，但 Server 重新接入它时可能提示找不到终端，重新打开一个即可。（[#739](https://github.com/anywhere-labs/Agents-Anywhere/pull/739)）
 - 端口预览需要 Server 执行 `v2_61` 数据库迁移（只新增预览表），并配置单独注册的预览域名 `AGENT_SERVER_PREVIEW_DOMAIN`（不能是 AA 站点的子域名）和至少 32 个字符、只含字母和数字的随机 `AGENT_SERVER_PREVIEW_INTERNAL_TOKEN`（可用 `openssl rand -hex 32` 生成，它不再出现在请求路径和访问日志里）；预览域名要有通配符 DNS 记录和通配符证书（需要 DNS-01 验证，在网关前终止 TLS）。自托管 Compose 默认带上 frps 和 preview-auth，网关同时承载预览域名，填好这两项即开启；没有配置时端口预览在各端隐藏，其他功能不受影响。加密模式下预览流量不在端到端加密范围内，可用 `AGENT_SERVER_E2EE_PREVIEW=deny` 关闭。（[#734](https://github.com/anywhere-labs/Agents-Anywhere/pull/734)、[#735](https://github.com/anywhere-labs/Agents-Anywhere/pull/735)、[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
@@ -25,6 +26,7 @@
 ### 会话创建与消息交付
 
 - 连接 v3 Connector 的设备上：回答审批时选项无效不再让这一轮卡住，可以重新回答；附件文件缺失时发送会直接提示失败，之后还能继续发消息；Agent 进程意外退出不再让 Connector 一起崩溃；Hermes 和其他通用 ACP Agent 第二轮的回复不再覆盖上一轮的最后一条回复；Connector 在执行完操作、还没记下结果时重启，Server 重试同一操作不会再执行一次。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
+- 连接 v3 Connector 的设备上：会话里可以切换模型、权限和思考强度，模型和权限列表正常显示，刷新后显示当前的选择；计划和目标状态正常显示并可以操作，计划可以下载为 Markdown；用 `/plan`、`/goal` 开始的新会话会先进入规划或设置目标，不再被当成普通消息；接管电脑上已有的会话后可以排队发消息，设备离线时切换的接管开关会在设备上线后生效；电脑上的原始记录恢复后，「不可用」提示会消失；斜杠命令菜单可以列出和执行 Agent 提供的命令。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 设备上的 Connector 在收下消息、还没交给 Agent 时重启，重启后会接着发出这条消息，不再一直停在已接收却没有发出的状态。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 连接 v3 Connector 的设备上可以新建会话并发出第一条消息，带附件也可以；网络不稳重试时不会建出重复的会话，设备拒绝或离线时不留下空会话。（[#732](https://github.com/anywhere-labs/Agents-Anywhere/pull/732)）
 - 连接 v3 Connector 的设备上，运行中排队的消息改由设备保存和按序发出，Server 不再保存消息内容；设备离线时排队区显示为空并提示设备离线。（[#718](https://github.com/anywhere-labs/Agents-Anywhere/pull/718)）
@@ -51,6 +53,8 @@
 - 连接 v3 Connector 的电脑上，持续增长的长输出（如长时间运行的命令）在运行期间只保存预览，结束后才保存一份完整内容，不再留下几百份中间版本占用磁盘；内容被修改、删除后不再使用的文件会自动删除，启动时也会清理之前残留的文件。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 设备连接半断（连接还在但不再有心跳）时，所有 Server 实例会在一分钟内一致显示离线；设备上报的会话摘要遇到 Server 存储出错时由设备重发，不再丢失；设备删除本地数据或重装后重建的会话，新消息不会被客户端当成已经看过的旧消息；Connector 的本地存储意外退出时会停止并报错，不再整体卡住。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 系统钥匙串锁定或暂时不可用时，Connector 不再生成新密钥覆盖旧的（以前会导致设备身份和加密配对全部失效），第一次运行且没有可用钥匙串时改用仅本人可读的文件保存；密钥也不再出现在命令行参数里。端口预览只开放属于会话的端口；加密模式下端口通知不再带进程名和网址路径，普通模式下网址里的令牌参数也会被去掉。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
+- 连接 v3 Connector 的设备在不开启端到端加密时，也可以浏览、编辑、下载设备上的文件，使用终端（多标签、重连后补回输出）和执行 Shell 命令。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
+- 连接 v3 Connector 的设备上，可以看到可用的 Agent 类型，启用、停用 Agent 实例并修改配置、切换模型渠道和修改设备设置；设备离线时的修改会在设备上线后自动生效，不会被之前的旧修改覆盖。Agent 配置和模型密钥不再随操作记录保存在 Server 上。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 吊销设备凭据、删除设备或删除账号后，连接 v3 Connector 的设备会立即断开并显示离线，不再继续接收操作。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 加密模式下可以在工作设备上运行 `anywhere-cli pair-client` 显示配对二维码和链接（Desktop 等在运行时也可以）；已配对的客户端批准新客户端时，要在工作设备上确认（命令行询问或 Desktop 弹窗），超时或无人回答视为拒绝。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 设备配对码和配对时下发的连接凭据不再写入数据库，只在 Redis 里以哈希和加密形式保存到配对过期，凭据被领取一次后立即删除。（[#723](https://github.com/anywhere-labs/Agents-Anywhere/pull/723)）

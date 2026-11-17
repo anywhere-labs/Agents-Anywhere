@@ -5,11 +5,12 @@ lists and for offline display). Everything else goes to the device:
 
 - **State**: ``Sessions/state`` with ``{sessionId, part: "planning" | "goal"}``; the
   device answers ``{planning: PlanningState}`` / ``{goal: GoalState}`` in the v2
-  client shapes. Offline, the Server answers a ``stale`` state built from the
-  directory enum.
+  client shapes (a device that ignores ``part`` answers both keys next to ``state``).
+  Offline, the Server answers a ``stale`` state built from the directory enum.
 - **Plan documents**: ``Store/planDocument`` with ``{sessionId}`` -> ``{plans: [...]}``
-  (newest first), or ``{sessionId, planId, revision}`` -> ``{plan: PlanDocument}``;
-  ``plan_not_found`` when there is none.
+  (newest first), or ``{sessionId, planId, revision}`` -> ``{document: PlanDocument}``
+  (the same body the secure channel's ``GET plans/{planId}/{revision}`` returns);
+  ``plan_document_not_found`` when there is none.
 - **Changes**: ``Commands/sessionPlanning`` / ``Commands/sessionGoal`` with the v2
   request body plus ``sessionId``; ``commandId = operationId``. ``CommandAck.r`` is
   the v2 response body (``PlanningResponse`` / ``GoalResponse`` fields).
@@ -40,6 +41,8 @@ from agent_server.services.device_commands import (
 from agent_server.services.device_reads import DeviceReadError, DeviceReadService
 
 PLAN_MODE = {"planning": "plan", "awaiting_review": "plan"}
+# The device's code for a plan revision it does not have (also 404 through the secure channel).
+PLAN_NOT_FOUND = "plan_document_not_found"
 RESPONSE_MODELS: dict[str, type[BaseModel]] = {"session.planning": PlanningResponse, "session.goal": GoalResponse}
 
 
@@ -120,7 +123,7 @@ class DevicePlanningService:
                 session.connectorId, "store.planDocument", {"sessionId": session.id, **params}
             )
         except DeviceReadError as exc:
-            if exc.code == "plan_not_found":
+            if exc.code == PLAN_NOT_FOUND:
                 raise DevicePlanNotFound(params.get("planId")) from exc
             raise
         if body is None:
@@ -134,7 +137,7 @@ class DevicePlanningService:
         return [_validated(PlanDocument, plan) for plan in plans if isinstance(plan, dict)]
 
     async def plan_document(self, session: Any, plan_id: str, revision: int) -> BaseModel:
-        plan = (await self._plan_document(session, {"planId": plan_id, "revision": revision})).get("plan")
+        plan = (await self._plan_document(session, {"planId": plan_id, "revision": revision})).get("document")
         if not isinstance(plan, dict):
             raise DevicePlanNotFound(plan_id)
         return _validated(PlanDocument, plan)

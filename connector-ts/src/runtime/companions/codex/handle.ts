@@ -142,8 +142,8 @@ export class CodexRuntimeHandle implements RuntimeHandle {
     discard: planId => this.quitter.discard(planId),
   }
 
-  catalogs(): Promise<Catalogs> {
-    return this.inner.catalogs()
+  catalogs(sessionId?: string): Promise<Catalogs> {
+    return this.inner.catalogs(sessionId)
   }
 
   /** 原生会话目录；还没打开的线程补上 rollout 里记录的权限（端口 `NativeSessionSummary.permission`）。 */

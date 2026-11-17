@@ -170,7 +170,8 @@ def test_hello_replays_only_deferrable_commands(mesh_router: RouterProcess, monk
             device, welcome, _access = await connect_device(client, connector_id=device_id, connector_token=token)
             try:
                 assert [(c["commandId"], c["m"], c["p"]) for c in welcome["pendingCommands"]] == [
-                    ("s_late", "device.settings.apply", {"k": "s_late"})
+                    # Rebuilt from the current desired state, not from the receipt.
+                    ("s_late", "device.settings.apply", {"settings": welcome["desired"]["deviceSettings"]})
                 ]
             finally:
                 await device.stop()
@@ -227,6 +228,16 @@ def test_receipt_fields_keep_no_content() -> None:
     assert receipt_payload("session.sendMessage", {"content": "secret"}) is None
     assert receipt_payload("session.queue.update", {"content": "secret"}) is None
     assert receipt_payload("runtime.apply", {"runtimeId": "codex"}) == {"runtimeId": "codex"}
+    # Config, model gateway and settings may hold credentials: never kept in a receipt.
+    assert receipt_payload(
+        "runtime.apply",
+        {"runtimeId": "claude", "revision": 3, "config": {"apiKey": "secret"}, "modelGateway": {"authToken": "secret"}},
+    ) == {"runtimeId": "claude", "revision": 3}
+    assert receipt_payload(
+        "channel.switch",
+        {"runtimeId": "claude", "operationId": "op1", "switchRevision": 2, "modelGateway": {"authToken": "secret"}},
+    ) == {"runtimeId": "claude", "operationId": "op1", "switchRevision": 2}
+    assert receipt_payload("device.settings.apply", {"settings": {"proxyUrl": "http://u:secret@proxy"}}) == {}
     assert receipt_result({"r": {"queue": {"items": [{"text": "secret"}]}}, "e": None}) is None
     assert receipt_result(
         {"r": None, "e": {"code": "session_busy", "message": "secret", "retryable": True}}
@@ -234,3 +245,29 @@ def test_receipt_fields_keep_no_content() -> None:
     assert receipt_result({"r": {"execution": "started", "state": {"plan": "secret"}}}) == {
         "r": {"execution": "started"}
     }
+
+
+def test_deferrable_replay_rebuilds_from_desired_state() -> None:
+    from agent_server.core.device_meshcall import replay_payload
+
+    runtimes = [{"runtimeId": "claude", "active": True, "config": {"model": "m"}, "revision": 5,
+                 "modelGateway": {"authToken": "t"}}]
+    # The newest desired state wins over what the receipt saw; fences come from the receipt.
+    assert replay_payload(
+        "channel.switch", {"runtimeId": "claude", "revision": 4, "operationId": "op1", "switchRevision": 2},
+        runtimes=runtimes, device_settings={},
+    ) == {**runtimes[0], "operationId": "op1", "switchRevision": 2}
+    assert replay_payload("runtime.apply", {"runtimeId": "claude"}, runtimes=runtimes, device_settings={}) == runtimes[0]
+    assert replay_payload("runtime.apply", {"runtimeId": "gone"}, runtimes=runtimes, device_settings={}) is None
+    assert replay_payload("device.settings.apply", {}, runtimes=[], device_settings={"a": 1}) == {"settings": {"a": 1}}
+
+
+def test_e2ee_scrub_keeps_deferrable_results_only() -> None:
+    from agent_server.core.device_meshcall import scrub_for_e2ee
+
+    ack = {"r": {"runtimeId": "claude", "status": "running", "revision": 5, "note": "free text"}, "e": None}
+    assert scrub_for_e2ee("command.ack", ack, command="runtime.apply")["r"] == {
+        "runtimeId": "claude", "status": "running", "revision": 5,
+    }
+    assert scrub_for_e2ee("command.ack", {"r": {"queue": ["secret"]}, "e": None}, command="session.queue.update")["r"] is None
+    assert scrub_for_e2ee("command.ack", {"r": {"x": 1}, "e": None})["r"] is None

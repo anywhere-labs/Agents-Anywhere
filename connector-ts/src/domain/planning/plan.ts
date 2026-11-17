@@ -295,3 +295,24 @@ export function planningWire(state: PlanningState, includeHistory = false): Reco
   if (includeHistory) value.proposals = state.proposals
   return structuredClone(value)
 }
+
+/** `PlanningState.capabilities` in protocol 1.2: which planning commands this session accepts now. */
+export interface PlanningCapabilities {
+  readonly supported: boolean
+  readonly actions: readonly PlanningAction[]
+  readonly contentStreaming: 'native_delta' | 'final_only'
+  readonly reason: string | null
+}
+
+/**
+ * The commands a session accepts, from the Runtime's capabilities: `session.planning` (switch the mode) and
+ * `session.plan_review` (answer a review). `submit_task` is the Server's creation flow, never a device command.
+ */
+export function planningCapabilities(input: { readonly modes: boolean; readonly review: boolean }): PlanningCapabilities {
+  const actions: PlanningAction[] = [
+    ...(input.modes ? (['enter_plan', 'exit_plan'] as const) : []),
+    ...(input.review ? DEFAULT_REVIEW_ACTIONS : []),
+  ]
+  const supported = actions.length > 0
+  return { supported, actions, contentStreaming: 'final_only', reason: supported ? null : '该会话不支持原生计划模式。' }
+}

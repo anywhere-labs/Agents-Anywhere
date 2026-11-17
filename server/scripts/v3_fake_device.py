@@ -42,6 +42,7 @@ from agent_server.core.device_meshcall import (
     COMMAND_METHODS,
     CONNECTION_ID_METADATA,
     MESH_MAX_FRAME_BYTES,
+    WORKSPACE_METHODS,
     ChangesEvent,
     ChangesSinceResponse,
     CommandAck,
@@ -52,6 +53,8 @@ from agent_server.core.device_meshcall import (
     SecureChannelItem,
     StoreReadResponse,
     StreamChunk,
+    TerminalOutputItem,
+    WorkspaceCallResponse,
     command_route,
     registered_services,
 )
@@ -136,6 +139,19 @@ class FakeDeviceState:
         self.outbox_opened = threading.Event()
         self.read_delay = 0.0
         self.calls: list[str] = []
+        # sessionId -> ``catalogs`` of ``Runtime/catalogs`` (``commands`` is the slash command catalog).
+        self.catalogs: dict[str, dict[str, Any]] = {}
+        # ``Workspace/call``: every (method, params) received, and what answers it. The handler returns
+        # the v2 result (or raises ``MeshCallError``); without one the device echoes the request.
+        self.workspace_calls: list[tuple[str, dict[str, Any]]] = []
+        self.workspace_handler: Callable[[str, dict[str, Any]], Any] | None = None
+        # ``Workspace/terminalOutput``: items to send per terminal, the requests seen, and how many
+        # streams are open now (opening subscribes, cancelling unsubscribes).
+        self.terminal_items: dict[str, collections.deque[TerminalOutputItem]] = collections.defaultdict(
+            collections.deque
+        )
+        self.terminal_requests: list[dict[str, Any]] = []
+        self.terminal_subscribers: collections.Counter[str] = collections.Counter()
 
     def session(self, session_id: str) -> FakeSession:
         if session_id not in self.sessions:
@@ -292,7 +308,8 @@ def _make_services(state: FakeDeviceState, *, mode: str = "off") -> list[object]
         @query
         async def queue(self, sessionId: str) -> Payload:
             """Queued messages."""
-            return Payload(**state.queues.get(sessionId, {"sessionId": sessionId, "revision": 0, "items": []}))
+            # The TS Connector's shape: the state under ``queue`` (``DeviceReaders.queue``).
+            return Payload(queue=state.queues.get(sessionId, {"sessionId": sessionId, "revision": 0, "items": []}))
 
     @service(f"{SERVICE_PREFIX}.Store", targeted=True)
     class Store:
@@ -344,8 +361,10 @@ def _make_services(state: FakeDeviceState, *, mode: str = "off") -> list[object]
                 return Payload(plans=plans)
             for plan in plans:
                 if plan["planId"] == planId and plan["revision"] == revision:
-                    return Payload(plan=plan)
-            raise MeshCallError("not_found", "no such plan", details={"source": "device", "aaCode": "plan_not_found"})
+                    return Payload(document=plan)
+            raise MeshCallError(
+                "not_found", "no such plan", details={"source": "device", "aaCode": "plan_document_not_found"}
+            )
 
         @query
         async def read(
@@ -397,6 +416,65 @@ def _make_services(state: FakeDeviceState, *, mode: str = "off") -> list[object]
                 resetSeq=session.reset_seq,
                 complete=True,
             )
+
+    @service(f"{SERVICE_PREFIX}.Runtime", targeted=True)
+    class Runtime:
+        """Runtime catalogs."""
+
+        @query
+        async def catalogs(self, sessionId: str) -> Payload:
+            """Model, permission and slash command catalogs of a session."""
+            state.calls.append("catalogs")
+            return Payload(sessionId=sessionId, catalogs=state.catalogs.get(sessionId, {}))
+
+    @service(f"{SERVICE_PREFIX}.Workspace", targeted=True)
+    class Workspace:
+        """Files, terminals and shell (normal mode only)."""
+
+        @mutates(reason="writes files, types into terminals and runs shell commands")
+        async def call(
+            self, method: str, ctx: RpcContext, params: dict[str, Any] | None = None
+        ) -> WorkspaceCallResponse:
+            """One v2 workspace method from ``WORKSPACE_METHODS``."""
+            state.check_connection(ctx)
+            state.calls.append(f"workspace:{method}")
+            if method not in WORKSPACE_METHODS:
+                raise MeshCallError(
+                    "invalid_argument", f"{method} is not a workspace method", details={"source": "device"}
+                )
+            params = params or {}
+            state.workspace_calls.append((method, params))
+            result: Any = {"method": method, "params": params}
+            if state.workspace_handler is not None:
+                result = state.workspace_handler(method, params)
+                if asyncio.iscoroutine(result):
+                    result = await result
+            return WorkspaceCallResponse(result=result)
+
+        @stream
+        async def terminalOutput(
+            self, terminalId: str, sessionId: str, ctx: RpcContext, fromSeq: int = 0
+        ) -> AsyncIterator[TerminalOutputItem]:
+            """Items queued in ``terminal_items``; ends after ``terminal.exited``."""
+            state.check_connection(ctx)
+            state.terminal_requests.append({"terminalId": terminalId, "sessionId": sessionId, "fromSeq": fromSeq})
+            if terminalId not in state.terminal_items:
+                raise MeshCallError(
+                    "terminal_not_found", f"terminal not found: {terminalId}", details={"source": "device"}
+                )
+            queue = state.terminal_items[terminalId]
+            state.terminal_subscribers[terminalId] += 1
+            try:
+                while True:
+                    if queue:
+                        item = queue.popleft()
+                        yield item
+                        if item.m == "terminal.exited":
+                            return
+                    else:
+                        await asyncio.sleep(POLL_SECONDS)
+            finally:
+                state.terminal_subscribers[terminalId] -= 1
 
     async def run_command(
         method: str, commandId: str, deadline: str, inputDigest: str | None, p: dict[str, Any]
@@ -484,10 +562,12 @@ def _make_services(state: FakeDeviceState, *, mode: str = "off") -> list[object]
         f"{SERVICE_PREFIX}.Link": Link,
         f"{SERVICE_PREFIX}.Sessions": Sessions,
         f"{SERVICE_PREFIX}.Store": Store,
+        f"{SERVICE_PREFIX}.Runtime": Runtime,
         f"{SERVICE_PREFIX}.Commands": commands,
+        f"{SERVICE_PREFIX}.Workspace": Workspace,
         f"{SERVICE_PREFIX}.Secure": Secure,
     }
-    # The fake has no ``Runtime`` service; everything else follows the registration table.
+    # Everything follows the registration table.
     return [factory() for name, factory in built.items() if name in registration]
 
 

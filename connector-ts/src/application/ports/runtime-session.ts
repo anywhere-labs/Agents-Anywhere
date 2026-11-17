@@ -138,7 +138,8 @@ export interface RuntimeHandle {
   readonly instanceId: string
   /** 运行时级能力（会话级能力在 RuntimeSession.capabilities）。 */
   capabilities(): RuntimeCapabilities
-  catalogs(): Promise<Catalogs>
+  /** `sessionId`: the open session whose current configuration to describe (else the most recently opened). */
+  catalogs(sessionId?: string): Promise<Catalogs>
   /** 原生会话目录（Codex 线程、Claude/Pi 本机会话…）。 */
   listNativeSessions(cursor?: string): Promise<NativeSessionPage>
   /** 只读历史：不 resume、不抢写锁、不往原生记录追加内容。 */

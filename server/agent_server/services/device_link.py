@@ -35,8 +35,10 @@ from agent_server.core.device_meshcall import (
     SessionSummaryOut,
     UsageReportOut,
     registered_services,
+    replay_payload,
     scrub_for_e2ee,
 )
+from agent_server.core.device_runtime import DeviceRuntimeView
 from agent_server.core.e2ee_settings import E2eeSettings, accept_display_envelope
 from agent_server.infra.device_link import DeviceLinkHub
 from agent_server.infra.device_mesh import (
@@ -45,11 +47,18 @@ from agent_server.infra.device_mesh import (
     MeshNotConfigured,
 )
 from agent_server.services.dashboard_events import publish_dashboard_changed
+from agent_server.services.device_commands import (
+    DeviceCommandError,
+    DeviceCommandRejected,
+)
+from agent_server.services.device_runtimes import device_runtime_entry
 from agent_server.services.e2ee_commands import E2eeCommandService
 
 LINK_CONTRACT = f"device-meshcall/{DEVICE_MESHCALL_VERSION}"
 REQUIRED_SERVICES = frozenset({"aa.device.v1.Link", "aa.device.v1.Commands"})
 _SERVER_VERSION = "3.0.0-dev"
+# A takeover change waits this long for the device before it is left for the next time the device links.
+TAKEOVER_SYNC_TIMEOUT_SECONDS = 15.0
 
 
 class DeviceLinkError(Exception):
@@ -89,6 +98,8 @@ class DeviceLinkService:
         self._capability_refresh = capability_refresh
         self._usage_recorder = usage_recorder
         self._local_records: dict[str, dict[str, Any]] = {}
+        # deviceId -> {sessionId: token}: takeover changes the device has not confirmed (single-worker mode).
+        self._local_takeover: dict[str, dict[str, str]] = {}
         # Lossy runtime/port state per device, for clients that ask later (no content).
         self.runtime_status: dict[str, dict[str, Any]] = {}
         self.event_listeners: list[Any] = []
@@ -170,23 +181,31 @@ class DeviceLinkService:
         floors = await self._store.device_seq_floors(
             device_id, {head.sessionId: head.headSeq for head in hello.sessionsHead}
         )
-        pending = [
-            PendingCommand(
-                commandId=row["commandId"],
-                deadline=row["expiresAt"],
-                inputDigest=row["inputDigest"],
-                p=row["payload"] or {},
-                m=row["kind"],
-            )
-            for row in await self._store.unsettled_device_commands(device_id)
-            # Only commands that may be delivered late (03-architecture §3.10); a user message
-            # whose outcome is unknown is never re-sent, it converges through Commands/status.
-            if row["kind"] in DEFERRABLE_COMMANDS
-        ]
         desired = DesiredState(
             runtimes=await self._desired_runtimes(device_id),
             deviceSettings=await self._store.get_connector_device_settings(device_id),
         )
+        pending: list[PendingCommand] = []
+        for row in await self._store.unsettled_device_commands(device_id):
+            # Only commands that may be delivered late (03-architecture §3.10); a user message
+            # whose outcome is unknown is never re-sent, it converges through Commands/status.
+            if row["kind"] not in DEFERRABLE_COMMANDS:
+                continue
+            # The receipt keeps no config or credentials: rebuild the payload from desired state.
+            payload = replay_payload(
+                row["kind"], row["payload"], runtimes=desired.runtimes, device_settings=desired.deviceSettings
+            )
+            if payload is None:
+                continue
+            pending.append(
+                PendingCommand(
+                    commandId=row["commandId"],
+                    deadline=row["expiresAt"],
+                    inputDigest=row["inputDigest"],
+                    p=payload,
+                    m=row["kind"],
+                )
+            )
         logger.info(
             "device hello device_id={} connection_id={} floors={} pending={} host={}",
             device_id,
@@ -219,10 +238,9 @@ class DeviceLinkService:
             rows = await self._store.list_device_runtimes(device_id)
         except KeyError:
             return []
-        return [
-            {key: row.get(key) for key in ("runtimeId", "runtimeType", "name", "active", "config") if key in row}
-            for row in rows
-        ]
+        # Same shape as the ``runtime.apply`` payload, including ``revision`` so a late replayed command
+        # never undoes the state delivered here.
+        return [device_runtime_entry(DeviceRuntimeView.model_validate(row)) for row in rows]
 
     async def ready(self, device_id: str, connection_id: str) -> None:
         record = await self.link_record(device_id)
@@ -351,13 +369,16 @@ class DeviceLinkService:
             )
             return
         changed = await self._store.apply_device_session_summary(session.id, summary, accept_display=accepted)
-        if summary.sourceAvailability != "available":
+        # The device is the only observer of its native records: what it reports is the state, including a
+        # record that is ``available`` again after it was missing (the client's warning then goes away).
+        if summary.sourceAvailability != session.sourceAvailability:
             await self._store.update_session_source_state(
                 session.id,
                 availability=summary.sourceAvailability,
                 reason=None,
                 observed_at=None,
-                observation_origin="device",
+                # The session summary is the device's inventory of its native records.
+                observation_origin="inventory",
             )
             changed = True
         if changed:
@@ -400,20 +421,114 @@ class DeviceLinkService:
             notice = payload["notice"]
             message = {"sessionId": session_id, "notices": [notice], "nextSeq": int(notice.get("updatedSeq") or 0)}
         elif method == "runtime.status":
-            # A's #674: v2 planning/goal state events ride in runtime.status as {event: <v2 name>}.
-            event = payload.get("event")
-            if event == "planning.state.updated" and isinstance(payload.get("state"), dict):
-                message = {"sessionId": session_id, "planningState": payload["state"]}
-            elif event == "goal.state.updated" and isinstance(payload.get("state"), dict):
-                message = {"sessionId": session_id, "goalState": payload["state"]}
+            # v2 planning/goal state events ride in ``RuntimeStatusEvent.status`` as
+            # ``{event: <v2 name>, revision, state: <client-shaped state>}``.
+            status = payload.get("status")
+            status = status if isinstance(status, dict) else {}
+            event = status.get("event")
+            state = status.get("state")
+            if event == "planning.state.updated" and isinstance(state, dict):
+                message = {"sessionId": session_id, "planningState": state}
+            elif event == "goal.state.updated" and isinstance(state, dict):
+                message = {"sessionId": session_id, "goalState": state}
         if message is not None:
             await self._broker.publish(session_id, message)
+
+    # -- takeover -------------------------------------------------------------------
+    #
+    # Takeover is a Server field the device also needs: its queue only dispatches, and only accepts queue
+    # operations, for sessions taken over. A change goes to the device as ``session.sync {sessionId,
+    # takeover}``. Until the device confirms it, the session is kept in a pending set (Redis hash
+    # ``device-takeover:{deviceId}``, sessionId -> token); when the device links again every pending session
+    # is sent again with the takeover the Server holds *then*, so the last change wins.
+
+    def _takeover_key(self, device_id: str) -> str:
+        return self._coordinator.key("device-takeover", device_id)
+
+    async def _mark_takeover(self, device_id: str, session_id: str, token: str) -> None:
+        if not self._coordinator.distributed:
+            self._local_takeover.setdefault(device_id, {})[session_id] = token
+            return
+        await self._coordinator.client.hset(self._takeover_key(device_id), session_id, token)
+
+    async def _clear_takeover(self, device_id: str, session_id: str, token: str) -> None:
+        """Forget a pending change unless a newer one replaced it meanwhile."""
+
+        if not self._coordinator.distributed:
+            pending = self._local_takeover.get(device_id, {})
+            if pending.get(session_id) == token:
+                del pending[session_id]
+            return
+        key = self._takeover_key(device_id)
+        if await self._coordinator.client.hget(key, session_id) == token:
+            await self._coordinator.client.hdel(key, session_id)
+
+    async def pending_takeover(self, device_id: str) -> dict[str, str]:
+        if not self._coordinator.distributed:
+            return dict(self._local_takeover.get(device_id, {}))
+        return dict(await self._coordinator.client.hgetall(self._takeover_key(device_id)) or {})
+
+    async def push_takeover(self, device_id: str, session_id: str) -> bool:
+        """Send the session's takeover to its v3 device now; True once the device confirmed it.
+
+        Offline or unconfirmed, the change stays pending and goes out when the device links again. Encrypted
+        mode registers no ``Commands/sessionSync`` for the Server: clients change it through their channel.
+        """
+
+        if self.commands is None or self._e2ee_settings().required:
+            return False
+        if await self._store.connector_link_contract(device_id) != LINK_CONTRACT:
+            return False
+        token = secrets.token_urlsafe(8)
+        await self._mark_takeover(device_id, session_id, token)
+        return await self._send_takeover(device_id, session_id, token)
+
+    async def _send_takeover(self, device_id: str, session_id: str, token: str) -> bool:
+        try:
+            session = await self._store.get_session(session_id)
+        except KeyError:
+            session = None
+        if session is None or session.connectorId != device_id:
+            await self._clear_takeover(device_id, session_id, token)
+            return False
+        try:
+            await self.commands.send(
+                user_id=None,
+                device_id=device_id,
+                kind="session.sync",
+                command_id=f"takeover_{secrets.token_urlsafe(12)}",
+                payload={"sessionId": session_id, "takeover": bool(session.takeover)},
+                session_id=session_id,
+                timeout=TAKEOVER_SYNC_TIMEOUT_SECONDS,
+            )
+        except DeviceCommandRejected as exc:
+            # The device refused it (it no longer has the session): nothing left to keep in step.
+            logger.info("takeover not applied device_id={} session_id={} code={}", device_id, session_id, exc.code)
+            await self._clear_takeover(device_id, session_id, token)
+            return False
+        except DeviceCommandError:
+            return False
+        await self._clear_takeover(device_id, session_id, token)
+        return True
+
+    async def flush_takeover(self, device_id: str) -> None:
+        """The device linked again: send every takeover change it has not confirmed."""
+
+        for session_id, token in (await self.pending_takeover(device_id)).items():
+            try:
+                await self._send_takeover(device_id, session_id, token)
+            except Exception:  # noqa: BLE001 - the rest still go; this one stays pending
+                logger.exception("takeover sync failed device_id={} session_id={}", device_id, session_id)
 
     # -- presence ---------------------------------------------------------------
 
     async def handle_presence(self, device_id: str, online: bool) -> None:
         if online:
             await self._store.record_connector_activity(device_id)
+            if self.commands is not None and not self._e2ee_settings().required:
+                task = asyncio.create_task(self.flush_takeover(device_id), name=f"device-takeover-{device_id}")
+                self._reconcile_tasks.add(task)
+                task.add_done_callback(self._reconcile_tasks.discard)
             if self._usage_recorder is not None:
                 from agent_server.services.usage_events import connector_online_event
 
