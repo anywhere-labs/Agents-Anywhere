@@ -20,7 +20,7 @@
 
 ### 本机连接
 
-- 修复会话状态读取长时间无响应后，模型列表等操作持续加载、需要重启应用才能恢复的问题；连接超时会返回明确错误。
+- 修复会话状态读取长时间无响应后，模型列表等操作持续加载、需要重启应用才能恢复的问题；连接超时会返回明确错误。（[#774](https://github.com/anywhere-labs/Agents-Anywhere/pull/774)）
 - 准备 Pi 时会复用本机 Node 22.19 及以上版本（包括 Node 24），不再强制下载；需要下载时，官方源连不上会自动改用 npmmirror，Python 安装源选了镜像的设备会优先使用 npmmirror；Windows 上多个进程同时准备不再报 `Resource deadlock avoided`，而是排队等待；数据目录通过 Junction 挂到其他盘时，不再误报「Node 安装包路径无效」；Node 下载失败时会提示检查网络。（[#657](https://github.com/anywhere-labs/Agents-Anywhere/pull/657)）
 
 ### Android
