@@ -27,8 +27,9 @@ from agent_server.core.auth import (
 )
 from agent_server.core.device_meshcall import (
     DEVICE_TRANSFER_PATH,
-    BlobTransfer,
+    ClientPreview,
     ClientServerFacts,
+    ClientTransfer,
 )
 from agent_server.core.models import (
     FsPreviewReadRequest,
@@ -77,7 +78,10 @@ async def _forward_fs_read(
     downloads: FsDownloadRelayManager,
     preview_access_token: str | None = None,
 ) -> Any:
-    """``fs/read`` through ``Client/call``: the Server allocates the transfer, the device PUTs the bytes to it."""
+    """``fs/read`` through ``Client/call``: the Server allocates the transfer, the device PUTs the bytes to it.
+
+    The relay takes the upload before the client asks for it (bounded: the device's ``PUT`` waits for the reader).
+    """
 
     transfer = await downloads.create(
         connector_id=connector_id,
@@ -89,6 +93,9 @@ async def _forward_fs_read(
         media_type="application/octet-stream",
         pushed=True,
     )
+    download_url = f"{api_v2_path(f'/connectors/{connector_id}/fs/transfers/{transfer.transfer_id}')}?token={transfer.token}"
+    if preview_access_token is not None:
+        download_url += f"&previewAccessToken={urllib.parse.quote(preview_access_token)}"
     answer = await client_call(
         request,
         route_id,
@@ -98,11 +105,13 @@ async def _forward_fs_read(
         path=api_v2_path(f"/connectors/{connector_id}/fs/read"),
         query={"root": root},
         server=ClientServerFacts(
-            transfer=BlobTransfer(
+            transfer=ClientTransfer(
                 transferId=transfer.transfer_id,
                 token=transfer.token,
                 path=DEVICE_TRANSFER_PATH.format(transfer_id=transfer.transfer_id),
-            )
+                downloadUrl=download_url,
+            ),
+            **({"preview": ClientPreview(root=root, path=path)} if preview_access_token is not None else {}),
         ),
         response_model=RpcResponsePayload,
     )
@@ -116,9 +125,6 @@ async def _forward_fs_read(
         sha256=str(result.get("sha256") or ""),
         media_type=str(result.get("mediaType") or "application/octet-stream"),
     )
-    download_url = f"{api_v2_path(f'/connectors/{connector_id}/fs/transfers/{transfer.transfer_id}')}?token={transfer.token}"
-    if preview_access_token is not None:
-        download_url += f"&previewAccessToken={urllib.parse.quote(preview_access_token)}"
     return RpcResponsePayload(
         ok=True,
         result={**result, "transferId": transfer.transfer_id, "token": transfer.token, "downloadUrl": download_url},
@@ -308,6 +314,7 @@ async def connector_fs_preview_read_text(
         request, "connector.fs.readText", user_id=preview["user_id"], connector_id=connector_id,
         response_model=FsReadTextResponse, body={"path": path, "maxBytes": payload.maxBytes},
         path=api_v2_path(f"/connectors/{connector_id}/fs/readText"), query={"root": root},
+        server=ClientServerFacts(preview=ClientPreview(root=root, path=path)),
     )) is not None:
         return forwarded
     await require_owned_online_connector(

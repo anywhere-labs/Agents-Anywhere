@@ -205,6 +205,7 @@ async def forward_connector(
     body: Any = RAW_BODY,
     path: str | None = None,
     query: dict[str, str] | None = None,
+    server: ClientServerFacts | None = None,
 ) -> Response | None:
     """Forward a route under ``/connectors/{connector_id}``; None when it takes its existing path.
 
@@ -222,6 +223,7 @@ async def forward_connector(
         response_model=response_model,
         path=path,
         query=query,
+        server=server,
     )
     return to_response(answer)
 

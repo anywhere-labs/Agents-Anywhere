@@ -10,6 +10,7 @@ import asyncio
 import base64
 import contextlib
 import json
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -37,6 +38,7 @@ from agent_server.services.client_forward import (
 from scripts.v3_fake_device import connect_device
 
 SID = "sess_cf1"
+FIXTURES = Path(__file__).resolve().parent / "fixtures" / "client_routes"
 BASE = f"/api/v2/sessions/{SID}"
 
 
@@ -412,8 +414,84 @@ def test_terminal_stream_uses_client_subscribe(mesh_router: RouterProcess, monke
 def test_every_call_route_has_a_forwarding_stub(route_id: str) -> None:
     """Each ``Client/call`` route is named by the handler that forwards it."""
 
-    from pathlib import Path
-
     api = Path(__file__).parents[1] / "agent_server" / "api"
     sources = "\n".join(path.read_text() for path in api.glob("*.py"))
     assert json.dumps(route_id) in sources, f"no handler forwards {route_id}"
+
+
+def test_file_download_allocates_the_relay_and_previews_carry_the_verified_file(
+    mesh_router: RouterProcess, monkeypatch
+) -> None:
+    async def scenario() -> None:
+        async with server(mesh_router, monkeypatch) as (app, client):
+            headers, device_id, device = await _session(app, client)
+            state = device.state
+            try:
+                state.client_handler = lambda request: (200, {
+                    "ok": True,
+                    "result": {"name": "a.txt", "size": 3, "sha256": "abc", "mediaType": "text/plain", "path": "a.txt"},
+                })
+                response = await client.post(
+                    f"/api/v2/connectors/{device_id}/fs/read", params={"root": "/repo"}, json={"path": "a.txt"},
+                    headers=headers,
+                )
+                assert response.status_code == 200, response.text
+                result = response.json()["result"]
+                request = state.client_calls[-1]
+                assert request["route"] == "connector.fs.read" and request["query"] == {"root": "/repo"}
+                transfer = request["server"]["transfer"]
+                assert transfer["transferId"] == result["transferId"] and transfer["token"] == result["token"]
+                assert transfer["path"] == f"/api/v3/device/transfers/{result['transferId']}"
+                assert transfer["downloadUrl"] == result["downloadUrl"]
+                relayed = await app.state.fs_downloads.get(result["transferId"], result["token"])
+                assert relayed.pushed and (relayed.name, relayed.size, relayed.media_type) == ("a.txt", 3, "text/plain")
+
+                # A preview read: the Server verifies the token, then forwards the device's own route with the
+                # file it opened.
+                token = await client.post(
+                    f"/api/v2/connectors/{device_id}/fs/preview-token", params={"root": "/repo"},
+                    json={"path": "a.txt"}, headers=headers,
+                )
+                assert token.status_code == 200, token.text
+                opened = await client.post(
+                    "/api/v2/connectors/fs/preview-session", json={"previewToken": token.json()["previewToken"]}
+                )
+                assert opened.status_code == 200, opened.text
+                access = opened.json()["previewAccessToken"]
+                recorded = json.loads((FIXTURES / "device.fs.preview.readText.json").read_text())["response"]
+                state.client_handler = lambda request: (200, recorded)
+                text = await client.post("/api/v2/connectors/fs/preview/readText", json={"previewAccessToken": access})
+                assert text.status_code == 200, text.text
+                request = state.client_calls[-1]
+                assert request["route"] == "connector.fs.readText"
+                assert request["path"] == f"/api/v2/connectors/{device_id}/fs/readText"
+                preview = request["server"]["preview"]
+                assert preview["root"] == "/repo" and preview["path"].endswith("a.txt")
+                assert request["body"]["path"] == preview["path"] and request["query"] == {"root": "/repo"}
+            finally:
+                await device.stop()
+
+    asyncio.run(scenario())
+
+
+def test_the_relay_takes_an_upload_before_the_reader_arrives() -> None:
+    from agent_server.infra.fs_downloads import FsDownloadRelayManager
+    from agent_server.infra.redis_coordinator import RedisCoordinator
+
+    async def scenario() -> None:
+        relay = FsDownloadRelayManager(RedisCoordinator())
+        transfer = await relay.create(
+            connector_id="c1", root="/r", path="a", name="a", size=0, sha256="", media_type="x", pushed=True
+        )
+
+        async def chunks() -> Any:
+            for part in (b"a" * 10, b"b" * 10, b"c"):
+                yield part
+
+        upload = asyncio.create_task(relay.upload(transfer_id=transfer.transfer_id, token=transfer.token, chunks=chunks()))
+        await asyncio.sleep(0.05)
+        assert upload.done() and upload.result() is True
+        received = b"".join([part async for part in relay.stream(transfer_id=transfer.transfer_id, token=transfer.token)])
+        assert received == b"a" * 10 + b"b" * 10 + b"c"
+
+    asyncio.run(scenario())

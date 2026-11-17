@@ -1195,6 +1195,24 @@ class ClientCommand(DeviceModel):
     deadline: str
 
 
+class ClientTransfer(BlobTransfer):
+    """The relay a ``fs/read`` download goes through: where the device ``PUT``s the bytes, and where the client
+    fetches them."""
+
+    downloadUrl: str | None = Field(
+        default=None,
+        description="the URL the client downloads from (a preview download carries its previewAccessToken); "
+        "default the device's own fs/transfers route",
+    )
+
+
+class ClientPreview(DeviceModel):
+    """The file a preview token opened, as the Server verified it."""
+
+    root: NonEmpty
+    path: NonEmpty
+
+
 class ClientServerFacts(DeviceModel):
     """Facts the Server owns. The device takes them over whatever the body says, on ``Client/call`` only."""
 
@@ -1203,7 +1221,8 @@ class ClientServerFacts(DeviceModel):
     attachments: list[AttachmentRef] | None = Field(
         default=None, description="the Server's records of the attachments the body references"
     )
-    transfer: BlobTransfer | None = Field(default=None, description="fs/read: where the device PUTs the bytes")
+    transfer: ClientTransfer | None = Field(default=None, description="fs/read: where the device PUTs the bytes")
+    preview: ClientPreview | None = Field(default=None, description="a preview read: the file its token opened")
 
 
 class ClientCallRequest(DeviceModel):

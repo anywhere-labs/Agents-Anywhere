@@ -79,12 +79,18 @@ export type Mediatype = string
 export type Name = string
 export type Sha256 = string | null
 export type Size = number
+export type Path1 = string
+export type Root = string
 /**
  * create-and-start: the directory row the Server created
  */
 export type Sessionid = string | null
 export type Takeover = boolean | null
-export type Path1 = string
+/**
+ * the URL the client downloads from (a preview download carries its previewAccessToken); default the device's own fs/transfers route
+ */
+export type Downloadurl = string | null
+export type Path2 = string
 export type Token = string
 export type Transferid = string
 
@@ -133,12 +139,16 @@ export interface Query {
  */
 export interface ClientServerFacts {
   attachments?: Attachments
+  /**
+   * a preview read: the file its token opened
+   */
+  preview?: ClientPreview | null
   sessionId?: Sessionid
   takeover?: Takeover
   /**
    * fs/read: where the device PUTs the bytes
    */
-  transfer?: BlobTransfer | null
+  transfer?: ClientTransfer | null
   [k: string]: unknown
 }
 /**
@@ -154,10 +164,20 @@ export interface AttachmentRef {
   [k: string]: unknown
 }
 /**
- * Where the device ``PUT``s the bytes (``DEVICE_TRANSFER_PATH``) and the one-time token.
+ * The file a preview token opened, as the Server verified it.
  */
-export interface BlobTransfer {
+export interface ClientPreview {
   path: Path1
+  root: Root
+  [k: string]: unknown
+}
+/**
+ * The relay a ``fs/read`` download goes through: where the device ``PUT``s the bytes, and where the client
+ * fetches them.
+ */
+export interface ClientTransfer {
+  downloadUrl?: Downloadurl
+  path: Path2
   token: Token
   transferId: Transferid
   [k: string]: unknown

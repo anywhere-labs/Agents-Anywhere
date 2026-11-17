@@ -15374,33 +15374,6 @@
                   "title": "AttachmentRef",
                   "type": "object"
                 },
-                "BlobTransfer": {
-                  "description": "Where the device ``PUT``s the bytes (``DEVICE_TRANSFER_PATH``) and the one-time token.",
-                  "properties": {
-                    "path": {
-                      "minLength": 1,
-                      "title": "Path",
-                      "type": "string"
-                    },
-                    "token": {
-                      "minLength": 1,
-                      "title": "Token",
-                      "type": "string"
-                    },
-                    "transferId": {
-                      "minLength": 1,
-                      "title": "Transferid",
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "transferId",
-                    "token",
-                    "path"
-                  ],
-                  "title": "BlobTransfer",
-                  "type": "object"
-                },
                 "ClientCaller": {
                   "description": "Who sent the request, as the Server authenticated it.",
                   "properties": {
@@ -15466,6 +15439,27 @@
                   "title": "ClientCommand",
                   "type": "object"
                 },
+                "ClientPreview": {
+                  "description": "The file a preview token opened, as the Server verified it.",
+                  "properties": {
+                    "path": {
+                      "minLength": 1,
+                      "title": "Path",
+                      "type": "string"
+                    },
+                    "root": {
+                      "minLength": 1,
+                      "title": "Root",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "root",
+                    "path"
+                  ],
+                  "title": "ClientPreview",
+                  "type": "object"
+                },
                 "ClientServerFacts": {
                   "description": "Facts the Server owns. The device takes them over whatever the body says, on ``Client/call`` only.",
                   "properties": {
@@ -15484,6 +15478,18 @@
                       "default": null,
                       "description": "the Server's records of the attachments the body references",
                       "title": "Attachments"
+                    },
+                    "preview": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/ClientPreview"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "a preview read: the file its token opened"
                     },
                     "sessionId": {
                       "anyOf": [
@@ -15513,7 +15519,7 @@
                     "transfer": {
                       "anyOf": [
                         {
-                          "$ref": "#/$defs/BlobTransfer"
+                          "$ref": "#/$defs/ClientTransfer"
                         },
                         {
                           "type": "null"
@@ -15524,6 +15530,46 @@
                     }
                   },
                   "title": "ClientServerFacts",
+                  "type": "object"
+                },
+                "ClientTransfer": {
+                  "description": "The relay a ``fs/read`` download goes through: where the device ``PUT``s the bytes, and where the client\nfetches them.",
+                  "properties": {
+                    "downloadUrl": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "the URL the client downloads from (a preview download carries its previewAccessToken); default the device's own fs/transfers route",
+                      "title": "Downloadurl"
+                    },
+                    "path": {
+                      "minLength": 1,
+                      "title": "Path",
+                      "type": "string"
+                    },
+                    "token": {
+                      "minLength": 1,
+                      "title": "Token",
+                      "type": "string"
+                    },
+                    "transferId": {
+                      "minLength": 1,
+                      "title": "Transferid",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "transferId",
+                    "token",
+                    "path"
+                  ],
+                  "title": "ClientTransfer",
                   "type": "object"
                 }
               },
