@@ -3,7 +3,7 @@
 Sessions on v2 Connectors never get here (``V3_SESSION_ONLY``).
 """
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -13,9 +13,11 @@ from agent_server.api.sessions import _require_session_action_capability
 from agent_server.api.v2_compat import V3_SESSION_ONLY
 from agent_server.core.capabilities import RUNTIME_ATTACHMENT, SESSION_GOAL
 from agent_server.core.goal.models import GoalRequest, GoalResponse, GoalState
+from agent_server.core.models import SessionView
 from agent_server.deps import current_user_id, get_rpc, get_store
 from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.infra.repositories.facade import Store
+from agent_server.services.device_planning import offline_goal_state
 
 router = APIRouter(prefix="/sessions", tags=["goals"])
 
@@ -28,8 +30,12 @@ async def read_goal(
     db: Annotated[Store, Depends(get_store)],
     device: DevicePlanning,
 ):
+    async def stale(session: SessionView) -> dict[str, Any]:
+        return offline_goal_state(session)
+
     if (forwarded := await forward_session(
-        request, "session.goal.get", user_id=user_id, session_id=session_id, response_model=GoalState
+        request, "session.goal.get", user_id=user_id, session_id=session_id, response_model=GoalState,
+        offline=stale,
     )) is not None:
         return forwarded
     session = await owned(db, session_id, user_id)

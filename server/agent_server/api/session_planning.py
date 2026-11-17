@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
@@ -21,6 +21,7 @@ from agent_server.core.capabilities import (
     SESSION_PLAN_REVIEW,
     SESSION_PLANNING,
 )
+from agent_server.core.models import SessionView
 from agent_server.core.planning.models import (
     PlanDocument,
     PlanningRequest,
@@ -34,6 +35,7 @@ from agent_server.services.device_planning import (
     DevicePlanningService,
     DevicePlanningUnavailable,
     DevicePlanNotFound,
+    offline_planning_state,
 )
 from agent_server.services.device_reads import DeviceReadError, DeviceReadTimeout
 
@@ -112,8 +114,13 @@ async def get_planning(
     db: Annotated[Store, Depends(get_store)],
     device: DevicePlanning,
 ):
+    async def stale(session: SessionView) -> dict[str, Any]:
+        fields = await db.session_directory_fields(session.id) or {}
+        return offline_planning_state(session, fields.get("planState"))
+
     if (forwarded := await forward_session(
-        request, "session.planning.get", user_id=user_id, session_id=session_id, response_model=PlanningState
+        request, "session.planning.get", user_id=user_id, session_id=session_id, response_model=PlanningState,
+        offline=stale,
     )) is not None:
         return forwarded
     session = await owned(db, session_id, user_id)
