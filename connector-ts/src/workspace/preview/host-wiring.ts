@@ -3,9 +3,7 @@
 // of a port that stopped listening. A host passes `commands` and `onLink` to `connectorRuntime` (ComposeOptions).
 import { join } from 'node:path'
 
-import type { CommandHandler } from '../../application/ports/index.js'
-import type { PreviewCloseCommand } from '../../generated/preview/v1_0/preview-close-command.js'
-import type { PreviewOpenCommand } from '../../generated/preview/v1_0/preview-open-command.js'
+import type { CommandHandlers } from '../../application/ports/index.js'
 import { listeningPorts, PortWatcher, type ListeningPort } from '../ports.js'
 import { previewCommands } from './commands.js'
 import { FrpcManager, type PreviewTransport } from './frpc-manager.js'
@@ -43,7 +41,7 @@ export interface PreviewHostOptions {
 
 export interface PreviewHost {
   /** Command handlers by business method name, for `ComposeOptions.commands`. */
-  readonly commands: Readonly<Record<string, CommandHandler>>
+  readonly commands: CommandHandlers
   /** For `ComposeOptions.onLink`: watches ports for this link (a new link replaces the previous watch). */
   onLink(link: AttachTarget): void
   /** Stops watching and closes every preview. */
@@ -121,12 +119,10 @@ export function previewHost(options: PreviewHostOptions): PreviewHost {
     }
   }
 
-  const handler = <T>(run: (payload: T) => Promise<object>): CommandHandler => async payload => ({ ...(await run(payload as T)) })
-
   return {
     commands: {
-      'preview.open': handler<PreviewOpenCommand>(payload => preview.previewOpen(payload)),
-      'preview.close': handler<PreviewCloseCommand>(payload => preview.previewClose(payload)),
+      'preview.open': async payload => ({ ...(await preview.previewOpen(payload)) }),
+      'preview.close': async payload => ({ ...(await preview.previewClose(payload)) }),
     },
     onLink(link) {
       stop?.()

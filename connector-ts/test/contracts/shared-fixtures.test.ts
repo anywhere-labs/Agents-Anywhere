@@ -12,7 +12,8 @@ import { fileURLToPath } from 'node:url'
 import { Ajv2020 } from 'ajv/dist/2020.js'
 import { describe, expect, it } from 'vitest'
 
-import { COMMAND_ROUTES, READ_ROUTES } from '../../src/generated/device-meshcall/v1_0/payloads.js'
+import { parseRequest } from '../../src/application/inbound/index.js'
+import { COMMAND_ROUTES, READ_ROUTES, type CommandMethod } from '../../src/generated/device-meshcall/v1_0/payloads.js'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..')
 const FIXTURES = join(ROOT, 'server/tests/fixtures')
@@ -131,6 +132,26 @@ describe('shared fixtures against device-meshcall 1.0', () => {
       },
       'deviceReports.runtimeTypes': STATUS_EVENT,
     })
+  })
+
+  it('the device\'s request checks accept every command request the Server sends', () => {
+    const requests: [string, CommandMethod, string][] = [
+      ['device_shapes.json', 'session.select', 'select'],
+      ['device_shapes.json', 'session.creation.begin', 'creationPlan'],
+      ['device_shapes.json', 'session.creation.begin', 'creationGoal'],
+      ['device_shapes.json', 'session.creation.begin', 'creationPrepared'],
+      ['device_shapes.json', 'workspace.prepare', 'workspacePrepare'],
+      ['device_shapes.json', 'workspace.preparation.reserve', 'workspacePreparationReserve'],
+      ['runtime_control_commands.json', 'runtime.apply', 'runtimeApply'],
+      ['runtime_control_commands.json', 'runtime.apply', 'runtimeApplyStop'],
+      ['runtime_control_commands.json', 'channel.switch', 'channelSwitch'],
+      ['runtime_control_commands.json', 'device.settings.apply', 'deviceSettingsApply'],
+    ]
+    for (const [file, method, name] of requests) {
+      const fixture = JSON.parse(readFileSync(join(FIXTURES, file), 'utf8')) as { requests: Record<string, unknown> }
+      expect(fixture.requests[name], `${file} requests.${name}`).toBeDefined()
+      expect(() => parseRequest(method, fixture.requests[name]), `${file} requests.${name}`).not.toThrow()
+    }
   })
 
   it('refuses a payload that breaks the contract', () => {

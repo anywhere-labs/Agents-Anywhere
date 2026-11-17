@@ -8,6 +8,7 @@
 //
 // The command payloads and results are declared here until the device-meshcall contract carries them.
 
+import type { ProtocolCapabilitySet } from '../../generated/protocol/v1_2/capability-set.js'
 import type { JsonObject, LiveEvents, Log, ProviderFacts, RuntimeProvider } from '../ports/index.js'
 import { capabilitySet } from './capabilities.js'
 import { GATEWAY_FIELD, GATEWAY_RUNTIME_PROTOCOLS, RuntimeApplyError, runtimeSpecFrom, type InstanceReport, type RuntimeInstanceSpec } from './instances.js'
@@ -32,7 +33,7 @@ export interface RuntimeApplyPayload {
 export interface RuntimeApplyResult extends InstanceReport {
   /** This Connector process; a new one means the device restarted. */
   readonly instanceId: string
-  readonly capabilities?: Record<string, unknown>
+  readonly capabilities?: ProtocolCapabilitySet
   /** Runtime Control 2.x model connection report, for types that take a gateway. */
   readonly modelConnection?: ModelConnectionReport
 }
@@ -42,7 +43,7 @@ export interface DeviceSettingsApplyPayload {
   readonly settings: Record<string, unknown>
 }
 
-interface ModelConnectionReport {
+type ModelConnectionReport = {
   readonly state: 'applied' | 'not_configured'
   readonly protocol: string | null
   readonly scope: 'instance'
@@ -167,7 +168,7 @@ async function resultOf(registry: RuntimeRegistry, report: InstanceReport): Prom
   return {
     ...report,
     instanceId: registry.processId,
-    ...(handle !== null && handle !== undefined ? { capabilities: capabilitySet(handle.capabilities(), { runtime: spec?.runtimeType ?? report.runtimeId, sessionId: null }) as Record<string, unknown> } : {}),
+    ...(handle !== null && handle !== undefined ? { capabilities: capabilitySet(handle.capabilities(), { runtime: spec?.runtimeType ?? report.runtimeId, sessionId: null }) } : {}),
     ...(connection !== null ? { modelConnection: connection } : {}),
   }
 }

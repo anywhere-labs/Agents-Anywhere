@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { stat } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 
-import { CommandInbox, runtimeControlCommands, type CommandHandler } from '../application/inbound/index.js'
+import { CommandInbox, runtimeControlCommands, type CommandHandlers } from '../application/inbound/index.js'
 import {
   ConversationService,
   NativeHistory,
@@ -40,7 +40,7 @@ export interface ComposeOptions {
   /** Scan native sessions of installed Runtimes when the link comes online (default true). */
   readonly scanOnStart?: boolean
   /** Extra command handlers (preview, runtime/apply, device settings), by business method name. */
-  readonly commands?: Readonly<Record<string, CommandHandler>>
+  readonly commands?: CommandHandlers
   /**
    * Device Trust (E2EE): `false` turns it off (the device then never serves an encrypted mode); the object
    * overrides the secrets' vault (tests use `noVault()`), the local confirmation and the device label.

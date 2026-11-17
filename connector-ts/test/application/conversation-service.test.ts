@@ -304,6 +304,32 @@ describe('command inbox', () => {
   })
 })
 
+describe('command payload checks', () => {
+  it('rejects a payload that does not fit the contract before any use case runs, with a durable receipt', async () => {
+    await makeSession()
+    const inbox = new CommandInbox(store, clock, service)
+    const reject = async (route: string, commandId: string, p: Record<string, unknown>) => inbox.handle(route, { commandId, deadline: 'x', p })
+    expect(await reject('sessionSendMessage', 'v1', { sessionId: 'sess_1', content: 'hi' })).toMatchObject({ outcome: 'rejected', e: { code: 'invalid_argument', message: 'clientMessageId is required' } })
+    expect(await reject('sessionSendMessage', 'v2', { sessionId: 'sess_1', clientMessageId: 'm', queue: 'later' })).toMatchObject({ outcome: 'rejected', e: { code: 'invalid_argument' } })
+    expect(await reject('sessionRespondNotice', 'v3', { sessionId: 'sess_1', noticeId: 'n1' })).toMatchObject({ outcome: 'rejected', e: { code: 'invalid_argument', message: 'actionId is required' } })
+    expect(await reject('sessionPlanning', 'v4', { sessionId: 'sess_1', command: 'take_over', operationId: 'op' })).toMatchObject({ outcome: 'rejected', e: { code: 'invalid_argument', message: 'unknown planning command take_over' } })
+    expect(await reject('sessionGoal', 'v5', { sessionId: 'sess_1', action: 'restart', operationId: 'op' })).toMatchObject({ outcome: 'rejected', e: { code: 'invalid_argument', message: 'unknown goal action restart' } })
+    expect(await reject('sessionSelect', 'v6', { sessionId: 'sess_1', selections: null })).toMatchObject({ outcome: 'rejected', e: { code: 'invalid_argument', message: 'selections must be an object' } })
+    expect(await reject('sessionCreationBegin', 'v7', { sessionId: 'sess_2', runtimeId: 'rti_pi', runtimeType: 'pi', cwd: '/w', clientMessageId: 'm', planningIntent: { mode: 'goal', operationId: 'op' } })).toMatchObject({ outcome: 'rejected', e: { code: 'invalid_argument', message: 'planningIntent.mode must be plan' } })
+    // Nothing ran: no Runtime session opened, and the rejections are receipts a retry replays.
+    expect(opened).toEqual([])
+    expect(await new DeviceReaders(store, clock.nowIso).commandStatus({ commandId: 'v1' })).toMatchObject({ known: true, outcome: 'rejected' })
+  })
+
+  it('passes the legacy select aliases through as one optionId/value', async () => {
+    await makeSession()
+    const inbox = new CommandInbox(store, clock, service)
+    const ack = await inbox.handle('sessionSelect', { commandId: 's1', deadline: 'x', p: { sessionId: 'sess_1', kind: 'model', selectionId: 'gpt' } })
+    expect(ack.outcome).toBe('accepted')
+    expect(sessions[0]?.calls).toContainEqual({ method: 'configure', change: { optionId: 'model', value: 'gpt' } })
+  })
+})
+
 describe('command receipts across a crash', () => {
   // The process dies after the effect committed and before the inbox wrote the receipt itself.
   const crashing = (base: RemoteStore): RemoteStore => ({ ...base, commands: { ...base.commands, settle: async () => { throw new Error('process died') } } }) as RemoteStore

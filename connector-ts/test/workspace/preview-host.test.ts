@@ -120,7 +120,7 @@ describe('previewHost', () => {
     await settle()
     // A new link starts a fresh watch: it knows no ports yet, so nothing closed on it.
     expect(f.transport.previews.map(p => p.previewId)).toEqual(['prv_1'])
-    expect(await f.host.commands['preview.close']!({ previewId: 'prv_1' }, ctx('cmd_3'))).toEqual({ closed: true })
+    expect(await f.host.commands['preview.close']!({ previewId: 'prv_1', slug: 'prv-1' }, ctx('cmd_3'))).toEqual({ closed: true })
     await f.host.close()
     expect(f.transport.closedAll).toBe(1)
   })
