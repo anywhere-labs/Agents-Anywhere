@@ -143,7 +143,9 @@ class PlanningService:
         result = state.wire()
         result["capabilities"] = {
             "supported": available,
-            "actions": sorted(COMMANDS) if available else [],
+            "actions": sorted(self.port.actions(session_id, external_id))
+            if available and hasattr(self.port, "actions")
+            else sorted(COMMANDS) if available else [],
             "contentStreaming": getattr(self.port, "content_streaming", "final_only"),
             "reason": None if available else "原生 Plan 控制当前不可用。",
         }
@@ -254,8 +256,12 @@ class PlanningService:
                     native_review=dict(event.native_review)
                     if event.native_review is not None
                     else None,
+                    review_actions=event.review_actions,
                 )
-                state.mode_observed("plan")
+                if event.progress is not None:
+                    state.execution_progress = dict(event.progress)
+                if event.review_actions is None:
+                    state.mode_observed("plan")
             elif event.kind == "review_closed" and state.review:
                 if event.native_id and event.native_id != (
                     state.native_review or {}
@@ -384,7 +390,9 @@ class PlanningService:
                     "request_revision",
                     "dismiss_review",
                 }:
-                    state.require_review(request, allow_approved=resume_execution)
+                    review = state.require_review(request, allow_approved=resume_execution)
+                    if not resume_execution and command not in review["actions"]:
+                        raise PlanningConflict("当前计划审阅不支持此操作。")
                     if self.document_key(state.proposal or {}) not in self.published:
                         raise PlanningConflict("计划尚未完成持久保存，请刷新后重试。")
                     if (

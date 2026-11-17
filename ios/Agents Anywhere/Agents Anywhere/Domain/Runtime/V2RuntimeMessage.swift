@@ -4,6 +4,9 @@ nonisolated struct V2RuntimeMessageSendRequest: Encodable, Hashable {
     let content: String
     let attachments: [V2AttachmentSendReference]
     let clientMessageId: String?
+    /// `auto` or `interrupt`. Sent only while the session is busy and offers
+    /// `session.queue`; without it a busy session still answers 409.
+    var queue: String? = nil
 }
 
 nonisolated struct V2AttachmentSendReference: Encodable, Hashable {

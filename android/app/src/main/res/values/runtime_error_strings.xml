@@ -8,6 +8,7 @@
     <string name="runtime_error_agent_cli_unsupported">The agent\'s batch-file launcher cannot be started directly. Set the path of the actual executable in the instance configuration.</string>
     <string name="runtime_error_agent_configuration_failed">Configuration or submission has not finished. Check the original operation first.</string>
     <string name="runtime_error_agent_guarantees_missing">The current agent cannot meet this session\'s recovery guarantees.</string>
+    <string name="runtime_error_agent_install_busy">Another process is preparing the agent runtime. Try again shortly.</string>
     <string name="runtime_error_agent_install_failed">Installing the agent runtime failed. Check the network and try again.</string>
     <string name="runtime_error_agent_open_failed">Agent initialization has not finished. Check the original operation first.</string>
     <string name="runtime_error_agent_projection_failed">An agent update could not be saved reliably. The session needs to be recovered.</string>
@@ -58,6 +59,7 @@
     <string name="runtime_error_node_archive_too_large">The Node download exceeds the size limit.</string>
     <string name="runtime_error_node_checksum_mismatch">The Node download failed verification. Try again.</string>
     <string name="runtime_error_node_checksum_missing">The Node release has no checksum record.</string>
+    <string name="runtime_error_node_download_failed">Downloading Node failed. Check the network and try again.</string>
     <string name="runtime_error_node_install_invalid">The Node runtime failed verification.</string>
     <string name="runtime_error_node_platform_unsupported">Automatic Node setup is not supported on this device platform.</string>
     <string name="runtime_error_not_pending">This creation was rejected and has no pending request.</string>
@@ -108,6 +110,8 @@
     <string name="runtime_error_pi_source_unreadable">The native history source cannot be read right now. The browsed content is kept.</string>
     <string name="runtime_error_pi_workspace_missing">The original session\'s working directory is missing or invalid.</string>
     <string name="runtime_error_pi_writer_unavailable">Native history write verification is not ready yet.</string>
+    <string name="runtime_error_plan_review_expired">This plan review has expired. Refresh the session before confirming again.</string>
+    <string name="runtime_error_planning_unavailable">Planning is unavailable for this session. Check the selected agent and its connection.</string>
     <string name="runtime_error_preparation_consumed">The workspace preparation is already bound to another creation.</string>
     <string name="runtime_error_preparation_not_reserved">The workspace preparation has not been reserved for this creation.</string>
     <string name="runtime_error_preparation_stale">The workspace preparation is no longer valid. Prepare again.</string>

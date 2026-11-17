@@ -682,6 +682,52 @@
         }
       }
     },
+    "%lld 个附件": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld attachments"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 个附件"
+          }
+        }
+      }
+    },
+    "%lld 条消息排队中": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld message queued"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld messages queued"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 条消息排队中"
+          }
+        }
+      }
+    },
     "%lld 次子 Agent 调用": {
       "extractionState": "manual",
       "localizations": {
@@ -1461,6 +1507,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Agent 调用"
+          }
+        }
+      }
+    },
+    "Agent 运行中，点发送排队，任务结束后自动发送": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agent is running. Tap send to queue; it sends when the task ends"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agent 运行中，点发送排队，任务结束后自动发送"
           }
         }
       }
@@ -5612,6 +5675,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "还没有工作目录。"
+          }
+        }
+      }
+    },
+    "Node 下载失败，请检查网络后重试。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Downloading Node failed. Check the network and try again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Node 下载失败，请检查网络后重试。"
           }
         }
       }
@@ -10959,6 +11039,24 @@
         }
       }
     },
+    "dashboard.device.runtimeConfigFields.agentCliPath.label": {
+      "comment": "Shared with Web: dashboard.device.runtimeConfigFields.agentCliPath.label. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agent executable path (optional)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agent 可执行文件路径（可选）"
+          }
+        }
+      }
+    },
     "dashboard.device.runtimeConfigFields.claudeExecutablePath.description": {
       "comment": "Shared with Web: dashboard.device.runtimeConfigFields.claudeExecutablePath.description. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -14066,6 +14164,24 @@
         }
       }
     },
+    "上一个任务出错，排队消息已暂停": {
+      "comment": "Shared with Web: dashboard.session.queuePausedError. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The last task failed, so queued messages are paused"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上一个任务出错，排队消息已暂停"
+          }
+        }
+      }
+    },
     "上一级目录": {
       "comment": "Shared with Web: common.parent. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -15016,6 +15132,24 @@
           "stringUnit": {
             "state": "translated",
             "value": "全部会话"
+          }
+        }
+      }
+    },
+    "全部清空": {
+      "comment": "Shared with Web: dashboard.session.queueClear. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clear all"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "全部清空"
           }
         }
       }
@@ -15973,6 +16107,42 @@
         }
       }
     },
+    "发送中": {
+      "comment": "Shared with Web: dashboard.session.queueSending. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sending"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "发送中"
+          }
+        }
+      }
+    },
+    "发送失败": {
+      "comment": "Shared with Web: dashboard.session.queueFailed. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Failed"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "发送失败"
+          }
+        }
+      }
+    },
     "发送消息": {
       "comment": "Shared with Web: dashboard.session.send. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -16091,6 +16261,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "另一 AA 执行实例正在使用此原生会话。"
+          }
+        }
+      }
+    },
+    "另一个进程正在准备 Agent 运行环境，请稍后重试。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Another process is preparing the agent runtime. Try again shortly."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "另一个进程正在准备 Agent 运行环境，请稍后重试。"
           }
         }
       }
@@ -17943,6 +18130,24 @@
         }
       }
     },
+    "引导当前任务": {
+      "comment": "Shared with Web: dashboard.session.deliverySteer. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Steer current task"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "引导当前任务"
+          }
+        }
+      }
+    },
     "归档": {
       "comment": "Shared with Web: dashboard.actions.archive. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
@@ -18096,6 +18301,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "当前不可用"
+          }
+        }
+      }
+    },
+    "当前会话无法进入或继续规划。请检查所选 Agent 和连接状态。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Planning is unavailable for this session. Check the selected agent and its connection."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前会话无法进入或继续规划。请检查所选 Agent 和连接状态。"
           }
         }
       }
@@ -18632,6 +18854,24 @@
         }
       }
     },
+    "打断并发送": {
+      "comment": "Shared with Web: dashboard.session.deliveryInterrupt. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Interrupt and send"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "打断并发送"
+          }
+        }
+      }
+    },
     "执行 %@": {
       "extractionState": "manual",
       "localizations": {
@@ -18866,6 +19106,59 @@
           "stringUnit": {
             "state": "translated",
             "value": "按项目"
+          }
+        }
+      }
+    },
+    "排队": {
+      "comment": "Shared with Web: dashboard.session.deliveryQueue. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Queue"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "排队"
+          }
+        }
+      }
+    },
+    "排队中": {
+      "comment": "Shared with Web: dashboard.session.queueWaiting. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Queued"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "排队中"
+          }
+        }
+      }
+    },
+    "排队消息操作": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Queued message actions"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "排队消息操作"
           }
         }
       }
@@ -19574,6 +19867,24 @@
           "stringUnit": {
             "state": "translated",
             "value": "是否执行这个计划？"
+          }
+        }
+      }
+    },
+    "显示全部 %lld 条": {
+      "comment": "Shared with Web: dashboard.session.queueShowAll. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show all %lld"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "显示全部 %lld 条"
           }
         }
       }
@@ -21794,6 +22105,24 @@
         }
       }
     },
+    "立即发送（打断当前任务）": {
+      "comment": "Shared with Web: dashboard.session.queueSendNow. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send now (interrupts the current task)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "立即发送（打断当前任务）"
+          }
+        }
+      }
+    },
     "立即重试": {
       "extractionState": "manual",
       "localizations": {
@@ -21841,6 +22170,24 @@
           "stringUnit": {
             "state": "translated",
             "value": "第 %lld/%lld 次重试。"
+          }
+        }
+      }
+    },
+    "第一条消息发送失败，后面的消息不会发出": {
+      "comment": "Shared with Web: dashboard.session.queuePausedFailed. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The first message failed to send; later messages won't go out"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "第一条消息发送失败，后面的消息不会发出"
           }
         }
       }
@@ -21926,6 +22273,24 @@
           "stringUnit": {
             "state": "translated",
             "value": "等待它重新连接，或选择其他在线设备。草稿会继续保留。"
+          }
+        }
+      }
+    },
+    "等待打断": {
+      "comment": "Shared with Web: dashboard.session.queueInterrupting. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Interrupting"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "等待打断"
           }
         }
       }
@@ -22168,6 +22533,59 @@
           "stringUnit": {
             "state": "translated",
             "value": "继续使用命令行"
+          }
+        }
+      }
+    },
+    "继续发送": {
+      "comment": "Shared with Web: dashboard.session.queueResume. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Continue sending"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "继续发送"
+          }
+        }
+      }
+    },
+    "编辑": {
+      "comment": "Shared with Web: dashboard.session.queueEdit. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Edit"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "编辑"
+          }
+        }
+      }
+    },
+    "编辑排队消息": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Edit queued message"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "编辑排队消息"
           }
         }
       }
@@ -23600,6 +24018,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "这条文件变更记录未提供 diff。"
+          }
+        }
+      }
+    },
+    "这次计划审阅已失效，请刷新会话后重新确认。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This plan review has expired. Refresh the session before confirming again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这次计划审阅已失效，请刷新会话后重新确认。"
           }
         }
       }

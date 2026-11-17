@@ -59,6 +59,9 @@ import { CAPABILITY, capabilityIsUsable, findCapability } from "@/components/ses
 import { SessionComposer, type AttachedFile } from "@/components/session/session-composer"
 import { commandResult, commandTransportFailure, type CommandOutcome } from "@/components/session/runtime-command-model"
 import { useRuntimeCommands } from "@/components/session/use-runtime-commands"
+import { SessionMessageQueue } from "@/components/session/session-message-queue"
+import { useSessionQueue } from "@/features/message-queue/use-session-queue"
+import { queuedDelivery, type MessageDelivery } from "@/features/message-queue/queue-model"
 import {
   buildOptimisticUserMessage,
   isOptimisticTimelineItem,
@@ -376,7 +379,11 @@ function SessionDetailVisit({
     ? { runtimeId: sessionRuntimeId(session), runtimeType: sessionRuntimeType(session) }
     : undefined
   const effectiveCapabilities = state?.effectiveCapabilities ?? null
-  const goals = useSessionGoal(token, sessionId, Boolean(session?.takeover && !session.archived && session.connectorStatus === "online" && capabilityIsUsable(effectiveCapabilities,"session.goal",sessionRuntimeScope)))
+  const isLocalOptimisticSession = isOptimisticSession(sessionId)
+  // Like goals: a session that is still being created has no queue yet.
+  const queueUsable = Boolean(session && !isLocalOptimisticSession && capabilityIsUsable(effectiveCapabilities, CAPABILITY.queue, sessionRuntimeScope))
+  const messageQueue = useSessionQueue(token, sessionId, queueUsable)
+  const goals = useSessionGoal(token, sessionId, Boolean(session?.takeover && !session.archived && session.connectorStatus === "online" && capabilityIsUsable(effectiveCapabilities,"session.goal",sessionRuntimeScope)), !isLocalOptimisticSession)
   const commandSessionId = session?.id === sessionId ? sessionId : null
   const commandCapability = session ? findCapability(effectiveCapabilities, CAPABILITY.commands, sessionRuntimeScope) : null
   const catalogMetadata = commandCapability?.metadata as Record<string, unknown> | undefined
@@ -419,7 +426,6 @@ function SessionDetailVisit({
   }, [runtimeState, runtimeStatus, session, state?.eventCursor, state?.serverTime])
 
   const composerDraft = composerDraftState.sessionId === sessionId ? composerDraftState.value : ""
-  const isLocalOptimisticSession = isOptimisticSession(sessionId)
   const creation = sessionCreations[sessionId]
   const creationFailed = creation?.status === "failed"
   const hasInitialSessionState = state !== null
@@ -541,6 +547,10 @@ function SessionDetailVisit({
 
   const goalEvent = remote.domainEvents.get("goal.state.updated")
   const planningEvent = remote.domainEvents.get("planning.state.updated")
+  const queueEvent = remote.domainEvents.get("runtime.queue.updated")
+  React.useEffect(() => {
+    if (queueEvent) messageQueue.ingest(queueEvent.payload.queue)
+  }, [queueEvent, messageQueue.ingest])
   React.useEffect(() => {
     if (goalEvent) goals.ingest(goalEvent.payload.state as import("@/generated/protocol/v1_1/goal-state").GoalState)
   }, [goalEvent, goals.ingest])
@@ -724,6 +734,7 @@ function SessionDetailVisit({
     content: string,
     attachments: AttachedFile[],
     _selections: { model?: string; permission?: string },
+    delivery: MessageDelivery = "send",
   ): Promise<boolean> => {
     if (!session || (!content.trim() && attachments.length === 0)) return false
     if (capabilityIsUsable(effectiveCapabilities,"session.goal",sessionRuntimeScope) && /^\/goal(?:\s|$)/.test(content.trimStart())) {
@@ -753,6 +764,28 @@ function SessionDetailVisit({
     if (uploadedAttachments.length !== attachments.length) return false
     const clientMessageId = createClientId("msg")
     const messageText = content.trim() || tNew("attachmentOnlyPrompt")
+    if (delivery === "queue" || delivery === "interrupt") {
+      // The server keeps the message until the session can take it; the
+      // queue panel shows it, and the timeline gets it once it is sent.
+      setSending(true)
+      try {
+        await selectionChanges.writes.get(session.id)
+        const response = await dashboardApi.sendSessionMessage(token, session.id, messageText, {
+          attachments: uploadedAttachments.map((attachment) => ({ fileId: attachment.fileId })),
+          clientMessageId,
+          queue: delivery === "interrupt" ? "interrupt" : "auto",
+        })
+        const queued = queuedDelivery(response.result)
+        if (queued) messageQueue.ingest(queued)
+        else timelineFollowRef.current?.resume()
+        return true
+      } catch (err) {
+        toast.error(err instanceof Error && err.message ? err.message : tSession("sendFailed"))
+        return false
+      } finally {
+        setSending(false)
+      }
+    }
     timelineFollowRef.current?.resume()
     const optimisticMessage = buildOptimisticUserMessage({
       sessionId: session.id,
@@ -772,7 +805,10 @@ function SessionDetailVisit({
     setState((current) => {
       if (!current) return current
       previousRuntimeState = current.state ?? null
-      pendingRuntimeState = nextOptimisticRuntimeState(current.state, current.session, "waiting")
+      // Steering joins the running turn; only a new turn starts out waiting.
+      pendingRuntimeState = delivery === "steer"
+        ? current.state ?? null
+        : nextOptimisticRuntimeState(current.state, current.session, "waiting")
       return {
         ...current,
         state: pendingRuntimeState,
@@ -782,6 +818,18 @@ function SessionDetailVisit({
     setSending(true)
     try {
       await selectionChanges.writes.get(session.id)
+      if (delivery === "steer") {
+        const response = await dashboardApi.steerSession(token, session.id, messageText, {
+          attachments: uploadedAttachments.map((attachment) => ({ fileId: attachment.fileId })),
+          clientMessageId,
+        })
+        // The turn may end just before the message reaches it.
+        const result = response.result as { ok?: unknown; message?: unknown } | null
+        if (response.ok === false || result?.ok === false) {
+          throw new Error(typeof result?.message === "string" && result.message ? result.message : tSession("steerFailed"))
+        }
+        return true
+      }
       await dashboardApi.sendSessionMessage(token, session.id, messageText, {
         attachments: uploadedAttachments.map((attachment) => ({ fileId: attachment.fileId })),
         clientMessageId,
@@ -1384,6 +1432,12 @@ function SessionDetailVisit({
           {planReview && <PlanningReviewPanel planning={planning} target={planReview} />}
           <div hidden={planReview !== null}>
           <GoalPanel goals={goals}/>
+          <SessionMessageQueue
+            controller={messageQueue}
+            runtimeStatus={runtimeState?.status ?? session.status}
+            canControl={Boolean(session.takeover && !session.archived && session.connectorStatus === "online")}
+            canInterrupt={capabilityIsUsable(effectiveCapabilities, CAPABILITY.interrupt, sessionRuntimeScope)}
+          />
           <SessionComposer
             token={token}
             session={session}
@@ -1393,6 +1447,7 @@ function SessionDetailVisit({
             sending={sending || planning.busy || goals.busy}
             interrupting={interrupting}
             takeoverBusy={takeoverBusy}
+            queueWaiting={queueUsable && (messageQueue.queue?.items.length ?? 0) > 0}
             value={composerDraft}
             effectiveCapabilities={state?.effectiveCapabilities ?? null}
             modelCatalog={state?.catalogs.model ?? null}

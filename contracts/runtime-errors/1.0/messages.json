@@ -30,6 +30,10 @@
       "zh-CN": "当前 Agent 不能满足该会话的恢复保证。",
       "en": "The current agent cannot meet this session's recovery guarantees."
     },
+    "agent_install_busy": {
+      "zh-CN": "另一个进程正在准备 Agent 运行环境，请稍后重试。",
+      "en": "Another process is preparing the agent runtime. Try again shortly."
+    },
     "agent_install_failed": {
       "zh-CN": "Agent 运行环境安装失败，请检查网络后重试。",
       "en": "Installing the agent runtime failed. Check the network and try again."
@@ -230,6 +234,10 @@
       "zh-CN": "Node 发布包缺少校验记录。",
       "en": "The Node release has no checksum record."
     },
+    "node_download_failed": {
+      "zh-CN": "Node 下载失败，请检查网络后重试。",
+      "en": "Downloading Node failed. Check the network and try again."
+    },
     "node_install_invalid": {
       "zh-CN": "Node 运行环境校验失败。",
       "en": "The Node runtime failed verification."
@@ -265,6 +273,14 @@
     "permission_denied": {
       "zh-CN": "当前权限或用户审批未允许此命令。",
       "en": "The current permissions or approvals do not allow this command."
+    },
+    "plan_review_expired": {
+      "zh-CN": "这次计划审阅已失效，请刷新会话后重新确认。",
+      "en": "This plan review has expired. Refresh the session before confirming again."
+    },
+    "planning_unavailable": {
+      "zh-CN": "当前会话无法进入或继续规划。请检查所选 Agent 和连接状态。",
+      "en": "Planning is unavailable for this session. Check the selected agent and its connection."
     },
     "pi_adapter_cache_corrupt": {
       "zh-CN": "Pi ACP 缓存依赖来源已变化。",

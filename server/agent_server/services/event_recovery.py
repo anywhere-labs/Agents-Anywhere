@@ -117,6 +117,7 @@ class EventRecoveryService:
                             )
                         },
                     ),
+                    *await self._queue_events(session_id, current_sequence),
                 ],
                 nextCursor=event_cursor(current_sequence),
                 snapshotRequired=False,
@@ -177,6 +178,7 @@ class EventRecoveryService:
                     payload={"capabilitySet": effective_capabilities.model_dump(mode="json")},
                 )
             )
+        events.extend(await self._queue_events(session_id, current_sequence))
         events.sort(key=lambda event: (event.sequence, event.eventId))
         return ProtocolEventRecoveryResponse(
             events=events,
@@ -184,6 +186,23 @@ class EventRecoveryService:
             snapshotRequired=False,
             serverTime=utc_now(),
         )
+
+    async def _queue_events(self, session_id: str, sequence: int) -> list:
+        """The queue is live state without its own sequence: resend it whole."""
+        reader = getattr(self._store, "get_session_queue", None)
+        if reader is None:
+            return []
+        queue = await reader(session_id)
+        if not queue.get("revision"):
+            return []
+        return [
+            protocol_event(
+                session_id,
+                sequence=sequence,
+                event_type="runtime.queue.updated",
+                payload={"queue": queue},
+            )
+        ]
 
     @staticmethod
     def _snapshot_required(current_sequence: int) -> ProtocolEventRecoveryResponse:

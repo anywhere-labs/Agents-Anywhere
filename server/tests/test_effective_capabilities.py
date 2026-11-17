@@ -235,6 +235,10 @@ def test_presence_change_publishes_reprojected_session_capabilities() -> None:
             assert connector_id == session.connectorId
             return [session]
 
+        async def get_session(self, session_id: str) -> SessionView:
+            assert session_id == session.id
+            return session
+
         async def get_protocol_capabilities(
             self,
             connector_id: str,
@@ -328,6 +332,9 @@ def test_batch_refreshes_equal_revision_replacement_from_another_publisher():
                     for i in range(3)
                 ]
 
+            async def get_session(self, session_id):
+                return _session(takeover=True).model_copy(update={"id": session_id})
+
             @asynccontextmanager
             async def session_revision_fence(self, session_id):
                 if asyncio.current_task().get_name() == "old" and session_id == "session-1":
@@ -412,6 +419,9 @@ def test_capability_batch_reads_once_and_newer_batch_supersedes_old_work():
                 return [_session(takeover=True).model_copy(update={"id": f"session-{i}"})
                         for i in range(3)]
 
+            async def get_session(self, session_id):
+                return _session(takeover=True).model_copy(update={"id": session_id})
+
             async def get_protocol_capabilities(self, connector_id, *, user_id=None):
                 self.reads += 1
                 return {"revision": self.reads, "capabilities": [{
@@ -458,5 +468,120 @@ def test_capability_batch_reads_once_and_newer_batch_supersedes_old_work():
         assert all(next(cap for cap in payload["capabilitySet"]["capabilities"]
                         if cap["capabilityId"] == SESSION_SEND_MESSAGE)["allowed"] is False
                    for payload in publisher.sent)
+
+    asyncio.run(exercise())
+
+
+class _BatchRepository:
+    """Stored rows change between the batch listing and each session fence."""
+
+    def __init__(self, sessions: list[SessionView]) -> None:
+        self.rows = {session.id: session for session in sessions}
+        self.listed: list[SessionView] = []
+
+    async def list_sessions_for_connector(self, connector_id):
+        self.listed = list(self.rows.values())
+        return self.listed
+
+    async def get_session(self, session_id):
+        try:
+            return self.rows[session_id]
+        except KeyError:
+            raise KeyError(session_id) from None
+
+    async def get_session_seq(self, session_id):
+        return (await self.get_session(session_id)).updatedSeq
+
+    @asynccontextmanager
+    async def session_revision_fence(self, session_id):
+        yield
+
+    async def get_protocol_capabilities_stamp(self, connector_id):
+        return (1, "stored")
+
+    async def get_protocol_capabilities(self, connector_id, *, user_id=None):
+        # Stored connector facts carry a microsecond-clock revision that is
+        # larger than any session sequence, so clients cannot discard them.
+        return {"revision": 1_700_000_000_000_000, "capabilities": [{
+            "capabilityId": SESSION_SEND_MESSAGE, "scope": "runtime",
+            "runtime": "codex", "supported": True, "available": True, "allowed": True,
+        }]}
+
+
+class _OnlinePresence:
+    async def is_online(self, connector_id):
+        return True
+
+
+class _RecordingPublisher:
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, dict]] = []
+
+    async def publish(self, session_id, payload):
+        self.sent.append((session_id, payload))
+
+
+def _published_send(payload: dict) -> dict:
+    return next(cap for cap in payload["capabilitySet"]["capabilities"]
+                if cap["capabilityId"] == SESSION_SEND_MESSAGE)
+
+
+def test_batch_projects_takeover_enabled_after_the_listing():
+    async def exercise():
+        repository = _BatchRepository([_session(takeover=False).model_copy(update={"updatedSeq": 5})])
+        publisher = _RecordingPublisher()
+
+        class Fence:
+            @asynccontextmanager
+            async def __call__(self, session_id):
+                # The user enabled takeover after the batch listed sessions;
+                # that write committed before the batch reached this fence.
+                repository.rows[session_id] = repository.rows[session_id].model_copy(
+                    update={"takeover": True, "updatedSeq": 6},
+                )
+                yield
+
+        repository.session_revision_fence = Fence()
+        await publish_connector_session_capabilities(
+            repository, _OnlinePresence(), publisher, "connector-1",
+        )
+
+        assert repository.listed[0].takeover is False
+        [(_, payload)] = publisher.sent
+        assert payload["nextSeq"] == 6
+        assert payload["session"]["takeover"] is True
+        assert payload["session"]["updatedSeq"] == 6
+        send = _published_send(payload)
+        assert send["allowed"] is True
+        assert send["unavailableReason"] is None
+
+    asyncio.run(exercise())
+
+
+def test_batch_skips_sessions_removed_or_moved_after_the_listing():
+    async def exercise():
+        sessions = [
+            _session(takeover=True).model_copy(update={"id": f"session-{i}"})
+            for i in range(3)
+        ]
+        repository = _BatchRepository(sessions)
+        publisher = _RecordingPublisher()
+
+        original_list = repository.list_sessions_for_connector
+
+        async def list_then_change(connector_id):
+            listed = await original_list(connector_id)
+            del repository.rows["session-0"]
+            repository.rows["session-1"] = repository.rows["session-1"].model_copy(
+                update={"connectorId": "connector-2"},
+            )
+            return listed
+
+        repository.list_sessions_for_connector = list_then_change
+        await publish_connector_session_capabilities(
+            repository, _OnlinePresence(), publisher, "connector-1",
+        )
+
+        assert [session_id for session_id, _ in publisher.sent] == ["session-2"]
 
     asyncio.run(exercise())

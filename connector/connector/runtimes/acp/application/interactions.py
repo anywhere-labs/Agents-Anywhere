@@ -22,7 +22,8 @@ class InteractionService:
         self.contexts: dict[str, dict] = {}
 
     async def open(
-        self, context: dict, agent_session_id: str | None, kind: str, request: dict
+        self, context: dict, agent_session_id: str | None, kind: str, request: dict,
+        *, open_review=None,
     ) -> dict:
         if context.get("closing"):
             return {"action": "cancel"}
@@ -50,6 +51,7 @@ class InteractionService:
             kind,
             request,
             time.time() + 300,
+            plan_review=open_review is not None,
         )
         waiter = asyncio.get_running_loop().create_future()
         self.waiters[item.interaction_id] = waiter
@@ -58,26 +60,40 @@ class InteractionService:
             self.store.put("interaction", item.interaction_id, asdict(item))
             self.publish_notice(context, item)
         try:
-            return await asyncio.wait_for(asyncio.shield(waiter), 300)
-        except (TimeoutError, asyncio.CancelledError):
-            with self.store.transaction():
-                row = self.store.require("interaction", item.interaction_id)
-                if row["status"] == "open":
-                    row.update(
-                        status="expired" if not waiter.cancelled() else "cancelled",
-                        revision=row["revision"] + 1,
-                    )
-                    self.store.put("interaction", item.interaction_id, row)
-                    self.publish_notice(context, parse_interaction(row))
+            if open_review is not None:
+                await open_review(item)
+            return await asyncio.wait_for(asyncio.shield(waiter), max(0, item.expires_at - time.time()))
+        except TimeoutError:
+            self.expire(item, "expired")
             return {"action": "cancel"}
+        except asyncio.CancelledError:
+            self.expire(item, "cancelled")
+            return {"action": "cancel"}
+        except Exception:
+            self.expire(item, "cancelled")
+            raise
         finally:
             self.waiters.pop(item.interaction_id, None)
             self.contexts.pop(item.interaction_id, None)
 
-    def respond(self, scope_id: str, values: dict) -> dict:
+    def expire(self, item: Interaction, status: str) -> None:
+        with self.store.transaction():
+            row = self.store.require("interaction", item.interaction_id)
+            if row["status"] == "open":
+                row.update(status=status, revision=row["revision"] + 1)
+                self.store.put("interaction", item.interaction_id, row)
+                self.publish_notice(self.contexts[item.interaction_id], parse_interaction(row))
+
+    def is_open(self, item: Interaction) -> bool:
+        waiter = self.waiters.get(item.interaction_id)
+        return item.status == "open" and time.time() < item.expires_at and waiter is not None and not waiter.done()
+
+    def respond(self, scope_id: str, values: dict, *, plan_review=False) -> dict:
         item = parse_interaction(
             self.store.require("interaction", values["interactionId"])
         )
+        if item.plan_review != plan_review:
+            raise AcpError("interaction_scope_mismatch", "回答不属于该交互流程。")
         if item.scope_id != scope_id:
             raise AcpError("interaction_scope_mismatch", "回答不属于该操作。")
         if item.status == "open" and item.interaction_id not in self.waiters:
@@ -139,10 +155,16 @@ class InteractionService:
                 if waiter and not waiter.done():
                     waiter.set_result({"action": "cancel"})
 
+    def has_open(self, scope_id: str) -> bool:
+        return any(
+            row["scope_id"] == scope_id and self.is_open(parse_interaction(row))
+            for row in self.store.values("interaction")
+        )
+
     def views(self, scope_id: str) -> list[dict]:
         result = []
         for row in self.store.values("interaction"):
-            if row["scope_id"] != scope_id:
+            if row["scope_id"] != scope_id or row.get("plan_review", False):
                 continue
             request = row["request"]
             actions = (

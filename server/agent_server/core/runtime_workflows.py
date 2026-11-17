@@ -14,6 +14,7 @@ from pydantic import (
 )
 
 from .models import InlineAttachmentRef
+from .planning.models import PlanningCreationIntent
 from .protocol import ProtocolModelCatalog
 
 Identity = str
@@ -61,6 +62,7 @@ class BeginCreationRequest(BaseModel):
     configuration: dict[str, StrictStr | StrictBool] | None = Field(
         default=None, max_length=128
     )
+    planningIntent: PlanningCreationIntent | None = None
     clientMessageId: str = Field(min_length=1, max_length=160)
     content: str = Field(max_length=1000000)
     attachments: list[InlineAttachmentRef] = Field(default_factory=list, max_length=10)
@@ -68,6 +70,8 @@ class BeginCreationRequest(BaseModel):
 
     @model_validator(mode="after")
     def require_message(self):
+        if self.planningIntent is not None and not self.content.strip():
+            raise ValueError("请填写需要规划的任务。")
         if not self.content.strip() and not self.attachments:
             raise ValueError("消息和附件不能同时为空。")
         return self

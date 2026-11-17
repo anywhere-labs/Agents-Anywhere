@@ -484,7 +484,39 @@ class SessionsApi(
         content: String,
         clientMessageId: String,
         attachments: List<RemoteAttachmentRef> = emptyList(),
+        /** `auto` or `interrupt`; only sent once the session offers `session.queue`. */
+        queue: String? = null,
     ): RemoteRpcResponse {
+        val body = runtimeMessageBody(content, clientMessageId, attachments)
+        queue?.let { body.put("queue", it) }
+        return client.postJson(
+            serverUrl = serverUrl,
+            path = "/sessions/${sessionId.urlEncode()}/runtime/messages",
+            body = body,
+            authorizationToken = authorizationToken,
+        ).toRemoteRpcResponse()
+    }
+
+    /** Adds a message to the running turn (`session.steer`); it does not go through the queue. */
+    fun steerSession(
+        serverUrl: String,
+        authorizationToken: String,
+        sessionId: String,
+        content: String,
+        clientMessageId: String,
+        attachments: List<RemoteAttachmentRef> = emptyList(),
+    ): RemoteRpcResponse = client.postJson(
+        serverUrl = serverUrl,
+        path = "/sessions/${sessionId.urlEncode()}/runtime/steer",
+        body = runtimeMessageBody(content, clientMessageId, attachments),
+        authorizationToken = authorizationToken,
+    ).toRemoteRpcResponse()
+
+    private fun runtimeMessageBody(
+        content: String,
+        clientMessageId: String,
+        attachments: List<RemoteAttachmentRef>,
+    ): JSONObject {
         val body = JSONObject()
             .put("content", content)
             .put("clientMessageId", clientMessageId)
@@ -494,13 +526,43 @@ class SessionsApi(
                 JSONArray(attachments.map { JSONObject().put("fileId", it.fileId) }),
             )
         }
-        return client.postJson(
-            serverUrl = serverUrl,
-            path = "/sessions/${sessionId.urlEncode()}/runtime/messages",
-            body = body,
-            authorizationToken = authorizationToken,
-        ).toRemoteRpcResponse()
+        return body
     }
+
+    fun getSessionQueue(serverUrl: String, token: String, sessionId: String): RemoteSessionQueueState =
+        client.getJson(serverUrl = serverUrl, path = queuePath(sessionId), authorizationToken = token).requireQueueState()
+
+    fun updateSessionQueueItem(serverUrl: String, token: String, sessionId: String, messageId: String, content: String): RemoteSessionQueueState =
+        client.patchJson(
+            serverUrl = serverUrl,
+            path = "${queuePath(sessionId)}/${messageId.urlEncode()}",
+            body = JSONObject().put("content", content),
+            authorizationToken = token,
+        ).requireQueueState()
+
+    fun deleteSessionQueueItem(serverUrl: String, token: String, sessionId: String, messageId: String): RemoteSessionQueueState =
+        client.deleteJson(serverUrl = serverUrl, path = "${queuePath(sessionId)}/${messageId.urlEncode()}", authorizationToken = token)
+            .requireQueueState()
+
+    fun retrySessionQueueItem(serverUrl: String, token: String, sessionId: String, messageId: String): RemoteSessionQueueState =
+        client.postJson(serverUrl = serverUrl, path = "${queuePath(sessionId)}/${messageId.urlEncode()}/retry", authorizationToken = token)
+            .requireQueueState()
+
+    fun sendSessionQueueItemNow(serverUrl: String, token: String, sessionId: String, messageId: String): RemoteSessionQueueState =
+        client.postJson(serverUrl = serverUrl, path = "${queuePath(sessionId)}/${messageId.urlEncode()}/send-now", authorizationToken = token)
+            .requireQueueState()
+
+    fun resumeSessionQueue(serverUrl: String, token: String, sessionId: String): RemoteSessionQueueState =
+        client.postJson(serverUrl = serverUrl, path = "${queuePath(sessionId)}/resume", authorizationToken = token)
+            .requireQueueState()
+
+    fun clearSessionQueue(serverUrl: String, token: String, sessionId: String): RemoteSessionQueueState =
+        client.deleteJson(serverUrl = serverUrl, path = queuePath(sessionId), authorizationToken = token).requireQueueState()
+
+    private fun queuePath(sessionId: String) = "/sessions/${sessionId.urlEncode()}/runtime/queue"
+
+    private fun JSONObject.requireQueueState(): RemoteSessionQueueState =
+        toSessionQueueState() ?: throw ApiException("The server returned an unreadable message queue.")
 
     fun uploadSessionAttachments(
         serverUrl: String,
@@ -664,6 +726,9 @@ class SessionsApi(
                 permissionCatalog = catalog?.takeIf { catalogType == "permission" }
                     ?.toRemoteRuntimePermissionCatalog(),
                 eventCursor = payload.optNullableString("eventCursor"),
+                queue = payload.optJSONObject("queue")
+                    ?.takeIf { value.optString("type") == "runtime.queue.updated" }
+                    ?.toSessionQueueState(),
             ),
         )
     }
@@ -792,6 +857,7 @@ class SessionsApi(
             ),
             eventCursor = optString("eventCursor", "seq:0"),
             serverTime = optNullableString("serverTime"),
+            queue = optJSONObject("queue")?.toSessionQueueState(),
         )
     }
 
@@ -988,7 +1054,7 @@ class SessionsApi(
                 ?: "",
             content = content,
             source = optJSONObject("source") ?: JSONObject(),
-            orderSeq = optInt("orderSeq", 0),
+            orderSeq = if (isNull("orderSeq")) MISSING_ORDER_SEQ else optInt("orderSeq", MISSING_ORDER_SEQ),
             revision = optInt("revision", 1),
             updatedSeq = optInt("updatedSeq", 0),
             createdAt = optString("createdAt", ""),
@@ -999,10 +1065,16 @@ class SessionsApi(
 
     private fun JSONObject.toRemoteRpcResponse(): RemoteRpcResponse {
         val error = optJSONObject("error")
+        val result = optJSONObject("result")
         return RemoteRpcResponse(
             ok = optBoolean("ok", false),
             errorCode = error?.optNullableString("code"),
             errorMessage = error?.optNullableString("message"),
+            delivery = result?.optNullableString("delivery"),
+            queue = result?.takeIf { it.optString("delivery") == "queued" }
+                ?.optJSONObject("queue")?.toSessionQueueState(),
+            resultOk = result?.takeIf { it.has("ok") }?.optBoolean("ok"),
+            resultMessage = result?.optNullableString("message"),
         )
     }
 

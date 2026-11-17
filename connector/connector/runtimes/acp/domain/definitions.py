@@ -35,6 +35,8 @@ class AgentProfile:
     required_guarantees: frozenset[str] = frozenset()
     permission_options: tuple[tuple[str, str], ...] = ()
     runtime_capabilities: tuple[str, ...] = ()
+    native_inventory: bool = True
+    launch_in_workspace: bool = False
 
 
 @dataclass(frozen=True)

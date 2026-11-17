@@ -125,7 +125,7 @@
       "model": "ProtocolSessionSnapshotResponse",
       "path": "schemas/session-snapshot-response.schema.json",
       "pydanticMode": "serialization",
-      "sha256": "273f81ab53a1cca42496ced615b50b0ddd119bc6072318f30a77405839111fb1",
+      "sha256": "9468d02b5b920e092977436df215b8c0834e67686ed80eda84ef6e593b8b5627",
       "slug": "session-snapshot-response"
     },
     {

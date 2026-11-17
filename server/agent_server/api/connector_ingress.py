@@ -45,6 +45,7 @@ from agent_server.deps import (
     get_store,
     get_timeline_broker,
     get_timeline_write_buffer,
+    message_queue_wake_for,
     model_channel_service_for,
 )
 from agent_server.infra.connector_rpc import (
@@ -623,6 +624,7 @@ async def connector_ws(
                 websocket.app.state.session_runtime_state_cache,
                 websocket.app.state.capability_refresh,
                 runtime_event=model_channel_service_for(websocket.app.state).runtime_event,
+                session_idle=message_queue_wake_for(websocket.app.state),
             )
             notification_pump = _ConnectorNotificationPump(
                 connector_id, ingest_service,
@@ -743,7 +745,7 @@ async def connector_ws(
                 connection,
                 reason=discovery_reason or "runtime.recovery",
                 on_discovered=model_channel_service_for(websocket.app.state).connector_discovered,
-                on_ready=model_channel_service_for(websocket.app.state).connector_event,
+                on_ready=_connector_ready_handler(websocket.app.state),
             ),
             name=f"runtime-discovery-complete-{connection.connection_id}",
         )
@@ -1093,3 +1095,19 @@ def _access_token_connector_id(authorization: str | None) -> str:
         if connector_id is not None:
             return connector_id
     raise HTTPException(status_code=401, detail="invalid connector access token")
+
+
+def _connector_ready_handler(state: Any) -> Callable[[str], Awaitable[None]]:
+    """The device is ready again: resume model channel switches and queued messages."""
+    channels = model_channel_service_for(state)
+    dispatcher = getattr(state, "message_queue_dispatcher", None)
+
+    async def on_ready(connector_id: str) -> None:
+        await channels.connector_event(connector_id)
+        if dispatcher is not None:
+            try:
+                await dispatcher.connector_ready(connector_id)
+            except Exception:  # noqa: BLE001 - the queue sweep retries
+                logger.exception("message queue resume failed connector_id={}", connector_id)
+
+    return on_ready

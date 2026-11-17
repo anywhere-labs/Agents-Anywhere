@@ -422,6 +422,61 @@ def test_projector_publishes_timeline_and_tracks_turns() -> None:
     asyncio.run(run())
 
 
+def test_projector_shows_automatic_approval_review_instead_of_unknown() -> None:
+    def review(status: str) -> dict[str, Any]:
+        return {
+            "type": "automaticApprovalReview",
+            "id": "automatic-approval-review:rev-1",
+            "targetItemId": "call_1",
+            "turnId": "turn-2",
+            "action": {"type": "command", "source": "shell", "command": "git push", "cwd": "/w"},
+            "startedAtMs": 1,
+            "completedAtMs": None if status == "inProgress" else 2,
+            "event": None,
+            "status": status,
+            "riskLevel": "medium" if status != "inProgress" else None,
+            "userAuthorization": None,
+            "rationale": None if status == "inProgress" else "用户明确要求推送。",
+        }
+
+    def state_with(status: str, turn_status: str) -> dict[str, Any]:
+        state = _state(threadRuntimeStatus={"type": "active", "activeFlags": []})
+        history = state["turnHistory"]["history"]
+        history["entitiesByKey"]["tail:0:local:n"] = _turn("turn-2", turn_status, [review(status)])
+        history["islands"][0]["entries"].append({"key": "tail:0:local:n"})
+        return state
+
+    async def run() -> None:
+        host = _Host()
+        projector = CodexIpcSessionProjector(
+            host=host,
+            session_states=RuntimeSessionStateCache("codex", host),
+            notices=CodexNoticeRegistry(),
+            active_turn_ids={},
+            timeline=CodexTimelineAccumulator(),
+        )
+        await projector.handle(_event("snapshot", _state()))
+        patch = [{"op": "add", "path": ["turnHistory", "history", "entitiesByKey", "tail:0:local:n"], "value": {}}]
+
+        # Live: the review appears while running, then resolves in place.
+        await projector.handle(_event("patches", state_with("inProgress", "inProgress"), patches=patch, revision=2))
+        await projector.handle(_event("patches", state_with("approved", "inProgress"), patches=patch, revision=3))
+        running, approved = host.item_upserts
+        assert running.id == approved.id
+        assert (running.type, running.status, running.content["label"]) == ("marker", "running", "自动审查中：运行 git push")
+        assert (approved.type, approved.status, approved.content["label"]) == ("marker", "done", "自动审查已批准：运行 git push")
+        assert approved.content["text"] == "用户明确要求推送。"
+        assert approved.source["rawType"] == "automaticApprovalReview"
+
+        # Snapshot (reattach/replay): same item, still readable.
+        await projector.handle(_event("snapshot", state_with("approved", "completed"), revision=4))
+        replayed = [item for item in host.syncs[-1]["items"] if item.source["rawType"] == "automaticApprovalReview"]
+        assert [(item.id, item.type, item.status) for item in replayed] == [(approved.id, "marker", "done")]
+        assert all(item.content.get("kind") != "unknown" for item in host.syncs[-1]["items"])
+
+    asyncio.run(run())
+
+
 # -- runtime routing -----------------------------------------------------------
 
 

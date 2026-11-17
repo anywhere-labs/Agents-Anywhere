@@ -120,9 +120,18 @@ class AcpAgentProvider(RuntimeProvider):
         def client_factory(on_update, on_interaction):
             return AgentClient(on_update, on_interaction, dialect=self.definition.dialect(context))
 
-        if self.definition.runtime is not None:
-            return self.definition.runtime(context, client_factory)
-        return validated_runtime(context, client_factory)
+        build_runtime = self.definition.runtime or validated_runtime
+        runtime = build_runtime(context, client_factory)
+        if self.definition.planning:
+            from connector.planning.infrastructure.binding import bind_planning
+
+            from .application.planning import AcpPlanningPort
+
+            port = AcpPlanningPort(runtime, self.definition.planning)
+            bind_planning(runtime, host, port)
+            if runtime.planning is not None:
+                runtime.app.planning = port
+        return runtime
 
 
 def validated_runtime(context: AgentContext, client_factory) -> AcpRuntime:

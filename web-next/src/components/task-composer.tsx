@@ -816,10 +816,8 @@ export function TaskComposer() {
     if (recoveryTargetUnavailable || workspace.connectorId !== selectedConnector.id) return
     if (!prompt.trim() && attachments.length === 0) return
     if (!capabilitiesReady || catalogsLoading || (needsPreparation && preparation.operation?.state.phase !== "ready")) return
-    // Prepared-workspace creation does not carry a planning intent yet; refuse instead of silently dropping it.
     if (useGoal && needsPreparation) { toast.error(tGoal("workspaceUnsupported")); return }
     if (useGoal && !goalObjective) return
-    if (usePlanning && needsPreparation) { toast.error(tPlanning("workspaceUnsupported")); return }
     if (requiresModelSelection && !selectedModelSelection) return
     if (requiresPermissionSelection && !selectedPermissionSelection) return
     if (attachments.length > 0 && (!canUseAttachments || !attachmentsAllowed)) return
@@ -974,7 +972,7 @@ export function TaskComposer() {
         >
           <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
           <span className="min-w-0 flex-1">
-            <span className="block truncate">{modelItem.label}</span>
+            <span className="block truncate" title={modelItem.label}>{modelItem.label}</span>
             {!modelItem.enabled && modelItem.disabledReason ? (
               <span className="block truncate text-xs text-muted-foreground">
                 {modelItem.disabledReason}
@@ -988,7 +986,10 @@ export function TaskComposer() {
       <DropdownMenuSub key={modelItem.id}>
         <DropdownMenuSubTrigger className="gap-2" disabled={!modelItem.enabled}>
           <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
-          <span className="max-w-40 truncate" title={modelItem.disabledReason ?? undefined}>
+          <span
+            className="min-w-0 flex-1 truncate"
+            title={modelItem.disabledReason ? `${modelItem.label}\n${modelItem.disabledReason}` : modelItem.label}
+          >
             {modelItem.label}
           </span>
         </DropdownMenuSubTrigger>
@@ -1208,14 +1209,14 @@ export function TaskComposer() {
                     {hasOnlineDevice && models.length > 0 ? (
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="sm" className="min-w-0 shrink max-w-72 gap-1.5 text-muted-foreground">
-                            {reasoningOptions.length > 0 ? <span className="text-foreground">{effortLabel}</span> : null}
-                            {reasoningOptions.length > 0 ? <span className="text-muted-foreground/50">·</span> : null}
+                          <Button variant="ghost" size="sm" className="min-w-0 shrink max-w-80 gap-1.5 text-muted-foreground" title={modelLabel}>
+                            {reasoningOptions.length > 0 ? <span className="shrink-0 text-foreground">{effortLabel}</span> : null}
+                            {reasoningOptions.length > 0 ? <span className="shrink-0 text-muted-foreground/50">·</span> : null}
                             <span className="min-w-0 truncate text-foreground">{modelLabel}</span>
                             <ChevronDown className="size-3.5 shrink-0 opacity-50" />
                           </Button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="start" className="w-56">
+                        <DropdownMenuContent align="start" className="w-auto min-w-56 max-w-[min(28rem,calc(100vw-1rem))]">
                           {groupModelOptions(models).map((section, index) => (
                             <React.Fragment key={section.id === null ? "ungrouped" : `group:${section.id}`}>
                               {index > 0 ? <DropdownMenuSeparator /> : null}

@@ -555,3 +555,34 @@ test("the Connector network setting replaces any proxy choice inherited from the
   settings.save({ connectorProxy: "http://127.0.0.1:7890" });
   assert.equal(environment().AA_CONNECTOR_PROXY, "http://127.0.0.1:7890");
 });
+
+test("Connector runs Pi on Desktop's own Electron and prefers npmmirror where Python already comes from a mirror", t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "aa-supervisor-pi-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const settings = new DesktopSettingsStore(path.join(root, "settings.json"));
+  settings.save({ uvPypiIndexUrl: "", uvPythonInstallMirror: "" });
+  fs.mkdirSync(path.join(root, "pi-runtime"));
+  const supervisor = new ConnectorSupervisor({
+    configPath: path.join(root, "connector.json"), dataPath: root, connectorDir: root, resourcesPath: root,
+    uvBundleDir: path.join(root, "build", "uv"),
+    pythonBundleDir: path.join(root, "build", "python"),
+    packaged: true, homePath: root, settings,
+    shellEnvironment: { AA_NODE_MIRROR: "https://inherited.example/node" },
+    binding: new DesktopBindingStore(path.join(root, "binding.json")),
+    logs: new ConnectorLogStore(path.join(root, "logs"), () => settings.get()),
+    onState: () => {}, onLog: () => {},
+    connectControl: async () => fakeChannel(),
+  });
+  const environment = () => (supervisor as unknown as { connectorEnvironment(): NodeJS.ProcessEnv }).connectorEnvironment();
+  assert.equal(environment().AA_ELECTRON_NODE, process.execPath);
+  assert.equal(environment().AA_PI_BUNDLED_RUNTIME, undefined, "an incomplete bundle is not offered");
+  fs.writeFileSync(path.join(root, "pi-runtime", "package.json"), "{}");
+  assert.equal(environment().AA_PI_BUNDLED_RUNTIME, path.join(root, "pi-runtime"));
+  assert.equal(environment().AA_NODE_MIRROR, undefined, "the official sources come first by default");
+  assert.equal(environment().AA_NPM_REGISTRY, undefined);
+  settings.save({ uvPythonInstallMirror: "https://registry.npmmirror.com/-/binary/python-build-standalone" });
+  assert.equal(environment().AA_NODE_MIRROR, "https://registry.npmmirror.com/-/binary/node");
+  assert.equal(environment().AA_NPM_REGISTRY, "https://registry.npmmirror.com");
+  settings.save({ uvPythonInstallMirror: "", uvPypiIndexUrl: "https://mirrors.aliyun.com/pypi/simple" });
+  assert.equal(environment().AA_NPM_REGISTRY, "https://registry.npmmirror.com");
+});

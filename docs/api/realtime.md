@@ -72,6 +72,7 @@ runtime.notice.snapshot
 runtime.notice.updated
 runtime.capability.updated
 runtime.catalog.updated
+runtime.queue.updated
 runtime.refetch_required
 session.refetch_required
 ```
@@ -83,6 +84,11 @@ Removed compatibility event types:
 - `notice.updated`
 - `notice.snapshot`
 - embedded `effectiveCapabilities` aliases in session realtime events
+
+`runtime.queue.updated` carries the whole server-owned message queue
+(`{queue: SessionQueueState}`); clients keep the highest `queue.revision`. It is
+a live projection without its own sequence, and `/events` recovery resends the
+current queue. See [运行中排队消息](session-message-queue.md).
 
 Use `runtime.state.updated`, `runtime.capability.updated`,
 `runtime.notice.updated`, and `runtime.notice.snapshot` for live Runtime facts.
@@ -315,7 +321,8 @@ includes:
       "method": "timeline.itemUpsert",
       "code": "notification_failed",
       "message": "...",
-      "errorType": "ValidationError"
+      "errorType": "ValidationError",
+      "retryable": false
     }
   ],
   "serverTime": "..."
@@ -327,6 +334,18 @@ per-notification failures using the original zero-based batch index. Explicit
 protocol violations that are intentionally unsupported may still return HTTP
 400; unexpected processing failures should be logged and reported through
 `rejected` instead of surfacing as HTTP 500.
+
+`retryable` is `true` when the same notification can be sent again unchanged
+after a short backoff, because it was refused by contention that clears on its
+own: a bounded lock wait (the Redis `session-revision` lock, or the PostgreSQL
+timeline writer lock under `lock_timeout`), an exhausted database connection
+pool, a deadlock or a serialization failure. Connectors must not treat such a
+rejection as a permanent validation or size failure. A Connector retries a
+response only when every rejected notification is retryable, and it resends the
+whole batch in order, so notifications the Server already accepted may arrive
+again (delivery is at least once). A mixed batch keeps the permanent failure
+visible. Servers older than 2.2.0 omit the field; a missing `retryable` means
+`false`.
 
 时间线通知中的 `orderSeq` 必须在 PostgreSQL `integer` 范围内
 （−2147483648–2147483647）。单条通知请求中的越界值返回 HTTP 400

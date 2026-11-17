@@ -41,6 +41,8 @@ agent-server/agent-server.files/
 # Downloaded uv binaries and CPython builds bundled into the packaged Desktop apps.
 desktop-workbench/build/uv/
 desktop-workbench/build/python/
+desktop-workbench/build/pi-runtime/
+desktop-workbench/build/pi-runtime.staging/
 desktop-workbench/.cache/
 desktop-workbench/release/
 desktop-next/build/uv/

@@ -682,6 +682,9 @@
         "secretRequired": "更换了地址，请重新填写 API Key。"
       },
       "runtimeConfigFields": {
+        "agentCliPath": {
+          "label": "Agent 可执行文件路径（可选）"
+        },
         "claudeExecutablePath": {
           "label": "Claude 可执行文件路径（可选）",
           "description": "可选。只有 Claude Code 不在默认 PATH 时才需要填写。"
@@ -1169,7 +1172,34 @@
       "modelRetryDelay": "本次等待 {seconds} 秒后重试。",
       "modelRetryCompleted": "重试结束，模型已恢复响应。",
       "modelRetryInterrupted": "已取消模型请求重试。",
-      "modelRetryFailed": "模型请求重试后仍失败。"
+      "modelRetryFailed": "模型请求重试后仍失败。",
+      "queuePlaceholder": "Agent 运行中，按 Enter 排队，任务结束后自动发送",
+      "queueMoreOptions": "更多发送方式",
+      "deliveryQueue": "排队",
+      "deliveryQueueHint": "当前任务结束后自动发送",
+      "deliveryInterrupt": "打断并发送",
+      "deliveryInterruptHint": "停止当前任务，立即作为新任务发送",
+      "deliverySteer": "引导当前任务",
+      "deliverySteerHint": "把这条消息交给正在运行的任务（⌘/Ctrl+Enter）",
+      "steerFailed": "无法引导当前任务，它可能已经结束。",
+      "queueActionFailed": "无法更新排队消息。",
+      "queueTitle": "{count, plural, other {# 条消息排队中}}",
+      "queuePausedError": "上一个任务出错，排队消息已暂停",
+      "queuePausedFailed": "第一条消息发送失败，后面的消息不会发出",
+      "queueResume": "继续发送",
+      "queueClear": "全部清空",
+      "queueCollapse": "收起",
+      "queueShowAll": "显示全部 {count} 条",
+      "queueEdit": "编辑",
+      "queueSave": "保存",
+      "queueCancelEdit": "取消",
+      "queueSending": "发送中",
+      "queueFailed": "发送失败",
+      "queueInterrupting": "等待打断",
+      "queueWaiting": "排队中",
+      "queueRetry": "重试",
+      "queueSendNow": "立即发送（打断当前任务）",
+      "queueDelete": "删除"
     },
     "sessionStatus": {
       "idle": "空闲",
@@ -2415,6 +2445,7 @@
     "agent_cli_unsupported": "无法直接启动该 Agent 的批处理入口，请在实例配置中填写实际可执行文件的路径。",
     "agent_configuration_failed": "配置或提交尚未完成，请先查询原操作。",
     "agent_guarantees_missing": "当前 Agent 不能满足该会话的恢复保证。",
+    "agent_install_busy": "另一个进程正在准备 Agent 运行环境，请稍后重试。",
     "agent_install_failed": "Agent 运行环境安装失败，请检查网络后重试。",
     "agent_open_failed": "Agent 初始化未完成，请先查询原操作。",
     "agent_projection_failed": "Agent 更新未能可靠保存，需要恢复校准。",
@@ -2465,6 +2496,7 @@
     "node_archive_too_large": "Node 下载超过大小上限。",
     "node_checksum_mismatch": "Node 下载校验失败，请重试。",
     "node_checksum_missing": "Node 发布包缺少校验记录。",
+    "node_download_failed": "Node 下载失败，请检查网络后重试。",
     "node_install_invalid": "Node 运行环境校验失败。",
     "node_platform_unsupported": "此设备平台暂不支持自动准备 Node。",
     "not_pending": "该创建已明确拒绝，没有待回答请求。",
@@ -2515,6 +2547,8 @@
     "pi_source_unreadable": "原生历史来源当前无法读取，已保留浏览内容。",
     "pi_workspace_missing": "原会话的项目工作目录不存在或无效。",
     "pi_writer_unavailable": "原生历史写入校验尚未就绪。",
+    "plan_review_expired": "这次计划审阅已失效，请刷新会话后重新确认。",
+    "planning_unavailable": "当前会话无法进入或继续规划。请检查所选 Agent 和连接状态。",
     "preparation_consumed": "工作区准备已绑定其他创建操作。",
     "preparation_not_reserved": "工作区准备尚未为当前创建操作预留。",
     "preparation_stale": "工作区准备已失效，请重新准备。",

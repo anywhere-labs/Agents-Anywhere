@@ -264,3 +264,15 @@ def test_only_client_errors_count_as_permanent(status, permanent):
     request = httpx.Request("POST", "http://test")
     error = httpx.HTTPStatusError("x", request=request, response=httpx.Response(status, request=request))
     assert runtime_sync._permanently_rejected(error) is permanent
+
+
+def test_retryable_rejections_do_not_pause_the_session():
+    """A Server-side lock wait is retried on the next scan, not backed off for minutes."""
+
+    from connector.server.ingest import (
+        ConnectorIngestRejectedError,
+        ConnectorIngestRetryableError,
+    )
+
+    assert runtime_sync._permanently_rejected(ConnectorIngestRetryableError("lock busy")) is False
+    assert runtime_sync._permanently_rejected(ConnectorIngestRejectedError("invalid")) is True

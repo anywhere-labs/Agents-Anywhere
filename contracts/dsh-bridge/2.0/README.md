@@ -64,7 +64,7 @@ API key 形如 `mk_<id>_<随机 hex>`，Router 按 id 查表并比对 SHA-256。
 | `ingestSnapshot` | 客户端流 | 请求 `{captureId, subscriptionId, sessionId, meta, throughSeq}` + 页流 `{captureId, items[]}` → `{accepted, quarantined, reason?}` |
 
 - 批次按 `batchSeq` 严格递增；乱序或 `subscriptionId` 未知是错误，由插件重新订阅。已结束订阅的批次返回 `subscription_unknown`，不会被确认。
-- Connector 连不上 Server 时，`ingestBatch` 和 `ingestSnapshot` 以应用错误码 `backend_unavailable`（`retryable: true`）失败，订阅不受影响。插件对 `ingestBatch` 退避后重发同一批，不结束同步流；不认识这个错误码的旧版插件按其他错误处理，重新订阅。
+- Connector 连不上 Server，或 Server 把这一批全部按可重试拒收（`rejected[].retryable: true`，例如等待会话锁超时）时，`ingestBatch` 和 `ingestSnapshot` 以应用错误码 `backend_unavailable`（`retryable: true`）失败，订阅不受影响。插件对 `ingestBatch` 退避后重发同一批，不结束同步流；不认识这个错误码的旧版插件按其他错误处理，重新订阅。
 - 检查点只在覆盖的历史被 Server 接受之后保存；被隔离的会话不保存检查点。
 - 快照页流可取消（调用取消即中止）；`captureId` 让被取消的旧流无法污染下一次捕获。提交被永久拒绝时返回 `accepted:false` 并给出隔离原因 `history_too_large` / `history_rejected`。
 - 隔离、退避重捕（30 s 起，超大 5 min 起，上限 30 min）、单会话失败隔离与 1.0 相同。
@@ -116,3 +116,9 @@ Desktop 主进程是 CommonJS，生成文件的 `import type ... from "meshcall"
 - 原生 plan-review notice 的 `metadata.planningReview` 保存完整 markdown、questionId、approveOptionId、可选 callId；Connector 将其转换为统一的不可变正文和审阅，隐藏重复的通用弹窗。原生身份不传给统一客户端。
 - Bridge 的 `session.planning` 默认不宣称完整 AA 能力，只在 metadata 中报告 `nativePlanningAvailable`。具备统一 Planning 应用与持久化的 Connector 才能发布有效的 planning／plan_document／plan_review 能力。因此新 Bridge 配旧 Connector 不会把首轮任务静默降级为普通模式。
 - 兼容命令目录只增加实际已注册、且 Plan 服务存在的 plan；任意其他原生命令继续被白名单拒绝。AA 的 plan 命令统一由 Connector Planning 应用处理，不回调通用命令入口。
+
+## 失败卡片的「继续」
+
+- 一轮以错误结束时，插件发出的 `execution_error` 卡片（`notice.upsert` 与 `getSessionNotices`）在 DSH 判定这次失败可以继续时，`actions` 为 `[{actionId: "continue", label: "继续", style: "primary"}]`，否则为空。判定只读 DSH 的 `conversationContinuation` 投影（0.2.2-rc.3 起，值等于该卡片 `metadata.turnEndSeq` 时可以继续）；更早的 DSH 没有这个投影，不会出现该操作。
+- `respondInteraction({noticeId, actionId: "continue"})` 让插件调用原生 `SessionController.prompt`，`content` 为空、`mode` 为 `queue`。请求 ID 由会话和该 `turn/end` 的 seq 推导，重复回应不会再开一轮。只有最近一轮的卡片可以继续；卡片已过期或 DSH 拒绝时返回 `{ok:false, code:"dsh_continue_unavailable"}`。新一轮开始时卡片照常关闭，DSH 写入的空 retry 消息不进时间线。
+- 只新增一个卡片操作，方法和字段不变：Connector 与 Server 原样转发，客户端按卡片的 `actions` 显示按钮，回应仍受 `session.interaction.approval` 控制；会话可写时插件也声明这项能力。

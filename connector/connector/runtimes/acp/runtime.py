@@ -99,11 +99,11 @@ class AcpRuntime(AgentRuntime):
             ) if self.agent_capabilities.supported(session_id, capability)
         ]
         return {
-            "configuration": {"revision": snapshot.revision, "options": list(snapshot.options)},
+            "configuration": {"revision": snapshot.revision, "options": snapshot.public_options()},
             "ownerGeneration": row["owner_generation"], "actions": actions,
         }
 
-    async def update_session_configuration(self, session_id, values):
+    async def update_session_configuration(self, session_id, values, *, planning=False):
         from .domain.definitions import fingerprint
         from .domain.operations import require_same_input
 
@@ -124,6 +124,9 @@ class AcpRuntime(AgentRuntime):
         context = self.app.sessions.get(session_id)
         if not context or context["closing"]:
             raise RuntimeInvalidRequestError("执行者已断开。")
+        mode = context["client"].dialect.planning_mode
+        if not planning and mode is not None and mode.config_id in values["values"]:
+            raise RuntimeInvalidRequestError("请使用会话计划命令切换规划模式。")
         row = {
             "digest": digest,
             "result": {
@@ -191,6 +194,13 @@ class AcpRuntime(AgentRuntime):
 
     def _publish_session_capabilities(self, session_id):
         value = self._session_capabilities(session_id)
+        port = self.app.planning
+        if port is not None:
+            from connector.runtime_protocol.instance_binding import (
+                apply_planning_capabilities,
+            )
+
+            value = apply_planning_capabilities(value, port, port.features(session_id))
         self.app._emit("runtime.capability.updated", {
             "runtime": self.config.runtime, "runtimeId": self.config.runtime_id,
             "sessionId": session_id, "revision": value.revision,
@@ -438,6 +448,8 @@ class AcpRuntime(AgentRuntime):
         rows = [SessionMeta(session_id=row["session_id"], external_session_id=row["agent_session_id"],
                 runtime=self.config.runtime, cwd=row["workspace"]["registered_path"])
                 for row in self.app.store.values("binding")]
+        if not self.profile.native_inventory:
+            return tuple(rows[:limit])
         client = await self.app.inventory_client()
         if client.capabilities.get("sessionCapabilities", {}).get("list") is not None:
             page = await client.list_sessions(cursor=cursor)
