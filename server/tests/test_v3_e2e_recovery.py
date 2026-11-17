@@ -9,7 +9,7 @@ Connector with the fake ACP Agent. Each test builds its own environment, so the 
   (a ``command.result``, the summary of a turn that ended) reaches the Server through the outbox exactly once;
   messages, reads and the session WebSocket work again.
 - Server killed and started again on the same database: the device keeps its Router connection and calls ready
-  again; with Redis (``AGENT_SERVER_TEST_REDIS_URL``) the new worker takes the link over without a new hello, a
+  again; with Redis (``AA_E2E_REDIS_URL``, keys under a prefix of their own) the new worker takes the link over without a new hello, a
   single process without Redis refuses the stale connection and the device says hello once more. Either way the
   new worker holds the link.
 
@@ -55,7 +55,8 @@ HELLO_AGAIN = r"ready refused .*; saying hello again"
 
 
 def _redis_url() -> str | None:
-    return os.environ.get("AGENT_SERVER_TEST_REDIS_URL", "").strip() or None
+    # Not AGENT_SERVER_TEST_REDIS_URL: test_e2ee_canary.py needs that database empty and flushes it.
+    return os.environ.get("AA_E2E_REDIS_URL", "").strip() or None
 
 
 @pytest.fixture
@@ -64,7 +65,7 @@ def recovery(request: pytest.FixtureRequest) -> Iterator[E2E]:
     if getattr(request, "param", None) == "redis":
         redis = _redis_url()
         if redis is None:
-            pytest.skip("AGENT_SERVER_TEST_REDIS_URL not set")
+            pytest.skip("AA_E2E_REDIS_URL not set")
         # A prefix of its own: the keys of other runs on the same Redis are not touched.
         server_env = {"AGENT_SERVER_REDIS_URL": redis, "AGENT_SERVER_REDIS_PREFIX": f"aa-e2e-{secrets.token_hex(4)}"}
     with e2e_environment(request, server_env=server_env) as env:

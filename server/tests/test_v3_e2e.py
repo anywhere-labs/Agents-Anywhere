@@ -51,6 +51,8 @@ pytestmark = pytest.mark.skipif(skip_reason() is not None, reason=skip_reason() 
 @pytest.fixture(scope="module")
 def e2e(request: pytest.FixtureRequest) -> Iterator[E2E]:
     with e2e_environment(request) as env:
+        # pytest-xdist (worksteal) can run any test of this file first on a worker: start from an online device.
+        env.wait_status("online", STARTUP_TIMEOUT)
         yield env
 
 

@@ -275,9 +275,22 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      redis:
+        # tests/test_v3_e2e_recovery.py: a Server restart with Redis hands the device link to the new worker.
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       # The suite truncates every table before each test; the name must contain "test".
       AGENT_SERVER_TEST_DB_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/agents_anywhere_test
+      # Only the v3 end-to-end recovery test uses it (keys under a prefix of their own); the opt-in benchmark
+      # tests/test_v3_e2e_bench.py stays skipped without AA_E2E_BENCH=1.
+      AA_E2E_REDIS_URL: redis://localhost:6379/1
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -314,7 +327,8 @@ jobs:
           (cd "$RUNNER_TEMP/meshcall/meshcall-router" && CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/bin/meshcall-router" ./cmd/meshcall-router)
           echo "MESHCALL_ROUTER_BINARY=$RUNNER_TEMP/bin/meshcall-router" >> "$GITHUB_ENV"
       - name: Set up Node and the TS Connector
-        # tests/test_v3_e2e.py runs the real TS Connector (and a fake ACP Agent) against the Server and Router.
+        # tests/test_v3_e2e*.py run the real TS Connector (and a fake ACP Agent) against the Server and Router:
+        # the feature walk, Router and Server restarts, and the encrypted mode.
         uses: ./.github/actions/setup-yarn
         with:
           project: connector-ts
