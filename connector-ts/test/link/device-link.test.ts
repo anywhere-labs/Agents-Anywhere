@@ -46,20 +46,20 @@ describe('AttachHub', () => {
   it('sends a heartbeat at once, coalesces events and filters by mode', async () => {
     let ended: string | null = null
     const hub = new AttachHub({ heartbeatMs: 60_000, onEnded: (_id, reason) => (ended = reason) })
-    hub.emit('runtime.status', { runtimeId: 'r1', state: 'starting' })
-    hub.emit('runtime.status', { runtimeId: 'r1', state: 'ready' })
-    hub.emit('runtime.notice.updated', { sessionId: 's1' })
+    hub.emit('runtime.status', { runtimeId: 'r1', status: { state: 'starting' } })
+    hub.emit('runtime.status', { runtimeId: 'r1', status: { state: 'ready' } })
+    hub.emit('runtime.notice.updated', { sessionId: 's1', notice: { noticeId: 'n1', sessionId: 's1', title: 'Approve', type: 'interaction' } })
     const abort = new AbortController()
     const stream = hub.open('lc_1', abort.signal)
     expect((await stream.next()).value).toEqual({ kind: 'heartbeat' })
-    expect((await stream.next()).value).toEqual({ kind: 'event', m: 'runtime.status', p: { runtimeId: 'r1', state: 'ready' } })
-    expect((await stream.next()).value).toEqual({ kind: 'event', m: 'runtime.notice.updated', p: { sessionId: 's1' } })
+    expect((await stream.next()).value).toEqual({ kind: 'event', m: 'runtime.status', p: { runtimeId: 'r1', status: { state: 'ready' } } })
+    expect((await stream.next()).value).toEqual({ kind: 'event', m: 'runtime.notice.updated', p: { sessionId: 's1', notice: { noticeId: 'n1', sessionId: 's1', title: 'Approve', type: 'interaction' } } })
     hub.setMode('required')
-    hub.emit('runtime.queue.updated', { sessionId: 's1' })
+    hub.emit('runtime.queue.updated', { sessionId: 's1', queue: { sessionId: 's1', revision: 1 } })
     // A session's facts are content in encrypted mode, even on an allowed method; device-level status still goes.
-    hub.emit('runtime.status', { runtimeId: 'r1', sessionId: 's1', status: { event: 'planning.state.updated' } })
-    hub.emit('port.listening', { ports: [{ port: 3000 }] })
-    expect((await stream.next()).value).toEqual({ kind: 'event', m: 'port.listening', p: { ports: [{ port: 3000 }] } })
+    hub.emit('runtime.status', { runtimeId: 'r1', sessionId: 's1', status: { event: 'planning.state.updated', revision: 1, state: { runtime: 'pi', sessionId: 's1' } } })
+    hub.emit('port.listening', { deviceId: 'dev_1', ports: [{ port: 3000 }] })
+    expect((await stream.next()).value).toEqual({ kind: 'event', m: 'port.listening', p: { deviceId: 'dev_1', ports: [{ port: 3000 }] } })
     abort.abort()
     expect((await stream.next()).done).toBe(true)
     expect(ended).toBe('cancelled')
@@ -230,9 +230,9 @@ describe.skipIf(binary === null)('DeviceLink against a real Router', () => {
     expect(await server.call('aa.device.v1.Commands', 'status', { commandId: 'cmd_1' })).toMatchObject({ known: true, outcome: 'accepted' })
     await until(() => server.outbox.some(item => item.m === 'command.result' && item.p.commandId === 'cmd_1'), 10_000, 'command.result')
     // Lossy events ride on attach.
-    link.attach.emit('runtime.status', { runtimeId: 'rti_pi', state: 'ready' })
+    link.attach.emit('runtime.status', { runtimeId: 'rti_pi', status: { state: 'ready' } })
     await until(() => (server.held?.events.length ?? 0) > 0, 5000, 'event')
-    expect(server.held?.events[0]).toEqual({ m: 'runtime.status', p: { runtimeId: 'rti_pi', state: 'ready' } })
+    expect(server.held?.events[0]).toEqual({ m: 'runtime.status', p: { runtimeId: 'rti_pi', status: { state: 'ready' } } })
   }, 30_000)
 
   it('runs the commands a welcome still lists and reports them through the outbox', async () => {
@@ -280,8 +280,8 @@ describe.skipIf(binary === null)('DeviceLink against a real Router', () => {
     await expect(server.call('aa.device.v1.Sessions', 'state', { sessionId: 'sess_1' })).rejects.toBeTruthy()
     await expect(server.call('aa.device.v1.Commands', 'sessionSendMessage', { commandId: 'c', deadline: new Date().toISOString(), p: {} })).rejects.toBeTruthy()
     // Only the plaintext-safe events ride on attach.
-    link.attach.emit('runtime.notice.updated', { sessionId: 'sess_1', title: 'secret' })
-    link.attach.emit('port.listening', { ports: [{ port: 5173 }] })
+    link.attach.emit('runtime.notice.updated', { sessionId: 'sess_1', notice: { noticeId: 'n1', sessionId: 'sess_1', title: 'secret', type: 'interaction' } })
+    link.attach.emit('port.listening', { deviceId: 'dev_1', ports: [{ port: 5173 }] })
     await until(() => (server.held?.events.length ?? 0) > 0, 5000, 'event')
     expect(server.held?.events.map(event => event.m)).toEqual(['port.listening'])
   }, 20_000)

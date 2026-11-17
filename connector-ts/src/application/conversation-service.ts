@@ -6,6 +6,7 @@ import { SessionControls } from './conversation/controls.js'
 import { GoalService } from './goals/goal-service.js'
 import { PlanningService, type PlanningRequest } from './planning/planning-service.js'
 import type { CommandReceipt, ConversationStore, RuntimeEvent, RuntimeSession, SessionCommit } from './ports/index.js'
+import type { LiveFact } from './session/bindings.js'
 import { QueueService, type ClientQueueOp } from './queue/queue-service.js'
 import { RuntimeBindings, type PreparedHandOver, type SessionBinding, type SessionEventSink } from './session/bindings.js'
 import { DeliveryRecords } from './session/deliveries.js'
@@ -187,7 +188,7 @@ export class ConversationService implements SessionEventSink {
     return this.goals.onGoalUpdated(sessionId, wire, receiptFor)
   }
 
-  public onLiveFact(sessionId: string, event: RuntimeEvent): void {
+  public onLiveFact(sessionId: string, event: LiveFact): void {
     this.turns.onLiveFact(sessionId, event)
   }
 

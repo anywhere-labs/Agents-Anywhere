@@ -1,3 +1,4 @@
+import type { OutboxMethod, OutboxPayloads } from '../../generated/device-meshcall/v1_0/payloads.js'
 import type {
   Delivery,
   DeliveryState,
@@ -290,8 +291,21 @@ export interface OutboxRecord {
 }
 
 /** The persistent outbox to the Server (04-connector.md §7). */
+/**
+ * An outbox record's payload as stored: `OutboxItem.p`, except that summaries keep their display fields in the clear
+ * (`SummaryFacts`) and are sealed into `displayDevice` when sent.
+ */
+export type StoredOutboxPayloads = {
+  readonly [K in OutboxMethod]: K extends 'session.summary'
+    ? { readonly summary: SummaryFacts }
+    : K extends 'session.inventory'
+      ? Omit<OutboxPayloads[K], 'sessions'> & { readonly runtimeId: string; readonly scanId: string; readonly complete: boolean; readonly sessions?: readonly SummaryFacts[] }
+      : OutboxPayloads[K]
+}
+
 export interface OutboxStore {
-  append(kind: string, sessionId: string | null, payload: Record<string, unknown>, at: string): Promise<number>
+  /** Appends a must-deliver message. */
+  append<K extends OutboxMethod>(kind: K, sessionId: string | null, payload: StoredOutboxPayloads[K], at: string): Promise<number>
   /** Unacknowledged records with `oid > afterOid`, oldest first. */
   pending(afterOid: number, limit: number): Promise<OutboxRecord[]>
   /** Cumulative: deletes every record with `oid <= oid`. */

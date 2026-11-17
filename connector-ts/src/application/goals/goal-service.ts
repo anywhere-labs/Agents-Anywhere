@@ -1,6 +1,6 @@
 import { checkRequest as checkGoalRequest, goalWire, initialGoalState, observe as observeGoal, type GoalRequest, type GoalState } from '../../domain/goals/index.js'
 import { UseCaseError } from '../errors.js'
-import type { CommandReceipt } from '../ports/index.js'
+import type { CommandReceipt, ContractStatusOf } from '../ports/index.js'
 import type { RuntimeBindings } from '../session/bindings.js'
 import type { SessionKernel } from '../session/kernel.js'
 import { withResult } from '../session/receipts.js'
@@ -90,6 +90,6 @@ export class GoalService {
    * client-shaped state, both inside `status`.
    */
   private emitGoal(sessionId: string, state: GoalState, takeover: boolean): void {
-    this.kernel.emitSessionStatus(sessionId, { event: 'goal.state.updated', revision: state.revision, state: goalWire(state, takeover) })
+    this.kernel.emitSessionStatus(sessionId, { event: 'goal.state.updated', revision: state.revision, state: goalWire(state, takeover) as unknown as ContractStatusOf<'goal.state.updated'>['state'] })
   }
 }

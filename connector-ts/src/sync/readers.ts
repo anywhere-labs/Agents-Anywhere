@@ -2,14 +2,23 @@ import type { ConversationStore } from '../application/ports/index.js'
 import { PAGE_BUDGET, SNAPSHOT_LIMIT, eventCursor, queue as queueRules, runtimeStateWire, toProtocolItem, type Interaction, type Session } from '../domain/conversation/index.js'
 import { GOAL_ACTIONS, goalWire, unobservedGoalState } from '../domain/goals/index.js'
 import { initialPlanning, planningCapabilities, planningWire, type PlanDocument } from '../domain/planning/index.js'
-import type { ChangesSinceResponse } from '../generated/device-meshcall/v1_0/changes-since-response.js'
-import type { CommandStatusResponse } from '../generated/device-meshcall/v1_0/command-status-response.js'
-import type { StoreReadResponse } from '../generated/device-meshcall/v1_0/store-read-response.js'
+import type { ReadMethod, ReadPayloads } from '../generated/device-meshcall/v1_0/payloads.js'
+import type { ProtocolCapabilitySet } from '../generated/protocol/v1_2/capability-set.js'
+import type { NoticeIn } from '../generated/device-meshcall/v1_0/session-notices-response.js'
 import { timelineEvents } from './client-shape.js'
+
+/** The request and the response (a stream's item) of a Server-initiated read, as device-meshcall 1.0 types them. */
+export type ReadRequest<M extends ReadMethod> = ReadPayloads[M]['request']
+export type ReadResponse<M extends ReadMethod> = ReadPayloads[M]['response']
+
+/** A body the domain's wire functions build untyped (planning, goal, runtime state, workflow views), as `T`. */
+function wire<T>(body: object): T {
+  return body as T
+}
 
 /** Live facts only the Runtime layer knows (capabilities, catalogs); null when the session is not open. */
 export interface RuntimeFacts {
-  sessionCapabilities(sessionId: string): Promise<Record<string, unknown> | null>
+  sessionCapabilities(sessionId: string): Promise<ProtocolCapabilitySet | null>
   catalogs(sessionId: string): Promise<Record<string, unknown> | null>
   /**
    * `state.selections` of a session that is not open (the Runtime's own report, e.g. an unopened Codex thread's
@@ -96,7 +105,7 @@ export class DeviceReaders {
   }
 
   /** `store.read`: paged history by `orderSeq`; paging back past what is stored projects older native history. */
-  public async read(request: { sessionId: string; mode: 'latest' | 'before' | 'after'; cursor?: number | null; limit?: number; byteBudget?: number }): Promise<StoreReadResponse> {
+  public async read(request: ReadRequest<'store.read'>): Promise<ReadResponse<'store.read'>> {
     await this.session(request.sessionId)
     const limit = request.limit ?? SNAPSHOT_LIMIT
     const cursor = request.cursor ?? null
@@ -117,7 +126,7 @@ export class DeviceReaders {
   }
 
   /** `store.changesSince`: the cursor-recovery path behind `/events?after=seq:N`. */
-  public async changesSince(request: { sessionId: string; afterSeq: number; limit?: number; byteBudget?: number }): Promise<ChangesSinceResponse> {
+  public async changesSince(request: ReadRequest<'store.changesSince'>): Promise<ReadResponse<'store.changesSince'>> {
     await this.session(request.sessionId)
     const page = await this.store.timeline.changesSince(request.sessionId, request.afterSeq, request.limit ?? 500, request.byteBudget ?? PAGE_BUDGET)
     if (page.snapshotRequired) return { events: [], toSeq: page.headSeq, resetSeq: page.resetSeq, complete: false, snapshotRequired: true }
@@ -125,7 +134,7 @@ export class DeviceReaders {
   }
 
   /** `session.notices`: the current interactions, replacing whatever a reconnecting client holds. */
-  public async notices(request: { sessionId: string }): Promise<Record<string, unknown>> {
+  public async notices(request: ReadRequest<'session.notices'>): Promise<ReadResponse<'session.notices'>> {
     await this.session(request.sessionId)
     return { sessionId: request.sessionId, notices: (await this.store.interactions.list(request.sessionId, true)).map(noticeOf) }
   }
@@ -178,34 +187,34 @@ export class DeviceReaders {
    * `Sessions/state`: `part: "planning"` answers `{planning}`, `part: "goal"` answers `{goal}` (the v2 client
    * shapes the Server validates); without `part`, the runtime state `{state}` together with both parts.
    */
-  public async sessionState(request: { sessionId: string; part?: string | null }): Promise<Record<string, unknown>> {
+  public async sessionState(request: ReadRequest<'session.state'>): Promise<ReadResponse<'session.state'>> {
     const session = await this.session(request.sessionId)
-    if (request.part === 'planning') return { planning: await this.planningState(session) }
-    if (request.part === 'goal') return { goal: await this.goalState(session) }
+    if (request.part === 'planning') return { planning: wire(await this.planningState(session)) }
+    if (request.part === 'goal') return { goal: wire(await this.goalState(session)) }
     const [selections, planning, goal] = await Promise.all([this.selections(request.sessionId), this.planningState(session), this.goalState(session)])
-    return { state: this.state(session, selections), planning, goal }
+    return { state: wire(this.state(session, selections)), planning: wire(planning), goal: wire(goal) }
   }
 
-  public async capabilities(request: { sessionId: string }): Promise<Record<string, unknown>> {
+  public async capabilities(request: ReadRequest<'session.capabilities'>): Promise<ReadResponse<'session.capabilities'>> {
     await this.session(request.sessionId)
     return { sessionId: request.sessionId, capabilitySet: await this.facts.sessionCapabilities(request.sessionId) }
   }
 
-  public async queue(request: { sessionId: string }): Promise<Record<string, unknown>> {
+  public async queue(request: ReadRequest<'session.queue'>): Promise<ReadResponse<'session.queue'>> {
     await this.session(request.sessionId)
-    return { queue: queueRules.queueState(await this.store.queues.get(request.sessionId)) }
+    return { queue: wire(queueRules.queueState(await this.store.queues.get(request.sessionId))) }
   }
 
-  public async catalogs(request: { sessionId: string }): Promise<Record<string, unknown>> {
+  public async catalogs(request: ReadRequest<'runtime.catalogs'>): Promise<ReadResponse<'runtime.catalogs'>> {
     await this.session(request.sessionId)
-    return { sessionId: request.sessionId, catalogs: (await this.facts.catalogs(request.sessionId)) ?? {} }
+    return { sessionId: request.sessionId, catalogs: wire((await this.facts.catalogs(request.sessionId)) ?? {}) }
   }
 
   /**
    * `store.planDocument`: with `planId` and `revision`, that immutable revision as `{document}`; without
    * `planId`, every revision as `{plans}`, newest first. A missing revision is `plan_document_not_found`.
    */
-  public async planDocument(request: { sessionId: string; planId?: string | null; revision?: number | null }): Promise<Record<string, unknown>> {
+  public async planDocument(request: ReadRequest<'store.planDocument'>): Promise<ReadResponse<'store.planDocument'>> {
     await this.session(request.sessionId)
     if (request.planId === undefined || request.planId === null || request.planId === '') {
       const state = await this.store.planning.load(request.sessionId)
@@ -223,19 +232,19 @@ export class DeviceReaders {
   }
 
   /** `workspace.preparation.get`: phase, model catalog, Agent options and open requests. */
-  public async workspacePreparation(request: { preparationId: string }): Promise<Record<string, unknown>> {
+  public async workspacePreparation(request: Pick<ReadRequest<'workspace.preparation.get'>, 'preparationId'>): Promise<ReadResponse<'workspace.preparation.get'>> {
     if (this.workflows === null) throw Object.assign(new Error('workspace preparation is not available on this device'), { code: 'workflow_unsupported' })
-    return this.workflows.view(request.preparationId)
+    return wire(await this.workflows.view(request.preparationId))
   }
 
   /** `session.creation.get` of a creation that consumed a preparation. */
-  public async creation(request: { createOperationId: string }): Promise<Record<string, unknown>> {
+  public async creation(request: Pick<ReadRequest<'session.creation.get'>, 'createOperationId'>): Promise<ReadResponse<'session.creation.get'>> {
     if (this.workflows === null) throw Object.assign(new Error('workspace preparation is not available on this device'), { code: 'workflow_unsupported' })
-    return this.workflows.creationView(request.createOperationId)
+    return wire(await this.workflows.creationView(request.createOperationId))
   }
 
   /** `Commands/status`: read-only receipt lookup; never executes anything. */
-  public async commandStatus(request: { commandId: string }): Promise<CommandStatusResponse> {
+  public async commandStatus(request: ReadRequest<'command.status'>): Promise<ReadResponse<'command.status'>> {
     const record = await this.store.commands.get(request.commandId)
     if (record === null) return { commandId: request.commandId, known: false, outcome: null }
     return {
@@ -249,7 +258,8 @@ export class DeviceReaders {
 }
 
 /** The client-shaped notice of an interaction, with its current status. */
-export function noticeOf(interaction: Interaction): Record<string, unknown> {
+export function noticeOf(interaction: Interaction): NoticeIn {
   const status = interaction.state === 'responding' ? 'responding' : interaction.state === 'resolved' ? 'resolved' : interaction.state === 'expired' ? 'expired' : 'open'
-  return { ...interaction.payload, noticeId: interaction.noticeId, sessionId: interaction.sessionId, status, resolvedAt: interaction.resolvedAt }
+  // The rest of the notice (title, type, actions) is the payload the Runtime mapping stored with the interaction.
+  return wire({ ...interaction.payload, noticeId: interaction.noticeId, sessionId: interaction.sessionId, status, resolvedAt: interaction.resolvedAt })
 }

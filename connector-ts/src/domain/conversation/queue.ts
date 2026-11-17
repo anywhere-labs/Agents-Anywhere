@@ -10,7 +10,7 @@ export const QUEUE_MAX_ITEMS = 20
 
 export type QueueItemStatus = 'queued' | 'sending' | 'failed'
 
-export interface QueueAttachment {
+export type QueueAttachment = {
   readonly fileId: string
   readonly name: string | null
   readonly mediaType: string | null
@@ -46,7 +46,7 @@ export interface SessionQueue {
 }
 
 /** `SessionQueueState` as clients read it (positions start at 1). */
-export interface SessionQueueState {
+export type SessionQueueState = {
   sessionId: string
   revision: number
   items: (Omit<QueueItem, 'attachments'> & { position: number; attachments: QueueAttachment[] })[]

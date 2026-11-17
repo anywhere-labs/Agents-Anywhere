@@ -8,7 +8,7 @@ import {
   type PlanningState,
 } from '../../domain/planning/index.js'
 import { UseCaseError } from '../errors.js'
-import type { CommandReceipt, RuntimeEvent } from '../ports/index.js'
+import type { CommandReceipt, ContractStatusOf, RuntimeEvent } from '../ports/index.js'
 import type { RuntimeBindings } from '../session/bindings.js'
 import type { SessionKernel } from '../session/kernel.js'
 import { withResult } from '../session/receipts.js'
@@ -131,6 +131,6 @@ export class PlanningService {
    * the client-shaped state, both inside `status`.
    */
   private emitPlanning(sessionId: string, state: PlanningState): void {
-    this.kernel.emitSessionStatus(sessionId, { event: 'planning.state.updated', revision: state.revision, state: planningWire(state) })
+    this.kernel.emitSessionStatus(sessionId, { event: 'planning.state.updated', revision: state.revision, state: planningWire(state) as unknown as ContractStatusOf<'planning.state.updated'>['state'] })
   }
 }

@@ -1,4 +1,4 @@
-import type { LiveEvents } from '../application/ports/index.js'
+import type { EventMethod, LiveEvent, LiveEventPayloads, LiveEvents } from '../application/ports/index.js'
 import { ATTACH_EVENTS as GENERATED_ATTACH_EVENTS } from '../generated/device-meshcall/v1_0/e2ee-registration.js'
 import type { LinkAttachItem } from '../generated/device-meshcall/v1_0/link-attach-item.js'
 
@@ -31,11 +31,10 @@ export interface AttachHubOptions {
   readonly onOpened?: (connectionId: string) => void
   /** It ended for `reason`; `cancelled` and `stalled` mean the device should call `ready` again. */
   readonly onEnded?: (connectionId: string, reason: AttachEnd) => void
-  /** Sees every emitted event, before the mode filter (the session command catalog keeps what it needs). */
-  readonly observe?: (method: string, payload: Record<string, unknown>) => void
 }
 
-function eventKey(method: string, payload: Record<string, unknown>): string {
+function eventKey({ method, payload: typed }: LiveEvent): string {
+  const payload: Record<string, unknown> = typed
   const scope = payload.sessionId ?? payload.runtimeId ?? payload.port ?? ''
   // Session facts of different kinds (planning, goal, status) share a session: one must not replace another.
   const status = payload.status
@@ -53,7 +52,7 @@ function eventKey(method: string, payload: Record<string, unknown>): string {
  * `ATTACH_STALL_MS`), reported as `stalled`, and the stream ends as soon as MeshCall asks for the next item.
  */
 export class AttachHub implements LiveEvents {
-  private readonly pending = new Map<string, { method: string; payload: Record<string, unknown> }>()
+  private readonly pending = new Map<string, LiveEvent>()
   private current: OpenStream | null = null
   private nextId = 1
   private allowed: ReadonlySet<string> = new Set(ATTACH_EVENTS.off)
@@ -68,7 +67,7 @@ export class AttachHub implements LiveEvents {
   public setMode(mode: 'off' | 'required'): void {
     this.allowed = new Set(ATTACH_EVENTS[mode])
     this.encrypted = mode === 'required'
-    for (const [key, event] of this.pending) if (!this.passes(event.method, event.payload)) this.pending.delete(key)
+    for (const [key, event] of this.pending) if (!this.passes(event)) this.pending.delete(key)
   }
 
   public get isOpen(): boolean {
@@ -79,16 +78,16 @@ export class AttachHub implements LiveEvents {
    * In encrypted mode only device-level facts go out in plaintext: a session's facts (anything naming a
    * `sessionId`: notices, planning, configuration) reach clients through their secure channel subscriptions.
    */
-  private passes(method: string, payload: Record<string, unknown>): boolean {
-    return this.allowed.has(method) && !(this.encrypted && payload.sessionId !== undefined)
+  private passes({ method, payload }: LiveEvent): boolean {
+    return this.allowed.has(method) && !(this.encrypted && 'sessionId' in payload && payload.sessionId !== undefined)
   }
 
-  public emit(method: string, payload: Record<string, unknown>): void {
-    this.options.observe?.(method, payload)
-    if (!this.passes(method, payload)) return
-    const key = eventKey(method, payload)
+  public emit<M extends EventMethod>(method: M, payload: LiveEventPayloads[M]): void {
+    const event = { method, payload } as LiveEvent
+    if (!this.passes(event)) return
+    const key = eventKey(event)
     this.pending.delete(key)
-    this.pending.set(key, { method, payload })
+    this.pending.set(key, event)
     while (this.pending.size > MAX_PENDING_EVENTS) this.pending.delete(this.pending.keys().next().value as string)
     this.current?.wake?.()
   }
@@ -152,7 +151,7 @@ export class AttachHub implements LiveEvents {
         for (const event of events) {
           if (stream.ended !== null) {
             // Not sent: keep it for the next holder unless something newer arrived.
-            const key = eventKey(event.method, event.payload)
+            const key = eventKey(event)
             if (!this.pending.has(key)) this.pending.set(key, event)
             continue
           }

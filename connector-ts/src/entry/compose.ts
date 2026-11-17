@@ -17,11 +17,11 @@ import {
   runtimeEvent,
   type RuntimeInstanceSpec,
 } from '../application/index.js'
-import type { LiveEvents, Log, RuntimeHandle, RuntimeHandleEvent, RuntimeProvider } from '../application/ports/index.js'
+import type { LiveEvent, LiveEvents, Log, RuntimeHandle, RuntimeHandleEvent, RuntimeProvider } from '../application/ports/index.js'
 import { legacyDataDir, type ConnectorRuntime, type ConnectorSettings, type RuntimeFactory } from '../host/index.js'
 import { ControlPlane, DeviceLink, blobLookup, deviceAttachmentFetcher, deviceTransferUploader, readSystemProxySettings, resolveEgress, type Egress, type LinkLogger, type WorkspaceServiceDeps } from '../link/index.js'
 import { openStoreWorker, inProcessStore, openSqliteStore, type RemoteStore } from '../store/index.js'
-import { DeviceReaders, DeviceTunnelApi, MemoryChangeFeed, OutboxSignal, plainSealer, type RuntimeFacts, type SessionFacts } from '../sync/index.js'
+import { DeviceReaders, DeviceTunnelApi, MemoryChangeFeed, OutboxSignal, SessionCommandCatalog, plainSealer, type RuntimeFacts, type SessionFacts } from '../sync/index.js'
 import { AttachmentCache, FileOps, RootPolicy, ShellOps, Terminals, nodePtySpawner, rootsFromEnv, workspaceMethods } from '../workspace/index.js'
 import { instanceCatalogs, preparedDownloadUpload } from './client-api.js'
 import { importLegacyV2 } from './legacy-import.js'
@@ -113,16 +113,8 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
       let link: DeviceLink | null = null
       const sessionFacts = new SessionFactsHub()
       const outboxSignal = new OutboxSignal()
-      // Session facts also go to the session's channel subscribers; attach drops them in encrypted mode.
-      const live: LiveEvents = {
-        emit: (method, payload) => {
-          if (typeof payload.sessionId === 'string') sessionFacts.publish(payload.sessionId, method, payload)
-          link?.attach.emit(method, payload)
-          // `session.status` follows a commit that queued `session.summary`; a commit without timeline changes (a
-          // turn that ended) wakes no feed subscriber, so the outbox is told here.
-          if (method === 'runtime.status' && (payload.status as { event?: unknown } | undefined)?.event === 'session.status') outboxSignal.poke()
-        },
-      }
+      const sessionCommands = new SessionCommandCatalog()
+      const live = liveFanOut({ sessionCommands, sessionFacts, outboxSignal, attach: () => link?.attach ?? null })
       const feed = new MemoryChangeFeed()
       const log = options.log
       // Assigned below; Runtime events only arrive after an instance started, which needs the service.
@@ -248,8 +240,7 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
           ...(terminals !== null ? { terminals } : {}),
           facts: sessionFacts,
           newId: ids.newId,
-          // The link keeps each session's slash commands; it is created after the tunnel, so it is read per call.
-          commands: sessionId => link?.sessionCommands.get(sessionId) ?? [],
+          commands: sessionId => sessionCommands.get(sessionId),
           runtimes: instanceCatalogs(runtimes),
           transferUpload: preparedDownloadUpload(workspaceService),
           platform: process.platform,
@@ -293,6 +284,7 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
             ...(deviceTrust !== null ? { secure: deviceTrust.secure } : {}),
             // Normal mode: the client API the secure channel answers, as `aa.device.v1.Client`.
             client: tunnel,
+            sessionCommands: sessionId => sessionCommands.get(sessionId),
           },
           egress,
           logger,
@@ -330,8 +322,38 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
   })
 }
 
+export interface LiveFanOutTargets {
+  /** Each session's slash commands as its Runtime last reported them (`commands.updated`). */
+  readonly sessionCommands: SessionCommandCatalog
+  readonly sessionFacts: SessionFactsHub
+  readonly outboxSignal: OutboxSignal
+  /** The current link's attach hub; null before the link exists. */
+  readonly attach: () => LiveEvents | null
+}
+
+/**
+ * Where the device's live events go. The slash command catalog is fed here, before and independently of the link,
+ * so a report made while no link exists yet (sessions resumed on start) is kept; a session's facts also go to its
+ * channel subscribers, and attach drops them in encrypted mode.
+ */
+export function liveFanOut(targets: LiveFanOutTargets): LiveEvents {
+  return {
+    emit: (method, payload) => {
+      targets.sessionCommands.observe(method, payload)
+      const event = { method, payload } as LiveEvent
+      if (event.method !== 'port.listening' && event.method !== 'port.closed' && typeof event.payload.sessionId === 'string') {
+        targets.sessionFacts.publish(event.payload.sessionId, method, payload)
+      }
+      targets.attach()?.emit(method, payload)
+      // `session.status` follows a commit that queued `session.summary`; a commit without timeline changes (a turn
+      // that ended) wakes no feed subscriber, so the outbox is told here.
+      if (event.method === 'runtime.status' && 'event' in event.payload.status && event.payload.status.event === 'session.status') targets.outboxSignal.poke()
+    },
+  }
+}
+
 /** Live session facts by session, for secure channel subscribers (`SessionFacts`). */
-class SessionFactsHub implements SessionFacts {
+export class SessionFactsHub implements SessionFacts {
   private readonly listeners = new Map<string, Set<(method: string, payload: Record<string, unknown>) => void>>()
 
   public subscribe(sessionId: string, listener: (method: string, payload: Record<string, unknown>) => void): () => void {

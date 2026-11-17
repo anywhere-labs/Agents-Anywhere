@@ -65,10 +65,10 @@ export function runtimeEvent(context: RuntimeEventContext): void {
   const { spec, handle, event, live } = context
   switch (event.type) {
     case 'status':
-      live.emit('runtime.status', { runtimeId: spec.runtimeId, status: { state: event.status, ...(event.error !== undefined ? { error: event.error } : {}) } })
+      live.emit('runtime.status', { runtimeId: spec.runtimeId, status: { state: event.status, ...(event.error !== undefined ? { error: { ...event.error } } : {}) } })
       return
     case 'capabilities.changed':
-      live.emit('runtime.status', { runtimeId: spec.runtimeId, status: { event: 'capabilities.changed' }, capabilities: capabilitySet(event.capabilities, { runtime: spec.runtimeType, sessionId: null }) as Record<string, unknown> })
+      live.emit('runtime.status', { runtimeId: spec.runtimeId, status: { event: 'capabilities.changed' }, capabilities: capabilitySet(event.capabilities, { runtime: spec.runtimeType, sessionId: null }) })
       return
     case 'catalogs.changed':
       live.emit('runtime.status', { runtimeId: spec.runtimeId, status: { event: 'catalogs.changed', catalogs: event.catalogs as Record<string, unknown> } })

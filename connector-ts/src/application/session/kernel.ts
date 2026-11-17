@@ -1,6 +1,7 @@
-import type { Session, TimelineDraft } from '../../domain/conversation/index.js'
+import type { Interaction, Session, TimelineDraft } from '../../domain/conversation/index.js'
+import type { NoticeIn } from '../../generated/device-meshcall/v1_0/runtime-notice-updated-event.js'
 import { UseCaseError } from '../errors.js'
-import type { ChangeFeed, Clock, ConversationStore, IdSource, LiveEvents, PromptAttachment, RuntimeHandles, SessionCommit } from '../ports/index.js'
+import type { ChangeFeed, Clock, ConversationStore, IdSource, LiveEvents, PromptAttachment, RuntimeHandles, RuntimeStatusPayload, SessionCommit } from '../ports/index.js'
 
 export interface ConversationDeps {
   readonly store: ConversationStore
@@ -96,10 +97,16 @@ export class SessionKernel {
    * A session fact on `Link/attach` as `runtime.status` (device-meshcall 1.0 requires `runtimeId`):
    * `{runtimeId, sessionId, status: {event: <v2 event name>, ...}}`. Lossy, so a failed lookup drops it.
    */
-  public emitSessionStatus(sessionId: string, status: Record<string, unknown>): void {
+  public emitSessionStatus(sessionId: string, status: RuntimeStatusPayload['status']): void {
     void this.deps.store.sessions.get(sessionId).then(session => {
       if (session !== null) this.deps.live.emit('runtime.status', { runtimeId: session.runtimeId, sessionId, status })
     }, () => undefined)
+  }
+
+  /** `runtime.notice.updated` of a stored interaction under a new status; the rest of the notice is its stored payload. */
+  public emitNotice(interaction: Interaction, status: 'resolved' | 'expired'): void {
+    const notice = { ...interaction.payload, noticeId: interaction.noticeId, status } as NoticeIn
+    this.deps.live.emit('runtime.notice.updated', { sessionId: interaction.sessionId, notice })
   }
 
   public async requireSession(sessionId: string): Promise<Session> {

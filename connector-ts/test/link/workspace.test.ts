@@ -116,7 +116,7 @@ describe('aa.device.v1.Workspace handlers', () => {
 
   function services(): { workspace: Handlers; runtime: Handlers } {
     catalog = new SessionCommandCatalog()
-    attach = new AttachHub({ observe: (method, payload) => catalog.observe(method, payload) })
+    attach = new AttachHub()
     const built = new DeviceServices({
       connectionId: () => 'lc_1',
       attach,
@@ -244,10 +244,9 @@ describe('aa.device.v1.Workspace handlers', () => {
   it('adds the session slash commands the Runtime reported to Runtime/catalogs', async () => {
     const svc = services()
     expect(await svc.runtime.catalogs!({ sessionId: 'sess_1' }, context())).toEqual({ sessionId: 'sess_1', catalogs: { models: [{ id: 'm1' }], commands: [] } })
-    // What ConversationService emits for a Runtime's `commands.updated`; seen even when attach drops it (encrypted mode).
-    attach.setMode('required')
-    attach.emit('runtime.status', { runtimeId: 'rti_1', sessionId: 'sess_1', status: { event: 'commands.updated', fact: { type: 'commands.updated', commands: [{ name: 'review', description: 'Review the diff', inputHint: 'files' }, { name: 'init' }, { description: 'nameless' }] } } })
-    attach.emit('runtime.status', { runtimeId: 'rti_1', sessionId: 'sess_2', status: { event: 'config.updated', fact: { commands: [{ name: 'x' }] } } })
+    // What ConversationService emits for a Runtime's `commands.updated`.
+    catalog.observe('runtime.status', { runtimeId: 'rti_1', sessionId: 'sess_1', status: { event: 'commands.updated', fact: { type: 'commands.updated', commands: [{ name: 'review', description: 'Review the diff', inputHint: 'files' }, { name: 'init' }, { description: 'nameless' }] } } })
+    catalog.observe('runtime.status', { runtimeId: 'rti_1', sessionId: 'sess_2', status: { event: 'config.updated', fact: { commands: [{ name: 'x' }] } } })
     expect(await svc.runtime.catalogs!({ sessionId: 'sess_1' }, context())).toEqual({
       sessionId: 'sess_1',
       catalogs: { models: [{ id: 'm1' }], commands: [{ name: 'review', description: 'Review the diff', inputHint: 'files' }, { name: 'init' }] },

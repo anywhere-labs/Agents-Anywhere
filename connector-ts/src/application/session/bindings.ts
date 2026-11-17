@@ -11,6 +11,9 @@ export interface CreationIntent {
   readonly operationId: string
 }
 
+/** A Runtime event the session reports live and keeps nowhere (`runtime.status` with the event in `fact`). */
+export type LiveFact = Extract<RuntimeEvent, { type: 'writer.changed' | 'config.updated' | 'commands.updated' | 'capabilities.changed' | 'usage.updated' | 'background.updated' }>
+
 /** How a hand-off opens a new Runtime session; kept with the delivery (`PendingDelivery.open`) across a restart. */
 export interface OpenSpec {
   readonly cwd: string
@@ -48,7 +51,7 @@ export interface SessionEventSink {
   onPlanUpdated(sessionId: string, event: Event<'plan.updated'>): Promise<void>
   onPlanningMode(sessionId: string, mode: 'plan' | 'normal'): Promise<void>
   onGoalUpdated(sessionId: string, wire: Record<string, unknown> | null): Promise<void>
-  onLiveFact(sessionId: string, event: RuntimeEvent): void
+  onLiveFact(sessionId: string, event: LiveFact): void
   onSessionLost(sessionId: string, error: { code: string; message: string }): Promise<void>
 }
 

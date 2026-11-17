@@ -1,4 +1,5 @@
 import { interaction as interactionRules } from '../../domain/conversation/index.js'
+import type { NoticeIn } from '../../generated/device-meshcall/v1_0/runtime-notice-updated-event.js'
 import type { PlanningService } from '../planning/planning-service.js'
 import type { RuntimeEvent, RuntimeSession } from '../ports/index.js'
 import type { RuntimeBindings } from '../session/bindings.js'
@@ -30,7 +31,7 @@ export class InteractionService {
   public async onInteractionOpened(sessionId: string, event: Extract<RuntimeEvent, { type: 'interaction.opened' }>): Promise<void> {
     const deps = this.kernel.deps
     const at = deps.clock.nowIso()
-    const notice: Record<string, unknown> = {
+    const notice: NoticeIn = {
       noticeId: event.interactionId,
       sessionId,
       type: 'interaction',
@@ -63,6 +64,6 @@ export class InteractionService {
     await deps.store.interactions.save(next)
     const session = await this.kernel.requireSession(sessionId)
     if (session.status === 'waiting_approval' && (await deps.store.interactions.list(sessionId, true)).length === 0) await this.kernel.patchSession(sessionId, { status: 'running' })
-    deps.live.emit('runtime.notice.updated', { sessionId, notice: { ...next.payload, noticeId: interactionId, status: next.state === 'resolved' ? 'resolved' : 'expired' } })
+    this.kernel.emitNotice(next, next.state === 'resolved' ? 'resolved' : 'expired')
   }
 }

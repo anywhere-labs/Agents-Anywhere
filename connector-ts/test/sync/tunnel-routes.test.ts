@@ -171,7 +171,7 @@ describe('notice answers', () => {
 
 describe('slash commands', () => {
   beforeEach(async () => {
-    device.commands.observe('runtime.status', { sessionId: S, status: { event: 'commands.updated', fact: { commands: [{ name: 'review', description: 'Review', inputHint: 'path' }] } } })
+    device.commands.observe('runtime.status', { runtimeId: 'rti_1', sessionId: S, status: { event: 'commands.updated', fact: { commands: [{ name: 'review', description: 'Review', inputHint: 'path' }] } } })
   })
 
   it('lists the session catalog with query and limit', async () => {

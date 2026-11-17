@@ -1,6 +1,8 @@
 // ported from Agents-Anywhere v2 server/agent_server/infra/device_link.py @4c8012369 (command_views, command_text, _slash_result, _COMMAND_UI)
 // ported from Agents-Anywhere v2 server/agent_server/api/sessions.py @4c8012369 (_unknown_command_result)
 
+import type { EventMethod, LiveEvent, LiveEventPayloads } from '../../application/ports/index.js'
+
 /** One slash command as the Runtime reported it (`commands.updated`). */
 export interface SessionCommand {
   readonly name: string
@@ -31,22 +33,25 @@ function commandsOf(value: unknown): SessionCommand[] | null {
 }
 
 /**
- * The latest slash command catalog per session, fed by every live event (`observe`, before the attach hub filters
- * by mode). Only `runtime.status` with `status.event === 'commands.updated'` changes it.
+ * The latest slash command catalog per session, fed by every live event the device emits (`observe`, whatever the
+ * E2EE mode). Only `runtime.status` with `status.event === 'commands.updated'` changes it.
  */
 export class SessionCommandCatalog {
   private readonly catalogs = new Map<string, readonly SessionCommand[]>()
 
   public constructor(private readonly max = MAX_COMMAND_CATALOGS) {}
 
-  public observe(method: string, payload: Record<string, unknown>): void {
-    if (method !== 'runtime.status' || typeof payload.sessionId !== 'string') return
-    const status = record(payload.status)
-    if (status === null || status.event !== 'commands.updated') return
-    const commands = commandsOf(record(status.fact)?.commands ?? status.commands)
+  public observe<M extends EventMethod>(method: M, payload: LiveEventPayloads[M]): void {
+    const event = { method, payload } as LiveEvent
+    if (event.method !== 'runtime.status') return
+    const { sessionId } = event.payload
+    const status: Record<string, unknown> = event.payload.status
+    if (typeof sessionId !== 'string' || status.event !== 'commands.updated') return
+    // The Runtime event is in `fact` (`RuntimeFactStatus`).
+    const commands = commandsOf(record(status.fact)?.commands)
     if (commands === null) return
-    this.catalogs.delete(payload.sessionId)
-    this.catalogs.set(payload.sessionId, commands)
+    this.catalogs.delete(sessionId)
+    this.catalogs.set(sessionId, commands)
     while (this.catalogs.size > this.max) this.catalogs.delete(this.catalogs.keys().next().value as string)
   }
 

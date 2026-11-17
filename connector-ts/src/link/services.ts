@@ -5,7 +5,7 @@ import type { TunnelApi } from '../application/inbound/tunnel-api.js'
 import type { OutboxStore } from '../application/ports/index.js'
 import type { CommandCall } from '../generated/device-meshcall/v1_0/command-call.js'
 import { REGISTERED_SERVICES } from '../generated/device-meshcall/v1_0/e2ee-registration.js'
-import { chunkJson, outboxStream, scrubForE2ee, watchSession, type DeviceReaders, type OutboxStreamOptions, type WatchDeps } from '../sync/index.js'
+import { chunkJson, outboxStream, scrubForE2ee, watchSession, type DeviceReaders, type OutboxStreamOptions, type ReadRequest, type WatchDeps } from '../sync/index.js'
 import { defineService, type MethodDef } from '../mesh/index.js'
 import type { AttachHub } from './attach.js'
 import type { LocalBlob } from './blobs.js'
@@ -62,6 +62,33 @@ export function callClass(serviceName: string, methodName: string, request?: Rec
   if (serviceName === 'aa.device.v1.Commands') return 'command'
   if (['watch', 'snapshot', 'readBlob', 'exportShare', 'terminalOutput'].includes(methodName)) return 'stream'
   return 'read'
+}
+
+function sessionId(request: Record<string, unknown>): string {
+  if (typeof request.sessionId !== 'string' || request.sessionId === '') throw new MeshCallError('invalid_argument', 'sessionId is required')
+  return request.sessionId
+}
+
+/** A non-negative integer field, or null when it is absent. */
+function integer(value: unknown, field: string): number | null {
+  if (value === undefined || value === null) return null
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw new MeshCallError('invalid_argument', `${field} must be a non-negative integer`)
+  return value
+}
+
+function bounds(request: Record<string, unknown>): { limit?: number; byteBudget?: number } {
+  const limit = integer(request.limit, 'limit')
+  const byteBudget = integer(request.byteBudget, 'byteBudget')
+  return { ...(limit !== null ? { limit } : {}), ...(byteBudget !== null ? { byteBudget } : {}) }
+}
+
+const READ_MODES: readonly ReadRequest<'store.read'>['mode'][] = ['latest', 'before', 'after']
+
+function storeReadRequest(request: Record<string, unknown>): ReadRequest<'store.read'> {
+  const mode = READ_MODES.find(candidate => candidate === request.mode)
+  if (mode === undefined) throw new MeshCallError('invalid_argument', 'mode must be latest, before or after')
+  const cursor = integer(request.cursor, 'cursor')
+  return { sessionId: sessionId(request), mode, ...(cursor !== null ? { cursor } : {}), ...bounds(request) }
 }
 
 /** Secure/channel handler (F's `channel/`): runs one client's encrypted channel. */
@@ -238,10 +265,6 @@ export class DeviceServices {
     const S = 'aa.device.v1.Sessions'
     const readers = this.deps.readers
     const chunkBytes = this.deps.chunkBytes ?? 512 * 1024
-    const sessionId = (request: Record<string, unknown>): string => {
-      if (typeof request.sessionId !== 'string' || request.sessionId === '') throw new MeshCallError('invalid_argument', 'sessionId is required')
-      return request.sessionId
-    }
     return [
       this.stream(S, 'snapshot', 'Client-shaped snapshot body, in StreamChunk pieces under the frame limit.', async function* (request) {
         const body = await readers.snapshot({
@@ -259,7 +282,7 @@ export class DeviceServices {
       this.unary(S, 'state', 'Runtime state of a session, or one part of it (`planning`, `goal`).', async request => {
         const part = request.part
         if (part !== undefined && part !== null && part !== 'planning' && part !== 'goal') throw new MeshCallError('invalid_argument', 'part must be planning or goal')
-        return readers.sessionState({ sessionId: sessionId(request), ...(typeof part === 'string' ? { part } : {}) })
+        return readers.sessionState({ sessionId: sessionId(request), ...(part === 'planning' || part === 'goal' ? { part } : {}) })
       }),
       this.unary(S, 'capabilities', 'Effective capabilities of a session.', async request => readers.capabilities({ sessionId: sessionId(request) })),
       this.unary(S, 'queue', 'Queued messages of a session.', async request => readers.queue({ sessionId: sessionId(request) })),
@@ -282,9 +305,17 @@ export class DeviceServices {
       throw new MeshCallError('unimplemented', `${name} is not available on this device yet`)
     })
     return [
-      this.unary(S, 'read', 'Paged history by orderSeq, bounded by count and bytes.', async request => readers.read(request as never)),
-      this.unary(S, 'changesSince', 'Changes after a clock position, or snapshotRequired.', async request => readers.changesSince(request as never)),
-      this.unary(S, 'planDocument', 'An immutable plan revision.', async request => readers.planDocument(request as never)),
+      this.unary(S, 'read', 'Paged history by orderSeq, bounded by count and bytes.', async request => readers.read(storeReadRequest(request))),
+      this.unary(S, 'changesSince', 'Changes after a clock position, or snapshotRequired.', async request => readers.changesSince({
+        sessionId: sessionId(request),
+        afterSeq: integer(request.afterSeq, 'afterSeq') ?? 0,
+        ...bounds(request),
+      })),
+      this.unary(S, 'planDocument', 'An immutable plan revision.', async request => readers.planDocument({
+        sessionId: sessionId(request),
+        ...(typeof request.planId === 'string' ? { planId: request.planId } : {}),
+        ...(typeof request.revision === 'number' ? { revision: request.revision } : {}),
+      })),
       this.readBlobMethod(S, unimplemented),
       unimplemented('exportShare'),
     ]
@@ -317,12 +348,11 @@ export class DeviceServices {
 
   private runtimeMethods(): MethodDef[] {
     return [this.unary('aa.device.v1.Runtime', 'catalogs', 'Model, permission and slash command catalogs of a session.', async request => {
-      const result = await this.deps.readers.catalogs(request as never)
+      const result = await this.deps.readers.catalogs({ sessionId: sessionId(request) })
       const commands = this.deps.sessionCommands
-      if (commands === undefined || typeof request.sessionId !== 'string') return result
+      if (commands === undefined) return result
       // `catalogs.commands`: the session's slash commands as the Runtime last reported them.
-      const catalogs = result.catalogs !== null && typeof result.catalogs === 'object' ? (result.catalogs as Record<string, unknown>) : {}
-      return { ...result, catalogs: { ...catalogs, commands: commands(request.sessionId) } }
+      return { ...result, catalogs: { ...result.catalogs, commands: [...commands(result.sessionId)] } }
     })]
   }
 

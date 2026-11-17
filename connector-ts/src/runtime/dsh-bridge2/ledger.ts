@@ -2,14 +2,14 @@
  * `Bridge2Ledger` on the v3 local store (A's `ConversationStore`, #670/#674). A 2.0 plugin
  * sends platform-shaped notifications; this writes them where the session engine would have:
  * timeline items and session facts into the store (each commit announced on the ChangeFeed),
- * lossy live facts (notices, capabilities, catalogs) through `LiveEvents`, checkpoints into the
+ * lossy live facts (notices, capabilities, catalogs) through `live`, checkpoints into the
  * runtime KV. A resolved call means "committed locally" (04-connector.md §5.6).
  *
  * Atomicity: the store commits per session, so a batch spanning sessions is applied in order,
  * one commit at a time. A batch that fails half-way is resent whole; every write here is an
  * idempotent upsert, so the resend converges.
  */
-import type { ChangeFeed, ConversationStore, LiveEvents, SessionCommit, SessionPatch } from '../../application/ports/index.js'
+import type { ChangeFeed, ConversationStore, SessionCommit, SessionPatch } from '../../application/ports/index.js'
 import { TIMELINE_ITEM_TYPES, type JsonObject, type SessionStatus, type SourceAvailability, type TimelineDraft,
   type TimelineItemStatus, type TimelineItemType, type TimelineRole, type TimelineSource } from '../../domain/conversation/index.js'
 import { BACKEND_UNAVAILABLE, Bridge2Error, type Bridge2Ledger, type Json, type Notification } from './relay.js'
@@ -54,10 +54,19 @@ export function draftOf(raw: Json, now: string): TimelineDraft | null {
 
 function text(value: unknown): string | null { return typeof value === 'string' && value ? value : null }
 
+/**
+ * Where the ledger's live facts go: v2 event names with the 2.0 plugin's own payloads. They are not the
+ * device-meshcall 1.0 `Link/attach` shapes (`LiveEvents`): `runtime.status` carries no `runtimeId` and no `status`
+ * object, and `runtime.capability.updated` / `runtime.catalog.updated` are not attach events.
+ */
+export interface Bridge2LiveSink {
+  emit(method: string, payload: Record<string, unknown>): void
+}
+
 export interface StoreLedgerDeps {
   readonly store: ConversationStore
   readonly feed: ChangeFeed
-  readonly live: LiveEvents
+  readonly live: Bridge2LiveSink
   /** The DSH runtime instance these sessions belong to. */
   readonly runtimeId: string
   readonly now?: () => string

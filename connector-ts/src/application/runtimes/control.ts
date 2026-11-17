@@ -9,7 +9,7 @@
 // The command payloads and results are declared here until the device-meshcall contract carries them.
 
 import type { ProtocolCapabilitySet } from '../../generated/protocol/v1_2/capability-set.js'
-import type { JsonObject, LiveEvents, Log, ProviderFacts, RuntimeProvider } from '../ports/index.js'
+import type { ContractStatusOf, JsonObject, LiveEvents, Log, ProviderFacts, RuntimeProvider } from '../ports/index.js'
 import { capabilitySet } from './capabilities.js'
 import { GATEWAY_FIELD, GATEWAY_RUNTIME_PROTOCOLS, RuntimeApplyError, runtimeSpecFrom, type InstanceReport, type RuntimeInstanceSpec } from './instances.js'
 import type { RuntimeRegistry } from './registry.js'
@@ -220,7 +220,8 @@ export async function announceRuntimes(registry: RuntimeRegistry, live: LiveEven
       runtimeId: '*',
       status: {
         event: 'runtime.types',
-        runtimeTypes: [...byType].map(([type, { facts, error }]) => runtimeTypeDescriptor(type, facts, error, registry.provider(type))),
+        // Runtime Control 2.1 descriptors, built as JSON by `runtimeTypeDescriptor`.
+        runtimeTypes: [...byType].map(([type, { facts, error }]) => runtimeTypeDescriptor(type, facts, error, registry.provider(type))) as unknown as NonNullable<ContractStatusOf<'runtime.types'>['runtimeTypes']>,
         features: [...RUNTIME_CONTROL_FEATURES],
       },
     })

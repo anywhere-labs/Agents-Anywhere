@@ -1,7 +1,7 @@
 import { statusAfterTurn } from '../../domain/conversation/index.js'
-import type { QueueOp, RuntimeEvent } from '../ports/index.js'
+import type { QueueOp } from '../ports/index.js'
 import { TimelineProjector } from '../projection.js'
-import type { RuntimeBindings } from './bindings.js'
+import type { LiveFact, RuntimeBindings } from './bindings.js'
 import type { DeliveryRecords } from './deliveries.js'
 import type { SessionKernel } from './kernel.js'
 
@@ -46,13 +46,13 @@ export class TurnLifecycle {
     const after = statusAfterTurn(outcome)
     const at = deps.clock.nowIso()
     const closed = await deps.store.interactions.expireBlocking(sessionId, 'turn_ended', at)
-    for (const interaction of closed) deps.live.emit('runtime.notice.updated', { sessionId, notice: { ...interaction.payload, noticeId: interaction.noticeId, status: 'expired' } })
+    for (const interaction of closed) this.kernel.emitNotice(interaction, 'expired')
     await this.kernel.patchSession(sessionId, { status: after.status, activeTurn: null, turnEnded: true, lastActivityAt: at })
     await this.queue.apply(sessionId, { kind: 'turnEnded', outcome: after.queueOutcome })
     void this.kernel.serial(sessionId, () => this.queue.dispatchNext(sessionId)).catch(error => this.kernel.reportError(sessionId, error))
   }
 
-  public onLiveFact(sessionId: string, event: RuntimeEvent): void {
+  public onLiveFact(sessionId: string, event: LiveFact): void {
     this.kernel.emitSessionStatus(sessionId, { event: event.type, fact: event as unknown as Record<string, unknown> })
   }
 
