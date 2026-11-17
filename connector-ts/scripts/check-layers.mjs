@@ -19,22 +19,74 @@ const DOMAIN_FORBIDDEN_BUILTINS = new Set([
  */
 const GENERATED = 'generated'
 
-/** Outer implementations of ports; they talk through application/ports, never to each other. */
-const PEER_ADAPTERS = new Set(['runtime', 'store', 'link', 'workspace', 'host'])
+/**
+ * The role of every top-level directory under src/ besides domain, application, generated and entry. A directory
+ * missing here is reported, so a new one gets a role before anything depends on it.
+ *
+ * - inbound: drives the use cases from outside (the Server's MeshCall link, the secure channel). Enters the
+ *   application only through application/inbound and application/ports; may use sync and shared infrastructure.
+ * - sync: the read and sync side the inbound adapters share (ChangeFeed, Sessions/watch, outbox stream, readers,
+ *   the secure channel's request router). Depends only on domain, application/ports and application/inbound.
+ * - outbound: implements application/ports (Runtimes, the store, workspace operations, the keystore, the host
+ *   process); may use shared infrastructure, never another adapter or the use cases.
+ * - shared: infrastructure with no knowledge of the application (MeshCall helpers, Noise primitives); imports
+ *   nothing else under src/ but generated types.
+ */
+export const ROLES = {
+  link: 'inbound',
+  channel: 'inbound',
+  sync: 'sync',
+  runtime: 'outbound',
+  store: 'outbound',
+  workspace: 'outbound',
+  keystore: 'outbound',
+  host: 'outbound',
+  mesh: 'shared',
+  'channel/noise': 'shared',
+}
+
+/**
+ * Session contexts inside application/ and the application areas each may import besides itself, domain, ports and
+ * the shared application modules at the top of application/. `session` is the engine the contexts build on;
+ * `conversation` drives the queue, planning and goals. No context imports the facade (conversation-service.ts).
+ */
+export const APPLICATION_CONTEXTS = {
+  session: [],
+  queue: ['session'],
+  planning: ['session'],
+  goals: ['session'],
+  conversation: ['session', 'queue', 'planning', 'goals'],
+}
+
+/** The facade that wires the session contexts together (module name, without extension). */
+const FACADE = 'conversation-service'
 
 /**
  * @param {string} file path relative to src/, with '/' separators
  * @returns {{ layer: string, area: string }}
  */
 export function classify(file) {
-  const [top = '', second = ''] = file.split('/')
+  const [top = '', second = '', third = ''] = file.split('/')
   if (top === 'domain') return { layer: 'domain', area: second.endsWith('.ts') ? '' : second }
   if (top === 'application') {
     if (second === 'ports') return { layer: 'application', area: 'ports' }
     if (second === 'inbound') return { layer: 'application', area: 'inbound' }
+    if (second.replace(/\.[cm]?[jt]sx?$/u, '') === FACADE) return { layer: 'application', area: 'facade' }
+    if (Object.hasOwn(APPLICATION_CONTEXTS, second) && third !== '') return { layer: 'application', area: second }
     return { layer: 'application', area: 'core' }
   }
+  if (top === 'channel' && second === 'noise') return { layer: 'channel/noise', area: '' }
   return { layer: top.endsWith('.ts') ? '' : top, area: '' }
+}
+
+/** @param {string} layer */
+function roleOf(layer) {
+  return Object.hasOwn(ROLES, layer) ? ROLES[/** @type {keyof typeof ROLES} */ (layer)] : undefined
+}
+
+/** @param {{ layer: string, area: string }} at */
+function label(at) {
+  return at.layer === 'application' && (at.area === 'ports' || at.area === 'inbound') ? `application/${at.area}` : at.layer
 }
 
 /**
@@ -50,17 +102,50 @@ export function ruleViolation(from, to) {
     if (from.area === 'conversation' && to.area === 'trust') return 'domain/conversation must not import domain/trust'
     return null
   }
-  if (from.layer === 'application') {
-    if (to.layer === 'domain') return null
-    if (to.layer !== 'application') return 'application may depend only on domain and application/ports'
-    if (from.area === 'ports' && to.area !== 'ports') return 'application/ports may depend only on domain and application/ports'
-    if (from.area === 'core' && to.area === 'inbound') return 'application use cases must not import application/inbound'
-    return null
-  }
+  if (from.layer === 'application') return applicationViolation(from, to)
   if (to.layer === 'entry' && from.layer !== 'entry') return 'only entry/ is the composition root; nothing imports it'
-  if (PEER_ADAPTERS.has(from.layer) && PEER_ADAPTERS.has(to.layer) && from.layer !== to.layer) {
-    return `${from.layer} must not import ${to.layer} directly; go through application/ports`
+  if (from.layer === 'entry') return null
+  const role = roleOf(from.layer)
+  if (role === undefined) return `${from.layer || 'src/'} has no layer role; add it to ROLES in scripts/check-layers.mjs`
+  if (to.layer === from.layer) return null
+  const toRole = roleOf(to.layer)
+  if (to.layer !== 'domain' && to.layer !== 'application' && toRole === undefined) return `${to.layer || 'src/'} has no layer role; add it to ROLES in scripts/check-layers.mjs`
+  if (role === 'shared') return `${from.layer} is shared infrastructure and must not import ${label(to)}`
+  const port = to.layer === 'application' && to.area === 'ports'
+  const inboundUseCases = to.layer === 'application' && to.area === 'inbound'
+  if (to.layer === 'domain' || port) return null
+  if (toRole === 'shared' && role !== 'sync') return null
+  if (role === 'outbound') {
+    if (to.layer === 'application') return `${from.layer} implements application/ports and must not import ${label(to)}`
+    if (toRole === 'outbound') return `${from.layer} must not import ${to.layer} directly; go through application/ports`
+    return `${from.layer} is an outbound adapter and must not import the inbound side (${to.layer})`
   }
+  if (role === 'sync') {
+    if (inboundUseCases) return null
+    if (to.layer === 'application') return 'sync reaches the use cases only through application/inbound and application/ports'
+    return `sync must not import ${to.layer}`
+  }
+  // inbound adapters
+  if (inboundUseCases || toRole === 'sync') return null
+  if (to.layer === 'application') return `${from.layer} reaches the use cases only through application/inbound and application/ports`
+  if (toRole === 'outbound') return `${from.layer} must not import ${to.layer}; outbound adapters are reached through application/ports`
+  return `${from.layer} must not import ${to.layer} directly`
+}
+
+/**
+ * @param {{ layer: string, area: string }} from an application module
+ * @param {{ layer: string, area: string }} to
+ * @returns {string | null}
+ */
+function applicationViolation(from, to) {
+  if (to.layer === 'domain') return null
+  if (to.layer !== 'application') return 'application may depend only on domain and application/ports'
+  if (from.area === 'ports' && to.area !== 'ports') return 'application/ports may depend only on domain and application/ports'
+  if (from.area !== 'inbound' && to.area === 'inbound') return 'application use cases must not import application/inbound'
+  const allowed = Object.hasOwn(APPLICATION_CONTEXTS, from.area) ? APPLICATION_CONTEXTS[/** @type {keyof typeof APPLICATION_CONTEXTS} */ (from.area)] : undefined
+  if (allowed === undefined || to.area === from.area || to.area === 'ports' || to.area === 'core') return null
+  if (to.area === 'facade') return `application/${from.area} must not import the facade ${FACADE}.ts`
+  if (!allowed.includes(to.area)) return `application/${from.area} must not import application/${to.area}`
   return null
 }
 

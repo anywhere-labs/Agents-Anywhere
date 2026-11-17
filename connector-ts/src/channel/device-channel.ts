@@ -2,7 +2,7 @@
 // afterwards it hands decrypted requests to TunnelApi (the same use cases as normal mode) and handles trust management requests here.
 
 import type { ChannelCaller, TunnelApi, TunnelSubscription } from '../application/inbound/tunnel-api.js'
-import type { DeviceTrustService } from '../application/trust/device-trust-service.js'
+import type { ChannelTrust } from '../application/inbound/channel-trust.js'
 import { TrustError, clientIdFor, type ClientPlatform } from '../domain/trust/index.js'
 import { HandshakeState, type NoiseCrypto, type NoiseKeyPair } from './noise/index.js'
 import {
@@ -29,7 +29,7 @@ const json = (value: unknown): Uint8Array => Buffer.from(JSON.stringify(value), 
 export interface DeviceChannelDeps {
   readonly deviceId: string
   readonly deviceLabel: string
-  readonly trust: DeviceTrustService
+  readonly trust: ChannelTrust
   readonly identity: NoiseKeyPair
   readonly crypto: NoiseCrypto
   readonly api: TunnelApi

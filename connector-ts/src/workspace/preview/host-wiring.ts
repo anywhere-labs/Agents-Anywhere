@@ -3,7 +3,7 @@
 // of a port that stopped listening. A host passes `commands` and `onLink` to `connectorRuntime` (ComposeOptions).
 import { join } from 'node:path'
 
-import type { CommandHandler } from '../../application/inbound/index.js'
+import type { CommandHandler } from '../../application/ports/index.js'
 import type { PreviewCloseCommand } from '../../generated/preview/v1_0/preview-close-command.js'
 import type { PreviewOpenCommand } from '../../generated/preview/v1_0/preview-open-command.js'
 import { listeningPorts, PortWatcher, type ListeningPort } from '../ports.js'

@@ -8,21 +8,9 @@ import type { CommandCall } from '../../generated/device-meshcall/v1_0/command-c
 import { PreparationError } from '../../domain/creation/index.js'
 import { UseCaseError, type AttachmentRef, type ConversationService, type CreationIntent } from '../conversation-service.js'
 import type { PreparationService } from '../creation/index.js'
-import type { Clock, CommandReceipt, CommandRecord, ConversationStore, InteractionAnswer } from '../ports/index.js'
+import type { Clock, CommandHandler, CommandHandlerContext, CommandReceipt, CommandRecord, ConversationStore, InteractionAnswer } from '../ports/index.js'
 
-/**
- * A command handler returns its result body (`CommandAck.r`); throwing a coded error rejects the command. A handler
- * whose effect is a store write passes `receipt` to that write, so effect and receipt commit together.
- */
-export type CommandHandler = (payload: Record<string, unknown>, context: CommandHandlerContext) => Promise<Record<string, unknown>>
-
-export interface CommandHandlerContext {
-  readonly commandId: string
-  readonly inputDigest: string | null
-  readonly actor: string
-  /** Always set by `CommandInbox`; absent when a handler is called directly (tests, tools). */
-  readonly receipt?: CommandReceipt
-}
+export type { CommandHandler, CommandHandlerContext } from '../ports/index.js'
 
 /** Business method name (`session.queue.sendNow`) → MeshCall method (`sessionQueueSendNow`), as the contract says. */
 export function commandRoute(method: string): string {
