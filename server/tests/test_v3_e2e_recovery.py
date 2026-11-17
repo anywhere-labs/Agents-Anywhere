@@ -47,6 +47,8 @@ from v3_e2e_harness import (
     wait_text,
 )
 
+# The steps share one Server, Router and device and run in order; scripts/check_tests.py distributes
+# with --dist loadfile so the whole file stays on one xdist worker.
 pytestmark = pytest.mark.skipif(skip_reason() is not None, reason=skip_reason() or "")
 
 REGISTERED = r"registered .* as "

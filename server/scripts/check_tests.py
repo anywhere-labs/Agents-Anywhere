@@ -210,7 +210,7 @@ def main():
         "PYTHONDONTWRITEBYTECODE": "1",
     }
     parallel = (
-        ["-n", str(options.workers), "--dist", "worksteal"]
+        ["-n", str(options.workers), "--dist", "loadfile"]
         if options.workers > 1
         else []
     )
@@ -219,7 +219,7 @@ def main():
     # tracing at two, while uninstrumented full verification can use all workers.
     record_workers = min(options.workers, 2)
     record_parallel = (
-        ["-n", str(record_workers), "--dist", "worksteal"] if record_workers > 1 else []
+        ["-n", str(record_workers), "--dist", "loadfile"] if record_workers > 1 else []
     )
     summary["record_workers"] = record_workers
     print(

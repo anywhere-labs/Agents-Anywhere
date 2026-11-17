@@ -45,13 +45,15 @@ from v3_e2e_harness import wait_for as _wait
 from v3_e2e_harness import wait_session as _wait_session
 from v3_e2e_harness import wait_text as _wait_text
 
+# The steps share one Server, Router and device and run in order; scripts/check_tests.py distributes
+# with --dist loadfile so the whole file stays on one xdist worker.
 pytestmark = pytest.mark.skipif(skip_reason() is not None, reason=skip_reason() or "")
 
 
 @pytest.fixture(scope="module")
 def e2e(request: pytest.FixtureRequest) -> Iterator[E2E]:
     with e2e_environment(request) as env:
-        # pytest-xdist (worksteal) can run any test of this file first on a worker: start from an online device.
+        # Start every test from an online device, whichever runs first.
         env.wait_status("online", STARTUP_TIMEOUT)
         yield env
 

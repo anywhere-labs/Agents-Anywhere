@@ -56,6 +56,8 @@ from scripts.e2ee_canary_scan import (
     scan_websocket,
 )
 
+# The steps share one Server, Router and device and run in order; scripts/check_tests.py distributes
+# with --dist loadfile so the whole file stays on one xdist worker.
 pytestmark = pytest.mark.skipif(skip_reason() is not None, reason=skip_reason() or "")
 
 CLIENT_SCRIPT = CONNECTOR_TS / "test/support/e2ee-client.ts"
