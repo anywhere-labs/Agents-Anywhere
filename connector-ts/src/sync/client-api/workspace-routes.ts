@@ -110,10 +110,18 @@ export class WorkspaceRoutes {
 
   // ---------------------------------------------------------------------------------------- connectors/{id}/…
 
-  public async device(route: Route, transfer: TransferFacts | null): Promise<TunnelApiResponse> {
+  /**
+   * `preview`: the file of a preview token the Server verified (`server.preview` of a `Client/call`). The Server
+   * forwards preview reads as `fs/readText` / `fs/read`; with it, those two routes read that file and ignore the
+   * request's own root and path.
+   */
+  public async device(route: Route, transfer: TransferFacts | null, preview: PreviewFacts | null = null): Promise<TunnelApiResponse> {
     const rest = route.segments.slice(2)
     const body = route.body
     const action = `${route.method} ${rest.join('/')}`
+    if (preview !== null && (action === 'POST fs/readText' || action === 'POST fs/read')) {
+      return action === 'POST fs/readText' ? this.readText(preview.root, preview.path, body.maxBytes) : this.download(preview.root, preview.path, transfer)
+    }
     switch (action) {
       case 'POST fs/list': {
         const root = this.root(route)
@@ -166,15 +174,6 @@ export class WorkspaceRoutes {
     if (rest[0] === 'terminals') return this.terminalsV1(route, rest.slice(1), scope)
     if (rest[0] === 'runtimes' && rest.length >= 3 && route.method === 'GET') return this.runtimeCatalog(rest[1]!, rest.slice(2).join('/'))
     throw notFound(`${route.method} connectors/{id}/${rest.join('/')} is not served by this device`)
-  }
-
-  /** `connectors/fs/preview/readText` and `…/read`: the file of a preview token the Server verified. */
-  public async preview(route: Route, preview: PreviewFacts | null, transfer: TransferFacts | null): Promise<TunnelApiResponse> {
-    if (preview === null) throw new TunnelHttpError(400, 'invalid_preview_token', 'invalid preview token')
-    const action = `${route.method} ${route.segments.slice(3).join('/')}`
-    if (action === 'POST readText') return this.readText(preview.root, preview.path, route.body.maxBytes)
-    if (action === 'POST read') return this.download(preview.root, preview.path, transfer)
-    throw notFound(`${route.method} ${route.segments.join('/')} is not served by this device`)
   }
 
   /** `sessions/{id}/terminals*` (v1): terminals scoped to the session, rooted at its working directory. */

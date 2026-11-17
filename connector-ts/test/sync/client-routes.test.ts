@@ -122,20 +122,27 @@ function fill(value: unknown): unknown {
   return JSON.parse(JSON.stringify(value).replace(/\{(\w+)\}/gu, (match, name: string) => names[name] ?? match))
 }
 
-async function call(route: string, server?: ServerFacts): Promise<{ fixture: Fixture; status: number; body: unknown }> {
+/** The request the device gets when the Server forwards a route as another one (`forward` of the route table). */
+interface Forwarded {
+  readonly path: string
+  readonly query: Record<string, unknown>
+  readonly body: unknown
+}
+
+async function call(route: string, server?: ServerFacts, forwarded?: Forwarded): Promise<{ fixture: Fixture; status: number; body: unknown }> {
   const recorded = fixture(route)
-  const query = fill(recorded.query) as Record<string, unknown> | null
+  const query = fill(forwarded?.query ?? recorded.query) as Record<string, unknown> | null
   const search = query === null ? '' : `?${new URLSearchParams(Object.entries(query).map(([key, value]): [string, string] => [key, String(value)]))}`
   const options: TunnelCallContext = server === undefined ? {} : { server: server as never }
-  const response = await device.request(recorded.method, `${fill(recorded.path) as string}${search}`, fill(recorded.body) ?? {}, options)
+  const response = await device.request(recorded.method, `${fill(forwarded?.path ?? recorded.path) as string}${search}`, fill(forwarded?.body ?? recorded.body) ?? {}, options)
   return { fixture: recorded, status: response.status, body: response.body }
 }
 
 const checked = new Set<string>()
 
 /** Calls the route as recorded and asserts the answer has the recorded shape (or the deviation's). */
-async function check(route: string, server?: ServerFacts): Promise<unknown> {
-  const { fixture: recorded, status, body } = await call(route, server)
+async function check(route: string, server?: ServerFacts, forwarded?: Forwarded): Promise<unknown> {
+  const { fixture: recorded, status, body } = await call(route, server, forwarded)
   checked.add(route)
   const deviation = DEVIATIONS[route]
   const context = `${route}: ${JSON.stringify(body).slice(0, 600)}`
@@ -249,8 +256,10 @@ describe('client routes: the device answers with the shapes the Server answered'
     const transfer = { transferId: 'fsdl_1', token: 'tok_1', path: '/api/v3/device/transfers/fsdl_1' }
     await check('device.fs.read', { transfer })
     names.previewAccessToken = 'pat_1'
-    await check('device.fs.preview.readText', { preview: { root, path: join(root, 'notes', 'a.txt') } })
-    await check('device.fs.preview.read', { preview: { root, path: join(root, 'notes', 'a.txt') }, transfer: { ...transfer, downloadUrl: '/api/v2/connectors/x/fs/transfers/fsdl_1?token=tok_1&previewAccessToken=pat_1' } })
+    // The Server verifies the preview token and forwards the read as `fs/readText` / `fs/read` with the file in `server.preview`.
+    const previewed = { preview: { root, path: join(root, 'notes', 'a.txt') } }
+    await check('device.fs.preview.readText', previewed, { path: '/connectors/{connectorId}/fs/readText', query: { root: '{root}' }, body: { path: join(root, 'notes', 'a.txt'), maxBytes: 1024 } })
+    await check('device.fs.preview.read', { ...previewed, transfer: { ...transfer, downloadUrl: '/api/v2/connectors/x/fs/transfers/fsdl_1?token=tok_1&previewAccessToken=pat_1' } }, { path: '/connectors/{connectorId}/fs/read', query: { root: '{root}' }, body: { path: join(root, 'notes', 'a.txt') } })
     await check('device.shell.exec')
 
     // Terminals.

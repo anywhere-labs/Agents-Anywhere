@@ -235,10 +235,9 @@ export class DeviceTunnelApi implements TunnelApi {
       const [area, id] = route.segments
       if (area === 'sessions' && id === 'create-and-start' && route.segments.length === 2 && route.method === 'POST') return await this.createAndStart(caller, call, route.body)
       if (area === 'sessions' && id !== undefined && route.segments.length >= 3) return await this.session(caller, call, id, route)
-      if (area === 'connectors' && id === 'fs' && route.segments[2] === 'preview') return await this.files.preview(route, call.preview, call.transfer)
       if (area === 'connectors' && id !== undefined) {
         if (id !== this.deps.deviceId) throw notFound(`connector ${id} is not this device`)
-        return await this.files.device(route, call.transfer)
+        return await this.files.device(route, call.transfer, call.preview)
       }
       throw notFound(`${request.method} ${route.segments.join('/')} is not served by this device`)
     } catch (error) {

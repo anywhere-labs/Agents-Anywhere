@@ -226,15 +226,19 @@ describe('files and shell', () => {
     }
   })
 
-  it('starts a download with the Server\'s transfer, and serves preview reads only for a verified token', async () => {
+  it('starts a download with the Server\'s transfer, and reads the verified file of a preview', async () => {
     const transfer = { transferId: 'tr_1', token: 'tk_1', path: '/api/v3/device/transfers/tr_1' }
     expect((await device.request('POST', `/connectors/${DEVICE}/fs/read?root=${encodeURIComponent(device.root)}`, { path: 'notes/a.txt' })).status).toBe(409)
     const read = await device.request('POST', `/connectors/${DEVICE}/fs/read?root=${encodeURIComponent(device.root)}`, { path: 'notes/a.txt' }, { server: { transfer } })
     expect(read.body).toMatchObject({ ok: true, result: { name: 'a.txt', size: 6, transferId: 'tr_1', token: 'tk_1', downloadUrl: `/api/v2/connectors/${DEVICE}/fs/transfers/tr_1?token=tk_1` } })
     expect(device.uploads).toEqual([expect.objectContaining({ transferId: 'tr_1', token: 'tk_1', uploadUrl: '/api/v3/device/transfers/tr_1', path: join(device.root, 'notes', 'a.txt') })])
-    expect((await device.request('POST', '/connectors/fs/preview/readText', { previewAccessToken: 'x' })).status).toBe(400)
-    const preview = await device.request('POST', '/connectors/fs/preview/readText', { previewAccessToken: 'x', maxBytes: 2 }, { server: { preview: { root: device.root, path: join(device.root, 'notes', 'a.txt') } } })
-    expect(preview.body).toMatchObject({ content: 'he', truncated: true })
+    // Preview reads come as `fs/readText` / `fs/read` with the verified file in `server.preview`, which wins over the body.
+    const verified = { preview: { root: device.root, path: join(device.root, 'notes', 'a.txt') } }
+    const preview = await device.request('POST', `/connectors/${DEVICE}/fs/readText?root=${encodeURIComponent(device.root)}`, { path: 'other.txt', maxBytes: 2 }, { server: verified })
+    expect(preview.body).toMatchObject({ content: 'he', truncated: true, path: join(device.root, 'notes', 'a.txt') })
+    const previewRead = await device.request('POST', `/connectors/${DEVICE}/fs/read?root=${encodeURIComponent(device.root)}`, { path: 'other.txt' }, { server: { ...verified, transfer: { ...transfer, transferId: 'tr_2' } } })
+    expect(previewRead.body).toMatchObject({ ok: true, result: { name: 'a.txt', size: 6, transferId: 'tr_2' } })
+    expect((await device.request('POST', '/connectors/fs/preview/readText', { previewAccessToken: 'x' })).status).toBe(404)
   })
 })
 
