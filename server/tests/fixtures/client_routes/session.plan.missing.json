@@ -1,0 +1,11 @@
+{
+  "body": null,
+  "method": "GET",
+  "path": "/sessions/{sessionId}/plans/plan_missing/1",
+  "query": null,
+  "response": {
+    "detail": "plan not found"
+  },
+  "route": "session.plan.missing",
+  "status": 404
+}

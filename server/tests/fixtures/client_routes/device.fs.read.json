@@ -1,0 +1,26 @@
+{
+  "body": {
+    "path": "notes/a.txt"
+  },
+  "method": "POST",
+  "path": "/connectors/{connectorId}/fs/read",
+  "query": {
+    "root": "{root}"
+  },
+  "response": {
+    "error": null,
+    "ok": true,
+    "result": {
+      "downloadUrl": "/api/v2/connectors/{connectorId}/fs/transfers/fsdl_vgK2iDP9WzhJ_E24FJr-27v_?token=o_QaHXX5Ic0O7W5n__fVEdziHjucOt4P2ay_21G-zPs",
+      "mediaType": "text/plain",
+      "name": "a.txt",
+      "path": "{root}/notes/a.txt",
+      "sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03",
+      "size": 6,
+      "token": "o_QaHXX5Ic0O7W5n__fVEdziHjucOt4P2ay_21G-zPs",
+      "transferId": "fsdl_vgK2iDP9WzhJ_E24FJr-27v_"
+    }
+  },
+  "route": "device.fs.read",
+  "status": 200
+}

@@ -1,0 +1,17 @@
+{
+  "body": {
+    "clientMessageId": "cm_rec_arch",
+    "content": "archived"
+  },
+  "method": "POST",
+  "path": "/sessions/{sessionId}/runtime/messages",
+  "query": null,
+  "response": {
+    "detail": {
+      "code": "session_archived",
+      "message": "session is archived in Agents Anywhere"
+    }
+  },
+  "route": "session.messages.archived",
+  "status": 409
+}

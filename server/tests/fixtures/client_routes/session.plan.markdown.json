@@ -1,0 +1,9 @@
+{
+  "body": null,
+  "method": "GET",
+  "path": "/sessions/{sessionId}/plans/{planId}/1/markdown",
+  "query": null,
+  "response": "# E2E plan\n\n1. Read the code\n2. Fix the bug\n",
+  "route": "session.plan.markdown",
+  "status": 200
+}

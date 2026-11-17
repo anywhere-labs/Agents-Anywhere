@@ -1,0 +1,18 @@
+{
+  "body": {
+    "actionId": "allow"
+  },
+  "method": "POST",
+  "path": "/sessions/{sessionId}/runtime/notices/ntc_missing/respond",
+  "query": null,
+  "response": {
+    "error": {
+      "code": "interaction_not_found",
+      "message": "interaction not found"
+    },
+    "ok": false,
+    "result": null
+  },
+  "route": "session.notices.respond.missing",
+  "status": 200
+}

@@ -1,0 +1,23 @@
+{
+  "body": {
+    "content": "written\n",
+    "path": "notes/b.txt"
+  },
+  "method": "POST",
+  "path": "/connectors/{connectorId}/fs/write",
+  "query": {
+    "root": "{root}"
+  },
+  "response": {
+    "error": null,
+    "ok": true,
+    "result": {
+      "bytesWritten": 8,
+      "encoding": "utf8",
+      "path": "{root}/notes/b.txt",
+      "sha256": "d9ed84a15ec3aa6e344981cb5b92da385361d08a8b6e579c73ce716e55cdecab"
+    }
+  },
+  "route": "device.fs.write",
+  "status": 200
+}

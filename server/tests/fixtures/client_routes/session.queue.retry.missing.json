@@ -1,0 +1,14 @@
+{
+  "body": {},
+  "method": "POST",
+  "path": "/sessions/{sessionId}/runtime/queue/q_missing/retry",
+  "query": null,
+  "response": {
+    "detail": {
+      "code": "queue_item_not_found",
+      "message": "queue item q_missing not found"
+    }
+  },
+  "route": "session.queue.retry.missing",
+  "status": 404
+}

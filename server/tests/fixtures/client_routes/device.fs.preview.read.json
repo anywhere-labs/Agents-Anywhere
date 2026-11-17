@@ -1,0 +1,24 @@
+{
+  "body": {
+    "previewAccessToken": "{previewAccessToken}"
+  },
+  "method": "POST",
+  "path": "/connectors/fs/preview/read",
+  "query": null,
+  "response": {
+    "error": null,
+    "ok": true,
+    "result": {
+      "downloadUrl": "/api/v2/connectors/{connectorId}/fs/transfers/fsdl_a0tgeRFNQKap4MME-Qh3nyKh?token=UjlyIaUmimYcfZj0RAIppO8vqPC2n6PO8X173Pirf9M&previewAccessToken={previewAccessToken}",
+      "mediaType": "text/plain",
+      "name": "a.txt",
+      "path": "{root}/notes/a.txt",
+      "sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03",
+      "size": 6,
+      "token": "UjlyIaUmimYcfZj0RAIppO8vqPC2n6PO8X173Pirf9M",
+      "transferId": "fsdl_a0tgeRFNQKap4MME-Qh3nyKh"
+    }
+  },
+  "route": "device.fs.preview.read",
+  "status": 200
+}

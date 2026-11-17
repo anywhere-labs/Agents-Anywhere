@@ -1,0 +1,16 @@
+{
+  "body": null,
+  "method": "GET",
+  "path": "/sessions/{sessionId}/runtime/catalogs/permission",
+  "query": null,
+  "response": {
+    "catalog": {
+      "permissions": [],
+      "revision": 1,
+      "runtime": "opencode"
+    },
+    "serverTime": "2026-11-17T14:00:51.333478Z"
+  },
+  "route": "session.catalog.permission",
+  "status": 200
+}

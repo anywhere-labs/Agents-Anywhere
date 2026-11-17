@@ -1,0 +1,33 @@
+{
+  "body": {
+    "label": "renamed"
+  },
+  "method": "PATCH",
+  "path": "/connectors/{connectorId}/terminals-v2/{terminalId}",
+  "query": null,
+  "response": {
+    "error": null,
+    "ok": true,
+    "result": {
+      "closed": false,
+      "cols": 80,
+      "createdAt": "2026-11-17T14:00:56.014Z",
+      "cwd": "{root}/notes",
+      "exitCode": null,
+      "label": "renamed",
+      "persistent": false,
+      "pid": 54032,
+      "purpose": "user",
+      "root": "{root}",
+      "rows": 24,
+      "scrollbackBytes": 0,
+      "scrollbackSeq": 0,
+      "sessionId": "browse_{connectorId}",
+      "shell": "/bin/bash",
+      "status": "running",
+      "terminalId": "{terminalId}"
+    }
+  },
+  "route": "device.terminals.rename",
+  "status": 200
+}

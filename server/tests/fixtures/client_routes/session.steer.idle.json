@@ -1,0 +1,13 @@
+{
+  "body": {
+    "content": "too late"
+  },
+  "method": "POST",
+  "path": "/sessions/{sessionId}/runtime/steer",
+  "query": null,
+  "response": {
+    "detail": "session is not running"
+  },
+  "route": "session.steer.idle",
+  "status": 409
+}

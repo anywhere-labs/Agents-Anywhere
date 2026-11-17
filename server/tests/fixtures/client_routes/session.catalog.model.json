@@ -1,0 +1,37 @@
+{
+  "body": null,
+  "method": "GET",
+  "path": "/sessions/{sessionId}/runtime/catalogs/model",
+  "query": null,
+  "response": {
+    "catalog": {
+      "models": [
+        {
+          "default": true,
+          "description": null,
+          "displayName": "Model 1",
+          "group": null,
+          "id": "m1",
+          "metadata": {},
+          "reasoningItems": [],
+          "selectionId": "m1"
+        },
+        {
+          "default": false,
+          "description": null,
+          "displayName": "Model 2",
+          "group": null,
+          "id": "m2",
+          "metadata": {},
+          "reasoningItems": [],
+          "selectionId": "m2"
+        }
+      ],
+      "revision": 1,
+      "runtime": "opencode"
+    },
+    "serverTime": "2026-11-17T14:00:51.310213Z"
+  },
+  "route": "session.catalog.model",
+  "status": 200
+}

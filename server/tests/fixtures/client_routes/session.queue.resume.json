@@ -1,0 +1,13 @@
+{
+  "body": {},
+  "method": "POST",
+  "path": "/sessions/{sessionId}/runtime/queue/resume",
+  "query": null,
+  "response": {
+    "items": [],
+    "revision": 6,
+    "sessionId": "{sessionId}"
+  },
+  "route": "session.queue.resume",
+  "status": 200
+}

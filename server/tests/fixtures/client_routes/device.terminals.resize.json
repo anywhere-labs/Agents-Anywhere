@@ -1,0 +1,20 @@
+{
+  "body": {
+    "cols": 100,
+    "rows": 30
+  },
+  "method": "POST",
+  "path": "/connectors/{connectorId}/terminals-v2/{terminalId}/resize",
+  "query": null,
+  "response": {
+    "error": null,
+    "ok": true,
+    "result": {
+      "cols": 100,
+      "rows": 30,
+      "terminalId": "{terminalId}"
+    }
+  },
+  "route": "device.terminals.resize",
+  "status": 200
+}

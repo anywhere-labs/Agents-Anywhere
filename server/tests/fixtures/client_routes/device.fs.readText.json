@@ -1,0 +1,24 @@
+{
+  "body": {
+    "maxBytes": 1024,
+    "path": "notes/a.txt"
+  },
+  "method": "POST",
+  "path": "/connectors/{connectorId}/fs/readText",
+  "query": {
+    "root": "{root}"
+  },
+  "response": {
+    "binary": false,
+    "content": "hello\n",
+    "encoding": "utf8",
+    "name": "a.txt",
+    "path": "{root}/notes/a.txt",
+    "serverTime": "2026-11-17T14:00:55.897497Z",
+    "sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03",
+    "size": 6,
+    "truncated": false
+  },
+  "route": "device.fs.readText",
+  "status": 200
+}

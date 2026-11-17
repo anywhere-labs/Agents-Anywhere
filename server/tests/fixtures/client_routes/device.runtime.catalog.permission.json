@@ -1,0 +1,14 @@
+{
+  "body": null,
+  "method": "GET",
+  "path": "/connectors/{connectorId}/runtimes/{runtimeId}/catalogs/permission",
+  "query": null,
+  "response": {
+    "detail": {
+      "code": "session_not_found",
+      "message": "session  is not on this device"
+    }
+  },
+  "route": "device.runtime.catalog.permission",
+  "status": 502
+}

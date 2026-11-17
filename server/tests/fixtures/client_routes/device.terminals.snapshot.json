@@ -1,0 +1,60 @@
+{
+  "body": null,
+  "method": "GET",
+  "path": "/connectors/{connectorId}/terminals-v2/{terminalId}/snapshot",
+  "query": {
+    "fromSeq": 0
+  },
+  "response": {
+    "error": null,
+    "ok": true,
+    "result": {
+      "baseSeq": 0,
+      "dataBase64": "DQpUaGUgZGVmYXVsdCBpbnRlcmFjdGl2ZSBzaGVsbCBpcyBub3cgenNoLg0KVG8gdXBkYXRlIHlvdXIgYWNjb3VudCB0byB1c2UgenNoLCBwbGVhc2UgcnVuIGBjaHNoIC1zIC9iaW4venNoYC4NCkZvciBtb3JlIGRldGFpbHMsIHBsZWFzZSB2aXNpdCBodHRwczovL3N1cHBvcnQuYXBwbGUuY29tL2tiL0hUMjA4MDUwLg0KG1s/MTAzNGh3YW5nZGVNYWNCb29rLVBybzpub3RlcyB3YW5nJCBlY2hvIGhpDQpoaQ0Kd2FuZ2RlTWFjQm9vay1Qcm86bm90ZXMgd2FuZyQgDRtbS3dhbmdkZU1hY0Jvb2stUHJvOm5vdGVzIHdhbmckIA==",
+      "outputs": [
+        {
+          "dataBase64": "DQpUaGUgZGVmYXVsdCBpbnRlcmFjdGl2ZSBzaGVsbCBpcyBub3cgenNoLg0KVG8gdXBkYXRlIHlvdXIgYWNjb3VudCB0byB1c2UgenNoLCBwbGVhc2UgcnVuIGBjaHNoIC1zIC9iaW4venNoYC4NCkZvciBtb3JlIGRldGFpbHMsIHBsZWFzZSB2aXNpdCBodHRwczovL3N1cHBvcnQuYXBwbGUuY29tL2tiL0hUMjA4MDUwLg0K",
+          "seq": 1
+        },
+        {
+          "dataBase64": "G1s/MTAzNGg=",
+          "seq": 2
+        },
+        {
+          "dataBase64": "d2FuZ2RlTWFjQm9vay1Qcm86bm90ZXMgd2FuZyQg",
+          "seq": 3
+        },
+        {
+          "dataBase64": "ZWNobyBoaQ0KaGkNCndhbmdkZU1hY0Jvb2stUHJvOm5vdGVzIHdhbmckIA==",
+          "seq": 4
+        },
+        {
+          "dataBase64": "DRtbS3dhbmdkZU1hY0Jvb2stUHJvOm5vdGVzIHdhbmckIA==",
+          "seq": 5
+        }
+      ],
+      "seq": 5,
+      "terminal": {
+        "closed": false,
+        "cols": 100,
+        "createdAt": "2026-11-17T14:00:56.014Z",
+        "cwd": "{root}/notes",
+        "exitCode": null,
+        "label": "renamed",
+        "persistent": true,
+        "pid": 54032,
+        "purpose": "user",
+        "root": "{root}",
+        "rows": 30,
+        "scrollbackBytes": 298,
+        "scrollbackSeq": 5,
+        "sessionId": "browse_{connectorId}",
+        "shell": "/bin/bash",
+        "status": "running",
+        "terminalId": "{terminalId}"
+      }
+    }
+  },
+  "route": "device.terminals.snapshot",
+  "status": 200
+}

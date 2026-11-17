@@ -1,0 +1,66 @@
+{
+  "body": {
+    "selections": {
+      "model": "m2",
+      "permission": "auto"
+    }
+  },
+  "method": "PATCH",
+  "path": "/sessions/{sessionId}/runtime/selections",
+  "query": null,
+  "response": {
+    "connectorResult": {
+      "applied": true,
+      "externalSessionId": "e2e-53790-1",
+      "selections": {
+        "model": "m2",
+        "permission": "auto"
+      },
+      "sessionId": "{sessionId}",
+      "state": {
+        "createdAt": "2026-11-17T14:00:50.411Z",
+        "externalSessionId": "e2e-53790-1",
+        "metadata": {
+          "activeTurnId": null
+        },
+        "runtime": "opencode",
+        "runtimeId": "{runtimeId}",
+        "selections": {
+          "mode": "default",
+          "model": "m2",
+          "permission": "auto"
+        },
+        "sessionId": "{sessionId}",
+        "status": "idle",
+        "updatedAt": "2026-11-17T14:00:50.490Z",
+        "updatedSeq": 2
+      },
+      "updated": true
+    },
+    "ok": true,
+    "serverTime": "2026-11-17T14:00:51.499142Z",
+    "state": {
+      "createdAt": "2026-11-17T14:00:51.453251Z",
+      "error": null,
+      "externalSessionId": "e2e-53790-1",
+      "metadata": {
+        "activeTurnId": null
+      },
+      "runtime": "opencode",
+      "runtimeId": "{runtimeId}",
+      "runtimeType": "opencode",
+      "selections": {
+        "mode": "default",
+        "model": "m2",
+        "permission": "auto"
+      },
+      "sessionId": "{sessionId}",
+      "status": "idle",
+      "statusReason": null,
+      "updatedAt": "2026-11-17T14:00:51.453251Z",
+      "updatedSeq": 2
+    }
+  },
+  "route": "session.selections",
+  "status": 200
+}

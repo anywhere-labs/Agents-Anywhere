@@ -1,0 +1,19 @@
+{
+  "body": {
+    "clientMessageId": "cm_rec_plain",
+    "content": "plain"
+  },
+  "method": "POST",
+  "path": "/sessions/{sessionId}/runtime/messages",
+  "query": null,
+  "response": {
+    "error": null,
+    "ok": true,
+    "result": {
+      "clientMessageId": "cm_rec_plain",
+      "delivery": "accepted"
+    }
+  },
+  "route": "session.messages",
+  "status": 200
+}

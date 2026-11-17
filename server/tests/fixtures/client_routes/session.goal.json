@@ -1,0 +1,27 @@
+{
+  "body": null,
+  "method": "GET",
+  "path": "/sessions/{sessionId}/goal",
+  "query": null,
+  "response": {
+    "bindingGeneration": 0,
+    "capabilities": {
+      "actions": [],
+      "reason": null,
+      "supported": false
+    },
+    "externalSessionId": "e2e-53790-1",
+    "freshness": "unknown",
+    "goal": null,
+    "lastOutcome": null,
+    "pendingOperationId": null,
+    "revision": 0,
+    "runtime": "opencode",
+    "runtimeId": "{runtimeId}",
+    "sessionId": "{sessionId}",
+    "sourceEpoch": "",
+    "sourceRevision": 0
+  },
+  "route": "session.goal",
+  "status": 200
+}

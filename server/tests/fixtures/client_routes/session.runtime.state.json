@@ -1,0 +1,31 @@
+{
+  "body": null,
+  "method": "GET",
+  "path": "/sessions/{sessionId}/runtime/state",
+  "query": null,
+  "response": {
+    "serverTime": "2026-11-17T14:00:51.013690Z",
+    "state": {
+      "createdAt": "2026-11-17T14:00:50.972612Z",
+      "error": null,
+      "externalSessionId": "e2e-53790-1",
+      "metadata": {
+        "activeTurnId": null
+      },
+      "runtime": "opencode",
+      "runtimeId": "{runtimeId}",
+      "runtimeType": "opencode",
+      "selections": {
+        "model": "m1",
+        "permission": "ask"
+      },
+      "sessionId": "{sessionId}",
+      "status": "idle",
+      "statusReason": null,
+      "updatedAt": "2026-11-17T14:00:50.972612Z",
+      "updatedSeq": 2
+    }
+  },
+  "route": "session.runtime.state",
+  "status": 200
+}

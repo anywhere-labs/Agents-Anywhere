@@ -1,0 +1,15 @@
+{
+  "body": {
+    "selections": {
+      "model": "m1"
+    }
+  },
+  "method": "PATCH",
+  "path": "/sessions/{sessionId}/runtime/selections",
+  "query": null,
+  "response": {
+    "detail": "session is read-only until takeover is enabled"
+  },
+  "route": "session.selections.read_only",
+  "status": 409
+}

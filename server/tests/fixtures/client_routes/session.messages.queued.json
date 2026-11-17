@@ -1,0 +1,55 @@
+{
+  "body": {
+    "clientMessageId": "cm_rec_q1",
+    "content": "queued one",
+    "queue": "auto"
+  },
+  "method": "POST",
+  "path": "/sessions/{sessionId}/runtime/messages",
+  "query": null,
+  "response": {
+    "error": null,
+    "ok": true,
+    "result": {
+      "clientMessageId": "cm_rec_q1",
+      "delivery": "queued",
+      "item": {
+        "attachments": [],
+        "clientMessageId": "cm_rec_q1",
+        "content": "queued one",
+        "createdAt": "2026-11-17T14:00:54.962Z",
+        "createdBy": "server",
+        "error": null,
+        "interruptRequested": false,
+        "messageId": "qmsg_GjflyVCoRX4diZiL",
+        "position": 1,
+        "sessionId": "{sessionId}",
+        "status": "queued",
+        "updatedAt": "2026-11-17T14:00:54.962Z"
+      },
+      "queue": {
+        "items": [
+          {
+            "attachments": [],
+            "clientMessageId": "cm_rec_q1",
+            "content": "queued one",
+            "createdAt": "2026-11-17T14:00:54.962Z",
+            "createdBy": "server",
+            "error": null,
+            "interruptRequested": false,
+            "messageId": "qmsg_GjflyVCoRX4diZiL",
+            "position": 1,
+            "sessionId": "{sessionId}",
+            "status": "queued",
+            "updatedAt": "2026-11-17T14:00:54.962Z"
+          }
+        ],
+        "revision": 1,
+        "sessionId": "{sessionId}"
+      },
+      "queuePosition": 1
+    }
+  },
+  "route": "session.messages.queued",
+  "status": 200
+}

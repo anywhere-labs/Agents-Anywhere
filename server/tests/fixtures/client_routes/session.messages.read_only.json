@@ -1,0 +1,14 @@
+{
+  "body": {
+    "clientMessageId": "cm_rec_ro",
+    "content": "read-only"
+  },
+  "method": "POST",
+  "path": "/sessions/{sessionId}/runtime/messages",
+  "query": null,
+  "response": {
+    "detail": "session is read-only until takeover is enabled"
+  },
+  "route": "session.messages.read_only",
+  "status": 409
+}

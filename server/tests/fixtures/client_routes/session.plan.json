@@ -1,0 +1,18 @@
+{
+  "body": null,
+  "method": "GET",
+  "path": "/sessions/{sessionId}/plans/{planId}/1",
+  "query": null,
+  "response": {
+    "contentHash": "sha256:e3f99b855ca7c4ccada90c4562b28e703bfa334426c45952f5caa69b57bb710d",
+    "contentState": "ready",
+    "createdAt": "2026-11-17T14:00:53.518Z",
+    "markdown": "# E2E plan\n\n1. Read the code\n2. Fix the bug\n",
+    "planId": "{planId}",
+    "revision": 1,
+    "sourceTurnId": "turn_5573da63-24c4-450f-9b38-68e0aa89b0cb",
+    "title": "E2E plan"
+  },
+  "route": "session.plan",
+  "status": 200
+}

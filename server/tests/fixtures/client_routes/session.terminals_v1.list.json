@@ -1,0 +1,12 @@
+{
+  "body": null,
+  "method": "GET",
+  "path": "/sessions/{sessionId}/terminals",
+  "query": null,
+  "response": {
+    "serverTime": "2026-11-17T14:00:56.139854Z",
+    "terminals": []
+  },
+  "route": "session.terminals_v1.list",
+  "status": 200
+}

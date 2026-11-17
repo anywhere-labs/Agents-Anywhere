@@ -1,0 +1,13 @@
+{
+  "body": {
+    "persistent": false
+  },
+  "method": "PATCH",
+  "path": "/connectors/{connectorId}/terminals-v2/trm_missing/persistence",
+  "query": null,
+  "response": {
+    "detail": "terminal not found"
+  },
+  "route": "device.terminals.missing",
+  "status": 404
+}

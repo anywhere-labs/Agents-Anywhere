@@ -1,0 +1,39 @@
+{
+  "body": {
+    "cols": 80,
+    "cwd": "notes",
+    "label": "rec",
+    "rows": 24
+  },
+  "method": "POST",
+  "path": "/connectors/{connectorId}/terminals-v2",
+  "query": {
+    "root": "{root}"
+  },
+  "response": {
+    "error": null,
+    "ok": true,
+    "result": {
+      "args": [],
+      "cols": 80,
+      "command": null,
+      "createdAt": "2026-11-17T14:00:56.014Z",
+      "cwd": "{root}/notes",
+      "exitCode": null,
+      "label": "rec",
+      "persistent": false,
+      "pid": 54032,
+      "purpose": "user",
+      "root": "{root}",
+      "rows": 24,
+      "scrollbackBytes": 0,
+      "scrollbackSeq": 0,
+      "sessionId": "browse_{connectorId}",
+      "shell": "/bin/bash",
+      "status": "running",
+      "terminalId": "trm_hmwtvqVDGoOlotKdNan8TXai"
+    }
+  },
+  "route": "device.terminals.create",
+  "status": 200
+}

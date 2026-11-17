@@ -1,0 +1,16 @@
+{
+  "body": {
+    "cols": 80,
+    "rows": 24
+  },
+  "method": "POST",
+  "path": "/connectors/{connectorId}/terminals",
+  "query": {
+    "root": "{root}"
+  },
+  "response": {
+    "detail": "terminal.relay.connect is not available on v3 devices yet (device-meshcall 1.0)"
+  },
+  "route": "device.terminals_v1.create",
+  "status": 502
+}

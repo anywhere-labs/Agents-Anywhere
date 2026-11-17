@@ -1,0 +1,29 @@
+{
+  "body": {
+    "path": "..",
+    "root": "{root}/notes"
+  },
+  "method": "POST",
+  "path": "/connectors/{connectorId}/fs/list",
+  "query": null,
+  "response": {
+    "error": null,
+    "ok": true,
+    "result": {
+      "entries": [
+        {
+          "name": "notes",
+          "path": "{root}/notes",
+          "size": null,
+          "type": "directory"
+        }
+      ],
+      "path": "{root}",
+      "targetPath": "{root}",
+      "targetType": "directory",
+      "truncated": false
+    }
+  },
+  "route": "device.fs.list.parent",
+  "status": 200
+}

@@ -1,0 +1,13 @@
+{
+  "body": null,
+  "method": "DELETE",
+  "path": "/sessions/{sessionId}/runtime/queue",
+  "query": null,
+  "response": {
+    "items": [],
+    "revision": 6,
+    "sessionId": "{sessionId}"
+  },
+  "route": "session.queue.clear",
+  "status": 200
+}

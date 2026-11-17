@@ -1,0 +1,14 @@
+{
+  "body": null,
+  "method": "GET",
+  "path": "/connectors/{connectorId}/runtimes/{runtimeId}/commands",
+  "query": null,
+  "response": {
+    "detail": {
+      "code": "device_method_unsupported",
+      "message": "runtime.commands is not available on v3 devices yet (device-meshcall 1.0)"
+    }
+  },
+  "route": "device.runtime.commands",
+  "status": 409
+}

@@ -1,0 +1,14 @@
+{
+  "body": {
+    "clientMessageId": "cm_rec_steer",
+    "content": "and also this"
+  },
+  "method": "POST",
+  "path": "/sessions/{sessionId}/runtime/steer",
+  "query": null,
+  "response": {
+    "detail": "session capability is unavailable: session.steer"
+  },
+  "route": "session.steer",
+  "status": 409
+}

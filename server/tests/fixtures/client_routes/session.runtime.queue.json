@@ -1,0 +1,14 @@
+{
+  "body": null,
+  "method": "GET",
+  "path": "/sessions/{sessionId}/runtime/queue",
+  "query": null,
+  "response": {
+    "deviceOffline": false,
+    "items": [],
+    "revision": 0,
+    "sessionId": "{sessionId}"
+  },
+  "route": "session.runtime.queue",
+  "status": 200
+}

@@ -1,0 +1,15 @@
+{
+  "body": {
+    "path": "notes/none.txt"
+  },
+  "method": "POST",
+  "path": "/connectors/{connectorId}/fs/readText",
+  "query": {
+    "root": "{root}"
+  },
+  "response": {
+    "detail": "file not found: {root}/notes/none.txt"
+  },
+  "route": "device.fs.readText.missing",
+  "status": 502
+}

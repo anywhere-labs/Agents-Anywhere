@@ -1,0 +1,21 @@
+{
+  "body": {
+    "command": "nope"
+  },
+  "method": "POST",
+  "path": "/sessions/{sessionId}/runtime/commands",
+  "query": null,
+  "response": {
+    "code": "command_unavailable",
+    "command": "nope",
+    "message": "命令目录已变化，请刷新。",
+    "ok": false,
+    "result": {
+      "executionState": "completed"
+    },
+    "serverTime": "2026-11-17T14:00:51.661201Z",
+    "session": null
+  },
+  "route": "session.commands.execute.unavailable",
+  "status": 200
+}

@@ -1,0 +1,26 @@
+{
+  "body": {
+    "args": [
+      "src"
+    ],
+    "command": "review"
+  },
+  "method": "POST",
+  "path": "/sessions/{sessionId}/runtime/commands",
+  "query": null,
+  "response": {
+    "code": null,
+    "command": "review",
+    "message": null,
+    "ok": true,
+    "result": {
+      "clientMessageId": "cmd__AN7Nd_v0xoTr53QCSIpXw",
+      "delivery": "accepted",
+      "executionState": "accepted"
+    },
+    "serverTime": "2026-11-17T14:00:51.584372Z",
+    "session": null
+  },
+  "route": "session.commands.execute",
+  "status": 200
+}

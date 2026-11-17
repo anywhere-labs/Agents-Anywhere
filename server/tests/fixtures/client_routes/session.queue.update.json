@@ -1,0 +1,44 @@
+{
+  "body": {
+    "content": "queued one, edited"
+  },
+  "method": "PATCH",
+  "path": "/sessions/{sessionId}/runtime/queue/{q1}",
+  "query": null,
+  "response": {
+    "items": [
+      {
+        "attachments": [],
+        "clientMessageId": "cm_rec_q1",
+        "content": "queued one, edited",
+        "createdAt": "2026-11-17T14:00:54.962Z",
+        "createdBy": "server",
+        "error": null,
+        "interruptRequested": false,
+        "messageId": "{q1}",
+        "position": 1,
+        "sessionId": "{sessionId}",
+        "status": "queued",
+        "updatedAt": "2026-11-17T14:00:55.145Z"
+      },
+      {
+        "attachments": [],
+        "clientMessageId": "cm_rec_q2",
+        "content": "queued two",
+        "createdAt": "2026-11-17T14:00:55.060Z",
+        "createdBy": "server",
+        "error": null,
+        "interruptRequested": false,
+        "messageId": "{q2}",
+        "position": 2,
+        "sessionId": "{sessionId}",
+        "status": "queued",
+        "updatedAt": "2026-11-17T14:00:55.060Z"
+      }
+    ],
+    "revision": 3,
+    "sessionId": "{sessionId}"
+  },
+  "route": "session.queue.update",
+  "status": 200
+}

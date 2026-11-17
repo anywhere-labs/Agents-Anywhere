@@ -1,0 +1,40 @@
+{
+  "body": null,
+  "method": "GET",
+  "path": "/sessions/{sessionId}/runtime/commands",
+  "query": {
+    "limit": 5,
+    "query": "rev"
+  },
+  "response": {
+    "commands": [
+      {
+        "acceptsArgs": true,
+        "aliases": [],
+        "argsSchema": {
+          "description": "path",
+          "type": "string"
+        },
+        "category": null,
+        "description": "Review the working tree",
+        "disabledReason": null,
+        "enabled": true,
+        "id": "review",
+        "metadata": {
+          "ui": {
+            "acceptsMultiline": true,
+            "allowedStatuses": [
+              "idle"
+            ],
+            "kind": "execute"
+          }
+        },
+        "scope": "session",
+        "title": "review"
+      }
+    ],
+    "serverTime": "2026-11-17T14:00:51.356567Z"
+  },
+  "route": "session.commands.list",
+  "status": 200
+}

@@ -1,0 +1,80 @@
+{
+  "body": null,
+  "method": "GET",
+  "path": "/sessions/{sessionId}/timeline",
+  "query": {
+    "limit": 50,
+    "mode": "latest"
+  },
+  "response": {
+    "deviceOffline": false,
+    "hasMore": false,
+    "historySource": "live",
+    "items": [
+      {
+        "completedAt": "2026-11-17T14:00:50.487Z",
+        "content": {
+          "clientMessageId": "cm_23ca638009274b55ae59310ab4f48a43",
+          "format": "markdown",
+          "isThinking": false,
+          "kind": "markdown",
+          "text": "hello e2e"
+        },
+        "contentHash": "sha256:98480724b92b4b0aed6b5dd79a3cc5f9074fa53e40c8bf4c95d18e127d8644ac",
+        "createdAt": "2026-11-17T14:00:50.487Z",
+        "id": "22eb1eae46400eb8497b3e4634e8ef8a5abdb5d33fa43ceebf0c8bca68c35417",
+        "orderSeq": 1073741824,
+        "revision": 1,
+        "role": "user",
+        "sessionId": "{sessionId}",
+        "source": {
+          "clientMessageId": "cm_23ca638009274b55ae59310ab4f48a43",
+          "derivedKey": null,
+          "event": "message.completed",
+          "itemId": null,
+          "itemType": null,
+          "runtime": "opencode",
+          "sessionId": "e2e-53790-1"
+        },
+        "status": "done",
+        "type": "message",
+        "updatedAt": "2026-11-17T14:00:50.487Z",
+        "updatedSeq": 1
+      },
+      {
+        "completedAt": "2026-11-17T14:00:50.489Z",
+        "content": {
+          "format": "markdown",
+          "isThinking": false,
+          "kind": "markdown",
+          "text": "echo: hello e2e [model=m1 permission=ask] sessions-in-cwd=1"
+        },
+        "contentHash": "sha256:80b63e569569dc8221e9cf7514e66bba532fdd5cec41c46a3613dbffd47571c0",
+        "createdAt": "2026-11-17T14:00:50.489Z",
+        "id": "a4b3a6b8f41afb443ac6df46d9bda2ce473670ce2ef0952bb3cc1ceb1f0cbfdd",
+        "orderSeq": 1073742848,
+        "revision": 1,
+        "role": "assistant",
+        "sessionId": "{sessionId}",
+        "source": {
+          "clientMessageId": null,
+          "derivedKey": null,
+          "event": "message.delta",
+          "itemId": null,
+          "itemType": null,
+          "runtime": "opencode",
+          "sessionId": "e2e-53790-1"
+        },
+        "status": "done",
+        "type": "message",
+        "updatedAt": "2026-11-17T14:00:50.489Z",
+        "updatedSeq": 2
+      }
+    ],
+    "nextSeq": 2,
+    "serverTime": "2026-11-17T14:00:50.903249Z",
+    "sessionId": "{sessionId}"
+  },
+  "route": "session.timeline",
+  "status": 200
+}

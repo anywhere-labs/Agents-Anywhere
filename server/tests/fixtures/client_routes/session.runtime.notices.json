@@ -1,0 +1,12 @@
+{
+  "body": null,
+  "method": "GET",
+  "path": "/sessions/{sessionId}/runtime/notices",
+  "query": null,
+  "response": {
+    "notices": [],
+    "serverTime": "2026-11-17T14:00:51.101600Z"
+  },
+  "route": "session.runtime.notices",
+  "status": 200
+}

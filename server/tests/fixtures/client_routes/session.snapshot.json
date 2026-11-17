@@ -1,0 +1,12 @@
+{
+  "body": null,
+  "method": "GET",
+  "note": "500 at 4c8012369: the device streams raw JSON slices, the Server inflates base64 deflate",
+  "path": "/sessions/{sessionId}/snapshot",
+  "query": {
+    "limit": 50
+  },
+  "response": "Internal Server Error",
+  "route": "session.snapshot",
+  "status": 500
+}

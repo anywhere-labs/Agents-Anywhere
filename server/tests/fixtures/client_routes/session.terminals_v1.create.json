@@ -1,0 +1,14 @@
+{
+  "body": {
+    "cols": 80,
+    "rows": 24
+  },
+  "method": "POST",
+  "path": "/sessions/{sessionId}/terminals",
+  "query": null,
+  "response": {
+    "detail": "connector connection was replaced"
+  },
+  "route": "session.terminals_v1.create",
+  "status": 409
+}

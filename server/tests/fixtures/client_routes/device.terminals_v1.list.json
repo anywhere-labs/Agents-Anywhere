@@ -1,0 +1,12 @@
+{
+  "body": null,
+  "method": "GET",
+  "path": "/connectors/{connectorId}/terminals",
+  "query": null,
+  "response": {
+    "serverTime": "2026-11-17T14:00:56.112922Z",
+    "terminals": []
+  },
+  "route": "device.terminals_v1.list",
+  "status": 200
+}

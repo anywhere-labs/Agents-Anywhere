@@ -1,0 +1,29 @@
+{
+  "body": {
+    "command": "echo shell-ok",
+    "cwd": "notes",
+    "timeoutMs": 10000
+  },
+  "method": "POST",
+  "path": "/connectors/{connectorId}/shell/exec",
+  "query": {
+    "root": "{root}"
+  },
+  "response": {
+    "error": null,
+    "ok": true,
+    "result": {
+      "command": "echo shell-ok",
+      "cwd": "{root}/notes",
+      "durationMs": 8,
+      "exitCode": 0,
+      "stderr": "",
+      "stderrTruncated": false,
+      "stdout": "shell-ok\n",
+      "stdoutTruncated": false,
+      "timedOut": false
+    }
+  },
+  "route": "device.shell.exec",
+  "status": 200
+}

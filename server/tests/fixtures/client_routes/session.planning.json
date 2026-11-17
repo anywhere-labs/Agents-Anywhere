@@ -1,0 +1,31 @@
+{
+  "body": null,
+  "method": "GET",
+  "path": "/sessions/{sessionId}/planning",
+  "query": null,
+  "response": {
+    "capabilities": {
+      "actions": [],
+      "contentStreaming": "final_only",
+      "reason": "该会话不支持原生计划模式。",
+      "supported": false
+    },
+    "draft": null,
+    "effectiveMode": "unknown",
+    "epoch": "",
+    "execution": null,
+    "executionProgress": null,
+    "freshness": "unknown",
+    "operation": null,
+    "proposal": null,
+    "proposals": [],
+    "requestedMode": null,
+    "review": null,
+    "revision": 0,
+    "runtime": "opencode",
+    "runtimeId": "{runtimeId}",
+    "sessionId": "{sessionId}"
+  },
+  "route": "session.planning",
+  "status": 200
+}
