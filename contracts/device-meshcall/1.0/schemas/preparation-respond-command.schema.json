@@ -1,0 +1,78 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:preparation-respond-command",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "description": "``workspace.preparation.respond``: an answer to an open request of the preparation.",
+  "properties": {
+    "actionId": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Actionid",
+      "type": "string"
+    },
+    "input": {
+      "default": null,
+      "title": "Input"
+    },
+    "interactionId": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Interactionid",
+      "type": "string"
+    },
+    "ownerGeneration": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Ownergeneration",
+      "type": "string"
+    },
+    "preparationId": {
+      "minLength": 1,
+      "title": "Preparationid",
+      "type": "string"
+    },
+    "requestRevision": {
+      "minimum": 0,
+      "title": "Requestrevision",
+      "type": "integer"
+    },
+    "responseOperationId": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Responseoperationid",
+      "type": "string"
+    },
+    "runtime": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Runtime"
+    },
+    "runtimeId": {
+      "minLength": 1,
+      "title": "Runtimeid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "interactionId",
+    "requestRevision",
+    "ownerGeneration",
+    "responseOperationId",
+    "actionId",
+    "runtimeId",
+    "preparationId"
+  ],
+  "title": "PreparationRespondCommand",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

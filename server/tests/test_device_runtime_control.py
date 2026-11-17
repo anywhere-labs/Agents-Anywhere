@@ -26,6 +26,12 @@ import httpx
 import pytest
 
 from agent_server.core.auth import create_user_access_token
+from agent_server.core.device_meshcall import (
+    COMMAND_PAYLOADS,
+    DesiredState,
+    RuntimeStatusEvent,
+)
+from agent_server.core.device_runtime import RuntimeTypeDescriptor
 from agent_server.core.device_settings import ConnectorDeviceSettingsPatch
 from agent_server.infra.connector_rpc import ConnectorRpcError
 from agent_server.services.connector_device_settings import update_device_settings
@@ -333,3 +339,37 @@ def test_workflows_on_a_v3_device_answer_definitely() -> None:
             assert call.value.code == "workflow_unsupported" and call.value.status == 409
 
     asyncio.run(scenario())
+
+
+# Fixture entry -> its device-meshcall model; the Connector validates the same entries against the generated
+# JSON Schemas (``connector-ts/test/entry/runtime-control.test.ts``).
+RUNTIME_CONTROL_MODELS: dict[str, type[Any]] = {
+    "requests.runtimeApply": COMMAND_PAYLOADS["runtime.apply"].request,
+    "requests.runtimeApplyStop": COMMAND_PAYLOADS["runtime.apply"].request,
+    "requests.channelSwitch": COMMAND_PAYLOADS["channel.switch"].request,
+    "requests.deviceSettingsApply": COMMAND_PAYLOADS["device.settings.apply"].request,
+    "results.runtimeApply": COMMAND_PAYLOADS["runtime.apply"].response,
+    "results.runtimeApplyStop": COMMAND_PAYLOADS["runtime.apply"].response,
+    "results.channelSwitch": COMMAND_PAYLOADS["channel.switch"].response,
+    "results.deviceSettingsApply": COMMAND_PAYLOADS["device.settings.apply"].response,
+    "deviceReports.claudeDescriptor": RuntimeTypeDescriptor,
+    "deviceReports.runtimeTypes": RuntimeStatusEvent,
+}
+
+
+def test_every_fixture_entry_is_its_contract_model() -> None:
+    data = _fixture()
+    names = {f"{kind}.{name}" for kind, entries in data.items() for name in entries}
+    assert names == set(RUNTIME_CONTROL_MODELS), "every fixture entry needs its contract model"
+    for name, model in RUNTIME_CONTROL_MODELS.items():
+        kind, key = name.split(".", 1)
+        model.model_validate(data[kind][key])
+
+
+def test_desired_runtimes_keep_the_command_shape() -> None:
+    """``LinkWelcome.desired.runtimes`` items are ``RuntimeApplyCommand``s and leave absent options out."""
+
+    request = _fixture()["requests"]["runtimeApply"]
+    without_gateway = {key: value for key, value in request.items() if key != "modelGateway"}
+    for payload in (request, without_gateway):
+        assert DesiredState(runtimes=[payload]).model_dump(mode="json")["runtimes"] == [payload]

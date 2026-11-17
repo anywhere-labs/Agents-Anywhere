@@ -12,6 +12,11 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from agent_server.core.client_routes import (
+    content_route_patterns,
+    sealed_upload_patterns,
+)
+
 E2eeMode = Literal["off", "required"]
 AllowDeny = Literal["allow", "deny"]
 
@@ -59,36 +64,18 @@ class E2eeSettings:
 # directory (display envelopes are sealed), archive/read/pin flags, usage, model configuration, the dashboard
 # stream, public share reads (ciphertext) and the tunnel itself.
 
-_SID = r"[^/]+"
-_CONTENT_ROUTE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
-    (method, re.compile(pattern))
-    for method, pattern in (
-        # Session creation carries the first message.
-        ("POST", r"/api/v2/sessions"),
-        ("POST", r"/api/v2/sessions/create-and-start"),
-        # Everything under a session except its directory entry and scheduling state (meta, runtime state,
-        # capabilities): content reads, the session WebSocket, commands, files, terminals, plans, goals, the
-        # server-side queue (it holds message text) and server-side share snapshots.
-        ("*", rf"/api/v2/sessions/{_SID}/(?!(meta|runtime/state|runtime/capabilities)$).+"),
-        # Device files, shell and terminals.
-        ("*", rf"/api/v2/connectors/{_SID}/(fs|shell|terminals|terminals-v2)(/.*)?"),
-        ("*", r"/api/v2/connectors/fs/.+"),
-        # Runtime workflows (workspace preparation, the creation wizard, its answers, session trees and agent
-        # operations) carry first messages, answers, paths and message trees; refuse the whole family until it
-        # is routed through the channel.
-        ("*", r"/api/v2/runtime-workflows(/.*)?"),
-    )
-)
+#: Derived from the client route table (``core.client_routes``): its route families and content routes.
+_CONTENT_ROUTE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = content_route_patterns()
 
 #: Encrypted uploads (``agent_server.core.e2ee.SEALED_UPLOAD_HEADER``) are allowed on the attachment route.
-_ATTACHMENT_UPLOAD = re.compile(rf"/api/v2/sessions/{_SID}/attachments")
+_SEALED_UPLOADS: tuple[re.Pattern[str], ...] = sealed_upload_patterns()
 
 
 def requires_secure_channel(method: str, path: str, *, sealed_upload: bool = False) -> bool:
     """True when ``method path`` is a plaintext content route that ``required`` mode refuses."""
 
     method = method.upper()
-    if sealed_upload and method == "POST" and _ATTACHMENT_UPLOAD.fullmatch(path):
+    if sealed_upload and method == "POST" and any(pattern.fullmatch(path) for pattern in _SEALED_UPLOADS):
         return False
     return any(
         (expected == "*" or expected == method) and pattern.fullmatch(path)

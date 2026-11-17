@@ -1,0 +1,69 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:session-goal-command",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "``session.goal``: the client's goal request on ``sessionId``.",
+  "properties": {
+    "action": {
+      "enum": [
+        "set",
+        "edit",
+        "pause",
+        "resume",
+        "clear"
+      ],
+      "title": "Action",
+      "type": "string"
+    },
+    "attachments": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "maxItems": 100,
+      "title": "Attachments",
+      "type": "array"
+    },
+    "expectedRevision": {
+      "minimum": 0,
+      "title": "Expectedrevision",
+      "type": "integer"
+    },
+    "objective": {
+      "anyOf": [
+        {
+          "maxLength": 2097152,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Objective"
+    },
+    "operationId": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Operationid",
+      "type": "string"
+    },
+    "sessionId": {
+      "minLength": 1,
+      "title": "Sessionid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "operationId",
+    "expectedRevision",
+    "action",
+    "sessionId"
+  ],
+  "title": "SessionGoalCommand",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

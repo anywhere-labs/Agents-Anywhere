@@ -1,0 +1,45 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:session-command",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A command on one session; ``runtime``/``runtimeId`` name the instance when the Server knows it.",
+  "properties": {
+    "runtime": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Runtime"
+    },
+    "runtimeId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Runtimeid"
+    },
+    "sessionId": {
+      "minLength": 1,
+      "title": "Sessionid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "sessionId"
+  ],
+  "title": "SessionCommand",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

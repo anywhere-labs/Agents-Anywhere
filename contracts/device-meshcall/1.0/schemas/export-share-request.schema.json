@@ -1,0 +1,54 @@
+{
+  "$defs": {
+    "ShareSelection": {
+      "properties": {
+        "itemIds": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Itemids",
+          "type": "array"
+        },
+        "scope": {
+          "minLength": 1,
+          "title": "Scope",
+          "type": "string"
+        }
+      },
+      "required": [
+        "scope"
+      ],
+      "title": "ShareSelection",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:export-share-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "``Store/exportShare``: an immutable snapshot of the selected items.",
+  "properties": {
+    "byteBudget": {
+      "default": 1048576,
+      "minimum": 4096,
+      "title": "Bytebudget",
+      "type": "integer"
+    },
+    "selection": {
+      "$ref": "#/$defs/ShareSelection"
+    },
+    "sessionId": {
+      "minLength": 1,
+      "title": "Sessionid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "sessionId",
+    "selection"
+  ],
+  "title": "ExportShareRequest",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

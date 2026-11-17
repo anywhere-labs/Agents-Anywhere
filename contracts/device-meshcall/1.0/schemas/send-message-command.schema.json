@@ -1,24 +1,36 @@
 {
   "$defs": {
-    "AttachmentRef": {
+    "CommandAttachmentRef": {
+      "description": "An attachment in a command: the Server's record; facts it does not have are left out.",
       "properties": {
-        "encrypted": {
-          "default": false,
-          "title": "Encrypted",
-          "type": "boolean"
-        },
         "fileId": {
           "minLength": 1,
           "title": "Fileid",
           "type": "string"
         },
         "mediaType": {
-          "title": "Mediatype",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mediatype"
         },
         "name": {
-          "title": "Name",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
         },
         "sha256": {
           "anyOf": [
@@ -33,18 +45,23 @@
           "title": "Sha256"
         },
         "size": {
-          "minimum": 0,
-          "title": "Size",
-          "type": "integer"
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Size"
         }
       },
       "required": [
-        "fileId",
-        "name",
-        "mediaType",
-        "size"
+        "fileId"
       ],
-      "title": "AttachmentRef",
+      "title": "CommandAttachmentRef",
       "type": "object"
     }
   },
@@ -53,7 +70,7 @@
   "properties": {
     "attachments": {
       "items": {
-        "$ref": "#/$defs/AttachmentRef"
+        "$ref": "#/$defs/CommandAttachmentRef"
       },
       "title": "Attachments",
       "type": "array"
@@ -64,6 +81,7 @@
       "type": "string"
     },
     "content": {
+      "default": "",
       "title": "Content",
       "type": "string"
     },
@@ -92,8 +110,7 @@
   },
   "required": [
     "sessionId",
-    "clientMessageId",
-    "content"
+    "clientMessageId"
   ],
   "title": "SendMessageCommand",
   "type": "object",

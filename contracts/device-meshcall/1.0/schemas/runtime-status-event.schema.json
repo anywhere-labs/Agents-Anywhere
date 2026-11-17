@@ -1,33 +1,1914 @@
 {
+  "$defs": {
+    "CapabilitiesChangedStatus": {
+      "description": "The instance's capability set changed; the set is ``RuntimeStatusEvent.capabilities``.",
+      "properties": {
+        "event": {
+          "const": "capabilities.changed",
+          "title": "Event",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event"
+      ],
+      "title": "CapabilitiesChangedStatus",
+      "type": "object"
+    },
+    "CatalogsChangedStatus": {
+      "properties": {
+        "catalogs": {
+          "$ref": "#/$defs/SessionCatalogs"
+        },
+        "event": {
+          "const": "catalogs.changed",
+          "title": "Event",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event"
+      ],
+      "title": "CatalogsChangedStatus",
+      "type": "object"
+    },
+    "ConfigUpdatedStatus": {
+      "description": "The session's Agent configuration options changed.",
+      "properties": {
+        "event": {
+          "const": "config.updated",
+          "title": "Event",
+          "type": "string"
+        },
+        "options": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Options",
+          "type": "array"
+        }
+      },
+      "required": [
+        "event"
+      ],
+      "title": "ConfigUpdatedStatus",
+      "type": "object"
+    },
+    "Goal": {
+      "additionalProperties": false,
+      "properties": {
+        "createdAt": {
+          "title": "Createdat",
+          "type": "string"
+        },
+        "endedAt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Endedat"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "iterations": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Iterations"
+        },
+        "lastReason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lastreason"
+        },
+        "objective": {
+          "title": "Objective",
+          "type": "string"
+        },
+        "sourceTurnId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sourceturnid"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "paused",
+            "blocked",
+            "usageLimited",
+            "budgetLimited",
+            "complete",
+            "failed",
+            "cleared",
+            "replaced"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "timeUsedSeconds": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timeusedseconds"
+        },
+        "tokenBudget": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tokenbudget"
+        },
+        "tokensUsed": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tokensused"
+        },
+        "updatedAt": {
+          "title": "Updatedat",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "objective",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ],
+      "title": "Goal",
+      "type": "object"
+    },
+    "GoalCapabilities": {
+      "properties": {
+        "actions": {
+          "items": {
+            "enum": [
+              "set",
+              "edit",
+              "pause",
+              "resume",
+              "clear"
+            ],
+            "type": "string"
+          },
+          "title": "Actions",
+          "type": "array"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "supported": {
+          "default": false,
+          "title": "Supported",
+          "type": "boolean"
+        }
+      },
+      "title": "GoalCapabilities",
+      "type": "object"
+    },
+    "GoalState": {
+      "additionalProperties": false,
+      "properties": {
+        "bindingGeneration": {
+          "default": 0,
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Bindinggeneration",
+          "type": "integer"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/GoalCapabilities"
+        },
+        "externalSessionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Externalsessionid"
+        },
+        "freshness": {
+          "default": "unknown",
+          "enum": [
+            "fresh",
+            "stale",
+            "unknown"
+          ],
+          "title": "Freshness",
+          "type": "string"
+        },
+        "goal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Goal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "lastOutcome": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Goal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "pendingOperationId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pendingoperationid"
+        },
+        "revision": {
+          "default": 0,
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "runtime": {
+          "title": "Runtime",
+          "type": "string"
+        },
+        "runtimeId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Runtimeid"
+        },
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        },
+        "sourceEpoch": {
+          "default": "",
+          "title": "Sourceepoch",
+          "type": "string"
+        },
+        "sourceRevision": {
+          "default": 0,
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Sourcerevision",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "sessionId",
+        "runtime"
+      ],
+      "title": "GoalState",
+      "type": "object"
+    },
+    "GoalStateUpdated": {
+      "properties": {
+        "event": {
+          "const": "goal.state.updated",
+          "title": "Event",
+          "type": "string"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "state": {
+          "$ref": "#/$defs/GoalState"
+        }
+      },
+      "required": [
+        "event",
+        "revision",
+        "state"
+      ],
+      "title": "GoalStateUpdated",
+      "type": "object"
+    },
+    "LinkError": {
+      "properties": {
+        "code": {
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "default": "",
+          "title": "Message",
+          "type": "string"
+        },
+        "retryable": {
+          "default": false,
+          "title": "Retryable",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "title": "LinkError",
+      "type": "object"
+    },
+    "ModelConnectionCapability": {
+      "additionalProperties": false,
+      "description": "What a runtime adapter declares about taking a model connection.",
+      "properties": {
+        "apply": {
+          "enum": [
+            "immediate",
+            "new_session",
+            "restart"
+          ],
+          "title": "Apply",
+          "type": "string"
+        },
+        "catalog": {
+          "$ref": "#/$defs/ModelConnectionCatalog"
+        },
+        "configField": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Configfield",
+          "type": "string"
+        },
+        "maturity": {
+          "enum": [
+            "experimental",
+            "beta",
+            "stable"
+          ],
+          "title": "Maturity",
+          "type": "string"
+        },
+        "modeField": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Modefield"
+        },
+        "modelField": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Modelfield"
+        },
+        "modelsField": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Modelsfield"
+        },
+        "modes": {
+          "items": {
+            "$ref": "#/$defs/ModelConnectionMode"
+          },
+          "maxItems": 16,
+          "title": "Modes",
+          "type": "array"
+        },
+        "protocols": {
+          "items": {
+            "enum": [
+              "openai_responses",
+              "openai_chat",
+              "anthropic"
+            ],
+            "type": "string"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "title": "Protocols",
+          "type": "array"
+        },
+        "scope": {
+          "enum": [
+            "instance",
+            "session",
+            "native_global"
+          ],
+          "title": "Scope",
+          "type": "string"
+        }
+      },
+      "required": [
+        "maturity",
+        "configField",
+        "protocols",
+        "scope",
+        "catalog",
+        "apply"
+      ],
+      "title": "ModelConnectionCapability",
+      "type": "object"
+    },
+    "ModelConnectionCatalog": {
+      "additionalProperties": false,
+      "properties": {
+        "auto": {
+          "title": "Auto",
+          "type": "boolean"
+        },
+        "manual": {
+          "title": "Manual",
+          "type": "boolean"
+        },
+        "required": {
+          "default": false,
+          "title": "Required",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "auto",
+        "manual"
+      ],
+      "title": "ModelConnectionCatalog",
+      "type": "object"
+    },
+    "ModelConnectionMode": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "supported": {
+          "title": "Supported",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "supported"
+      ],
+      "title": "ModelConnectionMode",
+      "type": "object"
+    },
+    "PlanDocument": {
+      "additionalProperties": false,
+      "properties": {
+        "contentHash": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Contenthash",
+          "type": "string"
+        },
+        "contentState": {
+          "const": "ready",
+          "default": "ready",
+          "title": "Contentstate",
+          "type": "string"
+        },
+        "createdAt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Createdat"
+        },
+        "markdown": {
+          "maxLength": 2097152,
+          "minLength": 1,
+          "title": "Markdown",
+          "type": "string"
+        },
+        "planId": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Planid",
+          "type": "string"
+        },
+        "revision": {
+          "minimum": 1,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "sourceTurnId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sourceturnid"
+        },
+        "title": {
+          "maxLength": 200,
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "planId",
+        "revision",
+        "contentHash",
+        "title",
+        "markdown"
+      ],
+      "title": "PlanDocument",
+      "type": "object"
+    },
+    "PlanDraft": {
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "title": "Content",
+          "type": "string"
+        },
+        "contentState": {
+          "enum": [
+            "drafting",
+            "failed",
+            "interrupted"
+          ],
+          "title": "Contentstate",
+          "type": "string"
+        },
+        "draftId": {
+          "title": "Draftid",
+          "type": "string"
+        },
+        "planId": {
+          "title": "Planid",
+          "type": "string"
+        },
+        "revision": {
+          "minimum": 1,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "draftId",
+        "planId",
+        "revision",
+        "seq",
+        "content",
+        "contentState"
+      ],
+      "title": "PlanDraft",
+      "type": "object"
+    },
+    "PlanReview": {
+      "additionalProperties": false,
+      "properties": {
+        "actions": {
+          "items": {
+            "enum": [
+              "enter_plan",
+              "exit_plan",
+              "submit_task",
+              "approve_and_execute",
+              "request_revision",
+              "dismiss_review"
+            ],
+            "type": "string"
+          },
+          "title": "Actions",
+          "type": "array"
+        },
+        "contentHash": {
+          "title": "Contenthash",
+          "type": "string"
+        },
+        "planId": {
+          "title": "Planid",
+          "type": "string"
+        },
+        "planRevision": {
+          "minimum": 1,
+          "title": "Planrevision",
+          "type": "integer"
+        },
+        "reviewId": {
+          "title": "Reviewid",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "open",
+            "responding",
+            "approved",
+            "revision_requested",
+            "dismissed",
+            "withdrawn",
+            "unknown"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reviewId",
+        "planId",
+        "planRevision",
+        "contentHash",
+        "status"
+      ],
+      "title": "PlanReview",
+      "type": "object"
+    },
+    "PlanningCapabilities": {
+      "properties": {
+        "actions": {
+          "items": {
+            "enum": [
+              "enter_plan",
+              "exit_plan",
+              "submit_task",
+              "approve_and_execute",
+              "request_revision",
+              "dismiss_review"
+            ],
+            "type": "string"
+          },
+          "title": "Actions",
+          "type": "array"
+        },
+        "contentStreaming": {
+          "default": "final_only",
+          "enum": [
+            "native_delta",
+            "final_only"
+          ],
+          "title": "Contentstreaming",
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "supported": {
+          "default": false,
+          "title": "Supported",
+          "type": "boolean"
+        }
+      },
+      "title": "PlanningCapabilities",
+      "type": "object"
+    },
+    "PlanningState": {
+      "additionalProperties": false,
+      "properties": {
+        "capabilities": {
+          "$ref": "#/$defs/PlanningCapabilities"
+        },
+        "draft": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanDraft"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "effectiveMode": {
+          "default": "unknown",
+          "enum": [
+            "plan",
+            "normal",
+            "unknown"
+          ],
+          "title": "Effectivemode",
+          "type": "string"
+        },
+        "epoch": {
+          "default": "",
+          "title": "Epoch",
+          "type": "string"
+        },
+        "execution": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Execution"
+        },
+        "executionProgress": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Executionprogress"
+        },
+        "freshness": {
+          "default": "unknown",
+          "enum": [
+            "fresh",
+            "stale",
+            "unknown"
+          ],
+          "title": "Freshness",
+          "type": "string"
+        },
+        "operation": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Operation"
+        },
+        "proposal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanDocument"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "proposals": {
+          "items": {
+            "$ref": "#/$defs/PlanDocument"
+          },
+          "title": "Proposals",
+          "type": "array"
+        },
+        "requestedMode": {
+          "anyOf": [
+            {
+              "enum": [
+                "plan",
+                "normal"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Requestedmode"
+        },
+        "review": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanReview"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "revision": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "runtime": {
+          "title": "Runtime",
+          "type": "string"
+        },
+        "runtimeId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Runtimeid"
+        },
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "runtime"
+      ],
+      "title": "PlanningState",
+      "type": "object"
+    },
+    "PlanningStateUpdated": {
+      "properties": {
+        "event": {
+          "const": "planning.state.updated",
+          "title": "Event",
+          "type": "string"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "state": {
+          "$ref": "#/$defs/PlanningState"
+        }
+      },
+      "required": [
+        "event",
+        "revision",
+        "state"
+      ],
+      "title": "PlanningStateUpdated",
+      "type": "object"
+    },
+    "ProtocolCapability": {
+      "properties": {
+        "allowed": {
+          "default": true,
+          "title": "Allowed",
+          "type": "boolean"
+        },
+        "available": {
+          "default": true,
+          "title": "Available",
+          "type": "boolean"
+        },
+        "capabilityId": {
+          "title": "Capabilityid",
+          "type": "string"
+        },
+        "parameters": {
+          "additionalProperties": true,
+          "title": "Parameters",
+          "type": "object"
+        },
+        "runtime": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Runtime"
+        },
+        "scope": {
+          "default": "runtime",
+          "enum": [
+            "runtime",
+            "session"
+          ],
+          "title": "Scope",
+          "type": "string"
+        },
+        "sessionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sessionid"
+        },
+        "supported": {
+          "default": true,
+          "title": "Supported",
+          "type": "boolean"
+        },
+        "unavailableReason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unavailablereason"
+        },
+        "version": {
+          "default": "1",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "capabilityId"
+      ],
+      "title": "ProtocolCapability",
+      "type": "object"
+    },
+    "ProtocolCapabilitySet": {
+      "properties": {
+        "capabilities": {
+          "items": {
+            "$ref": "#/$defs/ProtocolCapability"
+          },
+          "title": "Capabilities",
+          "type": "array"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Revision",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "revision"
+      ],
+      "title": "ProtocolCapabilitySet",
+      "type": "object"
+    },
+    "ProtocolModelCatalog": {
+      "properties": {
+        "models": {
+          "items": {
+            "$ref": "#/$defs/ProtocolModelItem"
+          },
+          "title": "Models",
+          "type": "array"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "runtime": {
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "title": "Runtime",
+          "type": "string"
+        }
+      },
+      "required": [
+        "runtime",
+        "revision"
+      ],
+      "title": "ProtocolModelCatalog",
+      "type": "object"
+    },
+    "ProtocolModelGroup": {
+      "description": "Where a model is routed from, e.g. a DSH provider or relay.",
+      "properties": {
+        "displayName": {
+          "minLength": 1,
+          "title": "Displayname",
+          "type": "string"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "itemDisplayName": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Itemdisplayname"
+        }
+      },
+      "required": [
+        "id",
+        "displayName"
+      ],
+      "title": "ProtocolModelGroup",
+      "type": "object"
+    },
+    "ProtocolModelItem": {
+      "properties": {
+        "default": {
+          "default": false,
+          "title": "Default",
+          "type": "boolean"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "displayName": {
+          "title": "Displayname",
+          "type": "string"
+        },
+        "group": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProtocolModelGroup"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "reasoningItems": {
+          "items": {
+            "$ref": "#/$defs/ProtocolReasoningItem"
+          },
+          "title": "Reasoningitems",
+          "type": "array"
+        },
+        "selectionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Selectionid"
+        }
+      },
+      "required": [
+        "displayName",
+        "id"
+      ],
+      "title": "ProtocolModelItem",
+      "type": "object"
+    },
+    "ProtocolPermissionCatalog": {
+      "properties": {
+        "permissions": {
+          "items": {
+            "$ref": "#/$defs/ProtocolPermissionItem"
+          },
+          "title": "Permissions",
+          "type": "array"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "runtime": {
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "title": "Runtime",
+          "type": "string"
+        }
+      },
+      "required": [
+        "runtime",
+        "revision"
+      ],
+      "title": "ProtocolPermissionCatalog",
+      "type": "object"
+    },
+    "ProtocolPermissionItem": {
+      "properties": {
+        "default": {
+          "default": false,
+          "title": "Default",
+          "type": "boolean"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "displayName": {
+          "title": "Displayname",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "selectionId": {
+          "title": "Selectionid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "displayName",
+        "id",
+        "selectionId"
+      ],
+      "title": "ProtocolPermissionItem",
+      "type": "object"
+    },
+    "ProtocolReasoningItem": {
+      "properties": {
+        "default": {
+          "default": false,
+          "title": "Default",
+          "type": "boolean"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "displayName": {
+          "title": "Displayname",
+          "type": "string"
+        },
+        "fullModelId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fullmodelid"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "selectionId": {
+          "title": "Selectionid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "displayName",
+        "id",
+        "selectionId"
+      ],
+      "title": "ProtocolReasoningItem",
+      "type": "object"
+    },
+    "RuntimeConfigSchemaDescriptor": {
+      "additionalProperties": false,
+      "properties": {
+        "defaults": {
+          "additionalProperties": true,
+          "title": "Defaults",
+          "type": "object"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "schema": {
+          "additionalProperties": true,
+          "title": "Schema",
+          "type": "object"
+        },
+        "uiSchema": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Uischema"
+        }
+      },
+      "required": [
+        "revision",
+        "schema",
+        "uiSchema",
+        "defaults",
+        "metadata"
+      ],
+      "title": "RuntimeConfigSchemaDescriptor",
+      "type": "object"
+    },
+    "RuntimeHealthStatus": {
+      "description": "The running instance's own health (``ready``, ``degraded``, …).",
+      "properties": {
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LinkError"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "state": {
+          "minLength": 1,
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "title": "RuntimeHealthStatus",
+      "type": "object"
+    },
+    "RuntimeInstanceReport": {
+      "properties": {
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LinkError"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "modelConnection": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Modelconnection"
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Phase"
+        },
+        "status": {
+          "minLength": 1,
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "RuntimeInstanceReport",
+      "type": "object"
+    },
+    "RuntimeInstanceStatus": {
+      "description": "An instance after the device applied desired state, with the provider's facts beside it.",
+      "properties": {
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Enabled"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LinkError"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "installed": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Installed"
+        },
+        "instance": {
+          "$ref": "#/$defs/RuntimeInstanceReport"
+        },
+        "runtimeType": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Runtimetype"
+        }
+      },
+      "required": [
+        "instance"
+      ],
+      "title": "RuntimeInstanceStatus",
+      "type": "object"
+    },
+    "RuntimeTypeDescriptor": {
+      "additionalProperties": false,
+      "description": "Runtime Control 2.0 provider-owned discovery facts.",
+      "properties": {
+        "available": {
+          "title": "Available",
+          "type": "boolean"
+        },
+        "capabilities": {
+          "additionalProperties": {
+            "type": "boolean"
+          },
+          "title": "Capabilities",
+          "type": "object"
+        },
+        "configSchema": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuntimeConfigSchemaDescriptor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "description": {
+          "anyOf": [
+            {
+              "maxLength": 1024,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Description"
+        },
+        "displayName": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Displayname",
+          "type": "string"
+        },
+        "implementationType": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Implementationtype"
+        },
+        "instancePolicy": {
+          "enum": [
+            "single",
+            "multiple"
+          ],
+          "title": "Instancepolicy",
+          "type": "string"
+        },
+        "maturity": {
+          "anyOf": [
+            {
+              "enum": [
+                "experimental",
+                "beta",
+                "stable"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Maturity"
+        },
+        "maxInstances": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Maxinstances"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "modelConnection": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelConnectionCapability"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Reason"
+        },
+        "recommendationRank": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Recommendationrank"
+        },
+        "recommended": {
+          "title": "Recommended",
+          "type": "boolean"
+        },
+        "runtimeType": {
+          "title": "Runtimetype",
+          "type": "string"
+        }
+      },
+      "required": [
+        "runtimeType",
+        "displayName",
+        "description",
+        "available",
+        "reason",
+        "recommended",
+        "recommendationRank",
+        "implementationType",
+        "configSchema",
+        "capabilities",
+        "metadata",
+        "instancePolicy",
+        "maxInstances"
+      ],
+      "title": "RuntimeTypeDescriptor",
+      "type": "object"
+    },
+    "RuntimeTypesStatus": {
+      "description": "The Runtime types this device build ships (``runtimeId: \"*\"``); replaces discovery.",
+      "properties": {
+        "event": {
+          "const": "runtime.types",
+          "title": "Event",
+          "type": "string"
+        },
+        "features": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Features",
+          "type": "array"
+        },
+        "runtimeTypes": {
+          "items": {
+            "$ref": "#/$defs/RuntimeTypeDescriptor"
+          },
+          "title": "Runtimetypes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "event"
+      ],
+      "title": "RuntimeTypesStatus",
+      "type": "object"
+    },
+    "SessionCatalogs": {
+      "description": "A session's catalogs: models, permissions, slash commands and the current selections.",
+      "properties": {
+        "commands": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/SlashCommand"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Commands"
+        },
+        "models": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProtocolModelCatalog"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "permissions": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProtocolPermissionCatalog"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "selections": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Selections"
+        }
+      },
+      "title": "SessionCatalogs",
+      "type": "object"
+    },
+    "SessionStatusChanged": {
+      "properties": {
+        "event": {
+          "const": "session.status",
+          "title": "Event",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "idle",
+            "pending",
+            "running",
+            "waiting",
+            "waiting_approval",
+            "blocked",
+            "stopping",
+            "error",
+            "unknown"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "status"
+      ],
+      "title": "SessionStatusChanged",
+      "type": "object"
+    },
+    "SlashCommand": {
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "inputHint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Inputhint"
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "SlashCommand",
+      "type": "object"
+    }
+  },
   "$id": "urn:agents-anywhere:device-meshcall:1.0:runtime-status-event",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "``runtime.status``: what the device reports about a Runtime instance (``runtimeId: \"*\"`` for the\ndevice's Runtime types) or one of its sessions (``sessionId``).",
   "properties": {
     "capabilities": {
       "anyOf": [
         {
-          "additionalProperties": true,
-          "type": "object"
+          "$ref": "#/$defs/ProtocolCapabilitySet"
         },
         {
           "type": "null"
         }
       ],
-      "default": null,
-      "title": "Capabilities"
+      "default": null
     },
     "runtimeId": {
       "minLength": 1,
       "title": "Runtimeid",
       "type": "string"
     },
+    "sessionId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sessionid"
+    },
     "status": {
-      "additionalProperties": true,
-      "title": "Status",
-      "type": "object"
+      "oneOf": [
+        {
+          "$ref": "#/$defs/RuntimeTypesStatus"
+        },
+        {
+          "$ref": "#/$defs/RuntimeInstanceStatus"
+        },
+        {
+          "$ref": "#/$defs/RuntimeHealthStatus"
+        },
+        {
+          "$ref": "#/$defs/CapabilitiesChangedStatus"
+        },
+        {
+          "$ref": "#/$defs/CatalogsChangedStatus"
+        },
+        {
+          "$ref": "#/$defs/SessionStatusChanged"
+        },
+        {
+          "$ref": "#/$defs/ConfigUpdatedStatus"
+        },
+        {
+          "$ref": "#/$defs/PlanningStateUpdated"
+        },
+        {
+          "$ref": "#/$defs/GoalStateUpdated"
+        }
+      ],
+      "title": "Status"
     }
   },
   "required": [
-    "runtimeId"
+    "runtimeId",
+    "status"
   ],
   "title": "RuntimeStatusEvent",
   "type": "object",

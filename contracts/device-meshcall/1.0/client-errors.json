@@ -1,0 +1,132 @@
+{
+  "deviceCodeDefaultStatus": 409,
+  "deviceCodeStatus": {
+    "file_not_found": 404,
+    "if_match_failed": 412,
+    "internal": 500,
+    "invalid_argument": 422,
+    "invalid_path": 422,
+    "not_found": 404,
+    "path_not_allowed": 403,
+    "permission_denied": 403,
+    "plan_document_not_found": 404,
+    "precondition_failed": 412,
+    "queue_item_not_found": 404,
+    "runtime_unavailable": 503,
+    "session_not_found": 404,
+    "terminal_not_found": 404
+  },
+  "meshCases": {
+    "resource_exhausted": "device_busy"
+  },
+  "rules": [
+    {
+      "case": "device_answered",
+      "command": {
+        "code": null,
+        "offlineAnswer": false,
+        "receipt": "settle",
+        "retryable": false,
+        "status": null
+      },
+      "description": "The device answered with a status and a body.",
+      "read": {
+        "code": null,
+        "offlineAnswer": false,
+        "receipt": "none",
+        "retryable": false,
+        "status": null
+      }
+    },
+    {
+      "case": "not_delivered",
+      "command": {
+        "code": "connector_offline",
+        "offlineAnswer": false,
+        "receipt": "delete",
+        "retryable": false,
+        "status": 409
+      },
+      "description": "The call never reached the device.",
+      "read": {
+        "code": "connector_offline",
+        "offlineAnswer": true,
+        "receipt": "none",
+        "retryable": false,
+        "status": 409
+      }
+    },
+    {
+      "case": "outcome_unknown",
+      "command": {
+        "code": "command_outcome_unknown",
+        "offlineAnswer": false,
+        "receipt": "unknown",
+        "retryable": false,
+        "status": 504
+      },
+      "description": "The call opened, then timed out or the link dropped.",
+      "read": {
+        "code": "device_read_timeout",
+        "offlineAnswer": false,
+        "receipt": "none",
+        "retryable": false,
+        "status": 504
+      }
+    },
+    {
+      "case": "device_busy",
+      "command": {
+        "code": "device_busy",
+        "offlineAnswer": false,
+        "receipt": "delete",
+        "retryable": true,
+        "status": 503
+      },
+      "description": "The device refused the call: too many calls of its lane in flight (resource_exhausted).",
+      "read": {
+        "code": "device_busy",
+        "offlineAnswer": false,
+        "receipt": "none",
+        "retryable": true,
+        "status": 503
+      }
+    },
+    {
+      "case": "request_too_large",
+      "command": {
+        "code": "request_too_large",
+        "offlineAnswer": false,
+        "receipt": "none",
+        "retryable": false,
+        "status": 413
+      },
+      "description": "The request body exceeds MAX_REQUEST_BODY_BYTES; refused before forwarding.",
+      "read": {
+        "code": "request_too_large",
+        "offlineAnswer": false,
+        "receipt": "none",
+        "retryable": false,
+        "status": 413
+      }
+    },
+    {
+      "case": "response_invalid",
+      "command": {
+        "code": "device_response_invalid",
+        "offlineAnswer": false,
+        "receipt": "settle",
+        "retryable": false,
+        "status": 502
+      },
+      "description": "The device's answer does not match the route's response model.",
+      "read": {
+        "code": "device_response_invalid",
+        "offlineAnswer": false,
+        "receipt": "none",
+        "retryable": false,
+        "status": 502
+      }
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:steer-result",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "outcome": {
+      "minLength": 1,
+      "title": "Outcome",
+      "type": "string"
+    }
+  },
+  "required": [
+    "outcome"
+  ],
+  "title": "SteerResult",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

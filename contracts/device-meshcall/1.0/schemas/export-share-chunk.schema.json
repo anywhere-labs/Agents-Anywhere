@@ -1,0 +1,62 @@
+{
+  "$defs": {
+    "ShareExportPart": {
+      "description": "Chunks are merged in order: ``items`` concatenated, ``attachments`` (file ids) united.",
+      "properties": {
+        "attachments": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Attachments",
+          "type": "array"
+        },
+        "items": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Items",
+          "type": "array"
+        }
+      },
+      "title": "ShareExportPart",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:export-share-chunk",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "chunk": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ShareExportPart"
+        },
+        {
+          "type": "string"
+        }
+      ],
+      "title": "Chunk"
+    },
+    "end": {
+      "default": false,
+      "title": "End",
+      "type": "boolean"
+    },
+    "seq": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "title": "Seq",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "seq",
+    "chunk"
+  ],
+  "title": "ExportShareChunk",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

@@ -13,7 +13,7 @@
       "model": "LinkWelcome",
       "path": "schemas/link-welcome.schema.json",
       "pydanticMode": "validation",
-      "sha256": "98d41ee70ce08364d1776063efb993fd3a10792929450afb98cdbc1d337979c2",
+      "sha256": "a6c8b79d54437c920aad0e71d1d625b774b48a7ba386dd2d678c6c6957c74b61",
       "slug": "link-welcome"
     },
     {
@@ -141,7 +141,7 @@
       "model": "RuntimeStatusEvent",
       "path": "schemas/runtime-status-event.schema.json",
       "pydanticMode": "validation",
-      "sha256": "fcc8df65cb742b7fc70a8b4cb927b976ac11c0068f9d72a5cc6a73d1a1d66a76",
+      "sha256": "0c2bafa39bf99c6fff9c4c81b69a47eb1f9364a04dcc444a900b7c51d52f565a",
       "slug": "runtime-status-event"
     },
     {
@@ -242,14 +242,6 @@
     },
     {
       "direction": "bidirectional",
-      "model": "SendMessageCommand",
-      "path": "schemas/send-message-command.schema.json",
-      "pydanticMode": "validation",
-      "sha256": "e7438ee659961434709a97ffbd7096696d4523022506a670470de6eb20656c71",
-      "slug": "send-message-command"
-    },
-    {
-      "direction": "bidirectional",
       "model": "WorkspaceCallRequest",
       "path": "schemas/workspace-call-request.schema.json",
       "pydanticMode": "validation",
@@ -279,6 +271,446 @@
       "pydanticMode": "validation",
       "sha256": "274edb6d21cb44e241f05e7ebc211c32e80ca28f60de5a1f74f4040823ea0c88",
       "slug": "terminal-output-item"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "RuntimeNoticeUpdatedEvent",
+      "path": "schemas/runtime-notice-updated-event.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "ea8183e7be31cc17ccabc5f8c544d7c913f9d4bcbd79b3167450517227de0362",
+      "slug": "runtime-notice-updated-event"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "RuntimeQueueUpdatedEvent",
+      "path": "schemas/runtime-queue-updated-event.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "c78340982581b509a9e8689e4e151d7a4ec7eda8508510463a04db8df4abd2ee",
+      "slug": "runtime-queue-updated-event"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "SessionRequest",
+      "path": "schemas/session-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "7724c6f7710510a87f00a76bc575b9cc9b1e6c2655708a0a1eee9df1cad2e0d1",
+      "slug": "session-request"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "SessionStateRequest",
+      "path": "schemas/session-state-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "1887ffe83c704fa0ae800c5fdcc437ed929579509e1a3ec1b7116bbcd1887c35",
+      "slug": "session-state-request"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "SessionNoticesResponse",
+      "path": "schemas/session-notices-response.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "4a6ecec2abf4c7c4fcf749f9bff8f5c36ba3cf066561fb0f663f4a0071d4f42e",
+      "slug": "session-notices-response"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "SessionStateResponse",
+      "path": "schemas/session-state-response.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "047e44733fded120d3f8be2228a338a60cd219601b5733f0d5d0e368477804cb",
+      "slug": "session-state-response"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "SessionCapabilitiesResponse",
+      "path": "schemas/session-capabilities-response.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "e9c2ecad8c8b1c97999889951426086552baef22bd737399ae6ebfd5ea65923a",
+      "slug": "session-capabilities-response"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "SessionQueueResponse",
+      "path": "schemas/session-queue-response.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "670d90cb1a3eda1df66f8f6f99a4ca76c48f01bf88868902fccb442ae5938ddb",
+      "slug": "session-queue-response"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "RuntimeCatalogsResponse",
+      "path": "schemas/runtime-catalogs-response.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "6f28601346c0df4533bdf86d36dd84fdd7583befd649c1f9253d326b362dd9bd",
+      "slug": "runtime-catalogs-response"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "PlanDocumentRequest",
+      "path": "schemas/plan-document-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "83e595d4b5ccc93ba2753ca4a5f9c5e37a32a77b355e96cd37865864e5fcffea",
+      "slug": "plan-document-request"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "PlanDocumentResponse",
+      "path": "schemas/plan-document-response.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "9548fab8f51ba05a9ca46826f2105f939a6ebf49be031f6446e3f5f30c7d75d1",
+      "slug": "plan-document-response"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "PreparationGetRequest",
+      "path": "schemas/preparation-get-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "e61bd3e2cc738275ae055c110790666a830c6dd5b96bea3bf7fc4152325a6da7",
+      "slug": "preparation-get-request"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "CreationGetRequest",
+      "path": "schemas/creation-get-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "e0beea5e26919ea3c62c816853f3e50062b4350b4c927e448dc4f140f661f930",
+      "slug": "creation-get-request"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "WorkflowState",
+      "path": "schemas/workflow-state.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "a1f650dd22fdeaa181a4d9a06fc4d64b2a1f59dc55e3bc510b5c8dce1235dfae",
+      "slug": "workflow-state"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "ReadBlobRequest",
+      "path": "schemas/read-blob-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "85bb31541a96acb83a7a1ac7673f612c66d84fedf41c4ff133f6386d78b92b50",
+      "slug": "read-blob-request"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "ReadBlobChunk",
+      "path": "schemas/read-blob-chunk.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "e67173f0536d24b1035d96b293acbf9f3e9728fb6ff9f597bce76bcc568b4e26",
+      "slug": "read-blob-chunk"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "ExportShareRequest",
+      "path": "schemas/export-share-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "b8d17584a94acc013a959dfe30b086119d55fe9ddad2d21a25a167de7f399c04",
+      "slug": "export-share-request"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "ExportShareChunk",
+      "path": "schemas/export-share-chunk.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "7308bced8a182ca2423f0241d9b08dceb1a7cb193c0acaef13b4a6c12c3072c9",
+      "slug": "export-share-chunk"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "SessionCommand",
+      "path": "schemas/session-command.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "619cab4d7e5122df0b8eeda1989a82ed6f4139d01909f4dbf5df247e91f4e13c",
+      "slug": "session-command"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "SendMessageCommand",
+      "path": "schemas/send-message-command.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "12b7967570bc4f8b3050a4e1a4bbdb014b25a147bfb21a5df7f129a9ce73f55a",
+      "slug": "send-message-command"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "SendMessageResult",
+      "path": "schemas/send-message-result.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "2ed73c23909000f04ddc63ec40c9a7519c8d25a876b9171a4fe5e7ca5a4eef74",
+      "slug": "send-message-result"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "SteerCommand",
+      "path": "schemas/steer-command.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "4ccc19b2d3f2d3061a27a7b2f3177b33ab2c068e0cbba520ff3aecfa909be993",
+      "slug": "steer-command"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "SteerResult",
+      "path": "schemas/steer-result.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "89da56ecc50a5ca7838fb270938d7f1bde1749df4c3e3ac2a83f3de71cedceca",
+      "slug": "steer-result"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "InterruptResult",
+      "path": "schemas/interrupt-result.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "ad74e45b09f4df3c5e11ca29311c0baeff882b8ce17a49a020a70f82df244bc9",
+      "slug": "interrupt-result"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "RespondNoticeCommand",
+      "path": "schemas/respond-notice-command.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "43e19ba86662d6a8bf53f2dcfa82e75d674f681ab313b8ee6f5bedd5d70b0b25",
+      "slug": "respond-notice-command"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "RespondNoticeResult",
+      "path": "schemas/respond-notice-result.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "ea4129ad4c1e60a35af729d2ec15c10c04f1d68e6ce05fc5fab73692797149de",
+      "slug": "respond-notice-result"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "SelectCommand",
+      "path": "schemas/select-command.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "165f6f1862c600e00bf4e3ee7704e0270033691caeaf0adbac79bd7039452777",
+      "slug": "select-command"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "SelectResult",
+      "path": "schemas/select-result.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "c8c252d1eb0aa56fa9051bcdaca0e5f8e671b7df37b023f89ed8ba45babd47a2",
+      "slug": "select-result"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "CreationBeginCommand",
+      "path": "schemas/creation-begin-command.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "3806c2a6fe29e1e01490d3a1619579dac2cb2135806c02e8761e8faf14f73dae",
+      "slug": "creation-begin-command"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "CreationBeginResult",
+      "path": "schemas/creation-begin-result.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "b40f986fcc87584c0f2e506c175a851af6dece8a2e612c90d1c09033c3502e49",
+      "slug": "creation-begin-result"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "CreationRespondCommand",
+      "path": "schemas/creation-respond-command.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "e0bd1b139f5ffa4665d37562f53fc5fa9bb1b3ab04bdce4c33577ca03f655a60",
+      "slug": "creation-respond-command"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "CreationCancelCommand",
+      "path": "schemas/creation-cancel-command.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "45b5ed5f071f37417e3cdeb17f2ec67b45de6f0099da0fb2efe430491ca8bc36",
+      "slug": "creation-cancel-command"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "WorkspacePrepareCommand",
+      "path": "schemas/workspace-prepare-command.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "177731968b907efc3e9fb53e16d11a1dadb420b0e263cce99fd0ca4aa1ae09b1",
+      "slug": "workspace-prepare-command"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "PreparationReserveCommand",
+      "path": "schemas/preparation-reserve-command.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "0a3f55c723b3d70153159d986a7f6c27b46c17efb7cbe54a3962a35b43e75fb7",
+      "slug": "preparation-reserve-command"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "PreparationReserveResult",
+      "path": "schemas/preparation-reserve-result.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "77168b43969c33d5ad3f770760b007a0adf8afc68cef2253a86bf3e3a0ad545d",
+      "slug": "preparation-reserve-result"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "PreparationRespondCommand",
+      "path": "schemas/preparation-respond-command.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "0953f699e79a2fce198643f3f796a4d278884dff4ba901e92f64e1359b2b9146",
+      "slug": "preparation-respond-command"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "PreparationCancelCommand",
+      "path": "schemas/preparation-cancel-command.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "190feca2cdfe45f4c1738d093cda47dc0bea7a827c61db48725a0d4e45638e6c",
+      "slug": "preparation-cancel-command"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "SessionPlanningCommand",
+      "path": "schemas/session-planning-command.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "e7c3b8f42af4b651edafe49d9ac1d42cfc08f133ec5421072dca0a953ae62166",
+      "slug": "session-planning-command"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "SessionGoalCommand",
+      "path": "schemas/session-goal-command.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "96775113288243a2d154b1cddf93fd5c64a1b8c1cf1d62b281c21efbf153fc22",
+      "slug": "session-goal-command"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "QueueItemCommand",
+      "path": "schemas/queue-item-command.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "17af7cd0aa08567c5d02fa35180ab376c8ab2db02050cab13a47971be1ad4def",
+      "slug": "queue-item-command"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "QueueReorderCommand",
+      "path": "schemas/queue-reorder-command.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "3754ee00ca7682149e45724ba2c0fe027154cd587708d1ff8b3f309c25858da4",
+      "slug": "queue-reorder-command"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "QueueResult",
+      "path": "schemas/queue-result.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "4edc7572f75f05a47518e5c354d0916ab3dc956d6986030449665c9e79216f6c",
+      "slug": "queue-result"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "SessionSyncCommand",
+      "path": "schemas/session-sync-command.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "6889661c9808e894046bd347ed952da0597e29b046571c5c901cc75d6bd88360",
+      "slug": "session-sync-command"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "SessionSyncResult",
+      "path": "schemas/session-sync-result.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "baef2983ce5bb59acfca3724ba7267c72512381629bf302a87c6ffa55f489560",
+      "slug": "session-sync-result"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "RuntimeApplyCommand",
+      "path": "schemas/runtime-apply-command.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "24f3bb41422389d08e696d1c5deb1a8520eca7fc6ba2edf0a7bcd7f6ce750197",
+      "slug": "runtime-apply-command"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "ChannelSwitchCommand",
+      "path": "schemas/channel-switch-command.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "418533ce8417a88f0dc83a6f29942834a6cd5e785b4b34c7b41dae8a9f07e2b0",
+      "slug": "channel-switch-command"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "RuntimeApplyResult",
+      "path": "schemas/runtime-apply-result.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "c0ea9879dcaca61fcc9d465aa2aa86f718813ead63a11debc6350a3a09003a6f",
+      "slug": "runtime-apply-result"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "DeviceSettingsApplyCommand",
+      "path": "schemas/device-settings-apply-command.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "cd927191f09b4c3c2476fa3859733ead1d787e9eb5e9f47c351938d4797a25cb",
+      "slug": "device-settings-apply-command"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "DeviceSettingsApplyResult",
+      "path": "schemas/device-settings-apply-result.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "f1305227f8a451f3ef13d56afb88e1045b602b62d7b4d4e15d9e47c46bb4f97b",
+      "slug": "device-settings-apply-result"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "PreviewOpenResult",
+      "path": "schemas/preview-open-result.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "e4da6000a400be3187f678c364755b694dc4e539a00f50724926e1d3f6e26b74",
+      "slug": "preview-open-result"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "PreviewCloseResult",
+      "path": "schemas/preview-close-result.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "55b4c64775b40899d78096e1c224f63bf31e1c50cd817045a65656ce640a32b4",
+      "slug": "preview-close-result"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "ClientCallRequest",
+      "path": "schemas/client-call-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "207e0e92a4e2a12aa3c6d71321c05a41c07acad6ba4b90000408e70efb022058",
+      "slug": "client-call-request"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "ClientCallItem",
+      "path": "schemas/client-call-item.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "0c220142402d26209f5f54f069a5879e9a9de5269e3872a5d0939534c20db485",
+      "slug": "client-call-item"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "ClientSubscribeRequest",
+      "path": "schemas/client-subscribe-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "90c02b35827b5303f7434ff1bc28e67b727eb515d38f8134046cd95bb9b2f153",
+      "slug": "client-subscribe-request"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "TerminalStreamItem",
+      "path": "schemas/terminal-stream-item.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "ae6e98e1ac362214b47851b461bd336d6bf0a322ffad187e99ee43e07ae0fc29",
+      "slug": "terminal-stream-item"
     }
   ],
   "carriage": "meshcall/1",
@@ -286,7 +718,7 @@
   "extras": [
     {
       "path": "device.meshcall.json",
-      "sha256": "4d8d35ea411a4d7d1cc3a6a362fcf694788135cb8905d83a28deb463f4eff976"
+      "sha256": "42f8a387ad4223a4d7c6a384603c3c58192d39fc000dab289cd46bb5bce218be"
     },
     {
       "path": "mesh-errors.json",
@@ -294,7 +726,19 @@
     },
     {
       "path": "e2ee-registration.json",
-      "sha256": "1a886c81080321b7e2bdb0121a6f02569042ff97b59449de95c7120d23aa7db7"
+      "sha256": "cfaaf45ff688727db8a279fb612c98670a80bf86bb2284615250547284d8efef"
+    },
+    {
+      "path": "payloads.json",
+      "sha256": "bf0851bcf38409486d1d797ae2e7b5632bcb3465e7b758db066014fcfc3fa08e"
+    },
+    {
+      "path": "client-routes.json",
+      "sha256": "e254448add6fd532d5ea6199526df7543ce7d16ba609a732be2bfe0e8ba8ff9f"
+    },
+    {
+      "path": "client-errors.json",
+      "sha256": "f2a6241337f07f1c8486c81cee06a1e2a1f497b26424c5c756ae4341bb65d7c3"
     }
   ],
   "jsonSchemaDraft": "https://json-schema.org/draft/2020-12/schema",

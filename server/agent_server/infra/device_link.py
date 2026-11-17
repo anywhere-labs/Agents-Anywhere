@@ -32,6 +32,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from loguru import logger
+from pydantic import ValidationError
 
 from agent_server.core.device_meshcall import (
     DEVICE_TRANSFER_PATH,
@@ -54,6 +55,7 @@ from agent_server.core.device_meshcall import (
     WorkspaceCallRequest,
     WorkspaceCallResponse,
     command_route,
+    validate_command_payload,
 )
 from agent_server.infra.device_mesh import DeviceCallError, DeviceMesh
 from agent_server.infra.redis_coordinator import RedisCoordinator
@@ -653,6 +655,10 @@ class DeviceRpcBridge:
         if self.commands is not None:
             return await self._send_command(device_id, method, params, timeout=timeout)
         command_id = _command_id(params, method)
+        try:
+            validate_command_payload(V2_COMMAND_METHODS[method], params)
+        except ValidationError as exc:
+            raise ConnectorRpcError("invalid_argument", f"{method}: {exc.errors()[0]['msg']}") from exc
         deadline = datetime.now(UTC) + timedelta(seconds=timeout)
         ack = await self._mesh.unary(
             device_id,

@@ -1,0 +1,52 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:queue-reorder-command",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "messageIds": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Messageids",
+      "type": "array"
+    },
+    "runtime": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Runtime"
+    },
+    "runtimeId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Runtimeid"
+    },
+    "sessionId": {
+      "minLength": 1,
+      "title": "Sessionid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "sessionId",
+    "messageIds"
+  ],
+  "title": "QueueReorderCommand",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

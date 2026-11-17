@@ -1,0 +1,75 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:workspace-prepare-command",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "``workspace.prepare``: open the Agent session of a workspace before the first message.",
+  "properties": {
+    "clientPreparationId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Clientpreparationid"
+    },
+    "cwd": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cwd"
+    },
+    "preparationId": {
+      "minLength": 1,
+      "title": "Preparationid",
+      "type": "string"
+    },
+    "projectId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Projectid"
+    },
+    "runtime": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Runtime"
+    },
+    "runtimeId": {
+      "minLength": 1,
+      "title": "Runtimeid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "runtimeId",
+    "preparationId"
+  ],
+  "title": "WorkspacePrepareCommand",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

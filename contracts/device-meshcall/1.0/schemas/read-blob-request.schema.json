@@ -1,0 +1,60 @@
+{
+  "$defs": {
+    "BlobTransfer": {
+      "description": "Where the device ``PUT``s the bytes (``DEVICE_TRANSFER_PATH``) and the one-time token.",
+      "properties": {
+        "path": {
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "token": {
+          "minLength": 1,
+          "title": "Token",
+          "type": "string"
+        },
+        "transferId": {
+          "minLength": 1,
+          "title": "Transferid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "transferId",
+        "token",
+        "path"
+      ],
+      "title": "BlobTransfer",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:read-blob-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "``Store/readBlob``: a stored blob or attachment, relayed over HTTP.",
+  "properties": {
+    "blobRef": {
+      "minLength": 1,
+      "title": "Blobref",
+      "type": "string"
+    },
+    "sessionId": {
+      "minLength": 1,
+      "title": "Sessionid",
+      "type": "string"
+    },
+    "transfer": {
+      "$ref": "#/$defs/BlobTransfer"
+    }
+  },
+  "required": [
+    "sessionId",
+    "blobRef",
+    "transfer"
+  ],
+  "title": "ReadBlobRequest",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

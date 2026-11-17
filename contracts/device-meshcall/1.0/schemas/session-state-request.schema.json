@@ -1,0 +1,37 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:session-state-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "``Sessions/state``: the runtime state with both parts, or only ``part``.",
+  "properties": {
+    "part": {
+      "anyOf": [
+        {
+          "enum": [
+            "planning",
+            "goal"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Part"
+    },
+    "sessionId": {
+      "minLength": 1,
+      "title": "Sessionid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "sessionId"
+  ],
+  "title": "SessionStateRequest",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

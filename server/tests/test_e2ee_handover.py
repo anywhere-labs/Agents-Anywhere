@@ -73,7 +73,8 @@ def test_required_mode_device_link_stores_no_plaintext(mesh_router: RouterProces
                 device.state.command_handler = lambda method, p: {"localIP": "127.0.0.1", "note": "secret"}
                 owner = (await store.get_connector(device_id)).userId
                 outcome = await app.state.device_commands.send(
-                    user_id=owner, device_id=device_id, kind="runtime.apply", command_id="cmd_h2", payload={},
+                    user_id=owner, device_id=device_id, kind="runtime.apply", command_id="cmd_h2",
+                    payload={"runtimeId": "rti_h2", "runtimeType": "claude", "active": True, "config": None},
                 )
                 assert outcome.result == {}
                 receipt = await store.get_device_command(owner, "cmd_h2")

@@ -193,7 +193,10 @@ class DeviceLinkService:
                 continue
             # The receipt keeps no config or credentials: rebuild the payload from desired state.
             payload = replay_payload(
-                row["kind"], row["payload"], runtimes=desired.runtimes, device_settings=desired.deviceSettings
+                row["kind"],
+                row["payload"],
+                runtimes=[runtime.model_dump(mode="json") for runtime in desired.runtimes],
+                device_settings=desired.deviceSettings,
             )
             if payload is None:
                 continue

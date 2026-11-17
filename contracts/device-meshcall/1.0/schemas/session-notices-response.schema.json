@@ -1,0 +1,354 @@
+{
+  "$defs": {
+    "NoticeAction": {
+      "properties": {
+        "actionId": {
+          "title": "Actionid",
+          "type": "string"
+        },
+        "input": {
+          "$ref": "#/$defs/NoticeActionInput"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "style": {
+          "default": "secondary",
+          "enum": [
+            "primary",
+            "secondary",
+            "danger"
+          ],
+          "title": "Style",
+          "type": "string"
+        }
+      },
+      "required": [
+        "actionId",
+        "label"
+      ],
+      "title": "NoticeAction",
+      "type": "object"
+    },
+    "NoticeActionInput": {
+      "properties": {
+        "required": {
+          "default": false,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "schema": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schema"
+        },
+        "uiSchema": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Uischema"
+        }
+      },
+      "title": "NoticeActionInput",
+      "type": "object"
+    },
+    "NoticeBlocking": {
+      "properties": {
+        "scope": {
+          "const": "session",
+          "title": "Scope",
+          "type": "string"
+        },
+        "targetId": {
+          "title": "Targetid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "scope",
+        "targetId"
+      ],
+      "title": "NoticeBlocking",
+      "type": "object"
+    },
+    "NoticeIn": {
+      "properties": {
+        "actions": {
+          "items": {
+            "$ref": "#/$defs/NoticeAction"
+          },
+          "title": "Actions",
+          "type": "array"
+        },
+        "blocking": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NoticeBlocking"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "context": {
+          "additionalProperties": true,
+          "title": "Context",
+          "type": "object"
+        },
+        "createdAt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Createdat"
+        },
+        "expiresAt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expiresat"
+        },
+        "interactionType": {
+          "anyOf": [
+            {
+              "enum": [
+                "approval",
+                "execution_error",
+                "confirmation",
+                "input_request",
+                "unknown"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Interactiontype"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "noticeId": {
+          "title": "Noticeid",
+          "type": "string"
+        },
+        "resolvedAt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resolvedat"
+        },
+        "responseRequired": {
+          "default": false,
+          "title": "Responserequired",
+          "type": "boolean"
+        },
+        "revision": {
+          "default": 1,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        },
+        "severity": {
+          "default": "info",
+          "enum": [
+            "info",
+            "success",
+            "warning",
+            "error"
+          ],
+          "title": "Severity",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/NoticeSource"
+        },
+        "status": {
+          "default": "open",
+          "enum": [
+            "open",
+            "responding",
+            "response_accepted",
+            "resolving",
+            "resolved",
+            "closed",
+            "expired",
+            "cancelled",
+            "failed"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "notification",
+            "interaction"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "noticeId",
+        "type",
+        "sessionId",
+        "title"
+      ],
+      "title": "NoticeIn",
+      "type": "object"
+    },
+    "NoticeSource": {
+      "properties": {
+        "approvalId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approvalid"
+        },
+        "component": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Component"
+        },
+        "operationId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Operationid"
+        },
+        "runtime": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+              "type": "string"
+            },
+            {
+              "const": "platform",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Runtime"
+        },
+        "timelineItemId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timelineitemid"
+        }
+      },
+      "title": "NoticeSource",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:session-notices-response",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "notices": {
+      "items": {
+        "$ref": "#/$defs/NoticeIn"
+      },
+      "title": "Notices",
+      "type": "array"
+    },
+    "sessionId": {
+      "minLength": 1,
+      "title": "Sessionid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "sessionId"
+  ],
+  "title": "SessionNoticesResponse",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

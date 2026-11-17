@@ -1,0 +1,30 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:preview-open-result",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "localIP": {
+      "title": "Localip",
+      "type": "string"
+    },
+    "port": {
+      "title": "Port",
+      "type": "integer"
+    },
+    "previewId": {
+      "minLength": 1,
+      "title": "Previewid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "previewId",
+    "port",
+    "localIP"
+  ],
+  "title": "PreviewOpenResult",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

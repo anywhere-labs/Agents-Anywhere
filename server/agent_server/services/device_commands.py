@@ -32,6 +32,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from loguru import logger
+from pydantic import ValidationError
 
 from agent_server.core.device_meshcall import (
     REQUEST_METHODS,
@@ -41,6 +42,7 @@ from agent_server.core.device_meshcall import (
     CommandStatusResponse,
     command_route,
     scrub_for_e2ee,
+    validate_command_payload,
 )
 from agent_server.core.e2ee_settings import E2eeSettings
 from agent_server.infra.device_link import DeviceLinkHub
@@ -86,6 +88,17 @@ class CommandOutcome:
     replayed: bool
 
 
+def _check_payload(kind: str, payload: dict[str, Any]) -> None:
+    """The payload must be ``kind``'s request model (``COMMAND_PAYLOADS``). One that is not is refused as the
+    device would refuse it (``invalid_argument``), before anything is recorded or sent."""
+
+    try:
+        validate_command_payload(kind, payload)
+    except ValidationError as exc:
+        logger.warning("device command payload does not match its contract kind={} errors={}", kind, exc.errors())
+        raise DeviceCommandRejected("invalid_argument", f"{kind}: {exc.errors()[0]['msg']}", None) from exc
+
+
 def input_digest(kind: str, payload: dict[str, Any]) -> str:
     canonical = json.dumps([kind, payload], ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
     return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
@@ -119,6 +132,7 @@ class DeviceCommandService:
     ) -> CommandOutcome:
         """Deliver ``kind`` once; raises ``DeviceCommandError`` subclasses."""
 
+        _check_payload(kind, payload)
         digest = digest or input_digest(kind, payload)
         if user_id is None:
             user_id = (await self._store.get_connector(device_id)).userId

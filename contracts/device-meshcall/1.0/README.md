@@ -7,10 +7,15 @@ v3 中 Server 与 Connector 之间的契约，取代 v2 的 `/api/v2/connector/w
   1. `POST /api/v3/device/hello`，请求体为 `LinkHello`。返回 `LinkWelcome`，内容包括 `seqFloors`、`e2eeMode`、期望状态、待投递命令和 `mesh` 凭据。这个 token 只能注册本设备的 `instanceId`；签发新 token 时会吊销上一个，半死的旧连接因此立即被踢掉。
   2. 设备注册服务后调用 `POST /api/v3/device/ready`（`LinkReady`）。Server 随即打开 `Link/attach` 和 `Link/outbox` 两条流。
 - **在线**：以 Server 持有的 `Link/attach` 流为准。设备每 20 秒在流上发一次心跳，租约 60 秒，每次连接带一个 `connectionId` 代次；调用时放在 metadata `aa-connection-id` 里。流结束即离线：读请求返回 200 和 `deviceOffline`，命令返回 409 `connector_offline`。
-- **源头**：`server/agent_server/core/device_meshcall.py`。生成命令：`cd server && .venv/bin/python -m scripts.export_v3_contracts`（加 `--check` 只检查）。生成三类产物：
+- **源头**：`server/agent_server/core/device_meshcall.py` 与客户端路由表 `server/agent_server/core/client_routes.py`。生成命令：`cd server && .venv/bin/python -m scripts.export_v3_contracts`（加 `--check` 只检查）。产物：
   - `schemas/*.schema.json`：各个 payload 的 JSON Schema。
-  - `device.meshcall.json`：MeshCall 可移植契约，可交给 `meshcall generate` 生成 Python 或 TS 客户端。
-  - `mesh-errors.json`：错误映射表。
+  - `device.meshcall.json`：MeshCall 可移植契约，可交给 `meshcall generate` 生成 Python 或 TS 客户端。每个方法的 request/response 都是真实模型；`Commands/*` 的 `CommandCall.p`、`CommandAck.r` 按方法带上类型（`qualname` 写作 `CommandCall[SendMessageCommand]`）。
+  - `payloads.json`：每个业务方法的载荷类型（见[业务载荷](#业务载荷)）。
+  - `client-routes.json`：客户端路由表（见 [Client 服务](#client-服务普通模式)）。
+  - `client-errors.json`：转发路由的错误到 HTTP 状态的映射。
+  - `mesh-errors.json`：MeshCall 错误分类。
+  - `e2ee-registration.json`：每种加密模式下注册的服务与方法。
+- **Connector 类型**：`cd connector-ts && yarn contracts:generate` 把 schema 编成 `src/generated/**`，并把 `payloads.json`、`client-routes.json`、`client-errors.json` 生成为 `payloads.ts`（方法到请求、响应类型的映射 `CommandPayloads`、`ReadPayloads`、`EventPayloads`、`OutboxPayloads`）、`client-routes.ts`、`client-errors.ts`。
 
 ## 服务
 
@@ -29,9 +34,69 @@ v3 中 Server 与 Connector 之间的契约，取代 v2 的 `/api/v2/connector/w
 | | `status` | unary | 查询命令回执（`command.status`） |
 | `aa.device.v1.Workspace` | `call` | unary | 仅普通模式：文件、终端、Shell。请求为 `WorkspaceCallRequest {method, params}`，响应为 `WorkspaceCallResponse {result}`；`method` 只能是 `WORKSPACE_METHODS` 里的 v2 方法，`params` 与 `result` 和 v2 相同。不重试 |
 | | `terminalOutput` | server_stream | 仅普通模式：打开即订阅一个终端的输出，取消即退订；流项为 `TerminalOutputItem` |
+| `aa.device.v1.Client` | `call` | server_stream | 仅普通模式：一次客户端 API 请求（`ClientCallRequest`），流项先是 `ClientCallHead`，再是正文分块（`ClientCallChunk`） |
+| | `subscribe` | server_stream | 仅普通模式：订阅终端（`ClientSubscribeRequest`），流项为终端 WebSocket 消息（`TerminalStreamItem`） |
 | `aa.device.v1.Secure` | `channel` | duplex | 仅加密模式使用：每个客户端通道一条调用，流项为 `SecureChannelItem {n, ct}`，Server 原样转发 |
 
 业务方法到路由的映射见源文件的 `REQUEST_METHODS`、`command_route()`、`LINK_ROUTES`；事件与出站箱的方法名见 `EVENT_METHODS`、`OUTBOX_METHODS`。
+
+切换到 `Client/call` 之后，以下方法会删除：`Sessions/{snapshot, notices, state, capabilities, queue}`、`Store/{read, changesSince, planDocument}`、`Runtime/catalogs`、整个 `Workspace`，以及 `Commands` 里的用户命令（`sessionSendMessage`、`sessionSteer`、`sessionInterrupt`、`sessionRespondNotice`、`sessionSelect`、`sessionPlanning`、`sessionGoal`、`sessionQueue*`，以及不带准备的 `sessionCreationBegin`）。保留的是 Server 自己发起的调用：`Link/*`、`Sessions/watch`、`Sessions/{workspacePreparationGet, creationGet}`、`Store/{readBlob, exportShare}`、`Commands/status`、`Commands/{runtimeApply, channelSwitch, deviceSettingsApply, previewOpen, previewClose, sessionSync}`、工作区准备与带准备的创建命令，以及 `Secure/channel`。在那之前两套并存。
+
+## Client 服务（普通模式）
+
+客户端 API 里由设备回答的路由只实现一次：设备侧是同一个 tunnel API（加密模式经 `Secure/channel` 调用，普通模式经 `Client/call` 调用），Server 只做归属、准入、用量、目录广播和响应装饰。
+
+**路由表**（`client-routes.json`，源头 `core/client_routes.py`）每条记录：
+
+| 字段 | 含义 |
+| --- | --- |
+| `id` | 路由 id；`via` 为 `call` 的路由组成 `ClientRouteId` 枚举 |
+| `method`、`path` | HTTP 方法（WebSocket 记作 `WS`）与 FastAPI 路径模板 |
+| `owner` | `server`（Server 独自回答）、`device`（设备回答）、`hybrid`（两边合成一个回答） |
+| `kind` | 设备执行额度：`read`、`command`、`critical`（审批、notice、中断、创建与准备的提问）、`stream` |
+| `via` | Server 怎样到达设备：`call`、`subscribe`、`watch`（`Sessions/watch`）、`blob`（`Store/readBlob`）、`share`（`Store/exportShare`）、`workflow`（带类型的工作区准备与创建命令）、`server`（`forward` 指向转发的路由）、`unsupported`（409） |
+| `commandId` | 命令 id 取自哪个字段：`clientMessageId`、`responseId`、`operationId`（缺省时 Server 生成并写回 body，`writesCommandId`），或 `commandId`（Server 生成 `c_…`，只放在 `ClientCallRequest.command`）；`null` 表示没有回执 |
+| `timeout` | `read`（Server 的 `read_timeout_seconds`）、`command`（30 秒）、`create`（60 秒） |
+| `offline` | 未投递时回 200 `deviceOffline: true`，而不是 409 `connector_offline` |
+| `decorate` | Server 叠加在设备回答上的内容，如快照的 `session`、`catalogs`、`effectiveCapabilities`，模型目录的 `channelCatalog` |
+| `e2ee` | `channel`：加密模式拒绝明文请求；`plain`：允许 |
+
+`families` 是加密模式整段拒绝的路径前缀（会话、设备文件、Shell、终端、工作区准备）：前缀下新加的路由默认被拒绝，例外只有表里标成 `plain` 的路由（会话的 `meta`、`runtime/state`、`runtime/capabilities`）。Server 的加密网关（`core/e2ee_settings.py`）就从这张表派生。
+
+**`Client/call`**：
+
+- 请求 `ClientCallRequest {route, method, path, query, body, caller, command?, server?, byteBudget?}`。`path` 是客户端调用的路径（不含查询串），设备只用一个解析器；`route` 让设备在解析前先校验路由、分好执行额度。
+- `command {commandId, inputDigest, deadline}`：命令路由的回执身份，设备的 inbox 按 `commandId` 回放原结果，不重新执行。
+- `server {sessionId?, takeover?, attachments?, transfer?}`：Server 拥有的事实（建会话时分配的 `sessionId`、接管状态、附件记录、文件下载的中继位置）。设备以它为准；它只在 `Client/call` 上生效，加密通道里不存在。
+- 流项：第一项 `ClientCallHead {kind: "head", status, contentType, command?}`，`command {commandId, outcome, e?}` 用来结算 Server 的回执；之后是正文 `ClientCallChunk {kind: "chunk", seq, chunk, end}`，每块最多 512 KiB，整个回答最多 16 MiB。请求体超过 1 MiB 时 Server 在转发前回 413。
+- 设备返回的错误一律是 `{detail: {code, message}}`，AA 错误码到 HTTP 状态的映射在 `client-errors.json` 的 `deviceCodeStatus`（未列出的为 409）。
+
+**`Client/subscribe {stream: "terminal", terminalId, fromSeq}`**：流项是终端 WebSocket 消息原样：`replay`（scrollback，总是第一项，读者落后时再发）、`output`、`exit`。输入、调整大小与关闭是 `Client/call` 请求。会话流仍用 `Sessions/watch`。
+
+**错误映射**（`client-errors.json`）：
+
+| 情况 | 读请求 | 命令 |
+| --- | --- | --- |
+| 设备返回了 status 和 body | 原样透传 | 原样透传，按 `head.command` 结算回执 |
+| 未投递 | 有离线回答的路由回 200 `deviceOffline`，其他 409 `connector_offline` | 删除 pending 回执，回 409 `connector_offline` |
+| 调用打开后结果未知 | 504 `device_read_timeout` | 回执记为 unknown，回 504 `command_outcome_unknown` |
+| 设备限流（`resource_exhausted`） | 503 `device_busy`，可重试 | 同左，删除回执 |
+| 请求体过大 | 413 `request_too_large` | 同左 |
+| 设备回答不符合路由的响应模型 | 502 `device_response_invalid` | 同左 |
+
+加密模式下不注册 `Client`。
+
+## 业务载荷
+
+MeshCall 的外壳（`CommandCall.p`、`CommandAck.r`、`LinkAttachItem.p`、`OutboxItem.p`）在线上仍是对象；每个业务方法放进去的内容由 `COMMAND_PAYLOADS`、`READ_PAYLOADS`、`EVENT_PAYLOADS`、`OUTBOX_PAYLOADS` 规定，导出为 `payloads.json`：
+
+- 命令：如 `session.sendMessage` 的 `SendMessageCommand` / `SendMessageResult`，`session.creation.begin` 的 `CreationBeginCommand`（不带准备的 `DirectCreationCommand` 或带 `preparationId` 的 `PreparedCreationCommand`），`runtime.apply` 的 `RuntimeApplyCommand` / `RuntimeApplyResult`，`device.settings.apply` 的 `DeviceSettingsApplyCommand`，`session.sync` 的 `SessionSyncCommand {sessionId, takeover?, archived?}`。`session.planning`、`session.goal` 的结果引用 protocol 1.2 的 `planning-response`、`goal-response`，`preview.*` 引用 preview 1.0。
+- 工作区准备与创建：请求为 `WorkspacePrepareCommand`、`PreparationReserveCommand` 等，回答为 runtime-workflows 1.2 的工作流状态（`workflow-state`）。
+- 读：`Sessions/state` 的 `SessionStateRequest` / `SessionStateResponse`，`Store/readBlob` 的 `ReadBlobRequest` / `ReadBlobChunk`，`Store/exportShare` 的 `ExportShareRequest` / `ExportShareChunk` 等。
+- 事件：`runtime.status` 的 `status` 是按 `event` 区分的 `RuntimeStatusPayload`：`runtime.types`、`capabilities.changed`、`catalogs.changed`、`session.status`、`config.updated`、`planning.state.updated`、`goal.state.updated`；没有 `event` 时按带的是 `instance`（应用期望状态之后的实例）还是 `state`（运行中实例的健康状态）区分。`runtime.notice.updated` 带 protocol 1.2 的 notice，`runtime.queue.updated` 带队列状态，`port.*` 引用 preview 1.0。
+- `LinkWelcome.desired.runtimes` 的每一项是 `RuntimeApplyCommand`；没有的可选字段（`modelGateway`、`operationId`、`switchRevision`）不输出为 null。
+
+Server 发送每条命令之前按请求模型校验 `p`（`validate_command_payload()`）。模型只要求设备本来就要求的字段，不合格的命令不登记、不发出，按设备同样的规则回 409 `invalid_argument`。仍是任意对象的字段：Runtime 实例的 `config`（由该类型的 `configSchema` 约束）、`modelConnection` 状态、时间线条目与分享条目（protocol 1.2 的条目原样透传）、`Workspace/call` 的 v2 参数与结果（切换后删除）、`ClientCallRequest.body`（由各路由的客户端契约约束）。
 
 ## 工作区（普通模式）
 
@@ -61,7 +126,7 @@ v3 中 Server 与 Connector 之间的契约，取代 v2 的 `/api/v2/connector/w
 
 ## 会话读与命令的业务字段
 
-MeshCall 层的模型只约束外壳，`p` 与读响应里的业务字段如下。两端共用样例 `server/tests/fixtures/device_shapes.json`：Server 发出的请求与设备真实的返回都在里面，任何一边改了形状，另一边的测试都会失败。
+各方法的模型见[业务载荷](#业务载荷)，下面是语义。两端共用样例 `server/tests/fixtures/device_shapes.json` 与 `runtime_control_commands.json`：Server 发出的请求与设备真实的返回都在里面，任何一边改了形状，另一边的测试都会失败；每一项还要分别通过 Server 的 pydantic 模型和 Connector 侧按生成的 JSON Schema 做的校验（ajv）。
 
 - `Sessions/snapshot` 的 `StreamChunk.chunk`：JSON 对象，或字符串。字符串有两种写法，Server 都接受：按 `seq` 拼接后是一个 JSON 对象（TS Connector 把 JSON 文本按帧上限切片）；或者每块各是一个 JSON 对象的 base64 deflate。
 - `Sessions/state {sessionId, part?}`：`part` 为 `planning` 时返回 `{planning}`，为 `goal` 时返回 `{goal}`，形状与 v2 的计划、目标状态相同；不带 `part` 时返回 `{state, planning, goal}`。其他取值报 `invalid_argument`。

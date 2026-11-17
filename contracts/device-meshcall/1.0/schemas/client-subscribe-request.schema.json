@@ -1,0 +1,86 @@
+{
+  "$defs": {
+    "ClientCaller": {
+      "description": "Who sent the request, as the Server authenticated it.",
+      "properties": {
+        "clientId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Clientid"
+        },
+        "platform": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Platform"
+        },
+        "userId": {
+          "minLength": 1,
+          "title": "Userid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "userId"
+      ],
+      "title": "ClientCaller",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:client-subscribe-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "``Client/subscribe``: opening subscribes, cancelling unsubscribes. Input, resize and close are\n``Client/call`` requests to the same paths as the client's.",
+  "properties": {
+    "caller": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ClientCaller"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "fromSeq": {
+      "default": 0,
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "title": "Fromseq",
+      "type": "integer"
+    },
+    "stream": {
+      "const": "terminal",
+      "title": "Stream",
+      "type": "string"
+    },
+    "terminalId": {
+      "minLength": 1,
+      "title": "Terminalid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "stream",
+    "terminalId"
+  ],
+  "title": "ClientSubscribeRequest",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

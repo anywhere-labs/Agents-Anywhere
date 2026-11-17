@@ -6,6 +6,8 @@
   Connector test feeds them to the real command inbox.
 - every other entry is what the real Connector code answers or emits; the Connector test checks it still
   produces them exactly, the tests here feed them to the Server (through the fake device or a service).
+- every entry is also checked against its device-meshcall model (``SHAPE_MODELS``) here and against the
+  generated JSON Schema on the Connector side.
 
 The fake device elsewhere answers what the Server expects; these tests use what the device really says.
 """
@@ -28,9 +30,15 @@ from device_link_helpers import (
 )
 from mesh_fixtures import RouterProcess
 
+from agent_server.core.device_meshcall import (
+    COMMAND_PAYLOADS,
+    READ_PAYLOADS,
+    RuntimeStatusEvent,
+)
 from agent_server.core.goal.models import GoalState
 from agent_server.core.models import SessionSelectionPatchRequest, SessionView
 from agent_server.core.planning.models import PlanningState
+from agent_server.core.protocol import ProtocolCapabilitySet
 from agent_server.core.runtime_workflows import (
     BeginCreationRequest,
     PrepareWorkspaceRequest,
@@ -428,3 +436,71 @@ def test_a_refused_reservation_rejects_the_creation_without_a_session(mesh_route
             assert view.sessionId is None
 
     asyncio.run(scenario())
+
+
+# -- 9. every shape against its device-meshcall model --------------------------------------------------
+
+# Fixture entry -> (method, "request" | "response") in ``COMMAND_PAYLOADS`` / ``READ_PAYLOADS``, or a model.
+SHAPE_MODELS: dict[str, tuple[str, str] | type[Any]] = {
+    "requests.select": ("session.select", "request"),
+    "requests.creationPlan": ("session.creation.begin", "request"),
+    "requests.creationGoal": ("session.creation.begin", "request"),
+    "requests.workspacePrepare": ("workspace.prepare", "request"),
+    "requests.workspacePreparationReserve": ("workspace.preparation.reserve", "request"),
+    "requests.creationPrepared": ("session.creation.begin", "request"),
+    "select.result": ("session.select", "response"),
+    "state.goal.unobserved": ("session.state", "response"),
+    "state.planning": ("session.state", "response"),
+    "state.goal": ("session.state", "response"),
+    "planning.result": ("session.planning", "response"),
+    "goal.result": ("session.goal", "response"),
+    "event.planning": RuntimeStatusEvent,
+    "event.goal": RuntimeStatusEvent,
+    "planDocument.list": ("store.planDocument", "response"),
+    "planDocument.one": ("store.planDocument", "response"),
+    "runtime.capabilities.prepared": ProtocolCapabilitySet,
+    "workspacePrepare.result": ("workspace.prepare", "response"),
+    "workspacePreparation.ready": ("workspace.preparation.get", "response"),
+    "workspacePreparationReserve.stale": ("workspace.preparation.reserve", "response"),
+    "workspacePreparationReserve.result": ("workspace.preparation.reserve", "response"),
+    "creationPrepared.result": ("session.creation.begin", "response"),
+    "creationPrepared.accepted": ("session.creation.get", "response"),
+}
+
+
+def _shape(name: str) -> Any:
+    if name.startswith("requests."):
+        return REQUESTS[name.removeprefix("requests.")]
+    return SHAPES[name]
+
+
+def _model(entry: tuple[str, str] | type[Any]) -> type[Any]:
+    if not isinstance(entry, tuple):
+        return entry
+    method, part = entry
+    payloads = COMMAND_PAYLOADS.get(method) or READ_PAYLOADS[method]
+    return payloads.request if part == "request" else payloads.response
+
+
+def test_every_shape_is_its_contract_model() -> None:
+    """Both sides validate these entries: the Server with the pydantic models, the Connector with the generated
+    JSON Schemas (``connector-ts/test/application/server-shapes.test.ts``)."""
+
+    names = {f"requests.{key}" for key in REQUESTS} | {key for key in SHAPES if key != "requests"}
+    assert names == set(SHAPE_MODELS), "every fixture entry needs its contract model"
+    for name, entry in SHAPE_MODELS.items():
+        _model(entry).model_validate(_shape(name))
+
+
+def test_the_server_refuses_a_payload_that_breaks_the_contract() -> None:
+    from pydantic import ValidationError
+
+    from agent_server.core.device_meshcall import validate_command_payload
+
+    validate_command_payload("session.select", REQUESTS["select"])
+    try:
+        validate_command_payload("session.select", {"selections": {}})
+    except ValidationError:
+        pass
+    else:
+        raise AssertionError("a select without sessionId must not reach the device")

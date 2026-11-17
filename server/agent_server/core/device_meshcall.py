@@ -23,11 +23,54 @@ Design rules encoded here:
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal, get_args
+from typing import Annotated, Any, ClassVar, Literal, NamedTuple, get_args
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Discriminator,
+    Field,
+    RootModel,
+    Tag,
+    model_serializer,
+)
 
-from agent_server.core.protocol import PROTOCOL_MAX_REVISION, ProtocolEventEnvelope
+from agent_server.core.client_routes import CLIENT_CALL_ROUTE_IDS, MAX_CHUNK_BYTES
+from agent_server.core.device_runtime import RuntimeTypeDescriptor
+from agent_server.core.device_settings import ConnectorDeviceSettings
+from agent_server.core.goal.models import (
+    GoalCreationIntent,
+    GoalRequest,
+    GoalResponse,
+    GoalState,
+)
+from agent_server.core.message_queue import SessionQueueState
+from agent_server.core.models import NoticeIn
+from agent_server.core.planning.models import (
+    PlanDocument,
+    PlanningCreationIntent,
+    PlanningRequest,
+    PlanningResponse,
+    PlanningState,
+)
+from agent_server.core.preview import (
+    PortClosedEvent,
+    PortListeningEvent,
+    PreviewCloseCommand,
+    PreviewOpenCommand,
+)
+from agent_server.core.protocol import (
+    PROTOCOL_MAX_REVISION,
+    ProtocolCapabilitySet,
+    ProtocolEventEnvelope,
+    ProtocolModelCatalog,
+    ProtocolPermissionCatalog,
+    SessionRuntimeState,
+)
+from agent_server.core.runtime_workflows import (
+    WorkflowInteractionResponse,
+    WorkflowState,
+)
 
 DEVICE_MESHCALL_VERSION = "1.0"
 DeviceContractVersion = Literal["1.0"]
@@ -59,6 +102,17 @@ class DeviceModel(BaseModel):
         extra="allow",
         json_schema_extra=_omit_default_additional_properties,
     )
+
+
+class SparseModel(DeviceModel):
+    """A model whose ``SPARSE`` fields are left out of its output while they are None (never sent as null)."""
+
+    SPARSE: ClassVar[frozenset[str]] = frozenset()
+
+    @model_serializer(mode="wrap")
+    def _drop_absent(self, handler: Any) -> dict[str, Any]:
+        data = handler(self)
+        return {key: value for key, value in data.items() if not (key in self.SPARSE and value is None)}
 
 
 # ---------------------------------------------------------------------------
@@ -272,10 +326,49 @@ class LinkHello(DeviceModel):
     sessionsHead: list[SessionHead] = Field(default_factory=list)
 
 
+class ModelGateway(SparseModel):
+    """The model gateway a Runtime instance uses, as the device takes it (the Server keeps it in the config)."""
+
+    SPARSE: ClassVar[frozenset[str]] = frozenset({"model"})
+
+    baseUrl: NonEmpty
+    authToken: NonEmpty
+    protocol: NonEmpty
+    model: str | None = None
+
+
+class RuntimeApplyCommand(SparseModel):
+    """``runtime.apply``: one desired Runtime instance; also the item of ``LinkWelcome.desired.runtimes``.
+
+    ``config`` holds only the instance's own settings, validated against its type's ``configSchema``
+    (Runtime Control 2.1); a model gateway travels as ``modelGateway``. ``revision`` only grows, so a late
+    command never undoes a newer one.
+    """
+
+    SPARSE: ClassVar[frozenset[str]] = frozenset({"modelGateway", "operationId", "switchRevision"})
+
+    runtimeId: NonEmpty
+    runtimeType: NonEmpty
+    name: str | None = None
+    active: bool
+    config: dict[str, Any] | None = None
+    revision: int = Field(default=0, ge=0)
+    modelGateway: ModelGateway | None = None
+    #: ``channel.switch`` only: the Server's switch fence.
+    operationId: str | None = None
+    switchRevision: int | None = Field(default=None, ge=0)
+
+
+class ChannelSwitchCommand(RuntimeApplyCommand):
+    """``channel.switch``: ``runtime.apply`` fenced by the switch the Server is executing
+    (``operationId``, ``switchRevision``; sent when the device declared ``channelReconcileFence``)."""
+
+
 class DesiredState(DeviceModel):
-    runtimes: list[dict[str, Any]] = Field(default_factory=list)
+    runtimes: list[RuntimeApplyCommand] = Field(default_factory=list)
+    #: The stored device settings as they are (``ConnectorDeviceSettings``; unknown keys pass through).
     deviceSettings: dict[str, Any] = Field(default_factory=dict)
-    channelSwitches: list[dict[str, Any]] = Field(default_factory=list)
+    channelSwitches: list[ChannelSwitchCommand] = Field(default_factory=list)
 
 
 class MeshCredentials(DeviceModel):
@@ -328,10 +421,141 @@ class ChangesEvent(DeviceModel):
     events: list[ProtocolEventEnvelope] = Field(default_factory=list)
 
 
+class RuntimeTypesStatus(DeviceModel):
+    """The Runtime types this device build ships (``runtimeId: "*"``); replaces discovery."""
+
+    event: Literal["runtime.types"]
+    runtimeTypes: list[RuntimeTypeDescriptor] = Field(default_factory=list)
+    features: list[str] = Field(default_factory=list)
+
+
+class RuntimeInstanceReport(DeviceModel):
+    status: NonEmpty
+    phase: dict[str, Any] | None = None
+    error: LinkError | None = None
+    #: Runtime Control 2.1 ``modelConnection`` status of the instance.
+    modelConnection: dict[str, Any] | None = None
+
+
+class RuntimeInstanceStatus(DeviceModel):
+    """An instance after the device applied desired state, with the provider's facts beside it."""
+
+    instance: RuntimeInstanceReport
+    runtimeType: str | None = None
+    enabled: bool | None = None
+    installed: bool | None = None
+    error: LinkError | None = None
+
+
+class RuntimeHealthStatus(DeviceModel):
+    """The running instance's own health (``ready``, ``degraded``, …)."""
+
+    state: NonEmpty
+    error: LinkError | None = None
+
+
+class CapabilitiesChangedStatus(DeviceModel):
+    """The instance's capability set changed; the set is ``RuntimeStatusEvent.capabilities``."""
+
+    event: Literal["capabilities.changed"]
+
+
+class SlashCommand(DeviceModel):
+    name: NonEmpty
+    description: str | None = None
+    inputHint: str | None = None
+
+
+class SessionCatalogs(DeviceModel):
+    """A session's catalogs: models, permissions, slash commands and the current selections."""
+
+    models: ProtocolModelCatalog | None = None
+    permissions: ProtocolPermissionCatalog | None = None
+    commands: list[SlashCommand] | None = None
+    selections: dict[str, Any] | None = None
+
+
+class CatalogsChangedStatus(DeviceModel):
+    event: Literal["catalogs.changed"]
+    catalogs: SessionCatalogs = Field(default_factory=SessionCatalogs)
+
+
+class SessionStatusChanged(DeviceModel):
+    event: Literal["session.status"]
+    status: SessionStatusValue
+
+
+class ConfigUpdatedStatus(DeviceModel):
+    """The session's Agent configuration options changed."""
+
+    event: Literal["config.updated"]
+    options: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class PlanningStateUpdated(DeviceModel):
+    event: Literal["planning.state.updated"]
+    revision: Seq
+    state: PlanningState
+
+
+class GoalStateUpdated(DeviceModel):
+    event: Literal["goal.state.updated"]
+    revision: Seq
+    state: GoalState
+
+
+def _runtime_status_tag(value: Any) -> str | None:
+    """``event`` when present; else ``instance`` or ``state`` by which fact the status carries."""
+
+    def get(key: str) -> Any:
+        return value.get(key) if isinstance(value, dict) else getattr(value, key, None)
+
+    event = get("event")
+    if isinstance(event, str):
+        return event
+    if get("instance") is not None:
+        return "instance"
+    if get("state") is not None:
+        return "state"
+    return None
+
+
+RuntimeStatusPayload = Annotated[
+    Annotated[RuntimeTypesStatus, Tag("runtime.types")]
+    | Annotated[RuntimeInstanceStatus, Tag("instance")]
+    | Annotated[RuntimeHealthStatus, Tag("state")]
+    | Annotated[CapabilitiesChangedStatus, Tag("capabilities.changed")]
+    | Annotated[CatalogsChangedStatus, Tag("catalogs.changed")]
+    | Annotated[SessionStatusChanged, Tag("session.status")]
+    | Annotated[ConfigUpdatedStatus, Tag("config.updated")]
+    | Annotated[PlanningStateUpdated, Tag("planning.state.updated")]
+    | Annotated[GoalStateUpdated, Tag("goal.state.updated")],
+    Discriminator(_runtime_status_tag),
+]
+
+
 class RuntimeStatusEvent(DeviceModel):
+    """``runtime.status``: what the device reports about a Runtime instance (``runtimeId: "*"`` for the
+    device's Runtime types) or one of its sessions (``sessionId``)."""
+
     runtimeId: NonEmpty
-    status: dict[str, Any] = Field(default_factory=dict)
-    capabilities: dict[str, Any] | None = None
+    sessionId: str | None = None
+    status: RuntimeStatusPayload
+    capabilities: ProtocolCapabilitySet | None = None
+
+
+class RuntimeNoticeUpdatedEvent(DeviceModel):
+    """``runtime.notice.updated``: a session notice opened, changed or closed (protocol 1.2 notice)."""
+
+    sessionId: NonEmpty
+    notice: NoticeIn
+
+
+class RuntimeQueueUpdatedEvent(DeviceModel):
+    """``runtime.queue.updated``: the session's whole queue after a change (protocol 1.2 queue state)."""
+
+    sessionId: NonEmpty
+    queue: SessionQueueState
 
 
 # ---------------------------------------------------------------------------
@@ -429,12 +653,146 @@ class CommandStatusResponse(DeviceModel):
     e: LinkError | None = None
 
 
+class SessionRequest(DeviceModel):
+    """Request of a read scoped to one session (``Sessions/notices``, ``capabilities``, ``queue``, …)."""
+
+    sessionId: NonEmpty
+
+
+class SessionStateRequest(SessionRequest):
+    """``Sessions/state``: the runtime state with both parts, or only ``part``."""
+
+    part: Literal["planning", "goal"] | None = None
+
+
+class SessionNoticesResponse(DeviceModel):
+    sessionId: NonEmpty
+    notices: list[NoticeIn] = Field(default_factory=list)
+
+
+class SessionStateResponse(DeviceModel):
+    """``{state, planning, goal}`` without ``part``; ``{planning}`` or ``{goal}`` with it."""
+
+    state: SessionRuntimeState | None = None
+    planning: PlanningState | None = None
+    goal: GoalState | None = None
+
+
+class SessionCapabilitiesResponse(DeviceModel):
+    sessionId: NonEmpty
+    capabilitySet: ProtocolCapabilitySet | None = None
+
+
+class SessionQueueResponse(DeviceModel):
+    queue: SessionQueueState
+
+
+class RuntimeCatalogsResponse(DeviceModel):
+    """``Runtime/catalogs``: ``catalogs`` is empty while the session is not open on the device."""
+
+    sessionId: NonEmpty
+    catalogs: SessionCatalogs = Field(default_factory=SessionCatalogs)
+
+
+class PlanDocumentRequest(SessionRequest):
+    """Without ``planId``: every revision (``{plans}``); with ``planId`` and ``revision``: that one (``{document}``)."""
+
+    planId: str | None = None
+    revision: int | None = Field(default=None, ge=1)
+
+
+class PlanDocumentResponse(DeviceModel):
+    plans: list[PlanDocument] | None = None
+    document: PlanDocument | None = None
+
+
+class WorkflowTarget(DeviceModel):
+    """The Runtime instance a runtime-workflows 1.2 call runs on."""
+
+    runtime: str | None = None
+    runtimeId: NonEmpty
+
+
+class PreparationGetRequest(WorkflowTarget):
+    """``Sessions/workspacePreparationGet`` (critical lane)."""
+
+    preparationId: NonEmpty
+
+
+class CreationGetRequest(WorkflowTarget):
+    """``Sessions/creationGet`` (critical lane)."""
+
+    createOperationId: NonEmpty
+
+
+class BlobTransfer(DeviceModel):
+    """Where the device ``PUT``s the bytes (``DEVICE_TRANSFER_PATH``) and the one-time token."""
+
+    transferId: NonEmpty
+    token: NonEmpty
+    path: NonEmpty
+
+
+class ReadBlobRequest(DeviceModel):
+    """``Store/readBlob``: a stored blob or attachment, relayed over HTTP."""
+
+    sessionId: NonEmpty
+    blobRef: NonEmpty
+    transfer: BlobTransfer
+
+
+class BlobHead(DeviceModel):
+    """First ``readBlob`` item: the Server starts answering its client with these."""
+
+    name: str
+    mediaType: str
+    size: int = Field(ge=0)
+    sha256: str
+
+
+class BlobProgress(DeviceModel):
+    """Later ``readBlob`` items: progress, then ``done``."""
+
+    progress: int | None = Field(default=None, ge=0)
+    done: bool = False
+
+
+class ReadBlobChunk(StreamChunk):
+    chunk: BlobHead | BlobProgress
+
+
+class ShareSelection(DeviceModel):
+    scope: NonEmpty
+    itemIds: list[str] = Field(default_factory=list)
+
+
+class ExportShareRequest(DeviceModel):
+    """``Store/exportShare``: an immutable snapshot of the selected items."""
+
+    sessionId: NonEmpty
+    selection: ShareSelection
+    byteBudget: int = Field(default=DEFAULT_BYTE_BUDGET, ge=4096)
+
+
+class ShareExportPart(DeviceModel):
+    """Chunks are merged in order: ``items`` concatenated, ``attachments`` (file ids) united."""
+
+    items: list[dict[str, Any]] = Field(default_factory=list)
+    attachments: list[str] = Field(default_factory=list)
+
+
+class ExportShareChunk(StreamChunk):
+    chunk: ShareExportPart | str
+
+
 # ---------------------------------------------------------------------------
-# Command payloads (``CommandCall.p``)
+# Command payloads (``CommandCall.p``) and results (``CommandAck.r``)
 # ---------------------------------------------------------------------------
 
 
 class AttachmentRef(DeviceModel):
+    """An attachment the Server holds (staged upload): the device fetches it by ``fileId``."""
+
     fileId: NonEmpty
     name: str
     mediaType: str
@@ -443,12 +801,290 @@ class AttachmentRef(DeviceModel):
     encrypted: bool = False
 
 
+class CommandAttachmentRef(DeviceModel):
+    """An attachment in a command: the Server's record; facts it does not have are left out."""
+
+    fileId: NonEmpty
+    name: str | None = None
+    mediaType: str | None = None
+    size: int | None = Field(default=None, ge=0)
+    sha256: str | None = None
+
+
+class SessionCommand(DeviceModel):
+    """A command on one session; ``runtime``/``runtimeId`` name the instance when the Server knows it."""
+
+    sessionId: NonEmpty
+    runtime: str | None = None
+    runtimeId: str | None = None
+
+
+class CommandResult(DeviceModel):
+    """A result whose fields the client route defines (passed through to the client)."""
+
+
 class SendMessageCommand(DeviceModel):
     sessionId: NonEmpty
     clientMessageId: NonEmpty
-    content: str
-    attachments: list[AttachmentRef] = Field(default_factory=list)
+    content: str = ""
+    attachments: list[CommandAttachmentRef] = Field(default_factory=list)
     queue: Literal["never", "auto", "interrupt"] | None = None
+
+
+class SendMessageResult(DeviceModel):
+    """``accepted``: the turn started; ``queued``: it waits in the session's queue; ``duplicate``: seen before."""
+
+    delivery: Literal["accepted", "queued", "duplicate"]
+    clientMessageId: NonEmpty
+    queuePosition: int | None = None
+    queue: SessionQueueState | None = None
+    item: dict[str, Any] | None = None
+    state: str | None = None
+
+
+class SteerCommand(SessionCommand):
+    clientMessageId: NonEmpty
+    content: str = ""
+    attachments: list[CommandAttachmentRef] = Field(default_factory=list)
+    externalSessionId: str | None = None
+    cwd: str | None = None
+
+
+class SteerResult(DeviceModel):
+    outcome: NonEmpty
+
+
+class InterruptResult(DeviceModel):
+    interrupted: bool
+
+
+class RespondNoticeCommand(SessionCommand):
+    """An approval option (``actionId``), form ``input``, or ``cancel``; ``responseId`` defaults to the commandId."""
+
+    noticeId: NonEmpty
+    responseId: str | None = None
+    actionId: str | None = None
+    input: Any = None
+    cancel: bool | None = None
+
+
+class RespondNoticeResult(DeviceModel):
+    status: NonEmpty
+
+
+class SelectCommand(SessionCommand):
+    """``selections`` (catalog type -> selection id; null keeps the current one), or one ``optionId``/``value``."""
+
+    selections: dict[str, str | bool | None] | None = None
+    optionId: str | None = None
+    value: str | bool | None = None
+    externalSessionId: str | None = None
+
+
+class SelectResult(DeviceModel):
+    updated: bool | None = None
+    applied: bool | None = None
+    sessionId: str | None = None
+    externalSessionId: str | None = None
+    selections: dict[str, Any] | None = None
+    state: SessionRuntimeState | None = None
+
+
+class DirectCreationCommand(DeviceModel):
+    """``session.creation.begin`` without a workspace preparation: the device opens the session and runs
+    the first turn. ``sessionId`` is the directory row the Server created."""
+
+    sessionId: NonEmpty
+    runtimeId: NonEmpty
+    runtimeType: NonEmpty
+    cwd: NonEmpty
+    clientMessageId: NonEmpty
+    content: str = ""
+    projectId: str | None = None
+    title: str | None = None
+    selections: dict[str, str | None] | None = None
+    attachments: list[CommandAttachmentRef] = Field(default_factory=list)
+    takeover: bool | None = None
+    planningIntent: PlanningCreationIntent | None = None
+    goalIntent: GoalCreationIntent | None = None
+    preparationId: None = None
+
+
+class PreparedCreationCommand(WorkflowTarget):
+    """``session.creation.begin`` consuming a reserved workspace preparation (runtime-workflows 1.2)."""
+
+    preparationId: NonEmpty
+    createOperationId: NonEmpty
+    sessionId: NonEmpty
+    clientMessageId: NonEmpty
+    content: str = ""
+    selections: dict[str, str | None] = Field(default_factory=dict)
+    configuration: dict[str, str | bool] | None = None
+    planningIntent: PlanningCreationIntent | None = None
+    title: str | None = None
+    attachments: list[CommandAttachmentRef] = Field(default_factory=list)
+    timelineAttachments: list[CommandAttachmentRef] = Field(default_factory=list)
+
+
+def _creation_tag(value: Any) -> str:
+    prepared = value.get("preparationId") if isinstance(value, dict) else getattr(value, "preparationId", None)
+    return "prepared" if prepared is not None else "direct"
+
+
+SessionCreationBeginCommand = Annotated[
+    Annotated[DirectCreationCommand, Tag("direct")] | Annotated[PreparedCreationCommand, Tag("prepared")],
+    Discriminator(_creation_tag),
+]
+
+
+class CreationBeginCommand(RootModel[SessionCreationBeginCommand]):
+    """``session.creation.begin``: direct, or from a workspace preparation (``preparationId``)."""
+
+
+class DirectCreationResult(SendMessageResult):
+    sessionId: NonEmpty
+
+
+class CreationBeginResult(RootModel[DirectCreationResult | WorkflowState]):
+    """Direct: the first message's delivery; prepared: the creation's workflow state."""
+
+
+class WorkspacePrepareCommand(WorkflowTarget):
+    """``workspace.prepare``: open the Agent session of a workspace before the first message."""
+
+    preparationId: NonEmpty
+    clientPreparationId: str | None = None
+    cwd: str | None = None
+    projectId: str | None = None
+
+
+class PreparationReserveCommand(WorkflowTarget):
+    """``workspace.preparation.reserve``: hold a ready preparation for one creation."""
+
+    preparationId: NonEmpty
+    createOperationId: NonEmpty
+    platformSessionId: NonEmpty
+    expectedRevision: int = Field(ge=0)
+    catalogRevision: int = Field(ge=0)
+    selections: dict[str, str | None] = Field(default_factory=dict)
+    planningIntent: PlanningCreationIntent | None = None
+    configuration: dict[str, str | bool] | None = None
+
+
+class WorkflowFailure(DeviceModel):
+    code: NonEmpty
+    message: str
+
+
+class PreparationReserveResult(DeviceModel):
+    """``reserved: false`` always carries the ``failure`` the creation is rejected with."""
+
+    reserved: bool
+    failure: WorkflowFailure | None = None
+
+
+class PreparationRespondCommand(WorkflowInteractionResponse):
+    """``workspace.preparation.respond``: an answer to an open request of the preparation."""
+
+    model_config = ConfigDict(extra="allow")
+
+    runtime: str | None = None
+    runtimeId: NonEmpty
+    preparationId: NonEmpty
+
+
+class CreationRespondCommand(WorkflowInteractionResponse):
+    """``session.creation.respond``: an answer to an open request of the creation."""
+
+    model_config = ConfigDict(extra="allow")
+
+    runtime: str | None = None
+    runtimeId: NonEmpty
+    createOperationId: NonEmpty
+
+
+class PreparationCancelCommand(WorkflowTarget):
+    preparationId: NonEmpty
+
+
+class CreationCancelCommand(WorkflowTarget):
+    createOperationId: NonEmpty
+    cancelOperationId: str | None = None
+
+
+class SessionPlanningCommand(PlanningRequest):
+    """``session.planning``: the client's planning request on ``sessionId``."""
+
+    sessionId: NonEmpty
+
+
+class SessionGoalCommand(GoalRequest):
+    """``session.goal``: the client's goal request on ``sessionId``."""
+
+    sessionId: NonEmpty
+
+
+class QueueItemCommand(SessionCommand):
+    """``session.queue.update`` (``content``/``attachments``), ``delete``, ``retry``, ``sendNow``."""
+
+    messageId: NonEmpty
+    content: str | None = None
+    attachments: list[CommandAttachmentRef] | None = None
+
+
+class QueueReorderCommand(SessionCommand):
+    messageIds: list[str]
+
+
+class QueueResult(DeviceModel):
+    """The whole queue after the operation (``{queue}``, or the queue itself)."""
+
+    queue: SessionQueueState | None = None
+
+
+class SessionSyncCommand(SessionCommand):
+    """``session.sync``: a Server-owned fact of the session the device keeps a copy of."""
+
+    takeover: bool | None = None
+    archived: bool | None = None
+
+
+class SessionSyncResult(DeviceModel):
+    headSeq: Seq
+
+
+class RuntimeApplyResult(DeviceModel):
+    """The instance after ``runtime.apply`` / ``channel.switch``."""
+
+    runtimeId: NonEmpty
+    status: NonEmpty
+    revision: int | None = None
+    instanceId: str | None = None
+    stale: bool | None = None
+    capabilities: ProtocolCapabilitySet | None = None
+    #: Runtime Control 2.1 ``modelConnection`` status.
+    modelConnection: dict[str, Any] | None = None
+    error: LinkError | None = None
+
+
+class DeviceSettingsApplyCommand(DeviceModel):
+    """``device.settings.apply``: the whole settings object, as ``LinkWelcome.desired`` has it."""
+
+    settings: ConnectorDeviceSettings
+
+
+class DeviceSettingsApplyResult(DeviceModel):
+    applied: bool
+
+
+class PreviewOpenResult(DeviceModel):
+    previewId: NonEmpty
+    port: int
+    localIP: str
+
+
+class PreviewCloseResult(DeviceModel):
+    closed: bool
 
 
 # ---------------------------------------------------------------------------
@@ -529,6 +1165,111 @@ class TerminalOutputItem(DeviceModel):
     p: dict[str, Any] = Field(default_factory=dict)
 
 
+# ---------------------------------------------------------------------------
+# Client (normal mode only): the client API a device serves, one route per call
+# ---------------------------------------------------------------------------
+#
+# ``Client/call`` carries one client API request (``core.client_routes``, ``via == "call"``) with the path
+# and body the client sent; the device answers with the status and body the client gets. ``Client/subscribe``
+# streams a terminal. In E2EE ``required`` mode the service is not registered: the same requests run
+# inside ``Secure/channel``, where ``server`` facts do not exist and the device ignores them.
+
+#: Ids of the routes ``Client/call`` serves (``core.client_routes.CLIENT_CALL_ROUTE_IDS``).
+ClientRouteId = Literal[CLIENT_CALL_ROUTE_IDS]  # type: ignore[valid-type]
+ClientHttpMethod = Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
+
+
+class ClientCaller(DeviceModel):
+    """Who sent the request, as the Server authenticated it."""
+
+    userId: NonEmpty
+    clientId: str | None = None
+    platform: str | None = None
+
+
+class ClientCommand(DeviceModel):
+    """A command route's receipt identity: the device's inbox replays by ``commandId``."""
+
+    commandId: NonEmpty
+    inputDigest: NonEmpty
+    deadline: str
+
+
+class ClientServerFacts(DeviceModel):
+    """Facts the Server owns. The device takes them over whatever the body says, on ``Client/call`` only."""
+
+    sessionId: str | None = Field(default=None, description="create-and-start: the directory row the Server created")
+    takeover: bool | None = None
+    attachments: list[AttachmentRef] | None = Field(
+        default=None, description="the Server's records of the attachments the body references"
+    )
+    transfer: BlobTransfer | None = Field(default=None, description="fs/read: where the device PUTs the bytes")
+
+
+class ClientCallRequest(DeviceModel):
+    """``Client/call``: one client API request. ``path`` is what the client called (``/api/v2/...``) with the
+    query left out; ``route`` names its table entry so the device checks it and picks the lane first."""
+
+    route: ClientRouteId
+    method: ClientHttpMethod
+    path: NonEmpty
+    query: dict[str, str] = Field(default_factory=dict)
+    body: Any = None
+    caller: ClientCaller
+    command: ClientCommand | None = None
+    server: ClientServerFacts | None = None
+    byteBudget: int | None = Field(default=None, ge=4096)
+
+
+class ClientCommandOutcome(DeviceModel):
+    """How the device settled the command; the Server settles its receipt from it."""
+
+    commandId: NonEmpty
+    outcome: Literal["accepted", "rejected"]
+    e: LinkError | None = None
+
+
+class ClientCallHead(DeviceModel):
+    """First item of ``Client/call``: the HTTP status the client gets."""
+
+    kind: Literal["head"]
+    status: int = Field(ge=100, le=599)
+    contentType: str = "application/json"
+    command: ClientCommandOutcome | None = None
+
+
+class ClientCallChunk(StreamChunk):
+    """Later items: the body, JSON text split into pieces of at most ``MAX_CHUNK_BYTES`` (``end`` on the last)."""
+
+    kind: Literal["chunk"]
+    chunk: dict[str, Any] | str = Field(description=f"at most {MAX_CHUNK_BYTES} UTF-8 bytes")
+
+
+class ClientCallItem(RootModel[Annotated[ClientCallHead | ClientCallChunk, Field(discriminator="kind")]]):
+    """Item of ``Client/call``: one ``head``, then the body's ``chunk``s."""
+
+
+class ClientSubscribeRequest(DeviceModel):
+    """``Client/subscribe``: opening subscribes, cancelling unsubscribes. Input, resize and close are
+    ``Client/call`` requests to the same paths as the client's."""
+
+    stream: Literal["terminal"]
+    terminalId: NonEmpty
+    fromSeq: Seq = 0
+    caller: ClientCaller | None = None
+
+
+class TerminalStreamItem(DeviceModel):
+    """A message of the terminal WebSocket, unchanged: ``replay`` (the scrollback, always first and again when
+    the reader fell behind), ``output`` in order, then ``exit``."""
+
+    type: Literal["replay", "output", "exit"]
+    data: str | None = Field(default=None, description="base64 bytes (replay, output)")
+    seq: Seq | None = None
+    exitCode: int | None = None
+    reason: str | None = None
+
+
 MeshShape = Literal["unary", "server_stream", "duplex"]
 
 
@@ -567,6 +1308,9 @@ REQUEST_METHODS: dict[str, MeshRoute] = {
     # Normal mode only (not in ``E2EE_REQUEST_METHODS``): files, terminals and shell.
     "workspace.call": _r("Workspace", "call"),
     "workspace.terminalOutput": _r("Workspace", "terminalOutput", "server_stream"),
+    # Normal mode only: the client API routes the device serves (``core.client_routes``).
+    "client.call": _r("Client", "call", "server_stream"),
+    "client.subscribe": _r("Client", "subscribe", "server_stream"),
 }
 
 COMMAND_METHODS: tuple[str, ...] = (
@@ -724,6 +1468,106 @@ OUTBOX_METHODS: tuple[str, ...] = (
     "attachment.consumed",
     "usage.report",
 )
+
+
+# ---------------------------------------------------------------------------
+# Business payloads by method
+# ---------------------------------------------------------------------------
+#
+# The MeshCall envelopes (``CommandCall.p``, ``CommandAck.r``, ``LinkAttachItem.p``, ``OutboxItem.p``) stay
+# generic objects on the wire; these tables say what each method puts in them. The contract export writes them
+# into ``device.meshcall.json`` and ``payloads.json``; the Connector's generated types are keyed by them.
+
+
+class MethodPayloads(NamedTuple):
+    """Request model and response model of a method. For a stream the response is the item model."""
+
+    request: type[BaseModel]
+    response: type[BaseModel]
+
+
+COMMAND_PAYLOADS: dict[str, MethodPayloads] = {
+    "session.sendMessage": MethodPayloads(SendMessageCommand, SendMessageResult),
+    "session.steer": MethodPayloads(SteerCommand, SteerResult),
+    "session.interrupt": MethodPayloads(SessionCommand, InterruptResult),
+    "session.respondNotice": MethodPayloads(RespondNoticeCommand, RespondNoticeResult),
+    "session.select": MethodPayloads(SelectCommand, SelectResult),
+    "session.creation.begin": MethodPayloads(CreationBeginCommand, CreationBeginResult),
+    "session.creation.respond": MethodPayloads(CreationRespondCommand, WorkflowState),
+    "session.creation.cancel": MethodPayloads(CreationCancelCommand, WorkflowState),
+    "workspace.prepare": MethodPayloads(WorkspacePrepareCommand, WorkflowState),
+    "workspace.preparation.reserve": MethodPayloads(PreparationReserveCommand, PreparationReserveResult),
+    "workspace.preparation.respond": MethodPayloads(PreparationRespondCommand, WorkflowState),
+    "workspace.preparation.cancel": MethodPayloads(PreparationCancelCommand, WorkflowState),
+    "session.planning": MethodPayloads(SessionPlanningCommand, PlanningResponse),
+    "session.goal": MethodPayloads(SessionGoalCommand, GoalResponse),
+    "session.queue.update": MethodPayloads(QueueItemCommand, QueueResult),
+    "session.queue.delete": MethodPayloads(QueueItemCommand, QueueResult),
+    "session.queue.retry": MethodPayloads(QueueItemCommand, QueueResult),
+    "session.queue.sendNow": MethodPayloads(QueueItemCommand, QueueResult),
+    "session.queue.resume": MethodPayloads(SessionCommand, QueueResult),
+    "session.queue.reorder": MethodPayloads(QueueReorderCommand, QueueResult),
+    "session.queue.clear": MethodPayloads(SessionCommand, QueueResult),
+    "session.sync": MethodPayloads(SessionSyncCommand, SessionSyncResult),
+    "runtime.apply": MethodPayloads(RuntimeApplyCommand, RuntimeApplyResult),
+    "device.settings.apply": MethodPayloads(DeviceSettingsApplyCommand, DeviceSettingsApplyResult),
+    "channel.switch": MethodPayloads(ChannelSwitchCommand, RuntimeApplyResult),
+    "preview.open": MethodPayloads(PreviewOpenCommand, PreviewOpenResult),
+    "preview.close": MethodPayloads(PreviewCloseCommand, PreviewCloseResult),
+}
+assert set(COMMAND_PAYLOADS) == set(COMMAND_METHODS)
+
+READ_PAYLOADS: dict[str, MethodPayloads] = {
+    "client.snapshot": MethodPayloads(ClientSnapshotRequest, StreamChunk),
+    "session.watch": MethodPayloads(SessionWatchRequest, ChangesEvent),
+    "session.notices": MethodPayloads(SessionRequest, SessionNoticesResponse),
+    "session.state": MethodPayloads(SessionStateRequest, SessionStateResponse),
+    "session.capabilities": MethodPayloads(SessionRequest, SessionCapabilitiesResponse),
+    "session.queue": MethodPayloads(SessionRequest, SessionQueueResponse),
+    "store.read": MethodPayloads(StoreReadRequest, StoreReadResponse),
+    "store.changesSince": MethodPayloads(ChangesSinceRequest, ChangesSinceResponse),
+    "store.readBlob": MethodPayloads(ReadBlobRequest, ReadBlobChunk),
+    "store.exportShare": MethodPayloads(ExportShareRequest, ExportShareChunk),
+    "store.planDocument": MethodPayloads(PlanDocumentRequest, PlanDocumentResponse),
+    "runtime.catalogs": MethodPayloads(SessionRequest, RuntimeCatalogsResponse),
+    "command.status": MethodPayloads(CommandStatusRequest, CommandStatusResponse),
+    "session.creation.get": MethodPayloads(CreationGetRequest, WorkflowState),
+    "workspace.preparation.get": MethodPayloads(PreparationGetRequest, WorkflowState),
+    "workspace.call": MethodPayloads(WorkspaceCallRequest, WorkspaceCallResponse),
+    "workspace.terminalOutput": MethodPayloads(TerminalOutputRequest, TerminalOutputItem),
+    "client.call": MethodPayloads(ClientCallRequest, ClientCallItem),
+    "client.subscribe": MethodPayloads(ClientSubscribeRequest, TerminalStreamItem),
+}
+assert set(READ_PAYLOADS) == set(REQUEST_METHODS)
+
+#: ``LinkAttachItem.p`` by ``LinkAttachItem.m``.
+EVENT_PAYLOADS: dict[str, type[BaseModel]] = {
+    "runtime.status": RuntimeStatusEvent,
+    "runtime.notice.updated": RuntimeNoticeUpdatedEvent,
+    "runtime.queue.updated": RuntimeQueueUpdatedEvent,
+    "port.listening": PortListeningEvent,
+    "port.closed": PortClosedEvent,
+}
+assert set(EVENT_PAYLOADS) == set(EVENT_METHODS)
+
+#: ``OutboxItem.p`` by ``OutboxItem.m``.
+OUTBOX_PAYLOADS: dict[str, type[BaseModel]] = {
+    "session.summary": SessionSummaryOut,
+    "session.inventory": SessionInventoryOut,
+    "command.result": CommandResultOut,
+    "attachment.consumed": AttachmentConsumedOut,
+    "usage.report": UsageReportOut,
+}
+assert set(OUTBOX_PAYLOADS) == set(OUTBOX_METHODS)
+
+
+def validate_command_payload(method: str, payload: dict[str, Any]) -> None:
+    """Raise ``pydantic.ValidationError`` when ``payload`` is not ``method``'s request (``COMMAND_PAYLOADS``).
+
+    Only checks: the payload is sent as it is.
+    """
+
+    COMMAND_PAYLOADS[method].request.model_validate(payload)
 
 
 # ---------------------------------------------------------------------------

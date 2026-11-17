@@ -15,7 +15,7 @@ Bytes never travel on MeshCall streams:
 - **Shares**: ``Store/exportShare`` returns an immutable snapshot and the files
   it references; the Server keeps copies of those files for the public link.
 
-Request payloads (``MethodPayload`` in device-meshcall 1.0, defined here):
+Request payloads (``ReadBlobRequest`` and ``ExportShareRequest`` in device-meshcall 1.0):
 
 - ``Store/readBlob``: ``{sessionId, blobRef, transfer: {transferId, token, path}}``;
   items ``{name, mediaType, size, sha256}`` first, then ``{progress}`` / ``{done: true}``.
@@ -37,7 +37,10 @@ from loguru import logger
 from agent_server.core.device_meshcall import (
     DEFAULT_BYTE_BUDGET,
     REQUEST_METHODS,
-    MethodPayload,
+    BlobTransfer,
+    ExportShareRequest,
+    ReadBlobRequest,
+    ShareSelection,
     StreamChunk,
 )
 from agent_server.infra.device_link import DeviceLinkHub
@@ -134,14 +137,14 @@ class DeviceBlobService:
         stream = self._mesh.stream(
             device_id,
             REQUEST_METHODS["store.readBlob"],
-            MethodPayload(
+            ReadBlobRequest(
                 sessionId=session_id,
                 blobRef=file_id,
-                transfer={
-                    "transferId": transfer.transfer_id,
-                    "token": transfer.token,
-                    "path": TRANSFER_PATH.format(transfer_id=transfer.transfer_id),
-                },
+                transfer=BlobTransfer(
+                    transferId=transfer.transfer_id,
+                    token=transfer.token,
+                    path=TRANSFER_PATH.format(transfer_id=transfer.transfer_id),
+                ),
             ),
             StreamChunk,
             connection_id=connection_id,
@@ -212,9 +215,9 @@ class DeviceBlobService:
             async for chunk in self._mesh.stream(
                 device_id,
                 REQUEST_METHODS["store.exportShare"],
-                MethodPayload(
+                ExportShareRequest(
                     sessionId=session_id,
-                    selection={"scope": scope, "itemIds": item_ids},
+                    selection=ShareSelection(scope=scope, itemIds=item_ids),
                     byteBudget=DEFAULT_BYTE_BUDGET * 8,
                 ),
                 StreamChunk,

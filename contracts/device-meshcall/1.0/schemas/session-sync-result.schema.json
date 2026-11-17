@@ -1,0 +1,21 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:session-sync-result",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "headSeq": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "title": "Headseq",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "headSeq"
+  ],
+  "title": "SessionSyncResult",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

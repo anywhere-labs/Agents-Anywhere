@@ -1,0 +1,779 @@
+{
+  "commands": {
+    "channel.switch": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "ChannelSwitchCommand",
+        "slug": "channel-switch-command",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "RuntimeApplyResult",
+        "slug": "runtime-apply-result",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Commands/channelSwitch"
+    },
+    "device.settings.apply": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "DeviceSettingsApplyCommand",
+        "slug": "device-settings-apply-command",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "DeviceSettingsApplyResult",
+        "slug": "device-settings-apply-result",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Commands/deviceSettingsApply"
+    },
+    "preview.close": {
+      "request": {
+        "contract": "preview",
+        "model": "PreviewCloseCommand",
+        "slug": "preview-close-command",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "PreviewCloseResult",
+        "slug": "preview-close-result",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Commands/previewClose"
+    },
+    "preview.open": {
+      "request": {
+        "contract": "preview",
+        "model": "PreviewOpenCommand",
+        "slug": "preview-open-command",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "PreviewOpenResult",
+        "slug": "preview-open-result",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Commands/previewOpen"
+    },
+    "runtime.apply": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "RuntimeApplyCommand",
+        "slug": "runtime-apply-command",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "RuntimeApplyResult",
+        "slug": "runtime-apply-result",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Commands/runtimeApply"
+    },
+    "session.creation.begin": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "CreationBeginCommand",
+        "slug": "creation-begin-command",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "CreationBeginResult",
+        "slug": "creation-begin-result",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Commands/sessionCreationBegin"
+    },
+    "session.creation.cancel": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "CreationCancelCommand",
+        "slug": "creation-cancel-command",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "WorkflowState",
+        "slug": "workflow-state",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Commands/sessionCreationCancel"
+    },
+    "session.creation.respond": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "CreationRespondCommand",
+        "slug": "creation-respond-command",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "WorkflowState",
+        "slug": "workflow-state",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Commands/sessionCreationRespond"
+    },
+    "session.goal": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "SessionGoalCommand",
+        "slug": "session-goal-command",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "protocol",
+        "model": "GoalResponse",
+        "slug": "goal-response",
+        "version": "1.2"
+      },
+      "route": "aa.device.v1.Commands/sessionGoal"
+    },
+    "session.interrupt": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "SessionCommand",
+        "slug": "session-command",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "InterruptResult",
+        "slug": "interrupt-result",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Commands/sessionInterrupt"
+    },
+    "session.planning": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "SessionPlanningCommand",
+        "slug": "session-planning-command",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "protocol",
+        "model": "PlanningResponse",
+        "slug": "planning-response",
+        "version": "1.2"
+      },
+      "route": "aa.device.v1.Commands/sessionPlanning"
+    },
+    "session.queue.clear": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "SessionCommand",
+        "slug": "session-command",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "QueueResult",
+        "slug": "queue-result",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Commands/sessionQueueClear"
+    },
+    "session.queue.delete": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "QueueItemCommand",
+        "slug": "queue-item-command",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "QueueResult",
+        "slug": "queue-result",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Commands/sessionQueueDelete"
+    },
+    "session.queue.reorder": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "QueueReorderCommand",
+        "slug": "queue-reorder-command",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "QueueResult",
+        "slug": "queue-result",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Commands/sessionQueueReorder"
+    },
+    "session.queue.resume": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "SessionCommand",
+        "slug": "session-command",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "QueueResult",
+        "slug": "queue-result",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Commands/sessionQueueResume"
+    },
+    "session.queue.retry": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "QueueItemCommand",
+        "slug": "queue-item-command",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "QueueResult",
+        "slug": "queue-result",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Commands/sessionQueueRetry"
+    },
+    "session.queue.sendNow": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "QueueItemCommand",
+        "slug": "queue-item-command",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "QueueResult",
+        "slug": "queue-result",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Commands/sessionQueueSendNow"
+    },
+    "session.queue.update": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "QueueItemCommand",
+        "slug": "queue-item-command",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "QueueResult",
+        "slug": "queue-result",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Commands/sessionQueueUpdate"
+    },
+    "session.respondNotice": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "RespondNoticeCommand",
+        "slug": "respond-notice-command",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "RespondNoticeResult",
+        "slug": "respond-notice-result",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Commands/sessionRespondNotice"
+    },
+    "session.select": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "SelectCommand",
+        "slug": "select-command",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "SelectResult",
+        "slug": "select-result",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Commands/sessionSelect"
+    },
+    "session.sendMessage": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "SendMessageCommand",
+        "slug": "send-message-command",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "SendMessageResult",
+        "slug": "send-message-result",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Commands/sessionSendMessage"
+    },
+    "session.steer": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "SteerCommand",
+        "slug": "steer-command",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "SteerResult",
+        "slug": "steer-result",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Commands/sessionSteer"
+    },
+    "session.sync": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "SessionSyncCommand",
+        "slug": "session-sync-command",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "SessionSyncResult",
+        "slug": "session-sync-result",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Commands/sessionSync"
+    },
+    "workspace.preparation.cancel": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "PreparationCancelCommand",
+        "slug": "preparation-cancel-command",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "WorkflowState",
+        "slug": "workflow-state",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Commands/workspacePreparationCancel"
+    },
+    "workspace.preparation.reserve": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "PreparationReserveCommand",
+        "slug": "preparation-reserve-command",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "PreparationReserveResult",
+        "slug": "preparation-reserve-result",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Commands/workspacePreparationReserve"
+    },
+    "workspace.preparation.respond": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "PreparationRespondCommand",
+        "slug": "preparation-respond-command",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "WorkflowState",
+        "slug": "workflow-state",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Commands/workspacePreparationRespond"
+    },
+    "workspace.prepare": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "WorkspacePrepareCommand",
+        "slug": "workspace-prepare-command",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "WorkflowState",
+        "slug": "workflow-state",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Commands/workspacePrepare"
+    }
+  },
+  "events": {
+    "port.closed": {
+      "contract": "preview",
+      "model": "PortClosedEvent",
+      "slug": "port-closed-event",
+      "version": "1.0"
+    },
+    "port.listening": {
+      "contract": "preview",
+      "model": "PortListeningEvent",
+      "slug": "port-listening-event",
+      "version": "1.0"
+    },
+    "runtime.notice.updated": {
+      "contract": "device-meshcall",
+      "model": "RuntimeNoticeUpdatedEvent",
+      "slug": "runtime-notice-updated-event",
+      "version": "1.0"
+    },
+    "runtime.queue.updated": {
+      "contract": "device-meshcall",
+      "model": "RuntimeQueueUpdatedEvent",
+      "slug": "runtime-queue-updated-event",
+      "version": "1.0"
+    },
+    "runtime.status": {
+      "contract": "device-meshcall",
+      "model": "RuntimeStatusEvent",
+      "slug": "runtime-status-event",
+      "version": "1.0"
+    }
+  },
+  "outbox": {
+    "attachment.consumed": {
+      "contract": "device-meshcall",
+      "model": "AttachmentConsumedOut",
+      "slug": "attachment-consumed-out",
+      "version": "1.0"
+    },
+    "command.result": {
+      "contract": "device-meshcall",
+      "model": "CommandResultOut",
+      "slug": "command-result-out",
+      "version": "1.0"
+    },
+    "session.inventory": {
+      "contract": "device-meshcall",
+      "model": "SessionInventoryOut",
+      "slug": "session-inventory-out",
+      "version": "1.0"
+    },
+    "session.summary": {
+      "contract": "device-meshcall",
+      "model": "SessionSummaryOut",
+      "slug": "session-summary-out",
+      "version": "1.0"
+    },
+    "usage.report": {
+      "contract": "device-meshcall",
+      "model": "UsageReportOut",
+      "slug": "usage-report-out",
+      "version": "1.0"
+    }
+  },
+  "reads": {
+    "client.call": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "ClientCallRequest",
+        "slug": "client-call-request",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "ClientCallItem",
+        "slug": "client-call-item",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Client/call",
+      "shape": "server_stream"
+    },
+    "client.snapshot": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "ClientSnapshotRequest",
+        "slug": "client-snapshot-request",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "StreamChunk",
+        "slug": "stream-chunk",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Sessions/snapshot",
+      "shape": "server_stream"
+    },
+    "client.subscribe": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "ClientSubscribeRequest",
+        "slug": "client-subscribe-request",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "TerminalStreamItem",
+        "slug": "terminal-stream-item",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Client/subscribe",
+      "shape": "server_stream"
+    },
+    "command.status": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "CommandStatusRequest",
+        "slug": "command-status-request",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "CommandStatusResponse",
+        "slug": "command-status-response",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Commands/status",
+      "shape": "unary"
+    },
+    "runtime.catalogs": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "SessionRequest",
+        "slug": "session-request",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "RuntimeCatalogsResponse",
+        "slug": "runtime-catalogs-response",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Runtime/catalogs",
+      "shape": "unary"
+    },
+    "session.capabilities": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "SessionRequest",
+        "slug": "session-request",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "SessionCapabilitiesResponse",
+        "slug": "session-capabilities-response",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Sessions/capabilities",
+      "shape": "unary"
+    },
+    "session.creation.get": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "CreationGetRequest",
+        "slug": "creation-get-request",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "WorkflowState",
+        "slug": "workflow-state",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Sessions/creationGet",
+      "shape": "unary"
+    },
+    "session.notices": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "SessionRequest",
+        "slug": "session-request",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "SessionNoticesResponse",
+        "slug": "session-notices-response",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Sessions/notices",
+      "shape": "unary"
+    },
+    "session.queue": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "SessionRequest",
+        "slug": "session-request",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "SessionQueueResponse",
+        "slug": "session-queue-response",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Sessions/queue",
+      "shape": "unary"
+    },
+    "session.state": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "SessionStateRequest",
+        "slug": "session-state-request",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "SessionStateResponse",
+        "slug": "session-state-response",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Sessions/state",
+      "shape": "unary"
+    },
+    "session.watch": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "SessionWatchRequest",
+        "slug": "session-watch-request",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "ChangesEvent",
+        "slug": "changes-event",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Sessions/watch",
+      "shape": "server_stream"
+    },
+    "store.changesSince": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "ChangesSinceRequest",
+        "slug": "changes-since-request",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "ChangesSinceResponse",
+        "slug": "changes-since-response",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Store/changesSince",
+      "shape": "unary"
+    },
+    "store.exportShare": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "ExportShareRequest",
+        "slug": "export-share-request",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "ExportShareChunk",
+        "slug": "export-share-chunk",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Store/exportShare",
+      "shape": "server_stream"
+    },
+    "store.planDocument": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "PlanDocumentRequest",
+        "slug": "plan-document-request",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "PlanDocumentResponse",
+        "slug": "plan-document-response",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Store/planDocument",
+      "shape": "unary"
+    },
+    "store.read": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "StoreReadRequest",
+        "slug": "store-read-request",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "StoreReadResponse",
+        "slug": "store-read-response",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Store/read",
+      "shape": "unary"
+    },
+    "store.readBlob": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "ReadBlobRequest",
+        "slug": "read-blob-request",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "ReadBlobChunk",
+        "slug": "read-blob-chunk",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Store/readBlob",
+      "shape": "server_stream"
+    },
+    "workspace.call": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "WorkspaceCallRequest",
+        "slug": "workspace-call-request",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "WorkspaceCallResponse",
+        "slug": "workspace-call-response",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Workspace/call",
+      "shape": "unary"
+    },
+    "workspace.preparation.get": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "PreparationGetRequest",
+        "slug": "preparation-get-request",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "WorkflowState",
+        "slug": "workflow-state",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Sessions/workspacePreparationGet",
+      "shape": "unary"
+    },
+    "workspace.terminalOutput": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "TerminalOutputRequest",
+        "slug": "terminal-output-request",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "TerminalOutputItem",
+        "slug": "terminal-output-item",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Workspace/terminalOutput",
+      "shape": "server_stream"
+    }
+  }
+}

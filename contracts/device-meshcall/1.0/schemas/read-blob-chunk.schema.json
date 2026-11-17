@@ -1,0 +1,95 @@
+{
+  "$defs": {
+    "BlobHead": {
+      "description": "First ``readBlob`` item: the Server starts answering its client with these.",
+      "properties": {
+        "mediaType": {
+          "title": "Mediatype",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        },
+        "size": {
+          "minimum": 0,
+          "title": "Size",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "mediaType",
+        "size",
+        "sha256"
+      ],
+      "title": "BlobHead",
+      "type": "object"
+    },
+    "BlobProgress": {
+      "description": "Later ``readBlob`` items: progress, then ``done``.",
+      "properties": {
+        "done": {
+          "default": false,
+          "title": "Done",
+          "type": "boolean"
+        },
+        "progress": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Progress"
+        }
+      },
+      "title": "BlobProgress",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:read-blob-chunk",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "chunk": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BlobHead"
+        },
+        {
+          "$ref": "#/$defs/BlobProgress"
+        }
+      ],
+      "title": "Chunk"
+    },
+    "end": {
+      "default": false,
+      "title": "End",
+      "type": "boolean"
+    },
+    "seq": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "title": "Seq",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "seq",
+    "chunk"
+  ],
+  "title": "ReadBlobChunk",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

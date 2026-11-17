@@ -1,0 +1,140 @@
+{
+  "$defs": {
+    "ModelGateway": {
+      "description": "The model gateway a Runtime instance uses, as the device takes it (the Server keeps it in the config).",
+      "properties": {
+        "authToken": {
+          "minLength": 1,
+          "title": "Authtoken",
+          "type": "string"
+        },
+        "baseUrl": {
+          "minLength": 1,
+          "title": "Baseurl",
+          "type": "string"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model"
+        },
+        "protocol": {
+          "minLength": 1,
+          "title": "Protocol",
+          "type": "string"
+        }
+      },
+      "required": [
+        "baseUrl",
+        "authToken",
+        "protocol"
+      ],
+      "title": "ModelGateway",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:runtime-apply-command",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "``runtime.apply``: one desired Runtime instance; also the item of ``LinkWelcome.desired.runtimes``.\n\n``config`` holds only the instance's own settings, validated against its type's ``configSchema``\n(Runtime Control 2.1); a model gateway travels as ``modelGateway``. ``revision`` only grows, so a late\ncommand never undoes a newer one.",
+  "properties": {
+    "active": {
+      "title": "Active",
+      "type": "boolean"
+    },
+    "config": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Config"
+    },
+    "modelGateway": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ModelGateway"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Name"
+    },
+    "operationId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Operationid"
+    },
+    "revision": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "runtimeId": {
+      "minLength": 1,
+      "title": "Runtimeid",
+      "type": "string"
+    },
+    "runtimeType": {
+      "minLength": 1,
+      "title": "Runtimetype",
+      "type": "string"
+    },
+    "switchRevision": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Switchrevision"
+    }
+  },
+  "required": [
+    "runtimeId",
+    "runtimeType",
+    "active"
+  ],
+  "title": "RuntimeApplyCommand",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

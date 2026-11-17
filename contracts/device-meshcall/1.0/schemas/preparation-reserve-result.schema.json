@@ -1,0 +1,52 @@
+{
+  "$defs": {
+    "WorkflowFailure": {
+      "properties": {
+        "code": {
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "WorkflowFailure",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:preparation-reserve-result",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "``reserved: false`` always carries the ``failure`` the creation is rejected with.",
+  "properties": {
+    "failure": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WorkflowFailure"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "reserved": {
+      "title": "Reserved",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "reserved"
+  ],
+  "title": "PreparationReserveResult",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

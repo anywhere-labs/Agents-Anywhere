@@ -40,7 +40,7 @@ from agent_server.core.device_meshcall import (
 ResponseT = TypeVar("ResponseT", bound=BaseModel)
 
 DEVICE_SERVICES: tuple[str, ...] = tuple(
-    f"{MESH_SERVICE_PREFIX}.{name}" for name in ("Link", "Sessions", "Store", "Runtime", "Commands", "Workspace", "Secure")
+    f"{MESH_SERVICE_PREFIX}.{name}" for name in ("Link", "Sessions", "Store", "Runtime", "Commands", "Workspace", "Client", "Secure")
 )
 ROUTER_AUTH_SERVICE = "meshcall.router.v1.AuthService"
 ROUTER_REGISTRY_SERVICE = "meshcall.router.v1.Registry"

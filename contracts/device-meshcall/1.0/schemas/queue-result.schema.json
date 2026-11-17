@@ -1,0 +1,201 @@
+{
+  "$defs": {
+    "SessionQueueAttachment": {
+      "properties": {
+        "fileId": {
+          "title": "Fileid",
+          "type": "string"
+        },
+        "mediaType": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mediatype"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Size"
+        }
+      },
+      "required": [
+        "fileId"
+      ],
+      "title": "SessionQueueAttachment",
+      "type": "object"
+    },
+    "SessionQueueError": {
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "SessionQueueError",
+      "type": "object"
+    },
+    "SessionQueueItem": {
+      "properties": {
+        "attachments": {
+          "items": {
+            "$ref": "#/$defs/SessionQueueAttachment"
+          },
+          "title": "Attachments",
+          "type": "array"
+        },
+        "clientMessageId": {
+          "title": "Clientmessageid",
+          "type": "string"
+        },
+        "content": {
+          "title": "Content",
+          "type": "string"
+        },
+        "createdAt": {
+          "title": "Createdat",
+          "type": "string"
+        },
+        "createdBy": {
+          "title": "Createdby",
+          "type": "string"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionQueueError"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "interruptRequested": {
+          "default": false,
+          "title": "Interruptrequested",
+          "type": "boolean"
+        },
+        "messageId": {
+          "title": "Messageid",
+          "type": "string"
+        },
+        "position": {
+          "minimum": 1,
+          "title": "Position",
+          "type": "integer"
+        },
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "queued",
+            "sending",
+            "failed"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "updatedAt": {
+          "title": "Updatedat",
+          "type": "string"
+        }
+      },
+      "required": [
+        "messageId",
+        "sessionId",
+        "clientMessageId",
+        "content",
+        "status",
+        "position",
+        "createdBy",
+        "createdAt",
+        "updatedAt"
+      ],
+      "title": "SessionQueueItem",
+      "type": "object"
+    },
+    "SessionQueueState": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/SessionQueueItem"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "revision": {
+          "minimum": 0,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "revision"
+      ],
+      "title": "SessionQueueState",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:queue-result",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The whole queue after the operation (``{queue}``, or the queue itself).",
+  "properties": {
+    "queue": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SessionQueueState"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "title": "QueueResult",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

@@ -1,0 +1,39 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:preparation-get-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "``Sessions/workspacePreparationGet`` (critical lane).",
+  "properties": {
+    "preparationId": {
+      "minLength": 1,
+      "title": "Preparationid",
+      "type": "string"
+    },
+    "runtime": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Runtime"
+    },
+    "runtimeId": {
+      "minLength": 1,
+      "title": "Runtimeid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "runtimeId",
+    "preparationId"
+  ],
+  "title": "PreparationGetRequest",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

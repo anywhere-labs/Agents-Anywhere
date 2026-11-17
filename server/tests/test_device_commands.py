@@ -197,7 +197,7 @@ def test_receipts_store_no_conversation_content(mesh_router: RouterProcess, monk
                 device.state.command_handler = lambda method, p: {"queue": queue}
                 changed = await app.state.device_queue.change(
                     user_id=user_id, device_id=device_id, session_id="sess_c1", kind="update",
-                    payload={"itemId": "q_1", "content": secret},
+                    payload={"messageId": "q_1", "content": secret},
                 )
                 # The caller gets the device's answer at once.
                 assert changed == queue

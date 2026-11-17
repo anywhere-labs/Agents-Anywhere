@@ -24,6 +24,10 @@
   },
   "modes": {
     "off": {
+      "aa.device.v1.Client": [
+        "call",
+        "subscribe"
+      ],
       "aa.device.v1.Commands": [
         "status",
         "sessionSendMessage",

@@ -1,0 +1,91 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:respond-notice-command",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "An approval option (``actionId``), form ``input``, or ``cancel``; ``responseId`` defaults to the commandId.",
+  "properties": {
+    "actionId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Actionid"
+    },
+    "cancel": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cancel"
+    },
+    "input": {
+      "default": null,
+      "title": "Input"
+    },
+    "noticeId": {
+      "minLength": 1,
+      "title": "Noticeid",
+      "type": "string"
+    },
+    "responseId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Responseid"
+    },
+    "runtime": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Runtime"
+    },
+    "runtimeId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Runtimeid"
+    },
+    "sessionId": {
+      "minLength": 1,
+      "title": "Sessionid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "sessionId",
+    "noticeId"
+  ],
+  "title": "RespondNoticeCommand",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

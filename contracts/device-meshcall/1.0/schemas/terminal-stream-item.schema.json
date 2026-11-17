@@ -1,0 +1,76 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:terminal-stream-item",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A message of the terminal WebSocket, unchanged: ``replay`` (the scrollback, always first and again when\nthe reader fell behind), ``output`` in order, then ``exit``.",
+  "properties": {
+    "data": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "base64 bytes (replay, output)",
+      "title": "Data"
+    },
+    "exitCode": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Exitcode"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reason"
+    },
+    "seq": {
+      "anyOf": [
+        {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Seq"
+    },
+    "type": {
+      "enum": [
+        "replay",
+        "output",
+        "exit"
+      ],
+      "title": "Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "type"
+  ],
+  "title": "TerminalStreamItem",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

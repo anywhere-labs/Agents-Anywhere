@@ -1,0 +1,50 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:creation-cancel-command",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "cancelOperationId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Canceloperationid"
+    },
+    "createOperationId": {
+      "minLength": 1,
+      "title": "Createoperationid",
+      "type": "string"
+    },
+    "runtime": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Runtime"
+    },
+    "runtimeId": {
+      "minLength": 1,
+      "title": "Runtimeid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "runtimeId",
+    "createOperationId"
+  ],
+  "title": "CreationCancelCommand",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

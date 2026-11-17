@@ -1,0 +1,134 @@
+{
+  "$defs": {
+    "PlanningCreationIntent": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "const": "plan",
+          "title": "Mode",
+          "type": "string"
+        },
+        "operationId": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Operationid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode",
+        "operationId"
+      ],
+      "title": "PlanningCreationIntent",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:preparation-reserve-command",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "``workspace.preparation.reserve``: hold a ready preparation for one creation.",
+  "properties": {
+    "catalogRevision": {
+      "minimum": 0,
+      "title": "Catalogrevision",
+      "type": "integer"
+    },
+    "configuration": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              }
+            ]
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Configuration"
+    },
+    "createOperationId": {
+      "minLength": 1,
+      "title": "Createoperationid",
+      "type": "string"
+    },
+    "expectedRevision": {
+      "minimum": 0,
+      "title": "Expectedrevision",
+      "type": "integer"
+    },
+    "planningIntent": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PlanningCreationIntent"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "platformSessionId": {
+      "minLength": 1,
+      "title": "Platformsessionid",
+      "type": "string"
+    },
+    "preparationId": {
+      "minLength": 1,
+      "title": "Preparationid",
+      "type": "string"
+    },
+    "runtime": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Runtime"
+    },
+    "runtimeId": {
+      "minLength": 1,
+      "title": "Runtimeid",
+      "type": "string"
+    },
+    "selections": {
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "title": "Selections",
+      "type": "object"
+    }
+  },
+  "required": [
+    "runtimeId",
+    "preparationId",
+    "createOperationId",
+    "platformSessionId",
+    "expectedRevision",
+    "catalogRevision"
+  ],
+  "title": "PreparationReserveCommand",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

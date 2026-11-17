@@ -1,0 +1,32 @@
+{
+  "$defs": {
+    "ConnectorDeviceSettings": {
+      "properties": {
+        "confirmQuitOnShutdown": {
+          "default": false,
+          "title": "Confirmquitonshutdown",
+          "type": "boolean"
+        }
+      },
+      "title": "ConnectorDeviceSettings",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:device-settings-apply-command",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "``device.settings.apply``: the whole settings object, as ``LinkWelcome.desired`` has it.",
+  "properties": {
+    "settings": {
+      "$ref": "#/$defs/ConnectorDeviceSettings"
+    }
+  },
+  "required": [
+    "settings"
+  ],
+  "title": "DeviceSettingsApplyCommand",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

@@ -1,0 +1,165 @@
+{
+  "$defs": {
+    "ClientCallChunk": {
+      "description": "Later items: the body, JSON text split into pieces of at most ``MAX_CHUNK_BYTES`` (``end`` on the last).",
+      "properties": {
+        "chunk": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "description": "at most 524288 UTF-8 bytes",
+          "title": "Chunk"
+        },
+        "end": {
+          "default": false,
+          "title": "End",
+          "type": "boolean"
+        },
+        "kind": {
+          "const": "chunk",
+          "title": "Kind",
+          "type": "string"
+        },
+        "seq": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "seq",
+        "chunk",
+        "kind"
+      ],
+      "title": "ClientCallChunk",
+      "type": "object"
+    },
+    "ClientCallHead": {
+      "description": "First item of ``Client/call``: the HTTP status the client gets.",
+      "properties": {
+        "command": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ClientCommandOutcome"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "contentType": {
+          "default": "application/json",
+          "title": "Contenttype",
+          "type": "string"
+        },
+        "kind": {
+          "const": "head",
+          "title": "Kind",
+          "type": "string"
+        },
+        "status": {
+          "maximum": 599,
+          "minimum": 100,
+          "title": "Status",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind",
+        "status"
+      ],
+      "title": "ClientCallHead",
+      "type": "object"
+    },
+    "ClientCommandOutcome": {
+      "description": "How the device settled the command; the Server settles its receipt from it.",
+      "properties": {
+        "commandId": {
+          "minLength": 1,
+          "title": "Commandid",
+          "type": "string"
+        },
+        "e": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LinkError"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "outcome": {
+          "enum": [
+            "accepted",
+            "rejected"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        }
+      },
+      "required": [
+        "commandId",
+        "outcome"
+      ],
+      "title": "ClientCommandOutcome",
+      "type": "object"
+    },
+    "LinkError": {
+      "properties": {
+        "code": {
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "default": "",
+          "title": "Message",
+          "type": "string"
+        },
+        "retryable": {
+          "default": false,
+          "title": "Retryable",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "title": "LinkError",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:client-call-item",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Item of ``Client/call``: one ``head``, then the body's ``chunk``s.",
+  "discriminator": {
+    "mapping": {
+      "chunk": "#/$defs/ClientCallChunk",
+      "head": "#/$defs/ClientCallHead"
+    },
+    "propertyName": "kind"
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/ClientCallHead"
+    },
+    {
+      "$ref": "#/$defs/ClientCallChunk"
+    }
+  ],
+  "title": "ClientCallItem",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}
