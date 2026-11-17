@@ -158,6 +158,31 @@ describe('sending messages', () => {
     expect(session?.latestTurnEndSeq).not.toBeNull()
   })
 
+  it('stays idle when the turn ends before the prompt acceptance is handled', async () => {
+    await makeSession()
+    await service.binding('sess_1')
+    const runtime = sessions[0]!
+    // A fast Runtime: the whole turn is reported before prompt() resolves with its acceptance.
+    runtime.prompt = async (input, delivery) => {
+      runtime.calls.push({ method: 'prompt', input, delivery })
+      runtime.emit({ type: 'turn.started', turnId: 't1', origin: 'user', clientMessageId: delivery.clientMessageId })
+      runtime.emit({ type: 'message.completed', itemId: 'a1', role: 'assistant', text: 'echo: hi', turnId: 't1' })
+      runtime.emit({ type: 'turn.ended', turnId: 't1', reason: 'end_turn' })
+      await settle(40)
+      ended = (await store.sessions.get('sess_1'))?.latestTurnEndSeq ?? null
+      return { outcome: 'accepted', turnId: 't1' }
+    }
+    let ended: number | null = null
+    await service.sendMessage({ sessionId: 'sess_1', clientMessageId: 'm1', content: 'hi' }, ctx())
+    await settle(120)
+    // The turn end was handled before the acceptance (the race this covers).
+    expect(ended).not.toBeNull()
+    const session = await store.sessions.get('sess_1')
+    expect(session).toMatchObject({ status: 'idle', activeTurn: null })
+    const summaries = (await store.outbox.pending(0, 100)).filter(record => record.kind === 'session.summary')
+    expect((summaries.at(-1)?.payload.summary as { status: string }).status).toBe('idle')
+  })
+
   it('pauses the queue after an errored turn until resume', async () => {
     await makeSession()
     await service.binding('sess_1')

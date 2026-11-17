@@ -15,6 +15,12 @@ export interface TurnQueue {
 
 /** A session's turns as the Runtime reports them: started, ended, or lost with the Runtime session. */
 export class TurnLifecycle {
+  /**
+   * The last turn that ended, per session. A prompt's acceptance can be handled after the Runtime already
+   * reported the whole turn (a fast reply); its start report must not reopen that turn.
+   */
+  private readonly ended = new Map<string, string>()
+
   public constructor(
     private readonly kernel: SessionKernel,
     private readonly bindings: RuntimeBindings,
@@ -25,11 +31,17 @@ export class TurnLifecycle {
   public async onTurnStarted(sessionId: string, turnId: string, clientMessageId: string | null): Promise<void> {
     const session = await this.kernel.requireSession(sessionId)
     if (session.activeTurn?.turnId === turnId && session.status === 'running') return
+    // Checked right before the patch is issued: an end recorded later queues its own patch after this one.
+    if (this.ended.get(sessionId) === turnId) {
+      if (clientMessageId !== null) await this.deliveries.settleDeliveryStarted(sessionId, clientMessageId, null)
+      return
+    }
     await this.kernel.patchSession(sessionId, { status: 'running', activeTurn: { turnId, clientMessageId, startedAt: this.kernel.deps.clock.nowIso() } })
     if (clientMessageId !== null) await this.deliveries.settleDeliveryStarted(sessionId, clientMessageId, null)
   }
 
-  public async onTurnEnded(sessionId: string, _turnId: string, outcome: 'completed' | 'interrupted' | 'failed', _message: string | null): Promise<void> {
+  public async onTurnEnded(sessionId: string, turnId: string, outcome: 'completed' | 'interrupted' | 'failed', _message: string | null): Promise<void> {
+    this.ended.set(sessionId, turnId)
     const deps = this.kernel.deps
     const after = statusAfterTurn(outcome)
     const at = deps.clock.nowIso()
