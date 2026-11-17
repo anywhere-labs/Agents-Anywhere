@@ -38,7 +38,7 @@ nonisolated enum RuntimeErrorText {
         case "configuration_mapping_unavailable": String(localized: "该旧选择没有唯一且无损的 Agent 配置映射。")
         case "device_pin_mismatch": String(localized: "设备身份与配对时不一致，请在设备上重新生成配对链接（手机上扫二维码）后再配对。")
         case "device_read_timeout": String(localized: "设备响应较慢，请稍后重试。")
-        case "device_upgrade_required": String(localized: "这台设备上的 Agents Anywhere 版本过旧，Server 已不再保存会话内容。请在设备上升级 Agents Anywhere 后再打开会话。")
+        case "device_upgrade_required": String(localized: "这台设备上的 Agents Anywhere 版本过旧。请在设备上升级 Agents Anywhere，之后才能打开会话，使用终端、文件、Shell 和 Runtime 管理。")
         case "dsh_home_mismatch": String(localized: "这个 DSH 使用的是另一个数据目录，不服务此设备上的 DSH Runtime。")
         case "e2ee_downgrade_refused": String(localized: "这台设备要求端到端加密，已拒绝未加密的连接。")
         case "e2ee_handshake_failed": String(localized: "加密连接没有建立：设备可能重装过或身份已变化，请重新配对。")

@@ -84,7 +84,8 @@ internal fun DeviceAgentsSection(
         when {
             !state.loaded && state.loadFailed -> {
                 Text(
-                    text = state.loadErrorMessage ?: stringResource(R.string.device_runtime_load_failed),
+                    text = runtimeErrorText(LocalContext.current, state.loadErrorCode, state.loadErrorMessage)
+                        ?: stringResource(R.string.device_runtime_load_failed),
                     color = LocalAAColors.current.errorText,
                     fontSize = 12.5.sp,
                     fontWeight = FontWeight.SemiBold,

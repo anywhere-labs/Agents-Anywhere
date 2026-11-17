@@ -70,6 +70,15 @@ test("query failures do not create replacements and a later open retries the inv
   assert.deepEqual(f.store.getState("session").tabs.map(tab => tab.terminal.terminalId), ["recovered"])
 })
 
+test("a failed open shows the caller's text for the error on the pending tab", async () => {
+  const upgrade = Object.assign(new Error("Upgrade Agents Anywhere on this device to use this."), { code: "device_upgrade_required" })
+  const f = fixture({ operations: { async list() { throw upgrade } } })
+  const errorText = (error) => error.code === "device_upgrade_required" ? "upgrade the device" : String(error)
+  await assert.rejects(openWorkspaceTerminal({ ...f.options, errorText }), /Upgrade/)
+  assert.deepEqual(f.calls.create, [])
+  assert.equal(f.store.getState("session").tabs[0].error, "upgrade the device")
+})
+
 test("reload restores layout and active terminal from a fresh inventory, not cached processes", async () => {
   const f = fixture({ preference, terminals: [terminal("first"), terminal("second")] })
   await openWorkspaceTerminal({ ...f.options, restore: f.store.getTerminalPreference("session") })

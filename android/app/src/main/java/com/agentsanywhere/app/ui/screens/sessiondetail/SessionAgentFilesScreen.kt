@@ -102,6 +102,8 @@ import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.ui.designsystem.AuthErrorNotice
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
+import com.agentsanywhere.app.ui.designsystem.failureText
+import com.agentsanywhere.app.ui.designsystem.runtimeErrorText
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import com.agentsanywhere.app.ui.screens.files.RemoteFilePreviewDialog
 import com.composables.icons.lucide.Braces
@@ -199,7 +201,7 @@ internal fun SessionAgentFilesScreen(
                 path = request.path,
             )
                 .onSuccess { directory = it.canonicalRemotePaths(request, deviceOs) }
-                .onFailure { failure -> error = failure.message ?: loadFilesFailedMessage }
+                .onFailure { failure -> error = failureText(context, failure, loadFilesFailedMessage) }
             loading = false
         }
     }
@@ -266,7 +268,7 @@ internal fun SessionAgentFilesScreen(
                 cacheDir = context.cacheDir,
             )
                 .onSuccess { imageFile = it.file }
-                .onFailure { failure -> previewError = failure.message ?: openFileFailedMessage }
+                .onFailure { failure -> previewError = failureText(context, failure, openFileFailedMessage) }
         } else {
             val requestRoot = remoteRootForPath(
                 targetPath = filePath,
@@ -287,7 +289,7 @@ internal fun SessionAgentFilesScreen(
                         preview = text
                     }
                 }
-                .onFailure { failure -> previewError = failure.message ?: openFileFailedMessage }
+                .onFailure { failure -> previewError = failureText(context, failure, openFileFailedMessage) }
         }
         previewLoading = false
     }
@@ -463,7 +465,7 @@ internal fun DeviceFilesContent(
                         resolvedRoot
                     }
                 }
-                .onFailure { failure -> error = failure.message ?: loadFilesFailedMessage }
+                .onFailure { failure -> error = failureText(context, failure, loadFilesFailedMessage) }
             loading = false
         }
     }
@@ -511,7 +513,7 @@ internal fun DeviceFilesContent(
                 cacheDir = context.cacheDir,
             )
                 .onSuccess { imageFile = it.file }
-                .onFailure { failure -> previewError = failure.message ?: openFileFailedMessage }
+                .onFailure { failure -> previewError = failureText(context, failure, openFileFailedMessage) }
         } else {
             val requestRoot = remoteRootForPath(
                 targetPath = filePath,
@@ -531,7 +533,7 @@ internal fun DeviceFilesContent(
                         preview = text
                     }
                 }
-                .onFailure { failure -> previewError = failure.message ?: openFileFailedMessage }
+                .onFailure { failure -> previewError = failureText(context, failure, openFileFailedMessage) }
         }
         previewLoading = false
     }
@@ -627,13 +629,14 @@ internal fun TerminalContent(
     val shortcutsVisible = imeBottomPx > 0
     val terminalBottomInset = 24.dp + if (shortcutsVisible) imeBottom + 88.dp else 0.dp
     val background = if (darkMode) Color(0xFF09090B) else Color(0xFFFEFDFB)
+    val terminalMessage = runtimeErrorText(LocalContext.current, terminalState.errorCode, terminalState.message)
     val statusText = when (terminalState.status) {
         RemoteTerminalStatus.Idle -> null
         RemoteTerminalStatus.Connecting -> stringResource(R.string.files_terminal_connecting)
         RemoteTerminalStatus.Open -> null
-        RemoteTerminalStatus.Closed -> terminalState.message ?: stringResource(R.string.files_terminal_disconnected)
-        RemoteTerminalStatus.Exited -> terminalState.message ?: stringResource(R.string.files_terminal_exited)
-        RemoteTerminalStatus.Error -> terminalState.message ?: stringResource(R.string.files_terminal_error)
+        RemoteTerminalStatus.Closed -> terminalMessage ?: stringResource(R.string.files_terminal_disconnected)
+        RemoteTerminalStatus.Exited -> terminalMessage ?: stringResource(R.string.files_terminal_exited)
+        RemoteTerminalStatus.Error -> terminalMessage ?: stringResource(R.string.files_terminal_error)
     }
     val reconnectable = canReconnect && (
         terminalState.status == RemoteTerminalStatus.Closed ||

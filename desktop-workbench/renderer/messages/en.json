@@ -2664,7 +2664,7 @@
     "configuration_mapping_unavailable": "This earlier selection has no exact agent configuration mapping.",
     "device_pin_mismatch": "The device identity does not match the one you paired with. Create a new pairing link on the device (scan the QR code on a phone) and pair again.",
     "device_read_timeout": "The device is responding slowly. Try again shortly.",
-    "device_upgrade_required": "Agents Anywhere on this device is out of date, and the server no longer stores session content. Upgrade Agents Anywhere on the device to open this session.",
+    "device_upgrade_required": "Agents Anywhere on this device is out of date. Upgrade Agents Anywhere on the device to open sessions and use the terminal, files, shell and Runtime management.",
     "dsh_home_mismatch": "This DSH uses a different data directory and does not serve the DSH runtime on this device.",
     "e2ee_downgrade_refused": "This device requires end-to-end encryption; the unencrypted connection was refused.",
     "e2ee_handshake_failed": "The encrypted connection could not be set up. The device may have been reinstalled; pair with it again.",

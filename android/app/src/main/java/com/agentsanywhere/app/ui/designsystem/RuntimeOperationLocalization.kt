@@ -39,14 +39,21 @@ internal fun runtimeOperationErrorMessage(context: android.content.Context, erro
         }
     } else runtimeErrorText(context, runtimeErrorCode(error), error.message) ?: context.getString(fallback)
 
-/** The stable code an API, workflow or native-history failure carries, if any. */
-internal fun runtimeErrorCode(error: Throwable): String? = when (error) {
-    is ApiException -> error.errorCode
-    is RuntimeOperationFailure -> error.code
-    is NativeHistoryRejected -> error.code
-    else -> null
-}
+/** The stable code an API, workflow or native-history failure carries, if any, also when wrapped as a cause. */
+internal fun runtimeErrorCode(error: Throwable): String? =
+    generateSequence(error) { it.cause }.take(8).firstNotNullOfOrNull { failure ->
+        when (failure) {
+            is ApiException -> failure.errorCode
+            is RuntimeOperationFailure -> failure.code
+            is NativeHistoryRejected -> failure.code
+            else -> null
+        }
+    }
 
 /** Localized text for a known code; otherwise the server or Connector [fallback] message. */
 internal fun runtimeErrorText(context: android.content.Context, code: String?, fallback: String?): String? =
     runtimeErrorRes(code)?.let(context::getString) ?: fallback
+
+/** Localized text for a failure with a known code; otherwise its message, then [fallback]. */
+internal fun failureText(context: android.content.Context, error: Throwable, fallback: String): String =
+    runtimeErrorText(context, runtimeErrorCode(error), error.message) ?: fallback

@@ -117,6 +117,9 @@ class FilePreviewKindTest {
         assertEquals(RemoteFileFailure.TooLarge, remoteFileFailure(ApiException("The file is too large to preview.", 413)))
         assertEquals(RemoteFileFailure.NotFound, remoteFileFailure(ApiException("file not found: /ws/报告.pdf", 502)))
         assertEquals(RemoteFileFailure.DeviceOffline, remoteFileFailure(ApiException("connector is offline", 409)))
+        val upgrade = ApiException("Upgrade Agents Anywhere on this device to use this.", 409, errorCode = "device_upgrade_required")
+        assertEquals(RemoteFileFailure.DeviceUpgradeRequired, remoteFileFailure(upgrade))
+        assertEquals(RemoteFileFailure.DeviceUpgradeRequired, remoteFileFailure(IllegalStateException(upgrade.message, upgrade)))
         assertEquals(RemoteFileFailure.Other("transfer not found"), remoteFileFailure(ApiException("transfer not found", 404)))
         assertEquals(RemoteFileFailure.Other(null), remoteFileFailure(IllegalStateException()))
     }

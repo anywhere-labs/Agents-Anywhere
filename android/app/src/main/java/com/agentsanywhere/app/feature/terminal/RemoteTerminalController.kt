@@ -139,6 +139,7 @@ class RemoteTerminalController(
                 state.value = RemoteTerminalState(
                     status = RemoteTerminalStatus.Error,
                     message = error.message ?: "Could not open terminal.",
+                    errorCode = terminalErrorCode(error),
                 )
             }
     }
@@ -182,6 +183,7 @@ class RemoteTerminalController(
                 state.value = RemoteTerminalState(
                     status = RemoteTerminalStatus.Error,
                     message = error.message ?: "Could not open terminal.",
+                    errorCode = terminalErrorCode(error),
                 )
             }
     }
@@ -358,6 +360,7 @@ class RemoteTerminalController(
                     state.value = RemoteTerminalState(
                         status = RemoteTerminalStatus.Closed,
                         message = error.message ?: "Could not connect to terminal.",
+                        errorCode = terminalErrorCode(error),
                     )
                     if (error is ApiException && error.statusCode == 401) {
                         manuallyClosed = true
@@ -824,7 +827,13 @@ internal fun isUnauthorizedTerminalConnection(
 data class RemoteTerminalState(
     val status: RemoteTerminalStatus = RemoteTerminalStatus.Idle,
     val message: String? = null,
+    /** Stable error code of the failure behind [message], for localized text. */
+    val errorCode: String? = null,
 )
+
+/** The stable code of an API failure, also when wrapped as a cause. */
+internal fun terminalErrorCode(error: Throwable): String? =
+    generateSequence(error) { it.cause }.take(8).firstNotNullOfOrNull { (it as? ApiException)?.errorCode }
 
 data class TerminalModifierState(
     val ctrl: Boolean = false,

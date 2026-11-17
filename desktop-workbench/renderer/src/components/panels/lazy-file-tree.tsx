@@ -39,6 +39,8 @@ type LazyFileTreeProps = {
   onExpandedPathsChange?: (paths: string[]) => void
   labels: LazyFileTreeLabels
   loadDirectory: (path: string) => Promise<FsListResult>
+  /** Text shown for a directory that fails to load; defaults to the error's message. */
+  errorText?: (error: unknown) => string
   onOpenFile: (entry: FsEntry) => void
   onKeepFileOpen?: (entry: FsEntry) => void
   onContextEntryChange?: (entry: FsEntry | null) => void
@@ -51,6 +53,10 @@ type TreeStyle = React.CSSProperties & {
 }
 
 const MAX_VISUAL_DEPTH = 12
+
+function defaultErrorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
 const INDENT_PX = 20
 
 export function LazyFileTree({
@@ -72,6 +78,7 @@ export function LazyFileTree({
   onExpandedPathsChange,
   labels,
   loadDirectory,
+  errorText = defaultErrorText,
   onOpenFile,
   onKeepFileOpen,
   onContextEntryChange,
@@ -186,11 +193,11 @@ export function LazyFileTree({
         replaceBranchState(key, {
           status: "error",
           requestId,
-          message: error instanceof Error ? error.message : String(error),
+          message: errorText(error),
         })
       }
     },
-    [caseInsensitivePaths, keyForPath, loadDirectory, replaceBranchState],
+    [caseInsensitivePaths, errorText, keyForPath, loadDirectory, replaceBranchState],
   )
 
   React.useEffect(() => {

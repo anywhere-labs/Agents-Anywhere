@@ -10,6 +10,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { LoadingState } from "@/components/loading-state"
 import { dashboardApi } from "@/features/dashboard/api"
 import type { FsEntry } from "@/features/dashboard/types"
+import { useErrorText } from "@/lib/runtime-error-text"
 
 export function FileBrowserDialog({
   open,
@@ -31,6 +32,7 @@ export function FileBrowserDialog({
   const t = useTranslations("dashboard.workspacePicker")
   const tNew = useTranslations("dashboard.new")
   const tCommon = useTranslations("common")
+  const errorText = useErrorText()
   const [currentPath, setCurrentPath] = React.useState("")
   const [inputPath, setInputPath] = React.useState("")
   const [entries, setEntries] = React.useState<FsEntry[]>([])
@@ -67,12 +69,12 @@ export function FileBrowserDialog({
       } catch (err) {
         if (request !== requestRef.current) return
         setEntries([])
-        setError(err instanceof Error ? err.message : t("loadFailed"))
+        setError(errorText(err, t("loadFailed")))
       } finally {
         if (request === requestRef.current) setLoading(false)
       }
     },
-    [connectorId, isWindowsConnector, t, tNew, token],
+    [connectorId, errorText, isWindowsConnector, t, tNew, token],
   )
 
   React.useEffect(() => {

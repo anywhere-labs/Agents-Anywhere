@@ -383,7 +383,9 @@ const val MAX_REMOTE_FILE_DOWNLOAD_BYTES = FilesApi.MAX_SAVE_BYTES
 fun remoteFileFailure(error: Throwable): RemoteFileFailure {
     val text = error.message.orEmpty()
     val status = (error as? ApiException)?.statusCode
+    val code = generateSequence(error) { it.cause }.take(8).firstNotNullOfOrNull { (it as? ApiException)?.errorCode }
     return when {
+        code == "device_upgrade_required" -> RemoteFileFailure.DeviceUpgradeRequired
         status == 413 -> RemoteFileFailure.TooLarge
         text.contains("not found", ignoreCase = true) && !text.contains("transfer", ignoreCase = true) ->
             RemoteFileFailure.NotFound

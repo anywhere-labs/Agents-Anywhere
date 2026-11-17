@@ -17,6 +17,7 @@ import {
   suggestedRuntimeInstanceName,
 } from "@/features/dashboard/runtime-instances"
 import type { DeviceRuntimeView, RuntimeTypeView } from "@/features/dashboard/types"
+import { useErrorText } from "@/lib/runtime-error-text"
 
 export function RuntimeAddDialog({
   runtimeType,
@@ -35,6 +36,7 @@ export function RuntimeAddDialog({
 }) {
   const t = useTranslations("dashboard.device")
   const tCommon = useTranslations("common")
+  const errorText = useErrorText()
   const [initial] = React.useState(() => {
     const existing = reconfigurableRuntimeInstance(runtimeType, runtimes)
     const otherRuntimes = runtimes.filter((runtime) => runtime.runtimeId !== existing?.runtimeId)
@@ -83,7 +85,7 @@ export function RuntimeAddDialog({
       toast.success(t("runtimeConfiguredAndStarted", { name: runtimeInstanceName(added) }))
       onOpenChange(false)
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : t("createRuntimeFailed")
+      const message = errorText(cause, t("createRuntimeFailed"))
       setError(message)
       toast.error(message)
       throw cause

@@ -23,5 +23,7 @@ class RuntimeErrorTextTest {
         assertEquals("pi_resume_failed", runtimeErrorCode(NativeHistoryRejected("pi_resume_failed", "x")))
         assertEquals("native_history_recovery_unconfirmed", runtimeErrorCode(RuntimeOperationFailure("native_history_recovery_unconfirmed", "x")))
         assertNull(runtimeErrorCode(IllegalStateException("plain")))
+        val upgrade = ApiException("Upgrade Agents Anywhere on this device to use this.", 409, errorCode = "device_upgrade_required")
+        assertEquals("device_upgrade_required", runtimeErrorCode(IllegalStateException("Could not load files.", upgrade)))
     }
 }

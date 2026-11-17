@@ -19,6 +19,8 @@ data class DeviceAgentsState(
     /** Set only while nothing has loaded yet; later failures are reported to the caller instead. */
     val loadFailed: Boolean = false,
     val loadErrorMessage: String? = null,
+    /** Stable error code behind [loadErrorMessage], for localized text. */
+    val loadErrorCode: String? = null,
 ) {
     val busy: Boolean
         get() = busyId != null
@@ -59,7 +61,7 @@ class DeviceAgentsController(
         val current = ++generation
         if (!quiet) {
             mutableState.update {
-                it.copy(loading = !discover || !it.loaded, discovering = discover, loadFailed = false, loadErrorMessage = null)
+                it.copy(loading = !discover || !it.loaded, discovering = discover, loadFailed = false, loadErrorMessage = null, loadErrorCode = null)
             }
         }
         var result = try {
@@ -95,6 +97,7 @@ class DeviceAgentsController(
                             discovering = false,
                             loadFailed = !state.loaded,
                             loadErrorMessage = error.message.takeIf { !state.loaded },
+                            loadErrorCode = (error as? ApiException)?.errorCode.takeIf { !state.loaded },
                         )
                     }
                 },
@@ -188,6 +191,8 @@ class DeviceAgentsController(
 
 /** Failures a Connector that just came online reports while it is still starting up. */
 internal fun Throwable.isTransientAgentFailure(): Boolean {
+    // A device that must be upgraded answers 409 until it is upgraded: retrying cannot help.
+    if ((this as? ApiException)?.errorCode == "device_upgrade_required") return false
     val status = (this as? ApiException)?.statusCode ?: return cause is IOException || this is IOException
     return status == 0 || status == 408 || status == 409 || status == 425 || status == 429 || status >= 500
 }

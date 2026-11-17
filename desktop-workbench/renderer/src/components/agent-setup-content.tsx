@@ -14,6 +14,7 @@ import { runtimeErrorReason } from '@/features/dashboard/runtime-status-presenta
 import type { DeviceRuntimeView, RuntimeTypeView } from '@/features/dashboard/types'
 import { isApiError } from '@/lib/api/errors'
 import { isTransientHttpStatus } from '@/lib/retry'
+import { useErrorText } from '@/lib/runtime-error-text'
 
 /** Page content shared by onboarding and the existing quick-add dialog. */
 export function AgentSetupContent({ connector, onContinue, onSkip, onChanged, continueLabel, presentation = 'default', onBusyChange, onActionBusyChange }: {
@@ -30,6 +31,7 @@ export function AgentSetupContent({ connector, onContinue, onSkip, onChanged, co
   const t = useTranslations('dashboard.pairDevice')
   const tReminder = useTranslations('agentReminder')
   const tDevice = useTranslations('dashboard.device')
+  const errorText = useErrorText()
   const [overview, setOverview] = React.useState<ConnectorRuntimeOverview>({ runtimes: [], runtimeTypes: [] })
   const [loading, setLoading] = React.useState(true)
   const [waitingOnline, setWaitingOnline] = React.useState(false)
@@ -61,18 +63,19 @@ export function AgentSetupContent({ connector, onContinue, onSkip, onChanged, co
         setOverview(next); setLoading(false)
       } catch (error) {
         if (current !== generation.current) return
-        if (isApiError(error) && (isTransientHttpStatus(error.status) || error.status === 409)) {
+        // A device that must be upgraded stays that way: report it instead of waiting.
+        if (isApiError(error) && error.code !== 'device_upgrade_required' && (isTransientHttpStatus(error.status) || error.status === 409)) {
           setWaitingOnline(true)
           timer = setTimeout(() => void load(), 2000)
           return
         }
-        setError(error instanceof Error ? error.message : t('errors.discoverRuntimesFailed'))
+        setError(errorText(error, t('errors.discoverRuntimesFailed')))
         setLoadFailed(true); setLoading(false)
       }
     }
     void load()
     return () => { generation.current++; clearTimeout(timer) }
-  }, [connector.id, reload, session?.accessToken, t])
+  }, [connector.id, errorText, reload, session?.accessToken, t])
 
   const runAction = async (runtimeType: string, action: (update: (runtime: DeviceRuntimeView) => void) => Promise<DeviceRuntimeView>) => {
     if (busyRef.current) return
@@ -86,7 +89,7 @@ export function AgentSetupContent({ connector, onContinue, onSkip, onChanged, co
       update(await action(update))
       if (current === generation.current) onChanged?.()
     } catch (error) {
-      if (current === generation.current) setError(error instanceof Error ? error.message : t('errors.configureAndStartFailed'))
+      if (current === generation.current) setError(errorText(error, t('errors.configureAndStartFailed')))
     } finally {
       busyRef.current = false
       if (current === generation.current) setAddingType(null)

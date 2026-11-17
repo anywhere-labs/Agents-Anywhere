@@ -13,6 +13,7 @@ import { Separator } from "@/components/ui/separator"
 import { dashboardApi } from "@/features/dashboard/api"
 import type { TerminalView } from "@/features/dashboard/types"
 import { apiPath, apiWebSocketUrl } from "@/lib/api"
+import { useErrorText } from "@/lib/runtime-error-text"
 import { openTerminalStream, type TerminalStream } from "@/lib/transport/terminal-stream"
 import { cn } from "@/lib/utils"
 import { ChevronExternal } from "./runtime-icons"
@@ -35,6 +36,7 @@ export function TerminalPanelBody({
   onPopOut,
 }: TerminalPanelBodyProps) {
   const t = useTranslations("dashboard.panels.terminal")
+  const errorText = useErrorText()
   const effectiveRoot = root?.trim() || "."
   const [terms, setTerms] = React.useState<TerminalView[]>([])
   const [activeId, setActiveId] = React.useState<string | null>(null)
@@ -92,7 +94,7 @@ export function TerminalPanelBody({
         setTerms([created.result])
         setActiveId(created.result.terminalId)
       } catch (err) {
-        if (!cancelled && generation === generationRef.current) setError(err instanceof Error ? err.message : String(err))
+        if (!cancelled && generation === generationRef.current) setError(errorText(err))
       }
     })()
     return () => {
@@ -113,11 +115,11 @@ export function TerminalPanelBody({
       setTerms((prev) => [...prev, response.result])
       setActiveId(response.result.terminalId)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(errorText(err))
     } finally {
       setBusy(false)
     }
-  }, [connectorId, effectiveRoot, t, token])
+  }, [connectorId, effectiveRoot, errorText, t, token])
 
   const cancelScheduledRename = React.useCallback(() => {
     if (renameTimerRef.current === null) return
@@ -141,7 +143,7 @@ export function TerminalPanelBody({
       try {
         await dashboardApi.connectorTerminalCloseV2(token, connectorId, terminalId)
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err))
+        setError(errorText(err))
       }
       setTerms((prev) => {
         const next = prev.filter((term) => term.terminalId !== terminalId)
@@ -149,7 +151,7 @@ export function TerminalPanelBody({
         return next
       })
     },
-    [activeId, cancelScheduledRename, connectorId, token],
+    [activeId, cancelScheduledRename, connectorId, errorText, token],
   )
 
   const renameTerminal = React.useCallback(
@@ -165,10 +167,10 @@ export function TerminalPanelBody({
           prev.map((term) => (term.terminalId === terminalId ? { ...term, ...response.result } : term)),
         )
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err))
+        setError(errorText(err))
       }
     },
-    [connectorId, token],
+    [connectorId, errorText, token],
   )
 
   const handleTerminalError = React.useCallback((message: string) => {
@@ -450,6 +452,7 @@ function XtermHost({
   onError: (message: string) => void
 }) {
   const t = useTranslations("dashboard.panels.terminal")
+  const errorText = useErrorText()
   const { resolvedTheme } = useTheme()
   const hostRef = React.useRef<HTMLDivElement | null>(null)
   const terminalRef = React.useRef<import("@xterm/xterm").Terminal | null>(null)
@@ -585,7 +588,7 @@ function XtermHost({
         if (!cancelled && !exitPrinted) setStatus("connecting")
       }
     })().catch((err) => {
-      if (!cancelled) onError(err instanceof Error ? err.message : String(err))
+      if (!cancelled) onError(errorText(err))
     })
 
     return () => {
@@ -596,7 +599,7 @@ function XtermHost({
       if (terminalRef.current === term) terminalRef.current = null
       term?.dispose()
     }
-  }, [connectorId, onError, t, terminal.terminalId, token])
+  }, [connectorId, errorText, onError, t, terminal.terminalId, token])
 
   React.useEffect(() => {
     if (!active) return

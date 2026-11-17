@@ -71,5 +71,7 @@ sealed interface RemoteFileFailure {
     data object NotFound : RemoteFileFailure
     data object TooLarge : RemoteFileFailure
     data object DeviceOffline : RemoteFileFailure
+    /** Agents Anywhere on the device must be upgraded before its files can be read. */
+    data object DeviceUpgradeRequired : RemoteFileFailure
     data class Other(val message: String?) : RemoteFileFailure
 }

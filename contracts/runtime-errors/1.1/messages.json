@@ -135,8 +135,8 @@
       "en": "The device is responding slowly. Try again shortly."
     },
     "device_upgrade_required": {
-      "zh-CN": "这台设备上的 Agents Anywhere 版本过旧，Server 已不再保存会话内容。请在设备上升级 Agents Anywhere 后再打开会话。",
-      "en": "Agents Anywhere on this device is out of date, and the server no longer stores session content. Upgrade Agents Anywhere on the device to open this session."
+      "zh-CN": "这台设备上的 Agents Anywhere 版本过旧。请在设备上升级 Agents Anywhere，之后才能打开会话，使用终端、文件、Shell 和 Runtime 管理。",
+      "en": "Agents Anywhere on this device is out of date. Upgrade Agents Anywhere on the device to open sessions and use the terminal, files, shell and Runtime management."
     },
     "dsh_home_mismatch": {
       "zh-CN": "这个 DSH 使用的是另一个数据目录，不服务此设备上的 DSH Runtime。",

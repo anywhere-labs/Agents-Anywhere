@@ -56,6 +56,7 @@ import { dashboardApi } from "@/features/dashboard/api"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { isApiError } from "@/lib/api/errors"
 import { createClientId } from "@/lib/id"
+import { useErrorText } from "@/lib/runtime-error-text"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 import { openWorkspaceTerminal } from "./session-terminal-lifecycle"
@@ -131,6 +132,7 @@ export function useSessionToolSidebar({
   const toggleSidebar = React.useCallback(() => dispatch({ type: "toggle-sidebar" }), [dispatch])
   const collapseSidebar = React.useCallback(() => dispatch({ type: "collapse-sidebar" }), [dispatch])
   const toggleExpanded = React.useCallback(() => dispatch({ type: "toggle-expanded" }), [dispatch])
+  const errorText = useErrorText()
   const openTerminal = React.useCallback((restore?: SessionTerminalPreference) => {
     if (!sessionId || !userId || !token || !connectorId || store.isShuttingDown()) return Promise.resolve()
     store.setContext(sessionId, {
@@ -139,6 +141,7 @@ export function useSessionToolSidebar({
     })
     return openWorkspaceTerminal({
       store, sessionId, userId, connectorId, root: effectiveRoot, label: terminalLabel, restore,
+      errorText,
       operations: {
         list: async () => (await dashboardApi.connectorTerminalListV2(token, connectorId)).result.terminals,
         create: async (label) => (await dashboardApi.connectorTerminalCreateV2(token, connectorId, effectiveRoot, {
@@ -147,7 +150,7 @@ export function useSessionToolSidebar({
         close: (terminalId) => closeTerminalWithRetry(token, connectorId, terminalId),
       },
     })
-  }, [connectorId, effectiveRoot, sessionId, store, terminalLabel, token, userId])
+  }, [connectorId, effectiveRoot, errorText, sessionId, store, terminalLabel, token, userId])
 
   React.useEffect(() => {
     if (!restoreOnMount || !sessionId) return
@@ -175,9 +178,9 @@ export function useSessionToolSidebar({
     }
 
     void openTerminal().catch((error: unknown) => {
-      if (!store.isShuttingDown()) onTerminalError?.(error instanceof Error ? error.message : String(error))
+      if (!store.isShuttingDown()) onTerminalError?.(errorText(error))
     })
-  }, [dispatch, onTerminalError, openTerminal, sessionId, store])
+  }, [dispatch, errorText, onTerminalError, openTerminal, sessionId, store])
   const openFilePreview = React.useCallback((target: SessionFilePreviewTarget, options?: SessionFileOpenOptions) => {
     if (!sessionId || store.isShuttingDown()) return
     const tabId = createClientId("files_preview")
@@ -207,12 +210,12 @@ export function useSessionToolSidebar({
       store.removeTerminal(connectorId, terminalId)
       return true
     } catch (error: unknown) {
-      onTerminalError?.(error instanceof Error ? error.message : String(error))
+      onTerminalError?.(errorText(error))
       return false
     } finally {
       closingTerminalIdsRef.current.delete(terminalId)
     }
-  }, [connectorId, dispatch, onTerminalError, sessionId, store, token, userId])
+  }, [connectorId, dispatch, errorText, onTerminalError, sessionId, store, token, userId])
   const setTabDirty = React.useCallback(
     (id: string, dirty: boolean) => dispatch({ type: "set-tab-dirty", id, dirty }), [dispatch],
   )

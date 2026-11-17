@@ -72,6 +72,7 @@ import type { FsEntry } from "@/features/dashboard/types"
 import { copyText } from "@/lib/clipboard"
 import { downloadBlob } from "@/lib/download"
 import { openNativeFilePreviewWindow } from "@/lib/file-preview-window"
+import { useErrorText } from "@/lib/runtime-error-text"
 import { cn } from "@/lib/utils"
 import { useTranslations } from "next-intl"
 
@@ -123,6 +124,7 @@ export function FilesPanelBody({
   const [entriesTruncated, setEntriesTruncated] = React.useState(false)
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+  const errorText = useErrorText()
   const [contextEntry, setContextEntry] = React.useState<FsEntry | null>(null)
   const [selectedFile, setSelectedFile] = React.useState<SessionFilePreviewTarget | null>(
     initialFile ?? null,
@@ -187,12 +189,12 @@ export function FilesPanelBody({
         setPath(resolvedPath)
       } catch (err) {
         if (requestId !== loadRequestIdRef.current) return
-        setError(err instanceof Error ? err.message : String(err))
+        setError(errorText(err))
       } finally {
         if (requestId === loadRequestIdRef.current) setLoading(false)
       }
     },
-    [connectorId, directoryContext, effectiveRoot, isWindowsConnector, token],
+    [connectorId, directoryContext, effectiveRoot, errorText, isWindowsConnector, token],
   )
 
   React.useEffect(() => {
@@ -362,7 +364,7 @@ export function FilesPanelBody({
         })
       } catch (err) {
         if (requestId !== loadRequestIdRef.current) return
-        setError(err instanceof Error ? err.message : String(err))
+        setError(errorText(err))
         setSelectedFile(initialFile ?? null)
       } finally {
         if (requestId === loadRequestIdRef.current) setLoading(false)
@@ -370,7 +372,7 @@ export function FilesPanelBody({
     }
 
     void initialize()
-  }, [canLoad, connectorId, directoryContext, effectiveRoot, initialFile, isWindowsConnector, loadDir, treeAllowed])
+  }, [canLoad, connectorId, directoryContext, effectiveRoot, errorText, initialFile, isWindowsConnector, loadDir, treeAllowed])
 
   const parentPath = React.useMemo(
     () => sessionFileParentPath(currentPath || path),
@@ -459,7 +461,7 @@ export function FilesPanelBody({
       await copyText(contextPath)
       toast.success(t("pathCopied"))
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : t("copyPathFailed"))
+      toast.error(errorText(err, t("copyPathFailed")))
     }
   }
 
@@ -477,7 +479,7 @@ export function FilesPanelBody({
       const file = await dashboardApi.connectorFsReadBlob(token, connectorId, effectiveRoot, contextEntry.path)
       downloadBlob(file.blob, file.name || contextEntry.name)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : t("downloadFailed"))
+      toast.error(errorText(err, t("downloadFailed")))
     }
   }
 
@@ -564,6 +566,7 @@ export function FilesPanelBody({
               entries={sortedEntries}
               rootLoading={loading}
               rootError={error}
+              errorText={errorText}
               rootTruncated={entriesTruncated}
               canLoad={canLoad}
               caseInsensitivePaths={isWindowsConnector}

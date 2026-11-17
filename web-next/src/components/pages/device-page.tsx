@@ -41,6 +41,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import { useErrorText } from "@/lib/runtime-error-text"
 import { cn } from "@/lib/utils"
 import type {
   DeviceRuntimeStatus,
@@ -305,6 +306,7 @@ function runtimeListKey(runtimes: DeviceRuntimeView[]) {
 export function DevicePage() {
   const t = useTranslations("dashboard.device")
   const tCommon = useTranslations("common")
+  const errorText = useErrorText()
   const runtimeStatusLabel = (runtime: DeviceRuntimeView) => {
     if (runtimeIsNotStarted(runtime)) return t("runtimeNotStarted")
     const key = RUNTIME_STATUS_LABEL_KEYS[runtime.status]
@@ -396,7 +398,7 @@ export function DevicePage() {
         }
       })
       .catch((error) => {
-        if (!cancelled) toast.error(error instanceof Error ? error.message : t("loadRuntimesFailed"))
+        if (!cancelled) toast.error(errorText(error, t("loadRuntimesFailed")))
       })
       .finally(() => {
         if (!cancelled) setRuntimesLoading(false)
@@ -452,7 +454,7 @@ export function DevicePage() {
       }
       refreshData()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : t("setupFailed"))
+      toast.error(errorText(err, t("setupFailed")))
     } finally {
       setTokenActionBusy(false)
     }
@@ -474,7 +476,7 @@ export function DevicePage() {
       setEditingName(false)
       refreshData()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : t("renameFailed"))
+      toast.error(errorText(err, t("renameFailed")))
       setNameDraft(connector.name)
       setEditingName(false)
     }
@@ -505,7 +507,7 @@ export function DevicePage() {
       setRuntimes(overview.runtimes)
       setRuntimeTypes(overview.runtimeTypes)
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : t("discoverRuntimesFailed"))
+      toast.error(errorText(error, t("discoverRuntimesFailed")))
     } finally {
       setDiscoveringRuntimes(false)
     }
@@ -523,7 +525,7 @@ export function DevicePage() {
       setRuntimeTypes(overview.runtimeTypes)
       setConfigRuntime(overview.runtimes.find((item) => item.runtimeId === runtime.runtimeId) ?? runtime)
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : t("discoverRuntimesFailed"))
+      toast.error(errorText(error, t("discoverRuntimesFailed")))
       setConfigRuntime(runtime)
     } finally {
       setDiscoveringRuntimes(false)
@@ -543,7 +545,7 @@ export function DevicePage() {
       replaceRuntime(renamed)
       setRenameRuntime(null)
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : t("renameRuntimeFailed"))
+      toast.error(errorText(error, t("renameRuntimeFailed")))
       throw error
     } finally {
       setSavingRuntimeName(false)
@@ -563,7 +565,7 @@ export function DevicePage() {
       replaceRuntime(response)
       toast.success(t("runtimeConfigSaved", { name: runtimeInstanceName(runtime) }))
     } catch (error) {
-      const message = error instanceof Error ? error.message : t("saveRuntimeConfigFailed")
+      const message = errorText(error, t("saveRuntimeConfigFailed"))
       toast.error(message)
       throw error
     } finally {
@@ -591,7 +593,7 @@ export function DevicePage() {
       replaceRuntime(started)
       toast.success(t("runtimeConfiguredAndStarted", { name: runtimeInstanceName(runtime) }))
     } catch (error) {
-      const message = error instanceof Error ? error.message : t("configureAndStartRuntimeFailed")
+      const message = errorText(error, t("configureAndStartRuntimeFailed"))
       toast.error(message)
       throw error
     } finally {
@@ -625,7 +627,7 @@ export function DevicePage() {
         .catch(() => null)
       replaceRuntime(authoritative ?? previous)
       const reason = authoritative ? runtimeErrorReason(authoritative) : null
-      toast.error(reason ?? (error instanceof Error ? error.message : t("runtimeActionFailed")))
+      toast.error(reason ?? errorText(error, t("runtimeActionFailed")))
     } finally {
       setRuntimeActionId(null)
     }
@@ -643,7 +645,7 @@ export function DevicePage() {
       setRuntimes((current) => runtimeInstancesAfterDeletion(current, removeRuntime.runtimeId, response))
       setRemoveRuntime(null)
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : t("deleteRuntimeConfigFailed"))
+      toast.error(errorText(error, t("deleteRuntimeConfigFailed")))
     } finally {
       setRuntimeActionId(null)
     }
@@ -683,7 +685,7 @@ export function DevicePage() {
       closeSelectMode()
       refreshData()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : t("bulkArchiveFailed"))
+      toast.error(errorText(err, t("bulkArchiveFailed")))
     } finally {
       setBulkBusy(false)
     }
@@ -702,7 +704,7 @@ export function DevicePage() {
       closeSelectMode()
       refreshData()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : t("bulkArchiveFailed"))
+      toast.error(errorText(err, t("bulkArchiveFailed")))
     } finally {
       setBulkBusy(false)
     }

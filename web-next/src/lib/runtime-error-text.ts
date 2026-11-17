@@ -34,3 +34,19 @@ export function useRuntimeErrorText() {
     return failure.message || fallback
   }, [t])
 }
+
+/**
+ * Text for a caught error in the UI language: a known code uses its `runtimeErrors`
+ * entry, otherwise the error's own message, then the fallback. The returned function
+ * keeps one identity, so callbacks and effects can call it without depending on it.
+ */
+export function useErrorText() {
+  const text = useRuntimeErrorText()
+  const textRef = React.useRef(text)
+  React.useEffect(() => {
+    textRef.current = text
+  }, [text])
+  return React.useCallback((error: unknown, fallback?: string): string => (
+    textRef.current(runtimeFailureOf(error), fallback) ?? String(error)
+  ), [])
+}

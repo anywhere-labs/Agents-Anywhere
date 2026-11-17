@@ -33,6 +33,7 @@ import { Switch } from "@/components/ui/switch"
 import { MonacoCodeView, type MonacoCodeViewApi } from "@/components/monaco-code-view"
 import { filePreviewLocation, type FilePreviewLocation } from "@/lib/file-preview-location"
 import { openNativeFilePreviewWindow } from "@/lib/file-preview-window"
+import { useErrorText } from "@/lib/runtime-error-text"
 import { dashboardApi } from "@/features/dashboard/api"
 import { loadStoredSession } from "@/features/auth/session"
 import type { FsEntry, FsPreviewSessionResponse, FsReadTextResult } from "@/features/dashboard/types"
@@ -178,6 +179,7 @@ export function FilePreviewSurface({
 }: FilePreviewSurfaceProps) {
   const t = useTranslations("preview")
   const tCommon = useTranslations("common")
+  const errorText = useErrorText()
   const tokenRef = React.useRef(token)
   tokenRef.current = token
   const translationRef = React.useRef(t)
@@ -369,7 +371,7 @@ export function FilePreviewSurface({
         }
       }
       if (!requestIsCurrent()) return
-      setState({ kind: "error", message: err instanceof Error ? err.message : String(err) })
+      setState({ kind: "error", message: errorText(err) })
     } finally {
       if (requestIsCurrent()) {
         setLoadedPath(path)
@@ -379,6 +381,7 @@ export function FilePreviewSurface({
   }, [
     canLoad,
     connectorId,
+    errorText,
     name,
     path,
     previewSession,
@@ -445,9 +448,9 @@ export function FilePreviewSurface({
         downloadBlob(blob, state.file.name || name)
       }
     } catch (err) {
-      setDownloadError(err instanceof Error ? err.message : String(err))
+      setDownloadError(errorText(err))
     }
-  }, [isScopedPreview, name, pendingFile, readOnlyPreview, sourceUrl, state, token])
+  }, [errorText, isScopedPreview, name, pendingFile, readOnlyPreview, sourceUrl, state, token])
 
   const handleSave = React.useCallback(async () => {
     if (pendingFile || readOnlyPreview || !token || state.kind !== "text" || !editorRef.current || !editMode) return false
@@ -479,13 +482,13 @@ export function FilePreviewSurface({
       window.setTimeout(() => setSavedFlash(false), 1500)
       return true
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
+      const message = errorText(err)
       setSaveError(message.includes("412") ? t("saveConflict") : message)
       return false
     } finally {
       setSaving(false)
     }
-  }, [connectorId, editMode, path, pendingFile, readOnlyPreview, root, state, t, token])
+  }, [connectorId, editMode, errorText, path, pendingFile, readOnlyPreview, root, state, t, token])
 
   const handleEmbeddedEditModeChange = React.useCallback(
     (checked: boolean) => {

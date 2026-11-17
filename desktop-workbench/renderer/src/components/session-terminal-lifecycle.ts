@@ -19,12 +19,14 @@ type OpenTerminalOptions = {
   label: string
   operations: TerminalOperations
   restore?: SessionTerminalPreference
+  /** Text shown on the tab when opening fails; defaults to the error's message. */
+  errorText?: (error: unknown) => string
 }
 
 const opening = new WeakMap<SessionToolSidebarStore, Map<string, { pendingId: string; task: Promise<void> }>>()
 
 export function openWorkspaceTerminal(options: OpenTerminalOptions): Promise<void> {
-  const { store, sessionId, userId, connectorId, root, label, operations, restore } = options
+  const { store, sessionId, userId, connectorId, root, label, operations, restore, errorText } = options
   if (store.isShuttingDown()) return Promise.resolve()
   const contextMatches = () => {
     const context = store.getContext(sessionId)
@@ -99,7 +101,7 @@ export function openWorkspaceTerminal(options: OpenTerminalOptions): Promise<voi
     if (contextMatches() && pendingExists()) {
       store.dispatch(sessionId, {
         type: "fail-terminal", id: pendingId,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorText ? errorText(error) : error instanceof Error ? error.message : String(error),
       })
     }
     throw error

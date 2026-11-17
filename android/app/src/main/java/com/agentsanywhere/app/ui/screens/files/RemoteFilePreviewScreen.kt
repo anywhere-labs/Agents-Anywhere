@@ -173,6 +173,7 @@ private fun RemoteFilePreviewPage(
         notFound = stringResource(R.string.file_preview_not_found),
         tooLarge = stringResource(R.string.file_preview_too_large, formatBytes(MAX_REMOTE_FILE_DOWNLOAD_BYTES)),
         offline = stringResource(R.string.file_preview_device_offline),
+        upgradeRequired = stringResource(R.string.runtime_error_device_upgrade_required),
         fallback = stringResource(R.string.file_preview_failed),
     )
 
@@ -688,6 +689,7 @@ private data class FilePreviewMessages(
     val notFound: String,
     val tooLarge: String,
     val offline: String,
+    val upgradeRequired: String,
     val fallback: String,
 )
 
@@ -696,6 +698,7 @@ private fun filePreviewErrorMessage(error: Throwable, messages: FilePreviewMessa
         RemoteFileFailure.NotFound -> messages.notFound
         RemoteFileFailure.TooLarge -> messages.tooLarge
         RemoteFileFailure.DeviceOffline -> messages.offline
+        RemoteFileFailure.DeviceUpgradeRequired -> messages.upgradeRequired
         is RemoteFileFailure.Other -> failure.message ?: messages.fallback
     }
 }
