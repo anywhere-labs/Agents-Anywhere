@@ -5,6 +5,7 @@
 //   node --experimental-transform-types --import ./test/support/ts-resolve.mjs test/support/e2e-device.ts \
 //     <home> pair <serverUrl>     # pair: prints the pairing code, saves credentials and starts once a client claims it
 //     <home> start                # start with saved credentials
+//     <home> pair-client          # next to a running start: prints the aa-pair:// code of a client pairing (encrypted mode)
 //
 // Environment: MESHCALL_ROUTER_BINARY (Router for local control), AGENT_CONNECTOR_WORKSPACE_ROOTS, HOME, PATH.
 // Exits cleanly on SIGTERM / SIGINT.
@@ -12,8 +13,8 @@ import { runCli } from '../../src/entry/cli.js'
 import { noVault } from '../../src/keystore/index.js'
 
 const [home, ...command] = process.argv.slice(2)
-if (home === undefined || (command[0] !== 'start' && command[0] !== 'pair')) {
-  process.stderr.write('usage: e2e-device.ts <home> (pair <serverUrl> | start)\n')
+if (home === undefined || (command[0] !== 'start' && command[0] !== 'pair' && command[0] !== 'pair-client')) {
+  process.stderr.write('usage: e2e-device.ts <home> (pair <serverUrl> | start | pair-client)\n')
   process.exit(64)
 }
 const argv = command[0] === 'pair' ? [...command, '--timeout', '60', '--poll-interval', '0.2'] : command
