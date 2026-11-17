@@ -53,7 +53,13 @@ export class TurnLifecycle {
   }
 
   public onLiveFact(sessionId: string, event: LiveFact): void {
-    this.kernel.emitSessionStatus(sessionId, { event: event.type, fact: event as unknown as Record<string, unknown> })
+    const fact = event as unknown as Record<string, unknown>
+    // `config.updated` carries its options in the status itself (device-meshcall 1.0 `ConfigUpdatedStatus`).
+    if (event.type === 'config.updated') {
+      this.kernel.emitSessionStatus(sessionId, { event: event.type, options: event.options as unknown as Record<string, unknown>[], fact })
+      return
+    }
+    this.kernel.emitSessionStatus(sessionId, { event: event.type, fact })
   }
 
   /** The Runtime session ended under us: the running turn fails with an unknown outcome; nothing is resent. */

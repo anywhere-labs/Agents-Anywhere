@@ -235,6 +235,19 @@ describe('runtime events', () => {
     expect(await store.interactions.list('sess_1', true)).toEqual([])
   })
 
+  it('reports Runtime live facts as runtime.status, with config.updated options in the status itself', async () => {
+    await makeSession()
+    await service.binding('sess_1')
+    const runtime = sessions[0]!
+    const options = [{ id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: 'm1' }] as const
+    runtime.emit({ type: 'config.updated', options })
+    runtime.emit({ type: 'commands.updated', commands: [{ name: 'review' }] })
+    await settle(40)
+    const statuses = live.filter(event => event.method === 'runtime.status').map(event => event.payload)
+    expect(statuses).toContainEqual({ runtimeId: 'rti_pi', sessionId: 'sess_1', status: { event: 'config.updated', options, fact: { type: 'config.updated', options } } })
+    expect(statuses).toContainEqual({ runtimeId: 'rti_pi', sessionId: 'sess_1', status: { event: 'commands.updated', fact: { type: 'commands.updated', commands: [{ name: 'review' }] } } })
+  })
+
   it('replaces the history on history.reset and raises the fence', async () => {
     await makeSession()
     await service.binding('sess_1')
