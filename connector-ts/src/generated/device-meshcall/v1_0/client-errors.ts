@@ -94,6 +94,24 @@ export const CLIENT_ERROR_RULES = [
     }
   },
   {
+    "case": "response_too_large",
+    "command": {
+      "code": "response_too_large",
+      "offlineAnswer": false,
+      "receipt": "settle",
+      "retryable": false,
+      "status": 500
+    },
+    "description": "The answer exceeds MAX_RESPONSE_BYTES; the device answers it instead of the body, or the Server stops reading.",
+    "read": {
+      "code": "response_too_large",
+      "offlineAnswer": false,
+      "receipt": "none",
+      "retryable": false,
+      "status": 500
+    }
+  },
+  {
     "case": "response_invalid",
     "command": {
       "code": "device_response_invalid",
@@ -131,6 +149,7 @@ export const DEVICE_CODE_STATUS: Readonly<Record<string, number>> = {
   "plan_document_not_found": 404,
   "precondition_failed": 412,
   "queue_item_not_found": 404,
+  "response_too_large": 500,
   "runtime_unavailable": 503,
   "session_not_found": 404,
   "terminal_not_found": 404

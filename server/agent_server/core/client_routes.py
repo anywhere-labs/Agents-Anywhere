@@ -363,7 +363,13 @@ def check_table() -> list[str]:
 # ---------------------------------------------------------------------------
 
 ClientFailureCase = Literal[
-    "device_answered", "not_delivered", "outcome_unknown", "device_busy", "request_too_large", "response_invalid"
+    "device_answered",
+    "not_delivered",
+    "outcome_unknown",
+    "device_busy",
+    "request_too_large",
+    "response_too_large",
+    "response_invalid",
 ]
 ReceiptAction = Literal["settle", "delete", "unknown", "none"]
 
@@ -421,6 +427,13 @@ CLIENT_ERROR_RULES: tuple[ClientErrorRule, ...] = (
         command=ClientErrorOutcome(status=413, code="request_too_large"),
     ),
     ClientErrorRule(
+        case="response_too_large",
+        description="The answer exceeds MAX_RESPONSE_BYTES; the device answers it instead of the body, or the Server "
+        "stops reading.",
+        read=ClientErrorOutcome(status=500, code="response_too_large"),
+        command=ClientErrorOutcome(status=500, code="response_too_large", receipt="settle"),
+    ),
+    ClientErrorRule(
         case="response_invalid",
         description="The device's answer does not match the route's response model.",
         read=ClientErrorOutcome(status=502, code="device_response_invalid"),
@@ -446,6 +459,7 @@ DEVICE_CODE_STATUS: dict[str, int] = {
     "precondition_failed": 412,
     "if_match_failed": 412,
     "runtime_unavailable": 503,
+    "response_too_large": 500,
     "internal": 500,
 }
 DEVICE_CODE_DEFAULT_STATUS = 409

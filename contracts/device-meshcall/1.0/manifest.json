@@ -738,7 +738,7 @@
     },
     {
       "path": "client-errors.json",
-      "sha256": "f2a6241337f07f1c8486c81cee06a1e2a1f497b26424c5c756ae4341bb65d7c3"
+      "sha256": "71c71b444617f145013568588e0e05f455463cad15a085013196d2bea95b99f3"
     }
   ],
   "jsonSchemaDraft": "https://json-schema.org/draft/2020-12/schema",
