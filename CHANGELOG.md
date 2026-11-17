@@ -10,6 +10,7 @@
 
 ### 会话创建与消息交付
 
+- ACP Agent 的思考内容会与助手正文分开展示，并支持折叠查看；Pi 已导入的会话也会按同样方式显示，只发图片不带文字的消息不再从时间线里消失。（[#736](https://github.com/anywhere-labs/Agents-Anywhere/pull/736)）
 - Agent 运行中，Web、Desktop、Android 和 iOS 都可以继续发送消息：消息会排队，当前任务结束后按顺序自动发出，在所有设备上看到的是同一份队列；排队的消息可以编辑、删除、立即发送（打断当前任务），也可以选择「打断并发送」，Codex、Pi、Hermes 还能选择「引导当前任务」把消息直接交给正在运行的任务。上一个任务出错时队列会暂停，点「继续发送」后再发出。（[#658](https://github.com/anywhere-labs/Agents-Anywhere/pull/658)、[#659](https://github.com/anywhere-labs/Agents-Anywhere/pull/659)）
 - 在工作设备安装并配置对应 CLI 后，可以在 Web、Desktop、Android 和 iOS 选择 Command Code、OpenCode、Google Antigravity、MiniMax Code、CodeBuddy Code 和 MiMo Code 新建会话，并按 Agent 支持的能力发送消息、处理审批、中断和恢复 AA 会话。（[#629](https://github.com/anywhere-labs/Agents-Anywhere/pull/629)）
 - Pi 会话现在支持 `/plan`，可以从首条任务开始规划、审阅和修改计划，并在同意后按原有工具权限继续执行。（[#631](https://github.com/anywhere-labs/Agents-Anywhere/pull/631)）

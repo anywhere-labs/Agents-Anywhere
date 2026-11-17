@@ -12,6 +12,58 @@ class Projection:
         self.items: dict[str, dict] = {}
         self.message_index = 0
         self.current_kind = None
+        self.current_thought_identity = None
+        self.current_thought_key = None
+
+    def _reset_segment(self):
+        self.current_kind = None
+        self.current_thought_identity = None
+        self.current_thought_key = None
+
+    @staticmethod
+    def _status(aa_metadata: dict) -> str:
+        stop_reason = aa_metadata.get("stopReason")
+        if stop_reason == "aborted":
+            return "cancelled"
+        if stop_reason == "error":
+            return "failed"
+        return "done" if aa_metadata.get("boundary") else "running"
+
+    def _thought_occurrence(self, kind: str, verified_id: str) -> int:
+        """Number of segments already stored for this ID.
+
+        Derived from self.items rather than a connection-local counter, so live,
+        replay (runtime.py snapshot) and recover (sessions.py) all agree.
+        """
+        # Occurrence 0 is the pre-segmentation key; later segments are stored
+        # under ``occurrence N`` with the same N this scan returns, so the probe
+        # has to start at 1 and advance by one rather than skipping ahead.
+        if fingerprint([self.session_id, kind, verified_id]) not in self.items:
+            return 0
+        occurrence = 1
+        while (
+            fingerprint(
+                [self.session_id, kind, verified_id, "occurrence", occurrence]
+            )
+            in self.items
+        ):
+            occurrence += 1
+        return occurrence
+
+    def _thought_key(self, kind: str, verified_id: str | None) -> str:
+        if verified_id is None:
+            return fingerprint(
+                [self.session_id, self.epoch, kind, self.message_index]
+            )
+        occurrence = self._thought_occurrence(kind, verified_id)
+        if occurrence == 0:
+            # Items written before segmented thoughts existed use this key.
+            # Keeping it for the first segment lets the upgrade upsert them in
+            # place instead of duplicating them.
+            return fingerprint([self.session_id, kind, verified_id])
+        return fingerprint(
+            [self.session_id, kind, verified_id, "occurrence", occurrence]
+        )
 
     def apply(self, update: dict) -> dict | None:
         native = update.get("_meta", {}).get("aa", {}).get("timelineItem")
@@ -39,35 +91,97 @@ class Projection:
             return item
         kind = update.get("sessionUpdate")
         if kind in {"agent_message_chunk", "agent_thought_chunk", "user_message_chunk"}:
-            if self.current_kind != kind:
-                self.message_index += 1
-                self.current_kind = kind
-            message_id = update.get("messageId")
-            key = fingerprint([self.session_id, kind, message_id]) if message_id and update.get("aaProjectionVerified") else fingerprint([self.session_id, self.epoch, kind, self.message_index])
-            old = self.items.get(key, {})
+            is_thought = kind == "agent_thought_chunk"
             content = update.get("content", {})
             if content.get("type") != "text":
                 return None
-            text = old.get("content", {}).get("text", "") + content.get("text", "")
+            chunk_text = content.get("text", "")
+            if not chunk_text and is_thought:
+                # A thought delta carries nothing on its own; other chunks may
+                # still end a message or attach files with empty text.
+                return None
+
+            message_id = update.get("messageId")
+            usable_message_id = (
+                message_id
+                if is_thought and isinstance(message_id, str) and message_id
+                else None
+            )
+            verified_message_id = (
+                usable_message_id
+                if usable_message_id is not None
+                and update.get("aaProjectionVerified")
+                else None
+            )
+            # ACP v1: every chunk of one message shares messageId, and a change
+            # means a new message started. That holds inside one connection
+            # whether or not the Runtime also promises the ID survives a replay,
+            # so an unverified ID still marks a segment boundary. Only key
+            # generation needs the replay-stable form; unverified IDs fall back
+            # to epoch and message index there.
+            thought_identity = (
+                ("verified", verified_message_id)
+                if verified_message_id is not None
+                else ("message", usable_message_id)
+                if is_thought and usable_message_id is not None
+                else ("fallback", None)
+            )
+            new_kind = self.current_kind != kind
+            new_thought_segment = (
+                is_thought
+                and not new_kind
+                and self.current_thought_identity != thought_identity
+            )
+            if new_kind or new_thought_segment:
+                self.message_index += 1
+                self._reset_segment()
+                self.current_kind = kind
+                if is_thought:
+                    self.current_thought_identity = thought_identity
+                    self.current_thought_key = self._thought_key(
+                        kind, verified_message_id
+                    )
+            if is_thought:
+                key = self.current_thought_key
+            elif message_id and update.get("aaProjectionVerified"):
+                key = fingerprint([self.session_id, kind, message_id])
+            else:
+                key = fingerprint(
+                    [self.session_id, self.epoch, kind, self.message_index]
+                )
+            old = self.items.get(key, {})
+            text = old.get("content", {}).get("text", "") + chunk_text
+            aa_metadata = update.get("_meta", {}).get("aa", {})
             item = {
                 "id": key,
                 "sessionId": self.session_id,
-                "type": "message",
-                "role": "user" if kind == "user_message_chunk" else "assistant",
-                "status": "cancelled" if update.get("_meta", {}).get("aa", {}).get("stopReason") == "aborted" else "failed" if update.get("_meta", {}).get("aa", {}).get("stopReason") == "error" else "done" if update.get("_meta", {}).get("aa", {}).get("boundary") else "running",
+                "type": "system" if is_thought else "message",
+                "role": (
+                    "system"
+                    if is_thought
+                    else "user"
+                    if kind == "user_message_chunk"
+                    else "assistant"
+                ),
+                "status": self._status(aa_metadata),
                 "content": {
-                    "kind": "markdown",
+                    "kind": "reasoning" if is_thought else "markdown",
                     "format": "markdown",
                     "text": text,
-                    "isThinking": kind == "agent_thought_chunk",
-                    **({"clientMessageId": update["_meta"]["aa"]["clientMessageId"]}
-                       if update.get("_meta", {}).get("aa", {}).get("clientMessageId") else {}),
-                    **({"attachments": update["_meta"]["aa"]["attachments"]}
-                       if update.get("_meta", {}).get("aa", {}).get("attachments") else {}),
+                    **(
+                        {"clientMessageId": aa_metadata["clientMessageId"]}
+                        if aa_metadata.get("clientMessageId")
+                        else {}
+                    ),
+                    **(
+                        {"attachments": aa_metadata["attachments"]}
+                        if aa_metadata.get("attachments")
+                        else {}
+                    ),
                 },
             }
         elif kind in {"tool_call", "tool_call_update"}:
-            self.current_kind = None
+            self._reset_segment()
             tool_id = update["toolCallId"]
             key = fingerprint([self.session_id, "tool", tool_id]) if update.get("aaProjectionVerified") else fingerprint([self.session_id, self.epoch, "tool", tool_id])
             old = self.items.get(key, {})
@@ -141,7 +255,7 @@ class Projection:
     def finish(self) -> list[dict]:
         result = []
         for item in self.items.values():
-            if item["type"] == "message" and item["status"] == "running":
+            if item["type"] in {"message", "system"} and item["status"] == "running":
                 item["status"] = "done"
                 item["revision"] += 1
                 item["contentHash"] = "sha256:" + fingerprint(
@@ -151,5 +265,5 @@ class Projection:
                     }
                 )
                 result.append(dict(item))
-        self.current_kind = None
+        self._reset_segment()
         return result
