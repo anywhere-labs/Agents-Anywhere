@@ -10,7 +10,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { ConversationService } from '../../src/application/index.js'
 import { CommandInbox } from '../../src/application/inbound/index.js'
-import type { RuntimeHandle, RuntimeHandles } from '../../src/application/ports/index.js'
+import type { RuntimeHandle, RuntimeHandles, SessionCapabilities } from '../../src/application/ports/index.js'
+import { capabilitySet } from '../../src/application/runtimes/capabilities.js'
 import type { ClientCallChunk, ClientCallHead } from '../../src/generated/device-meshcall/v1_0/client-call-item.js'
 import type { TerminalStreamItem } from '../../src/generated/device-meshcall/v1_0/terminal-stream-item.js'
 import {
@@ -49,6 +50,11 @@ class FakePty implements Pty {
   public end(exitCode: number): void {
     this.exit?.({ exitCode })
   }
+}
+
+const SESSION_CAPABILITIES: SessionCapabilities = {
+  revision: 1,
+  items: ['session.send_message', 'session.interrupt', 'session.interaction.approval', 'catalog.model'].map(id => ({ id: id as never, supported: true })),
 }
 
 /** A gate the test opens: commands wait at the inbox until then. */
@@ -106,7 +112,7 @@ describe.skipIf(binary === null)('aa.device.v1.Client over a real Router', () =>
       listNativeSessions: async () => ({ sessions: [] }),
       readNativeHistory: async () => ({ items: [] }),
       open: async (target, options) => {
-        const session = new FakeRuntimeSession(options.sessionId, target.kind === 'existing' ? target.ref.nativeSessionId : `thr_${sessions.length + 1}`)
+        const session = new FakeRuntimeSession(options.sessionId, target.kind === 'existing' ? target.ref.nativeSessionId : `thr_${sessions.length + 1}`, SESSION_CAPABILITIES)
         sessions.push(session)
         return session
       },
@@ -158,7 +164,14 @@ describe.skipIf(binary === null)('aa.device.v1.Client over a real Router', () =>
       await gate.wait()
       return inbox.handle(...args)
     } } as unknown as CommandInbox
-    const readers = new DeviceReaders(store, clock.nowIso)
+    // The session capabilities the client routes check (sending, interrupting, answering notices, selections).
+    const readers = new DeviceReaders(store, clock.nowIso, {
+      sessionCapabilities: async sessionId => {
+        const bound = service?.boundSession(sessionId) ?? null
+        return bound === null ? null : (capabilitySet(bound.capabilities, { runtime: 'codex', sessionId }) as never)
+      },
+      catalogs: async () => null,
+    })
     const watch = { store, feed, now: clock.nowIso }
     const policy = new RootPolicy({ roots: [root] })
     const methods = workspaceMethods(new FileOps(policy), new ShellOps(policy), terminals)
@@ -324,7 +337,9 @@ describe.skipIf(binary === null)('aa.device.v1.Client over a real Router', () =>
     const rejected = await call(respond)
     expect(rejected.head.command).toMatchObject({ commandId: 'rsp_1', outcome: 'rejected' })
     const code = rejected.head.command!.e!.code
-    expect(rejected.body).toMatchObject({ detail: { code } })
+    // A notice that is gone is not an HTTP error for the client (`{ok: false, error}`, as the Server answered).
+    expect(rejected.head.status).toBe(200)
+    expect(rejected.body).toMatchObject({ ok: false, error: { code } })
     expect(await store.commands.get('rsp_1')).toMatchObject({ outcome: 'rejected' })
     expect((await call(respond)).head).toEqual(rejected.head)
 
@@ -380,13 +395,15 @@ describe.skipIf(binary === null)('aa.device.v1.Client over a real Router', () =>
 
   it('puts critical routes in the critical lane, which reads and commands do not use', async () => {
     await startDevice({ limits: { critical: 3, command: 1 } })
+    // The interrupt reaches the inbox only for a session the device holds.
+    await createSession('sess_crit')
     // Link/attach and Link/outbox hold two critical slots for the whole connection.
     await poll(() => link.inflight('critical') === 2, 'the link streams')
     gate.close()
     const interrupt = call({
       route: 'session.runtime.interrupt',
       method: 'POST',
-      path: sessionPath('sess_x', 'runtime/interrupt'),
+      path: sessionPath('sess_crit', 'runtime/interrupt'),
       body: {},
       command: { commandId: 'c_int1', inputDigest: 'sha256:int-1', deadline: deadline() },
     })
