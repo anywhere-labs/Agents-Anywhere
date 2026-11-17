@@ -32,6 +32,8 @@ class FsDownloadTransfer:
     expires_at_monotonic: float
     queue: asyncio.Queue[bytes | None] | None = None
     closed: asyncio.Event = field(default_factory=asyncio.Event)
+    #: The device PUTs the bytes on its own (``Client/call`` ``fs/read``); the download never asks it to upload.
+    pushed: bool = False
 
     def _payload(self) -> dict[str, str | int]:
         return {
@@ -44,6 +46,7 @@ class FsDownloadTransfer:
             "size": self.size,
             "sha256": self.sha256,
             "media_type": self.media_type,
+            "pushed": self.pushed,
         }
 
 
@@ -72,6 +75,7 @@ class FsDownloadRelayManager:
         size: int,
         sha256: str,
         media_type: str,
+        pushed: bool = False,
     ) -> FsDownloadTransfer:
         self.expire()
         transfer_id = f"fsdl_{secrets.token_urlsafe(18)}"
@@ -89,6 +93,7 @@ class FsDownloadRelayManager:
             queue=None
             if self._coordinator.distributed
             else asyncio.Queue(maxsize=TRANSFER_QUEUE_CHUNKS),
+            pushed=pushed,
         )
         if self._coordinator.distributed:
             await self._coordinator.client.set(
@@ -131,6 +136,7 @@ class FsDownloadRelayManager:
                     sha256=str(payload["sha256"]),
                     media_type=str(payload["media_type"]),
                     expires_at_monotonic=self._clock() + (ttl_ms / 1000),
+                    pushed=bool(payload.get("pushed")),
                 )
             except (KeyError, TypeError, ValueError, json.JSONDecodeError):
                 return None
@@ -139,6 +145,19 @@ class FsDownloadRelayManager:
         if transfer is None or not secrets.compare_digest(transfer.token, token):
             return None
         return transfer
+
+    async def describe(
+        self, transfer: FsDownloadTransfer, *, name: str, size: int, sha256: str, media_type: str
+    ) -> None:
+        """Record what the file is once the device said so (the download's headers)."""
+
+        transfer.name, transfer.size, transfer.sha256, transfer.media_type = name, size, sha256, media_type
+        if self._coordinator.distributed:
+            await self._coordinator.client.set(
+                self._metadata_key(transfer.transfer_id),
+                json.dumps(transfer._payload(), ensure_ascii=False, separators=(",", ":")),
+                keepttl=True,
+            )
 
     async def upload(
         self,

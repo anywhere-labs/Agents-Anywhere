@@ -21,6 +21,7 @@ lists and for offline display). Everything else goes to the device:
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
@@ -171,15 +172,32 @@ class DevicePlanningService:
             body = _accepted(operation_id, outcome.result)
         return _validated(RESPONSE_MODELS[kind], body)
 
-    async def operation(self, session: Any, kind: str, operation_id: str, *, user_id: str) -> BaseModel | None:
+    async def operation(
+        self,
+        session: Any,
+        kind: str,
+        operation_id: str,
+        *,
+        user_id: str,
+        forwarded: str | None = None,
+        current_state: Callable[[], Awaitable[dict[str, Any]]] | None = None,
+    ) -> BaseModel | None:
+        """The outcome of a planning or goal operation, from its receipt.
+
+        ``forwarded``: the client route whose receipts ``Client/call`` leaves for the same operations
+        (``session.planning.execute``); ``current_state``: how the state after an applied operation is read then.
+        """
+
         receipt = await self._store.get_device_command(user_id, operation_id)
-        if receipt is None or receipt["kind"] != kind or receipt.get("sessionId") != session.id:
+        kinds = {kind} if forwarded is None else {kind, forwarded}
+        if receipt is None or receipt["kind"] not in kinds or receipt.get("sessionId") != session.id:
             return None
         if receipt["state"] in ("pending", "unknown"):
             receipt = await self._commands.reconcile_one(receipt, settle_unseen=False) or receipt
         result = receipt.get("result") or {}
         if receipt["state"] == "accepted":
-            body = _accepted(operation_id, {**(result.get("r") or {}), **await self._current_state(session, kind)})
+            state = await current_state() if current_state is not None else await self._current_state(session, kind)
+            body = _accepted(operation_id, {**(result.get("r") or {}), **state})
         elif receipt["state"] == "rejected":
             error = result.get("e") or {}
             body = _response(operation_id, "rejected", code=error.get("code"), message=error.get("message"))

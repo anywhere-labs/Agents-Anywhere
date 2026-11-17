@@ -10,9 +10,10 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from starlette.requests import HTTPConnection
 
+from agent_server.api.client_forward import forward_session
 from agent_server.api.device_session_reads import device_read_http_error
 from agent_server.api.v2_compat import V3_SESSION_ONLY
 from agent_server.core.message_queue import (
@@ -69,42 +70,72 @@ class _DeviceQueueRoute:
 
 
 DeviceQueue = Annotated[_DeviceQueueRoute, Depends()]
+
+
+async def _offline_queue(queue: _DeviceQueueRoute, session_id: str, user_id: str) -> dict[str, Any]:
+    """An offline device's queue: what the existing read path answers then."""
+
+    return (await queue.read(session_id, user_id)).model_dump(mode="json")
 UserId = Annotated[str, Depends(current_user_id)]
 
 
 @router.get("/{session_id}/runtime/queue", response_model=SessionQueueStateV12, dependencies=V3_SESSION_ONLY)
-async def read_queue(session_id: str, user_id: UserId, queue: DeviceQueue) -> SessionQueueStateV12:
+async def read_queue(request: Request, session_id: str, user_id: UserId, queue: DeviceQueue) -> SessionQueueStateV12:
+    if (forwarded := await forward_session(
+        request, "session.runtime.queue", user_id=user_id, session_id=session_id, response_model=SessionQueueStateV12, offline=lambda _session: _offline_queue(queue, session_id, user_id)
+    )) is not None:
+        return forwarded  # type: ignore[return-value]
     return await queue.read(session_id, user_id)
 
 
 @router.delete("/{session_id}/runtime/queue", response_model=SessionQueueState, dependencies=V3_SESSION_ONLY)
-async def clear_queue(session_id: str, user_id: UserId, queue: DeviceQueue) -> SessionQueueState:
+async def clear_queue(request: Request, session_id: str, user_id: UserId, queue: DeviceQueue) -> SessionQueueState:
+    if (forwarded := await forward_session(
+        request, "session.runtime.queue.clear", user_id=user_id, session_id=session_id, response_model=SessionQueueState
+    )) is not None:
+        return forwarded  # type: ignore[return-value]
     return await queue.change(session_id, user_id, "clear", {})
 
 
 @router.post("/{session_id}/runtime/queue/resume", response_model=SessionQueueState, dependencies=V3_SESSION_ONLY)
-async def resume_queue(session_id: str, user_id: UserId, queue: DeviceQueue) -> SessionQueueState:
+async def resume_queue(request: Request, session_id: str, user_id: UserId, queue: DeviceQueue) -> SessionQueueState:
+    if (forwarded := await forward_session(
+        request, "session.runtime.queue.resume", user_id=user_id, session_id=session_id, response_model=SessionQueueState
+    )) is not None:
+        return forwarded  # type: ignore[return-value]
     return await queue.change(session_id, user_id, "resume", {})
 
 
 @router.put("/{session_id}/runtime/queue/order", response_model=SessionQueueState, dependencies=V3_SESSION_ONLY)
 async def reorder_queue(
-    session_id: str, payload: QueueOrderRequest, user_id: UserId, queue: DeviceQueue
+    request: Request, session_id: str, payload: QueueOrderRequest, user_id: UserId, queue: DeviceQueue
 ) -> SessionQueueState:
+    if (forwarded := await forward_session(
+        request, "session.runtime.queue.reorder", user_id=user_id, session_id=session_id, response_model=SessionQueueState
+    )) is not None:
+        return forwarded  # type: ignore[return-value]
     return await queue.change(session_id, user_id, "reorder", {"messageIds": payload.messageIds})
 
 
 @router.delete(
     "/{session_id}/runtime/queue/{message_id}", response_model=SessionQueueState, dependencies=V3_SESSION_ONLY
 )
-async def delete_queue_item(session_id: str, message_id: str, user_id: UserId, queue: DeviceQueue) -> SessionQueueState:
+async def delete_queue_item(request: Request, session_id: str, message_id: str, user_id: UserId, queue: DeviceQueue) -> SessionQueueState:
+    if (forwarded := await forward_session(
+        request, "session.runtime.queue.delete", user_id=user_id, session_id=session_id, response_model=SessionQueueState
+    )) is not None:
+        return forwarded  # type: ignore[return-value]
     return await queue.change(session_id, user_id, "delete", {"messageId": message_id})
 
 
 @router.post(
     "/{session_id}/runtime/queue/{message_id}/retry", response_model=SessionQueueState, dependencies=V3_SESSION_ONLY
 )
-async def retry_queue_item(session_id: str, message_id: str, user_id: UserId, queue: DeviceQueue) -> SessionQueueState:
+async def retry_queue_item(request: Request, session_id: str, message_id: str, user_id: UserId, queue: DeviceQueue) -> SessionQueueState:
+    if (forwarded := await forward_session(
+        request, "session.runtime.queue.retry", user_id=user_id, session_id=session_id, response_model=SessionQueueState
+    )) is not None:
+        return forwarded  # type: ignore[return-value]
     return await queue.change(session_id, user_id, "retry", {"messageId": message_id})
 
 
@@ -114,8 +145,12 @@ async def retry_queue_item(session_id: str, message_id: str, user_id: UserId, qu
     dependencies=V3_SESSION_ONLY,
 )
 async def send_queue_item_now(
-    session_id: str, message_id: str, user_id: UserId, queue: DeviceQueue
+    request: Request, session_id: str, message_id: str, user_id: UserId, queue: DeviceQueue
 ) -> SessionQueueState:
+    if (forwarded := await forward_session(
+        request, "session.runtime.queue.sendNow", user_id=user_id, session_id=session_id, response_model=SessionQueueState
+    )) is not None:
+        return forwarded  # type: ignore[return-value]
     return await queue.change(session_id, user_id, "sendNow", {"messageId": message_id})
 
 
@@ -123,8 +158,12 @@ async def send_queue_item_now(
     "/{session_id}/runtime/queue/{message_id}", response_model=SessionQueueState, dependencies=V3_SESSION_ONLY
 )
 async def update_queue_item(
-    session_id: str, message_id: str, payload: QueueItemUpdateRequest, user_id: UserId, queue: DeviceQueue
+    request: Request, session_id: str, message_id: str, payload: QueueItemUpdateRequest, user_id: UserId, queue: DeviceQueue
 ) -> SessionQueueState:
+    if (forwarded := await forward_session(
+        request, "session.runtime.queue.update", user_id=user_id, session_id=session_id, response_model=SessionQueueState
+    )) is not None:
+        return forwarded  # type: ignore[return-value]
     return await queue.change(
         session_id, user_id, "update", payload.model_dump(exclude_none=True) | {"messageId": message_id}
     )

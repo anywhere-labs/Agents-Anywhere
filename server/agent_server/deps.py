@@ -21,6 +21,7 @@ from agent_server.infra.terminal_roots import TerminalRootStore
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.services.attachments import AttachmentService
 from agent_server.services.catalogs import CatalogService
+from agent_server.services.client_forward import ClientForwarder
 from agent_server.services.connector_files import ConnectorFileService
 from agent_server.services.connector_ingest import ConnectorIngestService
 from agent_server.services.connector_notifications import ConnectorNotificationService
@@ -229,6 +230,10 @@ def get_device_mesh(conn: HTTPConnection) -> DeviceMesh:
 
 def get_device_reads(conn: HTTPConnection) -> DeviceReadService:
     return conn.app.state.device_reads
+
+
+def get_client_forwarder(conn: HTTPConnection) -> ClientForwarder:
+    return conn.app.state.client_forwarder
 
 
 def get_device_planning(conn: HTTPConnection) -> Any:

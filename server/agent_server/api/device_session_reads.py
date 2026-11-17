@@ -80,21 +80,12 @@ async def device_snapshot(
         raise device_read_http_error(exc) from exc
     view = await session_view_v12(db, session)
     if body is None:
-        fields = await db.session_directory_fields(session.id) or {}
-        return ProtocolSessionSnapshotResponseV12(
-            session=view,
-            state=None,
-            timeline=ProtocolTimelineSnapshot(items=[], nextSeq=int(fields.get("headSeq") or 0), hasMore=False),
-            notices=[],
-            effectiveCapabilities=effective_capabilities,
-            runtimeCapabilities=runtime_capabilities,
+        return await offline_snapshot(
+            db=db,
+            session=session,
+            runtime_capabilities=runtime_capabilities,
+            effective_capabilities=effective_capabilities,
             catalogs=catalogs,
-            queue=None,
-            # The client has none of the history; when the device is back it reads from the start.
-            eventCursor=event_cursor(0),
-            serverTime=utc_now(),
-            historySource="unavailable",
-            deviceOffline=True,
         )
     timeline = body.get("timeline") or {}
     next_seq = int(timeline.get("nextSeq") or 0)
@@ -123,6 +114,62 @@ async def device_snapshot(
         )
     except ValidationError as exc:
         raise _invalid_device_response(exc) from exc
+
+
+async def offline_snapshot(
+    *,
+    db: Any,
+    session: SessionView,
+    runtime_capabilities: ProtocolCapabilitySet,
+    effective_capabilities: ProtocolCapabilitySet,
+    catalogs: dict[str, Any],
+) -> ProtocolSessionSnapshotResponseV12:
+    """The snapshot of a session whose device is offline: the Server's directory facts, no content."""
+
+    fields = await db.session_directory_fields(session.id) or {}
+    return ProtocolSessionSnapshotResponseV12(
+        session=await session_view_v12(db, session),
+        state=None,
+        timeline=ProtocolTimelineSnapshot(items=[], nextSeq=int(fields.get("headSeq") or 0), hasMore=False),
+        notices=[],
+        effectiveCapabilities=effective_capabilities,
+        runtimeCapabilities=runtime_capabilities,
+        catalogs=catalogs,
+        queue=None,
+        # The client has none of the history; when the device is back it reads from the start.
+        eventCursor=event_cursor(0),
+        serverTime=utc_now(),
+        historySource="unavailable",
+        deviceOffline=True,
+    )
+
+
+async def decorate_snapshot(
+    body: Any,
+    *,
+    db: Any,
+    session: SessionView,
+    runtime_capabilities: ProtocolCapabilitySet,
+    effective: Any,
+    catalogs: dict[str, Any],
+) -> dict[str, Any]:
+    """The device's ``Client/call`` snapshot with the Server's parts: its session view, catalogs and effective
+    capabilities (derived from the device's live runtime capabilities when the body has them)."""
+
+    out = dict(body) if isinstance(body, dict) else {}
+    if isinstance(out.get("runtimeCapabilities"), dict):
+        try:
+            runtime_capabilities = ProtocolCapabilitySet.model_validate(out["runtimeCapabilities"])
+        except ValidationError as exc:
+            raise _invalid_device_response(exc) from exc
+    out["session"] = (await session_view_v12(db, session)).model_dump(mode="json")
+    out["runtimeCapabilities"] = runtime_capabilities.model_dump(mode="json")
+    out["effectiveCapabilities"] = effective(runtime_capabilities).model_dump(mode="json")
+    out["catalogs"] = catalogs
+    out["serverTime"] = utc_now()
+    out.setdefault("historySource", "live")
+    out.setdefault("deviceOffline", False)
+    return out
 
 
 async def device_timeline(

@@ -15,10 +15,12 @@ from fastapi import (
     Depends,
     HTTPException,
     Query,
+    Request,
     WebSocket,
     WebSocketDisconnect,
 )
 
+from agent_server.api.client_forward import forward_session
 from agent_server.api.ws_auth import websocket_user_id
 from agent_server.core.models import (
     TerminalCreateRequest,
@@ -54,11 +56,16 @@ async def _send_terminal_ws_error(websocket: WebSocket, *, code: int, message: s
 
 @router.post("/{session_id}/terminals", response_model=TerminalResponse)
 async def terminal_create(
+    request: Request,
     session_id: str,
     payload: TerminalCreateRequest,
     user_id: str = Depends(current_user_id),
     terminal_service: TerminalService = Depends(get_terminal_service),
 ) -> TerminalResponse:
+    if (forwarded := await forward_session(
+        request, "session.terminals.create", user_id=user_id, session_id=session_id, response_model=TerminalResponse
+    )) is not None:
+        return forwarded
     try:
         return await terminal_service.create(session_id, payload, user_id=user_id)
     except TerminalServiceError as exc:
@@ -67,10 +74,15 @@ async def terminal_create(
 
 @router.get("/{session_id}/terminals", response_model=TerminalListResponse)
 async def terminal_list(
+    request: Request,
     session_id: str,
     user_id: str = Depends(current_user_id),
     terminal_service: TerminalService = Depends(get_terminal_service),
 ) -> TerminalListResponse:
+    if (forwarded := await forward_session(
+        request, "session.terminals.list", user_id=user_id, session_id=session_id, response_model=TerminalListResponse
+    )) is not None:
+        return forwarded
     try:
         return await terminal_service.list(session_id, user_id=user_id)
     except TerminalServiceError as exc:
@@ -79,12 +91,17 @@ async def terminal_list(
 
 @router.patch("/{session_id}/terminals/{terminal_id}", response_model=TerminalResponse)
 async def terminal_rename(
+    request: Request,
     session_id: str,
     terminal_id: str,
     payload: TerminalPatchRequest,
     user_id: str = Depends(current_user_id),
     terminal_service: TerminalService = Depends(get_terminal_service),
 ) -> TerminalResponse:
+    if (forwarded := await forward_session(
+        request, "session.terminals.rename", user_id=user_id, session_id=session_id, response_model=TerminalResponse
+    )) is not None:
+        return forwarded
     try:
         return await terminal_service.rename(session_id, terminal_id, payload, user_id=user_id)
     except TerminalServiceError as exc:
@@ -93,11 +110,16 @@ async def terminal_rename(
 
 @router.delete("/{session_id}/terminals/{terminal_id}", response_model=TerminalResponse)
 async def terminal_close(
+    request: Request,
     session_id: str,
     terminal_id: str,
     user_id: str = Depends(current_user_id),
     terminal_service: TerminalService = Depends(get_terminal_service),
 ) -> TerminalResponse:
+    if (forwarded := await forward_session(
+        request, "session.terminals.close", user_id=user_id, session_id=session_id, response_model=TerminalResponse
+    )) is not None:
+        return forwarded
     try:
         return await terminal_service.close(session_id, terminal_id, user_id=user_id)
     except TerminalServiceError as exc:
@@ -106,12 +128,17 @@ async def terminal_close(
 
 @router.post("/{session_id}/terminals/{terminal_id}/resize", response_model=TerminalResponse)
 async def terminal_resize(
+    request: Request,
     session_id: str,
     terminal_id: str,
     payload: TerminalResizeRequest,
     user_id: str = Depends(current_user_id),
     terminal_service: TerminalService = Depends(get_terminal_service),
 ) -> TerminalResponse:
+    if (forwarded := await forward_session(
+        request, "session.terminals.resize", user_id=user_id, session_id=session_id, response_model=TerminalResponse
+    )) is not None:
+        return forwarded
     try:
         return await terminal_service.resize(session_id, terminal_id, payload, user_id=user_id)
     except TerminalServiceError as exc:

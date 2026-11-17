@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import ValidationError
 
+from agent_server.api.client_forward import call as client_call
+from agent_server.api.client_forward import forward_connector, owned_device, to_response
 from agent_server.core.device_runtime import (
     DeviceRuntimeListResponse,
     DeviceRuntimeView,
@@ -318,6 +320,7 @@ async def get_connector_runtime_capabilities(
     response_model=ProtocolModelCatalogResponse,
 )
 async def get_connector_runtime_model_catalog(
+    request: Request,
     connector_id: str,
     runtime_id: str,
     service: DeviceRuntimeService = Depends(get_device_runtime_service),
@@ -325,6 +328,16 @@ async def get_connector_runtime_model_catalog(
     user_id: str = Depends(current_user_id),
     channels: ModelChannelService = Depends(get_model_channel_service),
 ) -> ProtocolModelCatalogResponse:
+    if await owned_device(request, "connector.runtime.catalogs.model", user_id=user_id, connector_id=connector_id):
+        async def _channel_overlay(body: Any) -> Any:
+            parsed = ProtocolModelCatalogResponse.model_validate(body)
+            catalog = await channels.channel_catalog(connector_id, runtime_id, parsed.catalog, user_id=user_id)
+            return ProtocolModelCatalogResponse(catalog=catalog, serverTime=utc_now()).model_dump(mode="json")
+
+        return to_response(await client_call(
+            request, "connector.runtime.catalogs.model", user_id=user_id, device_id=connector_id,
+            response_model=ProtocolModelCatalogResponse, decorate=_channel_overlay,
+        ))
     try:
         runtime_id = await channels.prepare_runtime(connector_id, runtime_id, user_id=user_id)
         runtime = await service.ensure_active_running(
@@ -353,12 +366,17 @@ async def get_connector_runtime_model_catalog(
     response_model=ProtocolPermissionCatalogResponse,
 )
 async def get_connector_runtime_permission_catalog(
+    request: Request,
     connector_id: str,
     runtime_id: str,
     service: DeviceRuntimeService = Depends(get_device_runtime_service),
     manager: ConnectorRpcManager = Depends(get_rpc),
     user_id: str = Depends(current_user_id),
 ) -> ProtocolPermissionCatalogResponse:
+    if (forwarded := await forward_connector(
+        request, "connector.runtime.catalogs.permission", user_id=user_id, connector_id=connector_id, response_model=ProtocolPermissionCatalogResponse
+    )) is not None:
+        return forwarded
     try:
         runtime = await service.ensure_active_running(
             connector_id, runtime_id, user_id=user_id
@@ -384,12 +402,17 @@ async def get_connector_runtime_permission_catalog(
     response_model=RuntimeCommandListResponse,
 )
 async def get_connector_runtime_commands(
+    request: Request,
     connector_id: str,
     runtime_id: str,
     service: DeviceRuntimeService = Depends(get_device_runtime_service),
     manager: ConnectorRpcManager = Depends(get_rpc),
     user_id: str = Depends(current_user_id),
 ) -> RuntimeCommandListResponse:
+    if (forwarded := await forward_connector(
+        request, "connector.runtime.commands", user_id=user_id, connector_id=connector_id, response_model=RuntimeCommandListResponse
+    )) is not None:
+        return forwarded
     try:
         runtime = await service.ensure_active_running(
             connector_id, runtime_id, user_id=user_id

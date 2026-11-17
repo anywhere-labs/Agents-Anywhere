@@ -7,6 +7,13 @@ from typing import Any
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
+from agent_server.api.client_forward import call as client_call
+from agent_server.api.client_forward import (
+    forward_connector,
+    forwarding,
+    owned_device,
+    to_response,
+)
 from agent_server.api.connector_common import (
     connector_scope_id,
     raise_connector_service_error,
@@ -17,6 +24,11 @@ from agent_server.core.api_namespace import api_v2_path
 from agent_server.core.auth import (
     create_signed_token,
     verify_signed_token,
+)
+from agent_server.core.device_meshcall import (
+    DEVICE_TRANSFER_PATH,
+    BlobTransfer,
+    ClientServerFacts,
 )
 from agent_server.core.models import (
     FsPreviewReadRequest,
@@ -54,8 +66,68 @@ FS_PREVIEW_OPEN_EXPIRES_IN = 5 * 60
 FS_PREVIEW_ACCESS_EXPIRES_IN = 15 * 60
 
 
+async def _forward_fs_read(
+    request: Request,
+    *,
+    route_id: str,
+    user_id: str,
+    connector_id: str,
+    root: str,
+    path: str,
+    downloads: FsDownloadRelayManager,
+    preview_access_token: str | None = None,
+) -> Any:
+    """``fs/read`` through ``Client/call``: the Server allocates the transfer, the device PUTs the bytes to it."""
+
+    transfer = await downloads.create(
+        connector_id=connector_id,
+        root=root,
+        path=path,
+        name=path.rsplit("/", 1)[-1] or "download",
+        size=0,
+        sha256="",
+        media_type="application/octet-stream",
+        pushed=True,
+    )
+    answer = await client_call(
+        request,
+        route_id,
+        user_id=user_id,
+        device_id=connector_id,
+        body={"path": path},
+        path=api_v2_path(f"/connectors/{connector_id}/fs/read"),
+        query={"root": root},
+        server=ClientServerFacts(
+            transfer=BlobTransfer(
+                transferId=transfer.transfer_id,
+                token=transfer.token,
+                path=DEVICE_TRANSFER_PATH.format(transfer_id=transfer.transfer_id),
+            )
+        ),
+        response_model=RpcResponsePayload,
+    )
+    if not answer.ok:
+        return to_response(answer)
+    result = dict(answer.body.get("result") or {}) if isinstance(answer.body, dict) else {}
+    await downloads.describe(
+        transfer,
+        name=str(result.get("name") or transfer.name),
+        size=int(result.get("size") or 0),
+        sha256=str(result.get("sha256") or ""),
+        media_type=str(result.get("mediaType") or "application/octet-stream"),
+    )
+    download_url = f"{api_v2_path(f'/connectors/{connector_id}/fs/transfers/{transfer.transfer_id}')}?token={transfer.token}"
+    if preview_access_token is not None:
+        download_url += f"&previewAccessToken={urllib.parse.quote(preview_access_token)}"
+    return RpcResponsePayload(
+        ok=True,
+        result={**result, "transferId": transfer.transfer_id, "token": transfer.token, "downloadUrl": download_url},
+    )
+
+
 @router.post("/{connector_id}/fs/list", response_model=RpcResponsePayload)
 async def connector_fs_list(
+    request: Request,
     connector_id: str,
     payload: dict[str, Any] = Body(default_factory=dict),
     root: str | None = Query(default=None, min_length=1),
@@ -63,6 +135,10 @@ async def connector_fs_list(
     store: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
 ) -> RpcResponsePayload:
+    if (forwarded := await forward_connector(
+        request, "connector.fs.list", user_id=user_id, connector_id=connector_id, response_model=RpcResponsePayload
+    )) is not None:
+        return forwarded
     connector = await require_owned_online_connector(
         connector_id, user_id, store, manager
     )
@@ -93,6 +169,7 @@ async def connector_fs_list(
 
 @router.post("/{connector_id}/fs/read", response_model=RpcResponsePayload)
 async def connector_fs_read(
+    request: Request,
     connector_id: str,
     payload: FsReadRequest,
     root: str = Query(..., min_length=1),
@@ -101,6 +178,11 @@ async def connector_fs_read(
     manager: ConnectorRpcManager = Depends(get_rpc),
     files: ConnectorFileService = Depends(get_connector_file_service),
 ) -> RpcResponsePayload:
+    if await owned_device(request, "connector.fs.read", user_id=user_id, connector_id=connector_id):
+        return await _forward_fs_read(
+            request, route_id="connector.fs.read", user_id=user_id, connector_id=connector_id, root=root,
+            path=payload.path, downloads=request.app.state.fs_downloads,
+        )
     await require_owned_online_connector(connector_id, user_id, store, manager)
     path = resolve_workspace_path(root, payload.path)
     try:
@@ -213,6 +295,7 @@ async def create_connector_fs_preview_session(
 
 @router.post("/fs/preview/readText", response_model=FsReadTextResponse)
 async def connector_fs_preview_read_text(
+    request: Request,
     payload: FsPreviewReadTextRequest,
     store: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
@@ -221,6 +304,12 @@ async def connector_fs_preview_read_text(
     connector_id = preview["connector_id"]
     root = preview["root"]
     path = preview["path"]
+    if forwarding(request, "connector.fs.preview.readText") and (forwarded := await forward_connector(
+        request, "connector.fs.readText", user_id=preview["user_id"], connector_id=connector_id,
+        response_model=FsReadTextResponse, body={"path": path, "maxBytes": payload.maxBytes},
+        path=api_v2_path(f"/connectors/{connector_id}/fs/readText"), query={"root": root},
+    )) is not None:
+        return forwarded
     await require_owned_online_connector(
         connector_id, preview["user_id"], store, manager
     )
@@ -241,6 +330,7 @@ async def connector_fs_preview_read_text(
 
 @router.post("/fs/preview/read", response_model=RpcResponsePayload)
 async def connector_fs_preview_read(
+    request: Request,
     payload: FsPreviewReadRequest,
     store: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
@@ -250,6 +340,13 @@ async def connector_fs_preview_read(
     connector_id = preview["connector_id"]
     root = preview["root"]
     path = preview["path"]
+    if forwarding(request, "connector.fs.preview.read") and await owned_device(
+        request, "connector.fs.read", user_id=preview["user_id"], connector_id=connector_id
+    ):
+        return await _forward_fs_read(
+            request, route_id="connector.fs.read", user_id=preview["user_id"], connector_id=connector_id, root=root,
+            path=path, downloads=request.app.state.fs_downloads, preview_access_token=payload.previewAccessToken,
+        )
     await require_owned_online_connector(
         connector_id, preview["user_id"], store, manager
     )
@@ -311,12 +408,13 @@ async def connector_fs_transfer_download(
     if transfer is None or transfer.connector_id != connector_id:
         raise HTTPException(status_code=404, detail="transfer not found")
     try:
-        await files.request_upload(
-            connector_id=connector_id,
-            scope_id=connector_scope_id(connector_id),
-            transfer=transfer,
-            upload_url=api_v2_path(f"/connector/fs/transfers/{transfer.transfer_id}"),
-        )
+        if not transfer.pushed:
+            await files.request_upload(
+                connector_id=connector_id,
+                scope_id=connector_scope_id(connector_id),
+                transfer=transfer,
+                upload_url=api_v2_path(f"/connector/fs/transfers/{transfer.transfer_id}"),
+            )
     except ConnectorServiceError as exc:
         raise_connector_service_error(exc)
     return StreamingResponse(
@@ -336,6 +434,7 @@ async def connector_fs_transfer_download(
 
 @router.post("/{connector_id}/fs/readText", response_model=FsReadTextResponse)
 async def connector_fs_read_text(
+    request: Request,
     connector_id: str,
     payload: FsReadTextRequest,
     root: str = Query(..., min_length=1),
@@ -343,6 +442,10 @@ async def connector_fs_read_text(
     store: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
 ) -> FsReadTextResponse:
+    if (forwarded := await forward_connector(
+        request, "connector.fs.readText", user_id=user_id, connector_id=connector_id, response_model=FsReadTextResponse
+    )) is not None:
+        return forwarded
     await require_owned_online_connector(connector_id, user_id, store, manager)
     path = resolve_workspace_path(root, payload.path)
     result = await request_connector(
@@ -362,6 +465,7 @@ async def connector_fs_read_text(
 
 @router.post("/{connector_id}/fs/write", response_model=RpcResponsePayload)
 async def connector_fs_write(
+    request: Request,
     connector_id: str,
     payload: FsWriteRequest,
     root: str = Query(..., min_length=1),
@@ -369,6 +473,10 @@ async def connector_fs_write(
     store: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
 ) -> RpcResponsePayload:
+    if (forwarded := await forward_connector(
+        request, "connector.fs.write", user_id=user_id, connector_id=connector_id, response_model=RpcResponsePayload
+    )) is not None:
+        return forwarded
     await require_owned_online_connector(connector_id, user_id, store, manager)
     path = resolve_workspace_path(root, payload.path)
     params: dict = {

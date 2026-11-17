@@ -4,6 +4,7 @@ import asyncio
 import os
 from collections import deque
 from collections.abc import Mapping
+from contextlib import nullcontext
 from typing import Any
 
 from fastapi import (
@@ -12,19 +13,39 @@ from fastapi import (
     Depends,
     HTTPException,
     Query,
+    Request,
     WebSocket,
 )
+from fastapi.responses import Response
 from loguru import logger
 from starlette.requests import HTTPConnection
 
+from agent_server.api.client_forward import (
+    attachment_facts,
+    caller_of,
+    client_path,
+    forward_session,
+    owned_device,
+    owned_session,
+    raw_body,
+    to_response,
+)
+from agent_server.api.client_forward import (
+    call as client_call,
+)
+from agent_server.api.client_forward import (
+    http_error as client_http_error,
+)
 from agent_server.api.connector_runtimes import (
     parse_runtime_model_catalog_response,
     parse_runtime_permission_catalog_response,
 )
 from agent_server.api.device_session_reads import (
+    decorate_snapshot,
     device_events,
     device_snapshot,
     device_timeline,
+    offline_snapshot,
 )
 from agent_server.api.server_push_websocket import (
     run_server_push_until_disconnect,
@@ -35,7 +56,11 @@ from agent_server.core.capabilities import (
     SESSION_INTERACTION_APPROVAL,
     capability_is_usable,
 )
-from agent_server.core.device_meshcall import DisplayEnvelope
+from agent_server.core.device_meshcall import (
+    AttachmentRef,
+    ClientServerFacts,
+    DisplayEnvelope,
+)
 from agent_server.core.e2ee_settings import E2eeSettings, e2ee_required_error
 from agent_server.core.events import (
     PORT_EVENT_TYPES,
@@ -111,6 +136,7 @@ from agent_server.infra.session_watch import SessionWatchHub
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.infra.ws_tickets import ClientWsTicketManager
 from agent_server.services.catalogs import CatalogService
+from agent_server.services.client_forward import ClientForwardError
 from agent_server.services.connector_presence import (
     with_effective_session_connector_status,
     with_effective_session_connector_statuses,
@@ -131,7 +157,7 @@ from agent_server.services.session_meta_projection import (
 )
 from agent_server.services.session_run import SessionRunError, SessionRunService
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
-from agent_server.services.usage_events import UsageRecorder
+from agent_server.services.usage_events import UsageRecorder, message_sent_event
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -357,6 +383,61 @@ def _session_rpc_timeout_seconds() -> float:
         return 10.0
 
 
+async def _forward_session_command(
+    request: Request,
+    route_id: str,
+    *,
+    user_id: str,
+    session_id: str,
+    response_model: Any,
+    db: Store,
+    broker: TimelineBroker,
+    manager: ConnectorRpcManager,
+    runtime_state_cache: SessionRuntimeStateCache,
+    run_service: SessionRunService | None = None,
+    attachments: str | None = None,
+    usage: bool = False,
+) -> Response | None:
+    """A session command through ``Client/call`` (None: the route takes its existing path).
+
+    The Server passes the facts it owns (takeover, its records of referenced attachments), admits the command
+    like its own sends, records usage once per command id and broadcasts the session's state afterwards.
+    """
+
+    session = await owned_session(request, route_id, user_id=user_id, session_id=session_id)
+    if session is None:
+        return None
+    body = await raw_body(request)
+    refs = await attachment_facts(request, user_id=user_id, session=session, body=body, field=attachments) if (
+        attachments
+    ) else None
+    facts = ClientServerFacts(takeover=session.takeover, **({"attachments": refs} if refs else {}))
+    try:
+        admission = run_service.admitted(session, user_id=user_id) if run_service is not None else nullcontext()
+        async with admission:
+            answer = await client_call(
+                request,
+                route_id,
+                user_id=user_id,
+                device_id=session.connectorId,
+                session_id=session.id,
+                body=body,
+                server=facts,
+                response_model=response_model,
+            )
+    except SessionRunError as exc:
+        _raise_session_run_error(exc)
+    finally:
+        await _best_effort_publish_session_protocol_update(
+            db, broker, manager, runtime_state_cache, session.id, user_id=user_id
+        )
+    if usage and answer.ok and answer.command is not None and not answer.command.replayed:
+        await request.app.state.usage_recorder.record(
+            message_sent_event(session, user_id=user_id, client_message_id=answer.command.command_id)
+        )
+    return to_response(answer)
+
+
 @router.post("")
 async def create_session(
     payload: SessionCreateRequest,
@@ -387,8 +468,58 @@ async def create_session(
     return result
 
 
+async def _forward_create_and_start(
+    request: Request,
+    payload: SessionCreateAndStartRequest,
+    *,
+    user_id: str,
+    run_service: SessionRunService,
+    manager: ConnectorRpcManager,
+) -> tuple[dict[str, Any] | None, Response | None]:
+    """create-and-start through ``Client/call``: ``(result, None)`` when the device started the session,
+    ``(None, response)`` with the device's own error otherwise."""
+
+    forwarder = request.app.state.client_forwarder
+
+    async def deliver(session: SessionView, attachments: list[dict[str, Any]], command_id: str) -> Any:
+        body = payload.model_dump(mode="json", exclude_none=True)
+        # Inline attachments are staged on the Server; the device gets their records in ``server``.
+        body.pop("attachments", None)
+        refs = [AttachmentRef.model_validate(item) for item in attachments]
+        facts = ClientServerFacts(sessionId=session.id, takeover=True, **({"attachments": refs} if refs else {}))
+        return await forwarder.call(
+            "session.createAndStart",
+            user_id=user_id,
+            device_id=payload.connectorId,
+            path=client_path(request),
+            query=dict(request.query_params),
+            caller=caller_of(request, user_id),
+            body=body,
+            server=facts,
+            session_id=session.id,
+            command_id=command_id,
+        )
+
+    try:
+        created = await run_service.create_and_start_session(payload, user_id=user_id, deliver=deliver)
+    except SessionRunError as exc:
+        _raise_session_run_error(exc)
+    except ClientForwardError as exc:
+        raise client_http_error(exc) from exc
+    answer = created["answer"]
+    if not answer.ok:
+        return None, to_response(answer)
+    body = dict(answer.body) if isinstance(answer.body, dict) else {}
+    session = await with_effective_session_connector_status(manager, created["session"])
+    body["session"] = session
+    body.setdefault("connectorResult", {})
+    body.setdefault("attachments", created["attachments"])
+    return body, None
+
+
 @router.post("/create-and-start")
 async def create_and_start_session(
+    request: Request,
     payload: SessionCreateAndStartRequest,
     user_id: str = Depends(current_user_id),
     reads: DeviceReadService = Depends(get_device_reads),
@@ -403,10 +534,18 @@ async def create_and_start_session(
     # Starting a conversation on a v2 Connector would keep it on the Server (D4, D8). Adding a
     # directory entry for an existing session (``POST /sessions``) stays allowed.
     await require_v3_owned_connector(db, reads, payload.connectorId, user_id)
-    try:
-        result = await run_service.create_and_start_session(payload, user_id=user_id)
-    except SessionRunError as exc:
-        _raise_session_run_error(exc)
+    if await owned_device(request, "session.createAndStart", user_id=user_id, connector_id=payload.connectorId):
+        forwarded, refused = await _forward_create_and_start(
+            request, payload, user_id=user_id, run_service=run_service, manager=manager
+        )
+        if refused is not None:
+            return refused  # type: ignore[return-value]
+        result = forwarded or {}
+    else:
+        try:
+            result = await run_service.create_and_start_session(payload, user_id=user_id)
+        except SessionRunError as exc:
+            _raise_session_run_error(exc)
     session = result.get("session")
     if session is not None:
         result = {
@@ -697,6 +836,7 @@ async def mark_sessions_read(
 
 @router.get("/{session_id}/runtime/state", response_model=SessionRuntimeStateResponse)
 async def session_runtime_state(
+    request: Request,
     session_id: str,
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
@@ -705,6 +845,15 @@ async def session_runtime_state(
         get_session_runtime_state_cache
     ),
 ) -> SessionRuntimeStateResponse:
+    async def _offline_state(session: SessionView) -> dict[str, Any]:
+        state = await read_runtime_state_live(db, manager, runtime_state_cache, session, user_id)
+        return SessionRuntimeStateResponse(state=state, serverTime=utc_now()).model_dump(mode="json")
+
+    if (forwarded := await forward_session(
+        request, "session.runtime.state", user_id=user_id, session_id=session_id,
+        response_model=SessionRuntimeStateResponse, offline=_offline_state,
+    )) is not None:
+        return forwarded
     try:
         session = await db.get_session(session_id, user_id=user_id)
         state = await read_runtime_state_live(
@@ -721,11 +870,24 @@ async def session_runtime_state(
 
 @router.get("/{session_id}/runtime/capabilities", response_model=ProtocolCapabilitiesResponse)
 async def session_runtime_capabilities(
+    request: Request,
     session_id: str,
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
 ) -> ProtocolCapabilitiesResponse:
+    async def _offline_capabilities(session: SessionView) -> dict[str, Any]:
+        session = await with_effective_session_connector_status(manager, session)
+        capability_set = derive_session_effective_capabilities(session=session, runtime_capabilities=None)
+        return ProtocolCapabilitiesResponse(
+            connectorId=session.connectorId, capabilitySet=capability_set, serverTime=utc_now()
+        ).model_dump(mode="json")
+
+    if (forwarded := await forward_session(
+        request, "session.runtime.capabilities", user_id=user_id, session_id=session_id,
+        response_model=ProtocolCapabilitiesResponse, offline=_offline_capabilities,
+    )) is not None:
+        return forwarded
     try:
         session = await db.get_session(session_id, user_id=user_id)
     except KeyError:
@@ -751,6 +913,7 @@ async def session_runtime_capabilities(
     response_model=ProtocolModelCatalogResponse,
 )
 async def session_runtime_model_catalog(
+    request: Request,
     session_id: str,
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
@@ -758,6 +921,20 @@ async def session_runtime_model_catalog(
     device_runtimes: DeviceRuntimeService = Depends(get_device_runtime_service),
     channels: ModelChannelService = Depends(get_model_channel_service),
 ) -> ProtocolModelCatalogResponse:
+    if (session := await owned_session(
+        request, "session.runtime.catalogs.model", user_id=user_id, session_id=session_id
+    )) is not None:
+        async def _channel_overlay(body: Any) -> Any:
+            parsed = ProtocolModelCatalogResponse.model_validate(body)
+            catalog = await channels.channel_catalog(
+                session.connectorId, _session_runtime_id(session), parsed.catalog, user_id=user_id
+            )
+            return ProtocolModelCatalogResponse(catalog=catalog, serverTime=utc_now()).model_dump(mode="json")
+
+        return to_response(await client_call(
+            request, "session.runtime.catalogs.model", user_id=user_id, device_id=session.connectorId,
+            session_id=session.id, response_model=ProtocolModelCatalogResponse, decorate=_channel_overlay,
+        ))
     try:
         session = await db.get_session(session_id, user_id=user_id)
         await device_runtimes.ensure_active_running(
@@ -786,12 +963,18 @@ async def session_runtime_model_catalog(
     response_model=ProtocolPermissionCatalogResponse,
 )
 async def session_runtime_permission_catalog(
+    request: Request,
     session_id: str,
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
     device_runtimes: DeviceRuntimeService = Depends(get_device_runtime_service),
 ) -> ProtocolPermissionCatalogResponse:
+    if (forwarded := await forward_session(
+        request, "session.runtime.catalogs.permission", user_id=user_id, session_id=session_id,
+        response_model=ProtocolPermissionCatalogResponse,
+    )) is not None:
+        return forwarded
     try:
         session = await db.get_session(session_id, user_id=user_id)
         await device_runtimes.ensure_active_running(
@@ -817,6 +1000,7 @@ async def session_runtime_permission_catalog(
 
 @router.patch("/{session_id}/runtime/selections", response_model=SessionSelectionPatchResponse, dependencies=V3_SESSION_ONLY)
 async def patch_session_selections(
+    request: Request,
     session_id: str,
     payload: SessionSelectionPatchRequest,
     user_id: str = Depends(current_user_id),
@@ -828,6 +1012,11 @@ async def patch_session_selections(
         get_session_runtime_state_cache
     ),
 ) -> SessionSelectionPatchResponse:
+    if (forwarded := await _forward_session_command(
+        request, "session.runtime.selections", user_id=user_id, session_id=session_id,
+        response_model=SessionSelectionPatchResponse, run_service=run_service, db=db, broker=broker, manager=manager, runtime_state_cache=runtime_state_cache,
+    )) is not None:
+        return forwarded
     try:
         state, connector_result = await run_service.update_session_selections(
             session_id,
@@ -855,6 +1044,7 @@ async def patch_session_selections(
 
 @router.get("/{session_id}/timeline", response_model=ProtocolTimelineResponseV12, dependencies=V3_SESSION_ONLY)
 async def session_timeline(
+    request: Request,
     session_id: str,
     after_seq: int = Query(0, alias="afterSeq", ge=0),
     before_order_seq: int | None = Query(None, alias="beforeOrderSeq", ge=1),
@@ -866,6 +1056,18 @@ async def session_timeline(
 ) -> ProtocolTimelineResponseV12:
     """The device holds the timeline (D1); v2 sessions never get here (``V3_SESSION_ONLY``)."""
 
+    async def _offline_timeline(session: SessionView) -> dict[str, Any]:
+        fields = await db.session_directory_fields(session.id) or {}
+        return ProtocolTimelineResponseV12(
+            sessionId=session.id, items=[], nextSeq=int(fields.get("headSeq") or 0), hasMore=False,
+            serverTime=utc_now(), historySource="unavailable", deviceOffline=True,
+        ).model_dump(mode="json")
+
+    if (forwarded := await forward_session(
+        request, "session.timeline", user_id=user_id, session_id=session_id,
+        response_model=ProtocolTimelineResponseV12, offline=_offline_timeline,
+    )) is not None:
+        return forwarded
     try:
         session = await db.get_session(session_id, user_id=user_id)
     except KeyError:
@@ -926,8 +1128,62 @@ async def _device_session_snapshot(
     )
 
 
+async def _forward_snapshot(
+    request: Request,
+    *,
+    db: Store,
+    manager: ConnectorRpcManager,
+    catalogs: CatalogService,
+    session: SessionView,
+    user_id: str,
+) -> Response:
+    """The snapshot through ``Client/call``: content from the device, the session view, catalogs and effective
+    capabilities from the Server; an offline device gets the Server's directory facts."""
+
+    session = await with_effective_session_connector_status(manager, session)
+    stored = ProtocolCapabilitySet.model_validate(
+        await db.get_protocol_capabilities(session.connectorId, user_id=user_id)
+    )
+    runtime_id = _session_runtime_id(session)
+    model_catalog = await catalogs.model_catalog(session.connectorId, runtime_id=runtime_id, user_id=user_id)
+    permission_catalog = await catalogs.permission_catalog(session.connectorId, runtime_id=runtime_id, user_id=user_id)
+    server_catalogs = {
+        key: catalog.model_dump(mode="json")
+        for key, catalog in (("model", model_catalog), ("permission", permission_catalog))
+        if catalog is not None
+    }
+
+    def effective(runtime_capabilities: ProtocolCapabilitySet) -> ProtocolCapabilitySet:
+        return derive_session_effective_capabilities(session=session, runtime_capabilities=runtime_capabilities)
+
+    async def offline() -> dict[str, Any]:
+        snapshot = await offline_snapshot(
+            db=db, session=session, runtime_capabilities=stored, effective_capabilities=effective(stored),
+            catalogs=server_catalogs,
+        )
+        return snapshot.model_dump(mode="json")
+
+    async def decorate(body: Any) -> dict[str, Any]:
+        return await decorate_snapshot(
+            body, db=db, session=session, runtime_capabilities=stored, effective=effective, catalogs=server_catalogs
+        )
+
+    answer = await client_call(
+        request,
+        "session.snapshot",
+        user_id=user_id,
+        device_id=session.connectorId,
+        session_id=session.id,
+        response_model=ProtocolSessionSnapshotResponseV12,
+        offline=offline,
+        decorate=decorate,
+    )
+    return to_response(answer)
+
+
 @router.get("/{session_id}/snapshot", response_model=ProtocolSessionSnapshotResponseV12, dependencies=V3_SESSION_ONLY)
 async def session_snapshot(
+    request: Request,
     session_id: str,
     limit: int = Query(100, ge=1, le=500),
     user_id: str = Depends(current_user_id),
@@ -943,6 +1199,9 @@ async def session_snapshot(
         raise HTTPException(status_code=404, detail="session not found") from None
     # Opening a session is platform usage; the recorder folds quick repeats.
     await usage_recorder.touch_session_view(session, user_id=user_id)
+    if await owned_session(request, "session.snapshot", user_id=user_id, session_id=session_id) is not None:
+        return await _forward_snapshot(request, db=db, manager=manager, catalogs=catalogs, session=session,
+                                       user_id=user_id)
     return await _device_session_snapshot(
         db=db,
         manager=manager,
@@ -961,12 +1220,27 @@ async def session_snapshot(
 
 @router.get("/{session_id}/events", response_model=ProtocolEventRecoveryResponseV12, dependencies=V3_SESSION_ONLY)
 async def session_events(
+    request: Request,
     session_id: str,
     after: str = Query("seq:0"),
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     reads: DeviceReadService = Depends(get_device_reads),
 ) -> ProtocolEventRecoveryResponseV12:
+    async def _offline_events(session: SessionView) -> dict[str, Any]:
+        try:
+            cursor = parse_event_cursor(after)
+        except EventCursorError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return ProtocolEventRecoveryResponseV12(
+            events=[], nextCursor=event_cursor(cursor), serverTime=utc_now(), deviceOffline=True
+        ).model_dump(mode="json")
+
+    if (forwarded := await forward_session(
+        request, "session.events", user_id=user_id, session_id=session_id,
+        response_model=ProtocolEventRecoveryResponseV12, offline=_offline_events,
+    )) is not None:
+        return forwarded
     try:
         session = await db.get_session(session_id, user_id=user_id)
         return await device_events(reads=reads, session=session, after_seq=parse_event_cursor(after))
@@ -1229,6 +1503,7 @@ async def _require_session_action_capability(
 
 @router.get("/{session_id}/runtime/commands", response_model=SessionCommandListResponse, dependencies=V3_SESSION_ONLY)
 async def list_session_runtime_commands(
+    request: Request,
     session_id: str,
     query: str | None = Query(default=None, max_length=4096),
     limit: int = Query(default=100, ge=1, le=1000),
@@ -1236,6 +1511,11 @@ async def list_session_runtime_commands(
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
 ) -> SessionCommandListResponse:
+    if (forwarded := await forward_session(
+        request, "session.runtime.commands", user_id=user_id, session_id=session_id,
+        response_model=SessionCommandListResponse,
+    )) is not None:
+        return forwarded
     try:
         session = await db.get_session(session_id, user_id=user_id)
     except KeyError:
@@ -1285,6 +1565,7 @@ async def list_session_runtime_commands(
 
 @router.post("/{session_id}/runtime/commands", response_model=SessionCommandResponse, dependencies=V3_SESSION_ONLY)
 async def execute_session_command(
+    request: Request,
     session_id: str,
     payload: SessionCommandRequest,
     user_id: str = Depends(current_user_id),
@@ -1292,6 +1573,12 @@ async def execute_session_command(
     manager: ConnectorRpcManager = Depends(get_rpc),
     device_planning: Any = Depends(get_device_planning),
 ) -> SessionCommandResponse:
+    if (forwarded := await _forward_session_command(
+        request, "session.runtime.commands.execute", user_id=user_id, session_id=session_id,
+        response_model=SessionCommandResponse, db=db, broker=request.app.state.timeline_broker, manager=manager,
+        runtime_state_cache=request.app.state.session_runtime_state_cache,
+    )) is not None:
+        return forwarded
     try:
         session = await db.get_session(session_id, user_id=user_id)
     except KeyError:
@@ -1389,6 +1676,7 @@ def _unknown_command_result(command: str) -> SessionCommandResponse:
 
 @router.post("/{session_id}/runtime/messages", response_model=RpcResponsePayload, dependencies=V3_SESSION_ONLY)
 async def send_message(
+    request: Request,
     session_id: str,
     payload: MessageCreateRequest,
     user_id: str = Depends(current_user_id),
@@ -1400,6 +1688,11 @@ async def send_message(
         get_session_runtime_state_cache
     ),
 ) -> RpcResponsePayload:
+    if (forwarded := await _forward_session_command(
+        request, "session.runtime.messages", user_id=user_id, session_id=session_id,
+        response_model=RpcResponsePayload, run_service=run_service, attachments="attachments", usage=True, db=db, broker=broker, manager=manager, runtime_state_cache=runtime_state_cache,
+    )) is not None:
+        return forwarded
     try:
         result = await run_service.send_message(session_id, payload, user_id=user_id)
         await _publish_session_protocol_update(
@@ -1424,6 +1717,7 @@ async def send_message(
 
 @router.post("/{session_id}/runtime/interrupt", response_model=RpcResponsePayload, dependencies=V3_SESSION_ONLY)
 async def interrupt_session(
+    request: Request,
     session_id: str,
     user_id: str = Depends(current_user_id),
     run_service: SessionRunService = Depends(get_session_run_service),
@@ -1434,6 +1728,11 @@ async def interrupt_session(
         get_session_runtime_state_cache
     ),
 ) -> RpcResponsePayload:
+    if (forwarded := await _forward_session_command(
+        request, "session.runtime.interrupt", user_id=user_id, session_id=session_id,
+        response_model=RpcResponsePayload, db=db, broker=broker, manager=manager, runtime_state_cache=runtime_state_cache,
+    )) is not None:
+        return forwarded
     try:
         result = await run_service.interrupt_session(session_id, user_id=user_id)
         await _publish_session_protocol_update(
@@ -1458,6 +1757,7 @@ async def interrupt_session(
 
 @router.post("/{session_id}/runtime/steer", response_model=RpcResponsePayload, dependencies=V3_SESSION_ONLY)
 async def steer_session(
+    request: Request,
     session_id: str,
     payload: SessionSteerRequest,
     user_id: str = Depends(current_user_id),
@@ -1469,6 +1769,11 @@ async def steer_session(
         get_session_runtime_state_cache
     ),
 ) -> RpcResponsePayload:
+    if (forwarded := await _forward_session_command(
+        request, "session.runtime.steer", user_id=user_id, session_id=session_id,
+        response_model=RpcResponsePayload, attachments="attachments", usage=True, db=db, broker=broker, manager=manager, runtime_state_cache=runtime_state_cache,
+    )) is not None:
+        return forwarded
     try:
         result = await run_service.steer_session(
             session_id,
@@ -1497,11 +1802,17 @@ async def steer_session(
 
 @router.get("/{session_id}/runtime/notices", response_model=RuntimeNoticeListResponse, dependencies=V3_SESSION_ONLY)
 async def list_session_runtime_notices(
+    request: Request,
     session_id: str,
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
 ) -> RuntimeNoticeListResponse:
+    if (forwarded := await forward_session(
+        request, "session.runtime.notices", user_id=user_id, session_id=session_id,
+        response_model=RuntimeNoticeListResponse,
+    )) is not None:
+        return forwarded
     try:
         session = await db.get_session(session_id, user_id=user_id)
     except KeyError:
@@ -1515,6 +1826,7 @@ async def list_session_runtime_notices(
 
 @router.post("/{session_id}/runtime/notices/{notice_id}/respond", response_model=RpcResponsePayload, dependencies=V3_SESSION_ONLY)
 async def respond_interaction(
+    request: Request,
     session_id: str,
     notice_id: str,
     payload: InteractionRespondRequest,
@@ -1526,6 +1838,11 @@ async def respond_interaction(
         get_session_runtime_state_cache
     ),
 ) -> RpcResponsePayload:
+    if (forwarded := await _forward_session_command(
+        request, "session.runtime.notices.respond", user_id=user_id, session_id=session_id,
+        response_model=RpcResponsePayload, db=db, broker=broker, manager=manager, runtime_state_cache=runtime_state_cache,
+    )) is not None:
+        return forwarded
     try:
         session = await db.get_session(session_id, user_id=user_id)
     except KeyError:
@@ -1600,12 +1917,19 @@ async def respond_interaction(
 
 @router.post("/{session_id}/sync", response_model=RpcResponsePayload, dependencies=V3_SESSION_ONLY)
 async def sync_session(
+    request: Request,
     session_id: str,
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
     device_runtimes: DeviceRuntimeService = Depends(get_device_runtime_service),
 ) -> RpcResponsePayload:
+    if (forwarded := await _forward_session_command(
+        request, "session.sync", user_id=user_id, session_id=session_id, response_model=RpcResponsePayload,
+        db=db, broker=request.app.state.timeline_broker, manager=manager,
+        runtime_state_cache=request.app.state.session_runtime_state_cache,
+    )) is not None:
+        return forwarded
     try:
         session = await db.get_session(session_id, user_id=user_id)
     except KeyError:

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from agent_server.api.client_forward import forward_connector
 from agent_server.api.connector_common import (
     connector_scope_id,
     raise_connector_service_error,
@@ -36,6 +37,7 @@ router = APIRouter(prefix="/connectors", tags=["connector-shell"])
 
 @router.post("/{connector_id}/shell/exec", response_model=RpcResponsePayload)
 async def connector_shell_exec(
+    request: Request,
     connector_id: str,
     payload: ShellExecRequest,
     root: str = Query(..., min_length=1),
@@ -44,6 +46,10 @@ async def connector_shell_exec(
     manager: ConnectorRpcManager = Depends(get_rpc),
     shell: ConnectorShellService = Depends(get_connector_shell_service),
 ) -> RpcResponsePayload:
+    if (forwarded := await forward_connector(
+        request, "connector.shell.exec", user_id=user_id, connector_id=connector_id, response_model=RpcResponsePayload
+    )) is not None:
+        return forwarded
     await require_owned_online_connector(connector_id, user_id, store, manager)
     cwd = resolve_workspace_path(root, payload.cwd or ".")
     try:

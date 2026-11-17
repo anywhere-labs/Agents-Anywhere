@@ -43,6 +43,7 @@ from agent_server.infra.connector_rpc import (
     ConnectorRpcManager,
 )
 from agent_server.infra.repositories.projects import _clean_workspace_path
+from agent_server.services.client_forward import ClientAnswer, ClientForwardError
 from agent_server.services.device_runtimes import (
     DeviceRuntimeError,
     DeviceRuntimeService,
@@ -59,6 +60,11 @@ from agent_server.services.usage_events import (
     message_sent_event,
     session_created_event,
 )
+
+#: Route whose receipts a forwarded create-and-start leaves (``core.client_routes``).
+FORWARDED_CREATION_ROUTE = "session.createAndStart"
+#: ``deliver(session, staged attachments, command id)`` of a forwarded create-and-start.
+ForwardedCreation = Callable[[SessionView, list[dict[str, Any]], str], Awaitable[ClientAnswer]]
 
 
 class SessionRunError(RuntimeError):
@@ -130,6 +136,10 @@ class SessionRunService:
             return nullcontext()
         return self._admit_runtime(connector_id, runtime_id, user_id=user_id)
 
+    def admitted(self, session: SessionView, *, user_id: str) -> AbstractAsyncContextManager[None]:
+        """Admission of a forwarded command on ``session`` (``Client/call``): the same as the Server's own sends."""
+        return self._admitted(session.connectorId, _session_runtime_id(session), user_id=user_id)
+
     async def create_session(
         self,
         payload: SessionCreateRequest,
@@ -181,7 +191,11 @@ class SessionRunService:
         payload: SessionCreateAndStartRequest,
         *,
         user_id: str,
+        deliver: ForwardedCreation | None = None,
     ) -> dict[str, Any]:
+        """``deliver``: forward the creation with ``Client/call`` instead of ``session.creation.begin``; the result
+        is then ``{session, attachments, answer}`` with the device's ``ClientAnswer``."""
+
         from agent_server.core.goal.models import GoalCreationIntent
 
         if (
@@ -224,9 +238,80 @@ class SessionRunService:
             runtime_id = await self._prepare_model_channel(payload.connectorId, runtime_id, user_id=user_id)
             payload.runtimeId = runtime_id
         async with self._admitted(payload.connectorId, runtime_id, user_id=user_id):
+            if deliver is not None:
+                return await self._create_and_start_forwarded(
+                    payload, user_id=user_id, runtime_id=runtime_id, project_id=project_id, deliver=deliver
+                )
             return await self._create_and_start_admitted(
                 payload, user_id=user_id, runtime_id=runtime_id, project_id=project_id,
             )
+
+    async def _create_and_start_forwarded(
+        self,
+        payload: SessionCreateAndStartRequest,
+        *,
+        user_id: str,
+        runtime_id: str,
+        project_id: str | None,
+        deliver: ForwardedCreation,
+    ) -> dict[str, Any]:
+        """create-and-start through ``Client/call``: the Server keeps the directory row, the staged attachments and
+        the session id (``ClientServerFacts.sessionId``); the device creates the session and runs its first turn.
+
+        A retry with the same ``clientMessageId`` reuses the first attempt's row; ``ClientForwarder`` replays the
+        receipt (the device's inbox answers again, nothing runs twice). The row is dropped when the device never
+        got the creation or refused it.
+        """
+
+        command_id = payload.clientMessageId or f"create_{uuid4().hex}"
+        payload.clientMessageId = command_id
+        previous = await self._store.get_device_command(user_id, command_id)
+        session: SessionView | None = None
+        if previous is not None and previous["kind"] == FORWARDED_CREATION_ROUTE and previous.get("sessionId"):
+            try:
+                session = await self._store.get_session(previous["sessionId"], user_id=user_id)
+            except KeyError:
+                session = None
+        created = session is None
+        attachments: list[dict[str, Any]] = []
+        if session is None:
+            session = await self._store.create_session(
+                connector_id=payload.connectorId,
+                project_id=project_id,
+                user_id=user_id,
+                runtime=payload.runtime,
+                runtime_id=runtime_id,
+                external_session_id=None,
+                title=payload.title,
+                cwd=payload.cwd,
+                selections=_selections_from_mapping(payload.selections),
+                takeover=True,
+            )
+            attachments = [
+                {
+                    "fileId": item.file_id,
+                    "name": item.name,
+                    "mediaType": item.media_type,
+                    "size": item.size,
+                    "sha256": item.sha256,
+                }
+                for item in await self._persist_inline_attachments(
+                    session_id=session.id, user_id=user_id, attachments=payload.attachments
+                )
+            ]
+        try:
+            answer = await deliver(session, attachments, command_id)
+        except ClientForwardError as exc:
+            if created and exc.code in ("connector_offline", "device_busy", "request_too_large"):
+                await self._discard_device_session(session.id)
+            raise
+        refused = not answer.ok and (answer.command is None or answer.command.outcome == "rejected")
+        if created and refused:
+            await self._discard_device_session(session.id)
+        if answer.ok and created:
+            await self._usage.record(session_created_event(session, user_id=user_id))
+            await self._usage.record(message_sent_event(session, user_id=user_id, client_message_id=command_id))
+        return {"session": session, "attachments": attachments, "answer": answer}
 
     async def _create_and_start_admitted(
         self,

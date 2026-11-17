@@ -41,10 +41,12 @@ from pydantic import BaseModel, ConfigDict
 from agent_server.core.device_meshcall import (
     COMMAND_METHODS,
     CONNECTION_ID_METADATA,
+    MAX_CHUNK_BYTES,
     MESH_MAX_FRAME_BYTES,
     WORKSPACE_METHODS,
     ChangesEvent,
     ChangesSinceResponse,
+    ClientCallItem,
     CommandAck,
     CommandStatusResponse,
     LinkAttachItem,
@@ -54,6 +56,7 @@ from agent_server.core.device_meshcall import (
     StoreReadResponse,
     StreamChunk,
     TerminalOutputItem,
+    TerminalStreamItem,
     WorkspaceCallResponse,
     command_route,
     registered_services,
@@ -152,6 +155,22 @@ class FakeDeviceState:
         )
         self.terminal_requests: list[dict[str, Any]] = []
         self.terminal_subscribers: collections.Counter[str] = collections.Counter()
+        # ``Client/call``: every request received (``ClientCallRequest`` as a dict) and what answers it.
+        # ``client_handler(request)`` returns ``(status, body)``, a ``ClientAnswer`` dict
+        # (``{"status", "body", "command", "contentType", "chunks"}``), a ``LinkError`` (a 409 answer that rejects
+        # the command), or raises ``MeshCallError``. Without one the device answers 200 with the request echoed.
+        # Commands replay by ``command.commandId`` like the device's inbox; ``client_receipts`` holds the heads.
+        self.client_calls: list[dict[str, Any]] = []
+        self.client_handler: Callable[[dict[str, Any]], Any] | None = None
+        self.client_receipts: dict[str, dict[str, Any]] = {}
+        self.client_runs: list[str] = []
+        self.client_delay = 0.0
+        self.client_chunk_bytes = MAX_CHUNK_BYTES
+        # ``Client/subscribe``: terminal messages to send per terminal (``TerminalStreamItem`` dicts).
+        self.client_terminal_items: dict[str, collections.deque[dict[str, Any]]] = collections.defaultdict(
+            collections.deque
+        )
+        self.client_subscriptions: list[dict[str, Any]] = []
 
     def session(self, session_id: str) -> FakeSession:
         if session_id not in self.sessions:
@@ -476,6 +495,119 @@ def _make_services(state: FakeDeviceState, *, mode: str = "off") -> list[object]
             finally:
                 state.terminal_subscribers[terminalId] -= 1
 
+    def client_answer(request: dict[str, Any]) -> dict[str, Any]:
+        """Run the handler once; a command's answer is kept as its receipt."""
+        result: Any = (200, {"echo": request})
+        if state.client_handler is not None:
+            result = state.client_handler(request)
+        if isinstance(result, LinkError):
+            result = {"status": 409, "body": {"detail": {"code": result.code, "message": result.message}},
+                      "command": {"outcome": "rejected", "e": result.model_dump(mode="json")}}
+        if isinstance(result, tuple):
+            result = {"status": result[0], "body": result[1]}
+        answer = dict(result)
+        command = request.get("command")
+        if command and "command" not in answer:
+            answer["command"] = {"outcome": "accepted" if answer.get("status", 200) < 400 else "rejected"}
+            if answer["command"]["outcome"] == "rejected":
+                body = answer.get("body") or {}
+                code = ((body.get("detail") or {}).get("code") if isinstance(body, dict) else None) or "rejected"
+                answer["command"]["e"] = {"code": code, "message": code}
+        if command and answer.get("command"):
+            answer["command"] = {"commandId": command["commandId"], **answer["command"]}
+            head = answer["command"]
+            state.receipts[command["commandId"]] = CommandAck(
+                outcome=head["outcome"], e=LinkError(**head["e"]) if head.get("e") else None
+            )
+        return answer
+
+    @service(f"{SERVICE_PREFIX}.Client", targeted=True)
+    class Client:
+        """The client API (normal mode only)."""
+
+        @stream
+        async def call(
+            self,
+            route: str,
+            method: str,
+            path: str,
+            caller: dict[str, Any],
+            ctx: RpcContext,
+            query: dict[str, str] | None = None,
+            body: Any = None,
+            command: dict[str, Any] | None = None,
+            server: dict[str, Any] | None = None,
+            byteBudget: int | None = None,
+        ) -> AsyncIterator[ClientCallItem]:
+            """One client request: a head, then the body in chunks."""
+            state.check_connection(ctx)
+            request = {
+                "route": route, "method": method, "path": path, "query": query or {}, "body": body,
+                "caller": caller, "command": command, "server": server,
+            }
+            state.client_calls.append(request)
+            command_id = (command or {}).get("commandId")
+            if command_id and command_id in state.client_receipts:
+                answer = state.client_receipts[command_id]
+            else:
+                async def run() -> dict[str, Any]:
+                    if state.client_delay:
+                        await asyncio.sleep(state.client_delay)
+                    state.client_runs.append(route)
+                    answer = client_answer(request)
+                    if command_id and answer.get("command"):
+                        state.client_receipts[command_id] = answer
+                    return answer
+
+                # A command outlives its call, as on a device: cancelling the call does not cancel the command.
+                work = asyncio.ensure_future(run())
+                answer = await (asyncio.shield(work) if command_id else work)
+            yield ClientCallItem.model_validate({
+                "kind": "head",
+                "status": answer.get("status", 200),
+                "contentType": answer.get("contentType", "application/json"),
+                "command": answer.get("command"),
+            })
+            chunks = answer.get("chunks")
+            if chunks is None:
+                if answer.get("body") is None:
+                    return
+                text = answer["body"] if isinstance(answer["body"], str) else json.dumps(answer["body"])
+                size = state.client_chunk_bytes
+                chunks = [text[i:i + size] for i in range(0, len(text), size)] or [""]
+            for seq, part in enumerate(chunks):
+                yield ClientCallItem.model_validate(
+                    {"kind": "chunk", "seq": seq, "chunk": part, "end": seq == len(chunks) - 1}
+                )
+
+        @stream
+        async def subscribe(
+            self,
+            stream: str,
+            terminalId: str,
+            ctx: RpcContext,
+            fromSeq: int = 0,
+            caller: dict[str, Any] | None = None,
+        ) -> AsyncIterator[TerminalStreamItem]:
+            """Terminal messages queued in ``client_terminal_items``; ends after ``exit``."""
+            state.check_connection(ctx)
+            state.client_subscriptions.append({"stream": stream, "terminalId": terminalId, "fromSeq": fromSeq})
+            if terminalId not in state.client_terminal_items:
+                raise MeshCallError(
+                    "not_found",
+                    f"terminal not found: {terminalId}",
+                    details={"source": "device", "aaCode": "terminal_not_found"},
+                )
+            queue = state.client_terminal_items[terminalId]
+            while True:
+                if queue:
+                    item = TerminalStreamItem.model_validate(queue.popleft())
+                    yield item
+                    if item.type == "exit":
+                        return
+                else:
+                    await asyncio.sleep(POLL_SECONDS)
+
     async def run_command(
         method: str, commandId: str, deadline: str, inputDigest: str | None, p: dict[str, Any]
     ) -> CommandAck:
@@ -565,6 +697,7 @@ def _make_services(state: FakeDeviceState, *, mode: str = "off") -> list[object]
         f"{SERVICE_PREFIX}.Runtime": Runtime,
         f"{SERVICE_PREFIX}.Commands": commands,
         f"{SERVICE_PREFIX}.Workspace": Workspace,
+        f"{SERVICE_PREFIX}.Client": Client,
         f"{SERVICE_PREFIX}.Secure": Secure,
     }
     # Everything follows the registration table.
