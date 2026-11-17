@@ -250,7 +250,7 @@ cross-compiles them from any host. Packaged builds keep config, binding and logs
 under Electron `userData`; signed resources are never modified at runtime.
 
 `bundle:pi` pre-installs the Pi ACP adapter and SDK into `build/pi-runtime/`
-from the Connector's `connector/runtimes/acp/profiles/pi/dependencies.json`,
+from the Connector's `connector-ts/src/runtime/profiles/pi/dependencies.json`,
 with the same npm flags the Connector uses (no install scripts, no lockfile).
 It keeps only the prebuilt native modules of `PI_BUNDLE_TARGETS` (set by
 `dist` like the other bundles) and drops `.bin` shims; `PI_BUNDLE_NPM_REGISTRY`

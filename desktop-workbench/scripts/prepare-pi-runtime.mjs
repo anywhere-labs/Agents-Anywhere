@@ -16,7 +16,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { exists, runtimeTargetKey } from "./bundle-targets.mjs";
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const DEPENDENCIES_FILE = join(PROJECT_ROOT, "..", "connector", "connector", "runtimes", "acp", "profiles", "pi", "dependencies.json");
+const DEPENDENCIES_FILE = join(PROJECT_ROOT, "..", "connector-ts", "src", "runtime", "profiles", "pi", "dependencies.json");
 const OUTPUT_ROOT = process.env.WORKBENCH_PI_BUNDLE_DIR?.trim()
   ? resolve(process.env.WORKBENCH_PI_BUNDLE_DIR.trim())
   : join(PROJECT_ROOT, "build", "pi-runtime");
