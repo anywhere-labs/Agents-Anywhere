@@ -624,10 +624,7 @@ async def connector_terminal_stream_v2(
     await websocket.accept()
     if await reads.is_v3_device(connector_id):
         forwarder = websocket.app.state.client_forwarder
-        if forwarder.enabled("connector.terminals.stream"):
-            await _terminal_stream_client(websocket, forwarder, user_id, connector_id, terminal_id, fromSeq)
-            return
-        await _terminal_stream_v3(websocket, relay, connector_id, terminal_id, fromSeq)
+        await _terminal_stream_client(websocket, forwarder, user_id, connector_id, terminal_id, fromSeq)
         return
     await hub.attach(connector_id, terminal_id, websocket)
     try:

@@ -1,7 +1,7 @@
 """Client routes forwarded with ``Client/call`` / ``Client/subscribe`` (docs/v3/14-unified-client-path.md §B, §C).
 
-Real Server app, a real MeshCall Router and the fake device's ``Client`` service. The switch
-(``ClientCallSwitch``) is turned on for every route; with it off the routes keep their existing path.
+Real Server app, a real MeshCall Router and the fake device's ``Client`` service; every device-served route of a
+device-meshcall device goes through ``Client/call``.
 """
 
 from __future__ import annotations
@@ -30,8 +30,6 @@ from meshcall import MeshCallError
 from agent_server.core.client_routes import ROUTES_BY_ID
 from agent_server.core.device_meshcall import LinkError
 from agent_server.services.client_forward import (
-    SWITCH_ENV,
-    ClientCallSwitch,
     client_input_digest,
     command_identity,
 )
@@ -60,21 +58,11 @@ async def _session(app: Any, client: httpx.AsyncClient, *, timeouts: bool = Fals
     pushed = device.state.push_outbox("session.summary", summary(SID, 0))
     await eventually(lambda: acked(device, pushed.oid))
     assert (await client.post(f"{BASE}/takeover", headers=headers)).status_code == 200
-    app.state.client_forwarder.switch = ClientCallSwitch.everything()
     return headers, device_id, device
 
 
 def _detail(response: httpx.Response) -> dict[str, Any]:
     return response.json()["detail"]
-
-
-def test_switch_names_routes_ids_and_prefixes() -> None:
-    assert not ClientCallSwitch.from_environment({}).enabled("session.timeline")
-    switch = ClientCallSwitch.from_environment({SWITCH_ENV: "session.timeline, connector.*"})
-    assert switch.enabled("session.timeline")
-    assert switch.enabled("connector.fs.list")
-    assert not switch.enabled("session.snapshot")
-    assert ClientCallSwitch.everything().enabled("session.snapshot")
 
 
 def test_command_identity_takes_or_generates_the_route_field() -> None:
@@ -326,21 +314,6 @@ async def _known(state: Any, command_id: str) -> bool:
     return command_id in state.receipts
 
 
-def test_switch_off_keeps_the_existing_path(mesh_router: RouterProcess, monkeypatch) -> None:
-    async def scenario() -> None:
-        async with server(mesh_router, monkeypatch) as (app, client):
-            headers, _device_id, device = await _session(app, client)
-            app.state.client_forwarder.switch = ClientCallSwitch()
-            try:
-                response = await client.get(f"{BASE}/timeline", headers=headers)
-                assert response.status_code == 200
-                assert device.state.client_calls == [] and "read" in device.state.calls
-            finally:
-                await device.stop()
-
-    asyncio.run(scenario())
-
-
 def test_terminal_stream_uses_client_subscribe(mesh_router: RouterProcess, monkeypatch) -> None:
     from conftest import make_test_client
 
@@ -349,7 +322,6 @@ def test_terminal_stream_uses_client_subscribe(mesh_router: RouterProcess, monke
     monkeypatch.setenv("AGENT_SERVER_MESH_ROUTER_URL", mesh_router.url)
     monkeypatch.setenv("AGENT_SERVER_MESH_PASSWORD", mesh_router.password)
     monkeypatch.setenv("AGENT_SERVER_MESH_PUBLIC_URL", mesh_router.url)
-    monkeypatch.setenv(SWITCH_ENV, "connector.terminals.*")
 
     async def connect(app: Any, device_id: str, token: str) -> Any:
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://server") as http:

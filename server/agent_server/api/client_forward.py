@@ -1,9 +1,10 @@
 """Thin FastAPI side of ``services.client_forward``: one call per forwarded route handler.
 
 Every device-served route keeps its handler, request and response models (OpenAPI and 422 do not change). The
-handler first asks ``forward_session`` / ``forward_connector``: when ``ClientCallSwitch`` names the route and the
-session's device speaks device-meshcall, the request goes to the device with ``Client/call`` and its answer is
-returned; otherwise they return None and the handler runs its existing path.
+handler first asks ``forward_session`` / ``forward_connector``: when the session's device speaks device-meshcall,
+the request goes to the device with ``Client/call`` and its answer is returned; otherwise (a v2 device, a session
+or device the caller does not own, a handler called without a request) they return None and the handler runs its
+own path.
 
 The Server keeps what only it can do: ownership (a session or device the caller does not own is left to the
 handler, which answers 404), v2 devices (D4, the handler's own path), admission, usage, directory broadcasts and
@@ -12,6 +13,7 @@ the facts it owns (``ClientServerFacts``).
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -47,10 +49,10 @@ def forwarder_of(conn: Request | None) -> ClientForwarder | None:
 
 
 def forwarding(conn: Request | None, route_id: str) -> bool:
-    """Whether ``route_id`` goes through ``Client/call`` (cheap: no I/O)."""
+    """Whether ``route_id`` can go through ``Client/call`` (cheap: no I/O): a request with a forwarder."""
 
-    forwarder = forwarder_of(conn)
-    return forwarder is not None and forwarder.enabled(route_id)
+    del route_id
+    return forwarder_of(conn) is not None
 
 
 def caller_of(conn: Request, user_id: str) -> ClientCaller:
@@ -134,7 +136,8 @@ async def call(
             session_id=session_id,
         )
         if decorate is not None and answer.ok and not answer.offline:
-            answer.body = await decorate(answer.body)
+            # A copy: the forwarder may share one answer between concurrent callers.
+            answer = dataclasses.replace(answer, body=await decorate(answer.body), model=None)
             if response_model is not None:
                 forwarder.check(route_id, answer, response_model)
     except ClientForwardError as exc:

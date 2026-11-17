@@ -407,7 +407,7 @@ def create_app(
     )
     app.state.device_link.commands = app.state.device_commands
     app.state.device_rpc_bridge.commands = app.state.device_commands
-    # Client routes forwarded with ``Client/call`` (AGENT_SERVER_CLIENT_CALL_ROUTES; none by default).
+    # Every device-served client route of a device-meshcall device goes through ``Client/call``.
     app.state.client_forwarder = ClientForwarder(
         app.state.device_mesh, app.state.device_link_hub, app.state.device_commands
     )

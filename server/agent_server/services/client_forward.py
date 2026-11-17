@@ -15,14 +15,14 @@ receipt and checks the body against the route's response model.
   accepted command is forwarded again with the same id (the device's inbox replays its ack, nothing runs twice);
   of a rejected one returns the stored error; of a pending or unknown one asks ``Commands/status`` first and
   answers 504 when it is still unknown. The same id with another input is 409 ``command_conflict``.
-* ``ClientCallSwitch`` decides which routes go through here; every other request keeps its existing path.
+* Every device-served route of a device-meshcall device goes through here; there is no other path.
 """
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
-import os
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
@@ -62,37 +62,6 @@ from agent_server.core.device_meshcall import (
 from agent_server.infra.device_link import DeviceLinkHub
 from agent_server.infra.device_mesh import DeviceCallError, DeviceMesh
 from agent_server.services.device_commands import DeviceCommandService, input_digest
-
-#: ``AGENT_SERVER_CLIENT_CALL_ROUTES``: route ids that go through ``Client/call``, comma separated; ``*`` for
-#: every route, ``session.*`` for a prefix. Empty (the default): none, every route keeps its existing path.
-SWITCH_ENV = "AGENT_SERVER_CLIENT_CALL_ROUTES"
-
-
-@dataclass(frozen=True, slots=True)
-class ClientCallSwitch:
-    """Which client routes are forwarded with ``Client/call`` / ``Client/subscribe``."""
-
-    routes: frozenset[str] = frozenset()
-
-    @classmethod
-    def parse(cls, value: str) -> ClientCallSwitch:
-        return cls(frozenset(part.strip() for part in value.split(",") if part.strip()))
-
-    @classmethod
-    def from_environment(cls, environ: Mapping[str, str] | None = None) -> ClientCallSwitch:
-        env = os.environ if environ is None else environ
-        return cls.parse(env.get(SWITCH_ENV, ""))
-
-    @classmethod
-    def everything(cls) -> ClientCallSwitch:
-        return cls(frozenset({"*"}))
-
-    def enabled(self, route_id: str) -> bool:
-        if not self.routes:
-            return False
-        if "*" in self.routes or route_id in self.routes:
-            return True
-        return any(item.endswith(".*") and route_id.startswith(item[:-1]) for item in self.routes)
 
 
 class ClientForwardError(Exception):
@@ -253,24 +222,32 @@ def _join_body(head: ClientCallHead, chunks: list[ClientCallChunk]) -> Any:
     return json.loads(text) if text else None
 
 
+@dataclass(slots=True)
+class _Flight:
+    """One shared device read and how many callers wait for it."""
+
+    task: asyncio.Task[ClientAnswer]
+    waiters: int = 0
+
+
 class ClientForwarder:
-    """Turns a client request into ``Client/call`` and the device's answer into the client's response."""
+    """Turns a client request into ``Client/call`` and the device's answer into the client's response.
+
+    Concurrent identical reads (same caller, device, route, path and query; a ``GET`` without Server facts) share one
+    ``Client/call`` in this worker: several clients opening one session cost the device one read. The shared
+    ``ClientAnswer`` is read-only for its callers.
+    """
 
     def __init__(
         self,
         mesh: DeviceMesh,
         hub: DeviceLinkHub,
         commands: DeviceCommandService,
-        *,
-        switch: ClientCallSwitch | None = None,
     ) -> None:
         self._mesh = mesh
         self._hub = hub
         self._commands = commands
-        self.switch = switch if switch is not None else ClientCallSwitch.from_environment()
-
-    def enabled(self, route_id: str) -> bool:
-        return self.switch.enabled(route_id)
+        self._flights: dict[tuple[Any, ...], _Flight] = {}
 
     def timeout(self, route: ClientRoute) -> float:
         if route.timeout == "create":
@@ -309,6 +286,73 @@ class ClientForwarder:
         route = ROUTES_BY_ID[route_id]
         if route.via != "call":
             raise ValueError(f"{route_id} is not forwarded with Client/call")
+        if route.method == "GET" and route.command_id is None and server is None and body is None:
+            key = (
+                user_id, device_id, route.id, path, tuple(sorted((query or {}).items())),
+                response_model, byte_budget, timeout,
+            )
+            return await self._shared(
+                key,
+                lambda: self._call(
+                    route, user_id=user_id, device_id=device_id, path=path, caller=caller, query=query, body=None,
+                    server=None, response_model=response_model, offline=offline, session_id=session_id,
+                    command_id=None, timeout=timeout, byte_budget=byte_budget,
+                ),
+            )
+        return await self._call(
+            route, user_id=user_id, device_id=device_id, path=path, caller=caller, query=query, body=body,
+            server=server, response_model=response_model, offline=offline, session_id=session_id,
+            command_id=command_id, timeout=timeout, byte_budget=byte_budget,
+        )
+
+    async def _shared(self, key: tuple[Any, ...], work: Callable[[], Awaitable[ClientAnswer]]) -> ClientAnswer:
+        """Run ``work`` once for every concurrent caller with the same ``key``.
+
+        A caller that is cancelled stops waiting without failing the others; the call is cancelled only once nobody
+        waits for it any more.
+        """
+
+        flight = self._flights.get(key)
+        if flight is None:
+            flight = _Flight(asyncio.create_task(work(), name=f"client-call-{key[2]}"))
+            self._flights[key] = flight
+            flight.task.add_done_callback(lambda task, key=key, flight=flight: self._land(key, flight, task))
+        flight.waiters += 1
+        try:
+            return await asyncio.shield(flight.task)
+        finally:
+            flight.waiters -= 1
+            if flight.waiters == 0 and not flight.task.done():
+                self._drop(key, flight)
+                flight.task.cancel()
+
+    def _drop(self, key: tuple[Any, ...], flight: _Flight) -> None:
+        if self._flights.get(key) is flight:
+            del self._flights[key]
+
+    def _land(self, key: tuple[Any, ...], flight: _Flight, task: asyncio.Task[ClientAnswer]) -> None:
+        self._drop(key, flight)
+        if not task.cancelled():
+            task.exception()  # observed here: the waiters re-raise it, and none may be left
+
+    async def _call(
+        self,
+        route: ClientRoute,
+        *,
+        user_id: str,
+        device_id: str,
+        path: str,
+        caller: ClientCaller,
+        query: Mapping[str, str] | None,
+        body: Any,
+        server: ClientServerFacts | None,
+        response_model: type[BaseModel] | None,
+        offline: Callable[[], Awaitable[Any]] | None,
+        session_id: str | None,
+        command_id: str | None,
+        timeout: float | None,
+        byte_budget: int | None,
+    ) -> ClientAnswer:
         if command_id is None:
             command_id, body = command_identity(route, body)
         if body is not None and len(json.dumps(body, separators=(",", ":"), default=str).encode()) > MAX_REQUEST_BODY_BYTES:
