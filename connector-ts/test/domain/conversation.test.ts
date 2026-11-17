@@ -206,6 +206,36 @@ describe('queue', () => {
     expect(queue.recoverSending(q, () => false, 't2').items[0]).toMatchObject({ status: 'failed', error: { code: 'queue_dispatch_unknown' } })
     expect(queue.recoverSending(q, () => true, 't2').items).toEqual([])
   })
+
+  it('applies every queue operation through one entry point', () => {
+    let q = queue.applyOp(queue.enqueue(queue.emptyQueue('s'), item('a'), 'auto').queue, { kind: 'markSending', messageId: 'a' }, 't')
+    expect(q.items[0]?.status).toBe('sending')
+    q = queue.applyOp(q, { kind: 'markFailed', messageId: 'a', error: { code: 'x', message: 'y' } }, 't')
+    expect(q.items[0]?.status).toBe('failed')
+    expect(queue.applyOp(q, { kind: 'turnEnded', outcome: 'idle' }, 't')).toBe(q)
+    expect(queue.applyOp(q, { kind: 'dropForArchive' }, 't').items).toEqual([])
+  })
+
+  it('settles the delivery behind a queue item with the operation', () => {
+    const q = queue.enqueue(queue.enqueue(queue.emptyQueue('s'), item('a'), 'auto').queue, item('b'), 'auto').queue
+    expect(queue.deliverySettlements({ kind: 'markSending', messageId: 'a' }, q)).toEqual([{ kind: 'move', clientMessageId: 'c_a', to: 'sending', errorCode: null }])
+    expect(queue.deliverySettlements({ kind: 'markFailed', messageId: 'a', error: { code: 'queue_dispatch_unknown', message: '' } }, q)).toEqual([{ kind: 'move', clientMessageId: 'c_a', to: 'unknown', errorCode: 'queue_dispatch_unknown' }])
+    expect(queue.deliverySettlements({ kind: 'markFailed', messageId: 'a', error: { code: 'queue_dispatch_failed', message: '' } }, q)[0]).toMatchObject({ to: 'rejected' })
+    expect(queue.deliverySettlements({ kind: 'retry', messageId: 'b' }, q)).toEqual([{ kind: 'retry', clientMessageId: 'c_b' }])
+    expect(queue.deliverySettlements({ kind: 'clear' }, queue.markSending(q, 'a', 't')).map(entry => entry.clientMessageId)).toEqual(['c_b'])
+    expect(queue.deliverySettlements({ kind: 'resume' }, q)).toEqual([])
+    expect(queue.deliverySettlements({ kind: 'remove', messageId: 'missing' }, q)).toEqual([])
+
+    const queued = delivery.receive(undefined, { sessionId: 's', clientMessageId: 'c_a', inputDigest: 'd', at: 't0', queued: true }).delivery
+    const sending = queue.settleDelivery(queued, { kind: 'move', clientMessageId: 'c_a', to: 'sending', errorCode: null }, 't1')
+    expect(sending?.state).toBe('sending')
+    expect(queue.settleDelivery(sending, { kind: 'move', clientMessageId: 'c_a', to: 'sending', errorCode: null }, 't2')).toBeNull()
+    expect(queue.settleDelivery(null, { kind: 'retry', clientMessageId: 'c_a' }, 't2')).toBeNull()
+    expect(queue.settleDelivery(sending, { kind: 'retry', clientMessageId: 'c_a' }, 't2')).toBeNull()
+    const rejected = queue.settleDelivery(sending, { kind: 'move', clientMessageId: 'c_a', to: 'rejected', errorCode: 'queue_dispatch_failed' }, 't2')
+    expect(rejected).toMatchObject({ state: 'rejected', errorCode: 'queue_dispatch_failed' })
+    expect(queue.settleDelivery(rejected, { kind: 'retry', clientMessageId: 'c_a' }, 't3')?.state).toBe('queued')
+  })
 })
 
 describe('admission', () => {

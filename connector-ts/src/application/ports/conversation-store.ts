@@ -2,8 +2,8 @@ import type {
   Delivery,
   DeliveryState,
   Interaction,
-  QueueAttachment,
   QueueItem,
+  QueueOp,
   Session,
   SessionQueue,
   SessionStatus,
@@ -205,19 +205,7 @@ export interface DeliveryRepository {
   acceptedPending(): Promise<Array<{ delivery: Delivery; pending: PendingDelivery | null }>>
 }
 
-export type QueueOp =
-  | { kind: 'update'; messageId: string; content?: string; attachments?: readonly QueueAttachment[] }
-  | { kind: 'remove'; messageId: string }
-  | { kind: 'retry'; messageId: string }
-  | { kind: 'sendNow'; messageId: string }
-  | { kind: 'resume' }
-  | { kind: 'reorder'; messageIds: readonly string[] }
-  | { kind: 'clear' }
-  | { kind: 'markSending'; messageId: string }
-  | { kind: 'markSent'; messageId: string }
-  | { kind: 'markFailed'; messageId: string; error: { code: string; message: string } }
-  | { kind: 'turnEnded'; outcome: 'idle' | 'error' }
-  | { kind: 'dropForArchive' }
+export type { QueueOp } from '../../domain/conversation/index.js'
 
 export interface QueueRepository {
   get(sessionId: string): Promise<SessionQueue>

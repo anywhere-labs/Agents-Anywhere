@@ -1,3 +1,4 @@
+import { canTransition, requeueForRetry, transition, type Delivery, type DeliveryState } from './delivery.js'
 import { ConversationError } from './errors.js'
 
 /**
@@ -236,4 +237,84 @@ export function recoverSending(queue: SessionQueue, wasAccepted: (item: QueueIte
 /** Archived sessions drop their queue at the next dispatch attempt. */
 export function dropForArchive(queue: SessionQueue): SessionQueue {
   return queue.items.length === 0 ? queue : changed(queue, [], false)
+}
+
+/** An operation on a session queue: the client's (`session.queue.*`) and the dispatcher's own. */
+export type QueueOp =
+  | { kind: 'update'; messageId: string; content?: string; attachments?: readonly QueueAttachment[] }
+  | { kind: 'remove'; messageId: string }
+  | { kind: 'retry'; messageId: string }
+  | { kind: 'sendNow'; messageId: string }
+  | { kind: 'resume' }
+  | { kind: 'reorder'; messageIds: readonly string[] }
+  | { kind: 'clear' }
+  | { kind: 'markSending'; messageId: string }
+  | { kind: 'markSent'; messageId: string }
+  | { kind: 'markFailed'; messageId: string; error: { code: string; message: string } }
+  | { kind: 'turnEnded'; outcome: 'idle' | 'error' }
+  | { kind: 'dropForArchive' }
+
+/** The queue after `op`; the same object when nothing changed. */
+export function applyOp(queue: SessionQueue, op: QueueOp, at: string): SessionQueue {
+  switch (op.kind) {
+    case 'update': return update(queue, op.messageId, { ...(op.content !== undefined ? { content: op.content } : {}), ...(op.attachments !== undefined ? { attachments: op.attachments } : {}) }, at)
+    case 'remove': return remove(queue, op.messageId).queue
+    case 'retry': return retry(queue, op.messageId, at)
+    case 'sendNow': return sendNow(queue, op.messageId, at)
+    case 'resume': return resume(queue)
+    case 'reorder': return reorder(queue, op.messageIds)
+    case 'clear': return clear(queue).queue
+    case 'markSending': return markSending(queue, op.messageId, at)
+    case 'markSent': return markSent(queue, op.messageId)
+    case 'markFailed': return markFailed(queue, op.messageId, op.error, at)
+    case 'turnEnded': return onTurnEnded(queue, op.outcome)
+    case 'dropForArchive': return dropForArchive(queue)
+  }
+}
+
+/** What a queue operation does to the delivery behind an item: move it to a state, or make it sendable again. */
+export type DeliverySettlement =
+  | { readonly kind: 'move'; readonly clientMessageId: string; readonly to: DeliveryState; readonly errorCode: string | null }
+  | { readonly kind: 'retry'; readonly clientMessageId: string }
+
+/** Codes of a dispatch whose outcome is not known: the delivery becomes `unknown`, never `rejected`. */
+const UNKNOWN_DISPATCH_CODES: ReadonlySet<string> = new Set(['queue_dispatch_unknown', 'command_outcome_unknown'])
+
+/**
+ * The deliveries a queue operation settles, given the queue before it, so that a queued message and its delivery
+ * never disagree: dispatch moves it to `sending` and `started`, a failed dispatch to `rejected` or `unknown`, a
+ * removed item to `rejected`, and a retry makes a failed delivery sendable again.
+ */
+export function deliverySettlements(op: QueueOp, before: SessionQueue): DeliverySettlement[] {
+  const itemOf = (messageId: string): QueueItem | undefined => before.items.find(item => item.messageId === messageId)
+  const move = (item: QueueItem | undefined, to: DeliveryState, errorCode: string | null): DeliverySettlement[] =>
+    item === undefined ? [] : [{ kind: 'move', clientMessageId: item.clientMessageId, to, errorCode }]
+  switch (op.kind) {
+    case 'markSending':
+      return move(itemOf(op.messageId), 'sending', null)
+    case 'markSent':
+      return move(itemOf(op.messageId), 'started', null)
+    case 'markFailed':
+      return move(itemOf(op.messageId), UNKNOWN_DISPATCH_CODES.has(op.error.code) ? 'unknown' : 'rejected', op.error.code)
+    case 'retry':
+    case 'sendNow': {
+      const item = itemOf(op.messageId)
+      return item === undefined ? [] : [{ kind: 'retry', clientMessageId: item.clientMessageId }]
+    }
+    case 'remove':
+      return move(itemOf(op.messageId), 'rejected', 'queue_item_removed')
+    case 'clear':
+    case 'dropForArchive':
+      return before.items.filter(item => item.status !== 'sending').flatMap(item => move(item, 'rejected', 'queue_item_removed'))
+    default:
+      return []
+  }
+}
+
+/** The delivery after a settlement; null when it stays as it is (missing, already there, or not allowed). */
+export function settleDelivery(current: Delivery | null, settlement: DeliverySettlement, at: string): Delivery | null {
+  if (current === null) return null
+  if (settlement.kind === 'retry') return current.state === 'rejected' || current.state === 'unknown' ? requeueForRetry(current, at) : null
+  if (current.state === settlement.to || !canTransition(current.state, settlement.to)) return null
+  return transition(current, settlement.to, at, { errorCode: settlement.errorCode })
 }

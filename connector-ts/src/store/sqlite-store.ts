@@ -724,49 +724,9 @@ export function openSqliteStore(options: OpenStoreOptions): SyncStore {
 
   /** Queue operations also settle the delivery behind the item, in the same transaction. */
   function settleDeliveryForQueue(sessionId: string, op: QueueOp, before: SessionQueue, at: string): void {
-    const itemOf = (messageId: string): QueueItem | undefined => before.items.find(item => item.messageId === messageId)
-    const move = (clientMessageId: string, to: DeliveryState, errorCode: string | null): void => {
-      const current = getDelivery(sessionId, clientMessageId)
-      if (current === null || current.state === to || !deliveryRules.canTransition(current.state, to)) return
-      putDelivery(deliveryRules.transition(current, to, at, { errorCode }))
-    }
-    switch (op.kind) {
-      case 'markSending': {
-        const item = itemOf(op.messageId)
-        if (item !== undefined) move(item.clientMessageId, 'sending', null)
-        return
-      }
-      case 'markSent': {
-        const item = itemOf(op.messageId)
-        if (item !== undefined) move(item.clientMessageId, 'started', null)
-        return
-      }
-      case 'markFailed': {
-        const item = itemOf(op.messageId)
-        if (item === undefined) return
-        const unknown = op.error.code === 'queue_dispatch_unknown' || op.error.code === 'command_outcome_unknown'
-        move(item.clientMessageId, unknown ? 'unknown' : 'rejected', op.error.code)
-        return
-      }
-      case 'retry':
-      case 'sendNow': {
-        const item = itemOf(op.messageId)
-        if (item === undefined) return
-        const current = getDelivery(sessionId, item.clientMessageId)
-        if (current !== null && (current.state === 'rejected' || current.state === 'unknown')) putDelivery(deliveryRules.requeueForRetry(current, at))
-        return
-      }
-      case 'remove': {
-        const item = itemOf(op.messageId)
-        if (item !== undefined) move(item.clientMessageId, 'rejected', 'queue_item_removed')
-        return
-      }
-      case 'clear':
-      case 'dropForArchive':
-        for (const item of before.items) if (item.status !== 'sending') move(item.clientMessageId, 'rejected', 'queue_item_removed')
-        return
-      default:
-        return
+    for (const settlement of queueRules.deliverySettlements(op, before)) {
+      const next = queueRules.settleDelivery(getDelivery(sessionId, settlement.clientMessageId), settlement, at)
+      if (next !== null) putDelivery(next)
     }
   }
 
@@ -777,21 +737,7 @@ export function openSqliteStore(options: OpenStoreOptions): SyncStore {
     apply(sessionId, op, at, receipt) {
       return tx(() => {
         const before = getQueue(sessionId)
-        let next: SessionQueue
-        switch (op.kind) {
-          case 'update': next = queueRules.update(before, op.messageId, { ...(op.content !== undefined ? { content: op.content } : {}), ...(op.attachments !== undefined ? { attachments: op.attachments } : {}) }, at); break
-          case 'remove': next = queueRules.remove(before, op.messageId).queue; break
-          case 'retry': next = queueRules.retry(before, op.messageId, at); break
-          case 'sendNow': next = queueRules.sendNow(before, op.messageId, at); break
-          case 'resume': next = queueRules.resume(before); break
-          case 'reorder': next = queueRules.reorder(before, op.messageIds); break
-          case 'clear': next = queueRules.clear(before).queue; break
-          case 'markSending': next = queueRules.markSending(before, op.messageId, at); break
-          case 'markSent': next = queueRules.markSent(before, op.messageId); break
-          case 'markFailed': next = queueRules.markFailed(before, op.messageId, op.error, at); break
-          case 'turnEnded': next = queueRules.onTurnEnded(before, op.outcome); break
-          case 'dropForArchive': next = queueRules.dropForArchive(before); break
-        }
+        const next = queueRules.applyOp(before, op, at)
         if (next !== before) {
           settleDeliveryForQueue(sessionId, op, before, at)
           putQueue(next)
