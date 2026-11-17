@@ -108,7 +108,6 @@ class ModelChannelError(ModelConfigError):
 
 
 class ModelChannelRepository(Protocol):
-    async def channel_discovery_gated(self, connector_id: str) -> bool: ...
     async def channel_connector_owner(self, connector_id: str) -> str | None: ...
     async def bump_channel_connection(self, user_id: str, channel: str) -> None: ...
     async def plan_channel_switch(self, connector_id: str, runtime_id: str, values: dict[str, Any]) -> None: ...
@@ -574,12 +573,6 @@ class ModelChannelService:
             self._spawn(connector_id, *waiting)
         await self.settle()
 
-    async def connector_discovered(self, connector_id: str) -> None:
-        """Discovery finished: fix each runtime's target before the device gate opens."""
-        owner = await self._store.channel_connector_owner(connector_id)
-        if owner is not None:
-            await self._ensure_targets(owner)
-
     async def connector_event(self, connector_id: str) -> None:
         """The device is back: every runtime waiting on it may go on."""
         # Always enumerate durable state; a missing Redis marker cannot hide work.
@@ -800,8 +793,6 @@ class ModelChannelService:
             await self._wake.clear(connector_id, runtime_id)
             return
         for _ in range(4):
-            if await self._store.channel_discovery_gated(connector_id):
-                return
             switch = await self._store.get_channel_switch(connector_id, runtime_id)
             if switch is None:
                 return

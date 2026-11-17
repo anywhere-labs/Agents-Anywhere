@@ -20,7 +20,6 @@ from agent_server.core.utc import utc_now
 from agent_server.infra.db.engine import closing_connection
 from agent_server.infra.db.schema import (
     channel_device_fences,
-    channel_device_gates,
     channel_rotation_intents,
     channel_sync_outbox,
     connectors,
@@ -554,52 +553,9 @@ class ChannelReconciliationRepositoryMixin:
                 .values(connection_revision=model_profiles.c.connection_revision + 1)
             )
 
-    async def set_channel_device_gate(
-        self, connector_id: str, connection_id: str
-    ) -> None:
-        async with channel_connection(self, write=True) as conn:
-            statement = pg_insert(channel_device_gates).values(
-                connector_id=connector_id,
-                connection_id=connection_id,
-                expires_at=deadline(180),
-            )
-            await conn.execute(
-                statement.on_conflict_do_update(
-                    index_elements=["connector_id"],
-                    set_={"connection_id": connection_id, "expires_at": deadline(180)},
-                )
-            )
-
-    async def clear_channel_device_gate(
-        self, connector_id: str, connection_id: str
-    ) -> None:
-        async with channel_connection(self, write=True) as conn:
-            await conn.execute(
-                delete(channel_device_gates).where(
-                    channel_device_gates.c.connector_id == connector_id,
-                    channel_device_gates.c.connection_id == connection_id,
-                )
-            )
-
     async def channel_admission_blocked(
         self, connector_id: str, runtime_ids: list[str], conn: Any, now: str
     ) -> bool:
-        gate = (
-            await conn.execute(
-                select(channel_device_gates.c.connector_id)
-                .join(
-                    connectors, connectors.c.id == channel_device_gates.c.connector_id
-                )
-                .where(
-                    channel_device_gates.c.connector_id == connector_id,
-                    channel_device_gates.c.connection_id
-                    == connectors.c.presence_connection_id,
-                    channel_device_gates.c.expires_at > now,
-                )
-            )
-        ).first()
-        if gate is not None:
-            return True
         rows = (
             (
                 await conn.execute(
@@ -665,24 +621,6 @@ class ChannelReconciliationRepositoryMixin:
                 )
             ).first()
         return row is not None
-
-    async def channel_discovery_gated(self, connector_id: str) -> bool:
-        async with channel_connection(self) as conn:
-            return (
-                await conn.execute(
-                    select(channel_device_gates.c.connector_id)
-                    .join(
-                        connectors,
-                        connectors.c.id == channel_device_gates.c.connector_id,
-                    )
-                    .where(
-                        channel_device_gates.c.connector_id == connector_id,
-                        channel_device_gates.c.connection_id
-                        == connectors.c.presence_connection_id,
-                        channel_device_gates.c.expires_at > utc_now(),
-                    )
-                )
-            ).first() is not None
 
     async def channel_statistics(self) -> dict[str, Any]:
         async with channel_connection(self) as conn:
