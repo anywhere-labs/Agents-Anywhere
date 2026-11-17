@@ -25,6 +25,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
+    "ajv": "^8.20.0",
     "esbuild": "^0.28.2",
     "json-schema-to-typescript": "^15.0.4",
     "typescript": "^5.9.2",

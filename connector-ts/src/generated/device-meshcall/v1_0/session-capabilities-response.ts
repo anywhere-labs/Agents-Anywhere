@@ -1,0 +1,42 @@
+/* eslint-disable */
+/** Generated from contracts/device-meshcall/1.0 artifact session-capabilities-response. Do not edit; run `yarn contracts:generate`. */
+
+export type Allowed = boolean
+export type Available = boolean
+export type Capabilityid = string
+export type Runtime = string | null
+export type Scope = "runtime" | "session"
+export type Sessionid = string | null
+export type Supported = boolean
+export type Unavailablereason = string | null
+export type Version = string
+export type Capabilities = ProtocolCapability[]
+export type Revision = number
+export type Sessionid1 = string
+
+export interface SessionCapabilitiesResponse {
+  capabilitySet?: ProtocolCapabilitySet | null
+  sessionId: Sessionid1
+  [k: string]: unknown
+}
+export interface ProtocolCapabilitySet {
+  capabilities?: Capabilities
+  revision: Revision
+  [k: string]: unknown
+}
+export interface ProtocolCapability {
+  allowed?: Allowed
+  available?: Available
+  capabilityId: Capabilityid
+  parameters?: Parameters
+  runtime?: Runtime
+  scope?: Scope
+  sessionId?: Sessionid
+  supported?: Supported
+  unavailableReason?: Unavailablereason
+  version?: Version
+  [k: string]: unknown
+}
+export interface Parameters {
+  [k: string]: unknown
+}

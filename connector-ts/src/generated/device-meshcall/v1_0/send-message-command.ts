@@ -1,13 +1,12 @@
 /* eslint-disable */
 /** Generated from contracts/device-meshcall/1.0 artifact send-message-command. Do not edit; run `yarn contracts:generate`. */
 
-export type Encrypted = boolean
 export type Fileid = string
-export type Mediatype = string
-export type Name = string
+export type Mediatype = string | null
+export type Name = string | null
 export type Sha256 = string | null
-export type Size = number
-export type Attachments = AttachmentRef[]
+export type Size = number | null
+export type Attachments = CommandAttachmentRef[]
 export type Clientmessageid = string
 export type Content = string
 export type Queue = ("auto" | "interrupt" | "never") | null
@@ -16,17 +15,19 @@ export type Sessionid = string
 export interface SendMessageCommand {
   attachments?: Attachments
   clientMessageId: Clientmessageid
-  content: Content
+  content?: Content
   queue?: Queue
   sessionId: Sessionid
   [k: string]: unknown
 }
-export interface AttachmentRef {
-  encrypted?: Encrypted
+/**
+ * An attachment in a command: the Server's record; facts it does not have are left out.
+ */
+export interface CommandAttachmentRef {
   fileId: Fileid
-  mediaType: Mediatype
-  name: Name
+  mediaType?: Mediatype
+  name?: Name
   sha256?: Sha256
-  size: Size
+  size?: Size
   [k: string]: unknown
 }

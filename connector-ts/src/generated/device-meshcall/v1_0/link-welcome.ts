@@ -3,12 +3,32 @@
 
 export type Connectionid = string
 export type Contractversion = "1.0"
-export type Channelswitches = {
+export type Active = boolean
+export type Config = {
   [k: string]: unknown
-}[]
-export type Runtimes = {
+} | null
+export type Authtoken = string
+export type Baseurl = string
+export type Model = string | null
+export type Protocol = string
+export type Name = string | null
+export type Operationid = string | null
+export type Revision = number
+export type Runtimeid = string
+export type Runtimetype = string
+export type Switchrevision = number | null
+export type Channelswitches = ChannelSwitchCommand[]
+export type Active1 = boolean
+export type Config1 = {
   [k: string]: unknown
-}[]
+} | null
+export type Name1 = string | null
+export type Operationid1 = string | null
+export type Revision1 = number
+export type Runtimeid1 = string
+export type Runtimetype1 = string
+export type Switchrevision1 = number | null
+export type Runtimes = RuntimeApplyCommand[]
 export type E2Eemode = "off" | "required"
 export type Expiresat = string
 /**
@@ -56,7 +76,52 @@ export interface DesiredState {
   runtimes?: Runtimes
   [k: string]: unknown
 }
+/**
+ * ``channel.switch``: ``runtime.apply`` fenced by the switch the Server is executing
+ * (``operationId``, ``switchRevision``; sent when the device declared ``channelReconcileFence``).
+ */
+export interface ChannelSwitchCommand {
+  active: Active
+  config?: Config
+  modelGateway?: ModelGateway | null
+  name?: Name
+  operationId?: Operationid
+  revision?: Revision
+  runtimeId: Runtimeid
+  runtimeType: Runtimetype
+  switchRevision?: Switchrevision
+  [k: string]: unknown
+}
+/**
+ * The model gateway a Runtime instance uses, as the device takes it (the Server keeps it in the config).
+ */
+export interface ModelGateway {
+  authToken: Authtoken
+  baseUrl: Baseurl
+  model?: Model
+  protocol: Protocol
+  [k: string]: unknown
+}
 export interface Devicesettings {
+  [k: string]: unknown
+}
+/**
+ * ``runtime.apply``: one desired Runtime instance; also the item of ``LinkWelcome.desired.runtimes``.
+ *
+ * ``config`` holds only the instance's own settings, validated against its type's ``configSchema``
+ * (Runtime Control 2.1); a model gateway travels as ``modelGateway``. ``revision`` only grows, so a late
+ * command never undoes a newer one.
+ */
+export interface RuntimeApplyCommand {
+  active: Active1
+  config?: Config1
+  modelGateway?: ModelGateway | null
+  name?: Name1
+  operationId?: Operationid1
+  revision?: Revision1
+  runtimeId: Runtimeid1
+  runtimeType: Runtimetype1
+  switchRevision?: Switchrevision1
   [k: string]: unknown
 }
 /**

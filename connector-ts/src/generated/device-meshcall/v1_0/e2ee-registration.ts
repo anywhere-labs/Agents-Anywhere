@@ -4,6 +4,10 @@
 /** Services and methods the device registers on the Router, per E2EE mode. */
 export const REGISTERED_SERVICES = {
   "off": {
+    "aa.device.v1.Client": [
+      "call",
+      "subscribe"
+    ],
     "aa.device.v1.Commands": [
       "status",
       "sessionSendMessage",
