@@ -61,10 +61,29 @@ max_journal_lines: 2000
 # entire context and push out everything else — silently, from the model's
 # point of view.
 #
+# max_total_bytes is the whole block: when entries run out of room, the rest
+# still appear as index lines (or as dropped-with-reason in the snapshot), so
+# audit tooling can explain what was left out. Raise it when a task genuinely
+# needs more; lower it only to bound cost for a narrow task. A single dispatch
+# can override it without touching this file: context compile --budget N.
+#
 # context_injection:
 #   max_file_bytes: 32768       # per jsonl-referenced file
 #   max_artifact_bytes: 65536   # per task artifact (prd / design / implement)
-#   max_total_bytes: 131072     # whole block
+#   max_total_bytes: 131072     # whole block; --budget N overrides per call
+
+#-------------------------------------------------------------------------------
+# Spec Check
+#-------------------------------------------------------------------------------
+#
+# The specs --check gate scans .specrune/spec/** plus Go comments under the
+# source roots. Auto-fix (specs --fix) repairs mechanically-detectable
+# reference rot (index-ref / path-ref / index-orphan) and commits on its own.
+#
+# spec_check:
+#   source_roots:            # Go-comment scan roots (default: [core])
+#     - core
+#   auto_commit: true        # false: fix files but never commit (CI: report only)
 
 #-------------------------------------------------------------------------------
 # Per-Turn Breadcrumb
@@ -73,7 +92,7 @@ max_journal_lines: 2000
 # A prompt containing this keyword skips the per-turn workflow-state
 # breadcrumb injection. Set to "" to disable the escape hatch.
 # prompt_injection:
-#   skip_keyword: no-trellis
+#   skip_keyword: no-specrune
 
 #-------------------------------------------------------------------------------
 # Lifecycle Hooks
@@ -90,11 +109,22 @@ max_journal_lines: 2000
 #   after_archive: []
 
 #-------------------------------------------------------------------------------
-# Codex
+# Dispatch
 #-------------------------------------------------------------------------------
-
-# How Codex consumes spec context.
+#
+# How each workflow phase runs. dispatch.mode is the global default:
 #   auto   (default): dispatch a sub-agent that reads the jsonl manifests
-#   inline:           load specs through skills in the main session
-# codex:
-#   dispatch_mode: auto
+#   inline:           run the phase in the main session, reading specs directly
+#
+# Per-phase keys override the global mode with inline or subagent. Omit them,
+# or set auto, to follow dispatch.mode.
+#
+# Phase 3 (finish / commit / archive) has no dispatch behavior: there is no
+# sub-agent to hand it to, so no finish key exists. Unknown keys here are
+# ignored and reported by specrune doctor as warnings.
+#
+# dispatch:
+#   mode: auto          # auto | inline
+#   research: auto      # auto | inline | subagent
+#   implement: auto
+#   check: auto

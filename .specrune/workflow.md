@@ -24,7 +24,7 @@ breadcrumb. Change it deliberately — the blocks below are load-bearing.
 not per project. In a linked git worktree the file is read from the main
 checkout, so `git worktree add` does not lose it.
 
-Override with the `TRELLIS_DEVELOPER` environment variable. Tasks record both a
+Override with the `SPECRUNE_DEVELOPER` environment variable. Tasks record both a
 `creator` and an `assignee`; assignee defaults to you.
 
 ### Spec System
@@ -111,12 +111,11 @@ artifacts, their own manifest. The parent tracks progress and nothing else.
 <!-- Per-turn breadcrumb: no active task (before Phase 1) -->
 ```
 [workflow-state:no_task]
-No active task. Unclear scope or a new feature: load the specrune-brainstorm
-skill first — a task needs a real slug and description, so do not create one from
-a guess. Otherwise, if this request is task-shaped, start Phase 1:
-  specrune task create "<title>" --slug <ascii-slug> --description "<what it delivers>"
-Simple questions, typo fixes, one-off edits: just do them.
-Do not invent a task to look busy.
+No active task. Unclear scope or a new feature: load specrune-brainstorm first —
+a task needs a real slug and description, never one invented from a guess.
+Task-shaped: specrune task create "<title>" --slug <ascii-slug> --description "<what it delivers>"
+Over 5 acceptance criteria or 3 deliverables: split into children, or one
+specrune task set-decompose <task> "<why>". Simple questions/typos: just do them.
 [/workflow-state:no_task]
 ```
 
@@ -140,16 +139,15 @@ need, then activate the task.
 ```
 [workflow-state:planning]
 Phase 1 — Plan. Active task: {task}
-Step 1.1 requirement exploration — load the specrune-brainstorm skill. Write prd.md
-with checkable acceptance criteria; add design.md for real technical decisions.
-Step 1.3 curate implement.jsonl / check.jsonl (specrune task add-context), or the
-sub-agents run with no spec context at all. Step 1.4 activates with specrune task start.
-Full text of any step: specrune context --mode phase --step N.N
-Do not write implementation code in this phase.
+Step 1.1 load specrune-brainstorm; write prd.md with checkable acceptance
+criteria, and add design.md for real technical decisions.
+Step 1.3 curate implement.jsonl / check.jsonl (specrune task add-context).
+Step 1.4 specrune task start activates. Step text: specrune context --mode phase --step N.N
+No implementation code in this phase.
 [/workflow-state:planning]
 ```
 
-<!-- Per-turn breadcrumb: Phase 1 with codex.dispatch_mode=inline -->
+<!-- Per-turn breadcrumb: Phase 1 with dispatch.mode=inline -->
 ```
 [workflow-state:planning-inline]
 Phase 1 — Plan (inline mode). Active task: {task}
@@ -169,25 +167,48 @@ Implement against the specs and the plan, then check the result against both.
 ```
 [workflow-state:in_progress]
 Phase 2 — Execute. Active task: {task}
-Step 2.1 — load the specrune-before-dev skill, then dispatch the specrune-implement
-agent. If its context lacks something, add it to implement.jsonl and re-dispatch;
-never paste spec into the prompt by hand, the next dispatch will not have it.
-Step 2.2 dispatch the specrune-check agent and fix what it finds.
-When the check passes, run specrune task finish to enter Phase 3.
-Full text of any step: specrune context --mode phase --step N.N
+Step 2.1 load specrune-before-dev, dispatch specrune-implement; add missing context to implement.jsonl.
+Step 2.2 dispatch a fresh specrune-check; findings go to review.md.
+Step 2.3 dispatch specrune-implement to fix open findings, then repeat 2.2-2.3.
+Green: no new blocker/major, every old finding closed; then specrune task finish (Phase 3).
+Full text: specrune context --mode phase --step N.N
 [/workflow-state:in_progress]
 ```
 
-<!-- Per-turn breadcrumb: Phase 2/3 with codex.dispatch_mode=inline -->
+<!-- Per-turn breadcrumb: Phase 2/3 with dispatch.mode=inline -->
 ```
 [workflow-state:in_progress-inline]
 Phase 2 — Execute (inline mode). Active task: {task}
-Load the specrune-before-dev skill, then do steps 2.1 and 2.2 yourself in this
-session — no sub-agents. Inline mode reads spec files directly rather than from
-implement.jsonl / check.jsonl; run the project's lint and tests as the check pass.
-When it passes, run specrune task finish to enter Phase 3.
-Full text of any step: specrune context --mode phase --step N.N
+Load specrune-before-dev; do steps 2.1-2.3 yourself in this session — no sub-agents.
+2.1 implement. 2.2 review fresh against check.jsonl; write review.md. 2.3 fix open
+findings yourself, then repeat 2.2-2.3. Inline reads spec files directly; lint and
+tests are the check pass. Green: no new blocker/major, every old finding closed;
+then: specrune task finish. Full text: specrune context --mode phase --step N.N
 [/workflow-state:in_progress-inline]
+```
+
+<!-- Per-turn breadcrumb: Phase 2/3 with dispatch.implement=inline -->
+```
+[workflow-state:in_progress-implement-inline]
+Phase 2 — Execute (implement inline). Active task: {task}
+Step 2.1 — load specrune-before-dev and implement in this session; keep implement.jsonl curated.
+Step 2.2 dispatch a fresh specrune-check; findings go to review.md.
+Step 2.3 fix open findings yourself, then repeat 2.2-2.3.
+Green: no new blocker/major, every old finding closed; then specrune task finish.
+Full text: specrune context --mode phase --step N.N
+[/workflow-state:in_progress-implement-inline]
+```
+
+<!-- Per-turn breadcrumb: Phase 2/3 with dispatch.check=inline -->
+```
+[workflow-state:in_progress-check-inline]
+Phase 2 — Execute (check inline). Active task: {task}
+Step 2.1 load specrune-before-dev, dispatch specrune-implement; add missing context to implement.jsonl.
+Step 2.2 — run a fresh check pass yourself against check.jsonl; write review.md.
+No specrune-check sub-agent. Step 2.3 dispatch specrune-implement to fix, then repeat 2.2-2.3.
+Green: no new blocker/major, every old finding closed; then: specrune task finish.
+Full text: specrune context --mode phase --step N.N
+[/workflow-state:in_progress-check-inline]
 ```
 
 ### Phase 3: Finish
@@ -198,21 +219,19 @@ Verify, update the specs that the change made stale, commit, and archive.
 ```
 [workflow-state:completed]
 Phase 3 — Finish. Active task: {task}
-Step 3.2 spec update — load the specrune-update-spec skill. Read the target spec
-file before editing it (a duplicate section is worse than a missing one), and skip
-typo-level changes: that noise buries the real updates.
+Step 3.2 load specrune-update-spec. Read the target spec before editing
+(a duplicate section is worse), and skip typo-level changes: noise buries real updates.
 Step 3.3 commit code and spec updates together.
-Step 3.4 verify every acceptance criterion in prd.md, then: specrune task archive <task>
-Full text of any step: specrune context --mode phase --step N.N
+Step 3.4 verify every acceptance criterion, then: specrune task archive <task>
+Full text: specrune context --mode phase --step N.N
 [/workflow-state:completed]
 
 [workflow-state:canceled]
-Task {task} was canceled — abandoned, not finished. There is no wrap-up to do, and
-it must not be flipped back to completed: that would erase the record of why.
-To look at it: specrune task show <task>. To close the record: specrune task archive <task>.
-To pick it up again: specrune task start <task> — it flips the status back to in_progress
-and records the pickup in notes, nothing to undo by hand. It does not know how far you
-got, so say so: specrune task set-status <task> in_progress --note "进度到哪一步"
+Task {task} was canceled — abandoned, not finished; it must not be flipped back
+to completed: that would erase the record of why. No wrap-up to do.
+Look: specrune task show <task>. Close the record: specrune task archive <task>.
+Resume: specrune task start <task> (reopens it, records the pickup; it cannot
+know your progress, so note it: specrune task set-status <task> in_progress --note "进度到哪一步")
 [/workflow-state:canceled]
 ```
 
@@ -369,16 +388,50 @@ missing something it needs, add it to `implement.jsonl` and re-dispatch — do n
 paste the spec into the prompt by hand, because the next dispatch will not have
 it.
 
-#### 2.2 Quality check `[required · repeatable]`
+#### 2.2 Review — fresh check `[required · repeatable]`
 
-Dispatch the check sub-agent. It compares the working tree against the specs and
-fixes what it finds rather than only reporting it.
+Dispatch a **fresh** check sub-agent for every round. Each round reads the task
+artifacts, `check.jsonl`, and `review.md` when it exists — never rely on the
+previous round's memory.
 
-The check pass reads `check.jsonl`, which is a different list from
-`implement.jsonl` on purpose: implementation needs conventions, verification needs
-the contracts those conventions are supposed to satisfy.
+Findings go to `review.md` in the task directory: the check agent creates it, or
+returns the ledger content when its role cannot write. Record each finding with
+an id, severity (`blocker` / `major` / `minor` / `nit`), `file:line`,
+evidence and status (`open` / `fixed` / `verified` / `rejected` / `deferred`).
+The ledger is append-only; a finding's current status is its last event.
 
-#### 2.3 Rollback `[on demand]`
+Each round verifies every open or fixed finding from earlier rounds before it
+looks for new ones. A finding must trace to an acceptance criterion, a spec in
+`check.jsonl`, or the review checklist; otherwise it is at most a nit. Do not
+invent new standards between rounds.
+
+A round that edited code, specs, task artifacts, or templates cannot be green:
+if it fixed a mechanical or local issue, its verdict stays red and the next
+fresh round verifies the fix. Writing `review.md` is the only permitted
+write and does not make the round red. Green requires **no new blocker/major**
+and every finding terminal (`verified` / `rejected` / `deferred`); `open` and
+`fixed` are still unfinished. Minor/nit may be deferred with a reason;
+rejecting or deferring a blocker/major needs the user's agreement.
+
+The check agent records `Candidate: green|red` for the round; the main session
+confirms it and records the final `Verdict: green|red` in `review.md`.
+
+The main session stops at 3 review rounds by default. If round 3 is still red,
+it hands the ledger to the user instead of opening another round.
+
+#### 2.3 Fix findings and re-review `[required · repeatable]`
+
+Dispatch the implement sub-agent to fix the open findings; when
+`dispatch.implement` is `inline`, fix them in this session instead. The fixer
+reads `review.md`, fixes each open finding, and appends a fix record under it.
+It does not close findings — only the next fresh check can mark them `verified`.
+
+Then return to 2.2 with a new check dispatch. Default cap: **3 review rounds**.
+If round 3 is still red, stop and hand the ledger to the user: extend the budget
+explicitly, accept or defer the remainder, or split a follow-up task. The cap is
+a circuit breaker, not a permanent ban.
+
+#### 2.4 Rollback `[on demand]`
 
 If an approach turns out to be wrong, discard the changes and re-plan. Do not
 layer a correction on top of a wrong shape — the result reads as intentional.

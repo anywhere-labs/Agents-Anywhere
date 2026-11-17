@@ -1,27 +1,10 @@
 {
   "__version": 2,
   "hashes": {
-    ".agents/skills/specrune-before-dev/SKILL.md": "71dc1ed74bfc36428e93d01f1894d08a00b936506c176bbf4848e68fef19e17d",
-    ".agents/skills/specrune-board/SKILL.md": "34c93960154adcdaad42890f7bf2daec770d513b6623631d97c54c5f0da76efc",
-    ".agents/skills/specrune-board/assets/specrune-board.html": "94282ac6a9c5c35c365b8bf24a0236b7014b289c394ccb1002aebc05d988270c",
-    ".agents/skills/specrune-brainstorm/SKILL.md": "2bc9fa8493f50405638f53058fe1f9b5c305299317acc8e27a8a12177d17a590",
-    ".agents/skills/specrune-break-loop/SKILL.md": "8e0f44179e510b009f172ab9ee4c62abfa801d9e7a39fdd1b919c0838637a4c0",
-    ".agents/skills/specrune-check/SKILL.md": "18db4af32c4febd0355aa0b0eb12780360097d2e5942b33fd83e19ac5b29224b",
-    ".agents/skills/specrune-continue/SKILL.md": "88c43171bf36220773ea167aef0037e644f6c9a722cdae97427bfb476b1fe6eb",
-    ".agents/skills/specrune-finish-work/SKILL.md": "260857b6c31f4b385a56840502979435dac3849a279ee62e0c073da63e212e55",
-    ".agents/skills/specrune-meta/SKILL.md": "3b8d9105ae717782321663701402bd850e3c557d945f8142a9ce80076637d30c",
-    ".agents/skills/specrune-meta/references/architecture.md": "cc623a8455149913e78a3927da24924e148d04dad5a58c666516f823042ad001",
-    ".agents/skills/specrune-meta/references/customization.md": "098a1329055d5508fc9e738a9e6dbb19e67b62406bd7cc4db7b41ba945081f0e",
-    ".agents/skills/specrune-meta/references/platform-files.md": "afbc5b7b35e406ddfc48b8f7d0ae41d3be26160b9932913e7010ff2bbb9cf662",
     ".agents/skills/specrune-session-insight/SKILL.md": "de5461b7d6002840b4572b7ee75700360683be7637ef41afe05dcc9e29f9e393",
     ".agents/skills/specrune-session-insight/references/cli-quick-reference.md": "c2e121a8205f621602a8d81f2e176f06c4a359428068100bf2eb9cba83f19e9b",
-    ".agents/skills/specrune-spec-bootstrap/SKILL.md": "a3900dba825ded3b4a68a0a0f67e7565b3978b069c9ff1042f5bdf79256b911f",
-    ".agents/skills/specrune-spec-bootstrap/references/repository-analysis.md": "4af4d810fb0f9161ca302070b3ec25c9388efb1be96b0430310b93557df6846a",
-    ".agents/skills/specrune-spec-bootstrap/references/spec-writing.md": "f0edf05978192ca0f912844882ecc372a86d8dde21d24771bceb94030412ac82",
-    ".agents/skills/specrune-spec-health/SKILL.md": "295e6097ffa261595d52d0701b80a70af3c198559a5bc155dbcfa0205e26131b",
     ".agents/skills/specrune-start/SKILL.md": "a37d961b045ecb3b4d8507b4f8ddd3ed6d451ff3e602da8fe7014713aead6df8",
-    ".agents/skills/specrune-update-spec/SKILL.md": "48acc7d09c17aa547e48245ea0bce243d8673f38d9de6175282fe0fe29cd15f6",
-    ".specrune/config.yaml": "9a313372ec1a449390a57b0bda6c948269fb2014bdbe1b0106869f50f26d8261",
-    ".specrune/workflow.md": "ad3970691b7d52ac0fabd3a5cd5e3c4bf9b406ad022491794b4d1d3f7a4b5fe6"
+    ".specrune/config.yaml": "a7eb6e41e1df0fc4192520218f3549ada88a0819cc209ad70a7d52b5146f2afd",
+    ".specrune/workflow.md": "4683c3a5d6b6dda8f60d984099c2a681d7cac0772f698cd5f81c4064043b344c"
   }
 }
