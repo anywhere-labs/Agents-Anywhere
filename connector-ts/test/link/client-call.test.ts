@@ -22,6 +22,7 @@ import {
   DeviceLink,
   DeviceServices,
   callClass,
+  clientCall,
   type ClientLimits,
   type TerminalSource,
 } from '../../src/link/index.js'
@@ -511,5 +512,27 @@ describe('aa.device.v1.Client registration', () => {
     const without = services(false).build(DEFAULT_REGISTRATION.off, null, 'off')
     expect(without.names).not.toContain(CLIENT_SERVICE)
     expect(without.skipped).toContain(CLIENT_SERVICE)
+  })
+})
+
+describe('clientCall bodies', () => {
+  async function answer(response: { status: number; body: unknown; contentType?: string }): Promise<(ClientCallHead | ClientCallChunk)[]> {
+    const api = { request: async () => response, subscribe: async () => () => undefined }
+    const items: (ClientCallHead | ClientCallChunk)[] = []
+    const request = { route: 'session.plans.markdown', method: 'GET', path: '/api/v2/sessions/sess_1/plans/plan_1/2/markdown', caller: { userId: 'usr_1' } }
+    for await (const item of clientCall(api as never, request)) items.push(item)
+    return items
+  }
+
+  it('sends a text body as it is under its own media type, and JSON otherwise', async () => {
+    const [head, ...chunks] = await answer({ status: 200, body: '# Plan\n\n- step', contentType: 'text/markdown; charset=utf-8' })
+    expect(head).toEqual({ kind: 'head', status: 200, contentType: 'text/markdown; charset=utf-8' })
+    expect(chunks.map(chunk => (chunk as ClientCallChunk).chunk).join('')).toBe('# Plan\n\n- step')
+    const [jsonHead, ...jsonChunks] = await answer({ status: 200, body: { markdown: 'x' } })
+    expect(jsonHead).toEqual({ kind: 'head', status: 200, contentType: 'application/json' })
+    expect(joinChunks(jsonChunks as ClientCallChunk[])).toEqual({ markdown: 'x' })
+    // A media type without a text body stays JSON.
+    const [objectHead] = await answer({ status: 200, body: { a: 1 }, contentType: 'text/plain' })
+    expect((objectHead as ClientCallHead).contentType).toBe('application/json')
   })
 })

@@ -22,6 +22,8 @@ export interface TunnelApiRequest {
 export interface TunnelApiResponse {
   readonly status: number
   readonly body: unknown
+  /** A text body's media type (`text/markdown; charset=utf-8`); absent for JSON. */
+  readonly contentType?: string
 }
 
 /**

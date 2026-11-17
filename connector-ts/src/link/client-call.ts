@@ -150,7 +150,7 @@ export async function* clientCall(api: TunnelApi, raw: Record<string, unknown>, 
   const command = checked.command
   // Set from the tunnel's callback, hence a holder rather than a narrowed local.
   const settled: { outcome: ClientCommandOutcome | null } = { outcome: null }
-  let response: { status: number; body: unknown }
+  let response: { status: number; body: unknown; contentType?: string }
   if (Buffer.byteLength(JSON.stringify(request.body ?? null), 'utf8') > limits.maxRequestBodyBytes) {
     response = errorBody(413, 'request_too_large', `the request body exceeds ${limits.maxRequestBodyBytes} bytes`)
   } else {
@@ -169,14 +169,17 @@ export async function* clientCall(api: TunnelApi, raw: Record<string, unknown>, 
   if (command !== null && settled.outcome === null && response.status >= 400 && response.status < 500) {
     settled.outcome = { commandId: command.commandId, outcome: 'rejected', e: errorOf(response.body) }
   }
-  let text = JSON.stringify(response.body ?? null)
+  // A text body goes as it is under its own media type; everything else is JSON.
+  let contentType = response.contentType !== undefined && typeof response.body === 'string' ? response.contentType : 'application/json'
+  let text = contentType === 'application/json' ? JSON.stringify(response.body ?? null) : response.body as string
   let status = response.status
   if (Buffer.byteLength(text, 'utf8') > limits.maxResponseBytes) {
     const tooLarge = errorBody(500, 'response_too_large', `the response body exceeds ${limits.maxResponseBytes} bytes`)
     status = tooLarge.status
     text = JSON.stringify(tooLarge.body)
+    contentType = 'application/json'
   }
-  yield { kind: 'head', status, contentType: 'application/json', ...(settled.outcome !== null ? { command: settled.outcome } : {}) }
+  yield { kind: 'head', status, contentType, ...(settled.outcome !== null ? { command: settled.outcome } : {}) }
   for (const chunk of chunkText(text, limits.maxChunkBytes)) yield { kind: 'chunk', ...chunk }
 }
 

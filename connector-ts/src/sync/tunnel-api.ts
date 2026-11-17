@@ -433,7 +433,8 @@ export class DeviceTunnelApi implements TunnelApi {
         throw error
       })
       const document = record(read.document)
-      return { status: 200, body: rest.length === 4 ? String(document.markdown ?? '') : document }
+      if (rest.length === 4) return { status: 200, body: String(document.markdown ?? ''), contentType: 'text/markdown; charset=utf-8' }
+      return { status: 200, body: document }
     }
     if (rest[0] === 'terminals') {
       const session = await this.requireSession(sessionId)
