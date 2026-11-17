@@ -62,20 +62,31 @@ def _redis_url() -> str | None:
 @pytest.fixture
 def recovery(request: pytest.FixtureRequest) -> Iterator[E2E]:
     server_env: dict[str, str] = {}
+    redis = _redis_url() if getattr(request, "param", None) == "redis" else None
     if getattr(request, "param", None) == "redis":
-        redis = _redis_url()
         if redis is None:
             pytest.skip("AA_E2E_REDIS_URL not set")
         # A prefix of its own: the keys of other runs on the same Redis are not touched.
         server_env = {"AGENT_SERVER_REDIS_URL": redis, "AGENT_SERVER_REDIS_PREFIX": f"aa-e2e-{secrets.token_hex(4)}"}
-    with e2e_environment(request, server_env=server_env) as env:
-        env.wait_status("online", STARTUP_TIMEOUT)
-        enable_fake_agent(env)
-        create_project(env)
-        env.session_id = new_session(env, "hello recovery")
-        wait_text(env, env.session_id, "echo: hello recovery")
-        wait_session(env, env.session_id, "idle")
-        yield env
+    try:
+        with e2e_environment(request, server_env=server_env) as env:
+            env.wait_status("online", STARTUP_TIMEOUT)
+            enable_fake_agent(env)
+            create_project(env)
+            env.session_id = new_session(env, "hello recovery")
+            wait_text(env, env.session_id, "echo: hello recovery")
+            wait_session(env, env.session_id, "idle")
+            yield env
+    finally:
+        if redis is not None:
+            from redis import Redis
+
+            client = Redis.from_url(redis)
+            try:
+                for key in client.scan_iter(match=f"{server_env['AGENT_SERVER_REDIS_PREFIX']}:*", count=500):
+                    client.delete(key)
+            finally:
+                client.close()
 
 
 def _receipts(env: E2E, session_id: str) -> list[dict[str, Any]]:
