@@ -284,6 +284,8 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
               onUploadError: (transferId, error) => log('warn', `file download ${transferId} failed: ${message(error)}`),
             },
             ...(deviceTrust !== null ? { secure: deviceTrust.secure } : {}),
+            // Normal mode: the client API the secure channel answers, as `aa.device.v1.Client`.
+            client: tunnel,
           },
           egress,
           logger,
