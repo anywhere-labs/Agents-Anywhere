@@ -165,7 +165,7 @@ async function check(route: string, server?: ServerFacts, forwarded?: Forwarded)
 
 beforeAll(async () => {
   device = await testDevice()
-  device.commands.observe('runtime.status', { runtimeId: 'rti_1', sessionId: SESSION, status: { event: 'commands.updated', fact: { commands: [{ name: 'review', description: 'Review the working tree', inputHint: 'path' }, { name: 'compact', description: 'Compact the context' }] } } })
+  device.commands.observe('runtime.status', { runtimeId: 'rti_1', sessionId: SESSION, status: { event: 'commands.updated', commands: [{ name: 'review', description: 'Review the working tree', inputHint: 'path' }, { name: 'compact', description: 'Compact the context' }] } })
   Object.assign(names, { root: device.root, connectorId: DEVICE, sessionId: SESSION, runtimeId: RUNTIME })
 })
 

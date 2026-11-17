@@ -22,6 +22,10 @@ export type Status =
   | CatalogsChangedStatus
   | SessionStatusChanged
   | ConfigUpdatedStatus
+  | CommandsUpdatedStatus
+  | WriterChangedStatus
+  | UsageUpdatedStatus
+  | BackgroundUpdatedStatus
   | PlanningStateUpdated
   | GoalStateUpdated
 export type Event = "runtime.types"
@@ -316,7 +320,23 @@ export type Event4 = "config.updated"
 export type Options = {
   [k: string]: unknown
 }[]
-export type Event5 = "planning.state.updated"
+export type Commands1 = SlashCommand[]
+export type Event5 = "commands.updated"
+export type Event6 = "writer.changed"
+export type By = string | null
+export type Execution = ("idle" | "running" | "waiting_for_input" | "unknown") | null
+export type Holder = "self" | "external" | "none" | "unknown"
+export type Contextwindow = number | null
+export type Amount = number
+export type Currency = string
+export type Event7 = "usage.updated"
+export type Usedtokens = number | null
+export type Event8 = "background.updated"
+export type Kind = "command" | "subagent" | "other"
+export type State1 = "running" | "requires_action" | "idle" | "completed" | "failed" | "stopped"
+export type Taskid = string
+export type Title = string
+export type Event9 = "planning.state.updated"
 export type Revision4 = number
 export type Actions = (
   "enter_plan" | "exit_plan" | "submit_task" | "approve_and_execute" | "request_revision" | "dismiss_review"
@@ -332,7 +352,7 @@ export type Revision5 = number
 export type Seq = number
 export type Effectivemode = "plan" | "normal" | "unknown"
 export type Epoch = string
-export type Execution = {
+export type Execution1 = {
   [k: string]: unknown
 } | null
 export type Executionprogress = {
@@ -349,7 +369,7 @@ export type Markdown = string
 export type Planid1 = string
 export type Revision6 = number
 export type Sourceturnid = string | null
-export type Title = string
+export type Title1 = string
 export type Proposals = PlanDocument[]
 export type Requestedmode = ("plan" | "normal") | null
 export type Actions1 = (
@@ -364,7 +384,7 @@ export type Revision7 = number
 export type Runtime3 = string
 export type Runtimeid1 = string | null
 export type Sessionid2 = string
-export type Event6 = "goal.state.updated"
+export type Event10 = "goal.state.updated"
 export type Revision8 = number
 export type Bindinggeneration = number
 export type Actions2 = ("set" | "edit" | "pause" | "resume" | "clear")[]
@@ -534,7 +554,8 @@ export interface RuntimeHealthStatus {
   [k: string]: unknown
 }
 /**
- * The instance's capability set changed; the set is ``RuntimeStatusEvent.capabilities``.
+ * The capability set of the instance (no ``sessionId``) or of one session changed; the set is
+ * ``RuntimeStatusEvent.capabilities`` (``scope: "session"`` items for a session).
  */
 export interface CapabilitiesChangedStatus {
   event: Event1
@@ -634,8 +655,63 @@ export interface ConfigUpdatedStatus {
   options?: Options
   [k: string]: unknown
 }
-export interface PlanningStateUpdated {
+/**
+ * The session's slash commands as its Runtime reported them last (the whole list).
+ */
+export interface CommandsUpdatedStatus {
+  commands?: Commands1
   event: Event5
+  [k: string]: unknown
+}
+export interface WriterChangedStatus {
+  event: Event6
+  writer: RuntimeWriter
+  [k: string]: unknown
+}
+/**
+ * Who writes to the session: this device (``self``), another program (``external``), nobody or unknown.
+ */
+export interface RuntimeWriter {
+  by?: By
+  execution?: Execution
+  holder: Holder
+  [k: string]: unknown
+}
+/**
+ * The session's context usage as its Runtime reported it last.
+ */
+export interface UsageUpdatedStatus {
+  contextWindow?: Contextwindow
+  cost?: RuntimeUsageCost | null
+  event: Event7
+  usedTokens?: Usedtokens
+  [k: string]: unknown
+}
+export interface RuntimeUsageCost {
+  amount: Amount
+  currency: Currency
+  [k: string]: unknown
+}
+/**
+ * One background task of the session changed (the task is nested: a top-level ``state`` is the health fact).
+ */
+export interface BackgroundUpdatedStatus {
+  event: Event8
+  task: BackgroundTask
+  [k: string]: unknown
+}
+/**
+ * A background task of a session (a background command, a sub-Agent) and its state.
+ */
+export interface BackgroundTask {
+  kind: Kind
+  state: State1
+  taskId: Taskid
+  title: Title
+  [k: string]: unknown
+}
+export interface PlanningStateUpdated {
+  event: Event9
   revision: Revision4
   state: PlanningState
   [k: string]: unknown
@@ -645,7 +721,7 @@ export interface PlanningState {
   draft?: PlanDraft | null
   effectiveMode?: Effectivemode
   epoch?: Epoch
-  execution?: Execution
+  execution?: Execution1
   executionProgress?: Executionprogress
   freshness?: Freshness
   operation?: Operation
@@ -681,7 +757,7 @@ export interface PlanDocument {
   planId: Planid1
   revision: Revision6
   sourceTurnId?: Sourceturnid
-  title: Title
+  title: Title1
 }
 export interface PlanReview {
   actions?: Actions1
@@ -692,7 +768,7 @@ export interface PlanReview {
   status: Status3
 }
 export interface GoalStateUpdated {
-  event: Event6
+  event: Event10
   revision: Revision8
   state: GoalState
   [k: string]: unknown

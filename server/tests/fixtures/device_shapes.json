@@ -334,6 +334,82 @@
       }
     }
   },
+  "event.commands": {
+    "runtimeId": "rti_codex",
+    "sessionId": "sess_shape",
+    "status": {
+      "event": "commands.updated",
+      "commands": [
+        {
+          "name": "review",
+          "description": "Review the working tree",
+          "inputHint": "path"
+        },
+        {
+          "name": "compact"
+        }
+      ]
+    }
+  },
+  "event.writer": {
+    "runtimeId": "rti_codex",
+    "sessionId": "sess_shape",
+    "status": {
+      "event": "writer.changed",
+      "writer": {
+        "holder": "external",
+        "by": "codex-app",
+        "execution": "running"
+      }
+    }
+  },
+  "event.usage": {
+    "runtimeId": "rti_codex",
+    "sessionId": "sess_shape",
+    "status": {
+      "event": "usage.updated",
+      "usedTokens": 1200,
+      "contextWindow": 200000,
+      "cost": {
+        "amount": 0.5,
+        "currency": "USD"
+      }
+    }
+  },
+  "event.background": {
+    "runtimeId": "rti_codex",
+    "sessionId": "sess_shape",
+    "status": {
+      "event": "background.updated",
+      "task": {
+        "taskId": "bg_1",
+        "kind": "command",
+        "title": "npm test",
+        "state": "running"
+      }
+    }
+  },
+  "event.capabilities": {
+    "runtimeId": "rti_codex",
+    "sessionId": "sess_shape",
+    "status": {
+      "event": "capabilities.changed"
+    },
+    "capabilities": {
+      "revision": 3,
+      "capabilities": [
+        {
+          "capabilityId": "session.goal",
+          "supported": true,
+          "available": false,
+          "unavailableReason": "busy",
+          "runtime": "codex",
+          "scope": "session",
+          "sessionId": "sess_shape"
+        }
+      ]
+    }
+  },
   "state.goal": {
     "goal": {
       "sessionId": "sess_shape",

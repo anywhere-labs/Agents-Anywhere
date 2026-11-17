@@ -1,7 +1,8 @@
 import type { Interaction, Session, TimelineDraft } from '../../domain/conversation/index.js'
 import type { NoticeIn } from '../../generated/device-meshcall/v1_0/runtime-notice-updated-event.js'
 import { UseCaseError } from '../errors.js'
-import type { ChangeFeed, Clock, ConversationStore, IdSource, LiveEvents, PromptAttachment, RuntimeHandles, RuntimeStatusPayload, SessionCommit } from '../ports/index.js'
+import type { ChangeFeed, Clock, ConversationStore, IdSource, LiveEvents, PromptAttachment, RuntimeHandles, RuntimeStatusPayload, SessionCapabilities, SessionCommit } from '../ports/index.js'
+import { capabilitySet } from '../runtimes/capabilities.js'
 
 export interface ConversationDeps {
   readonly store: ConversationStore
@@ -100,6 +101,19 @@ export class SessionKernel {
   public emitSessionStatus(sessionId: string, status: RuntimeStatusPayload['status']): void {
     void this.deps.store.sessions.get(sessionId).then(session => {
       if (session !== null) this.deps.live.emit('runtime.status', { runtimeId: session.runtimeId, sessionId, status })
+    }, () => undefined)
+  }
+
+  /** `runtime.status` `capabilities.changed` of one session: the set goes in the event's `capabilities`, scoped to the session. */
+  public emitSessionCapabilities(sessionId: string, capabilities: SessionCapabilities): void {
+    void this.deps.store.sessions.get(sessionId).then(session => {
+      if (session === null) return
+      this.deps.live.emit('runtime.status', {
+        runtimeId: session.runtimeId,
+        sessionId,
+        status: { event: 'capabilities.changed' },
+        capabilities: capabilitySet(capabilities, { runtime: session.runtimeType, sessionId }),
+      })
     }, () => undefined)
   }
 

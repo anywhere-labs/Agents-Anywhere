@@ -52,14 +52,47 @@ export class TurnLifecycle {
     void this.kernel.serial(sessionId, () => this.queue.dispatchNext(sessionId)).catch(error => this.kernel.reportError(sessionId, error))
   }
 
+  /** A Runtime live fact as its device-meshcall 1.0 `runtime.status` member. */
   public onLiveFact(sessionId: string, event: LiveFact): void {
-    const fact = event as unknown as Record<string, unknown>
-    // `config.updated` carries its options in the status itself (device-meshcall 1.0 `ConfigUpdatedStatus`).
-    if (event.type === 'config.updated') {
-      this.kernel.emitSessionStatus(sessionId, { event: event.type, options: event.options as unknown as Record<string, unknown>[], fact })
-      return
+    switch (event.type) {
+      case 'config.updated':
+        this.kernel.emitSessionStatus(sessionId, { event: event.type, options: event.options as unknown as Record<string, unknown>[] })
+        return
+      case 'commands.updated':
+        this.kernel.emitSessionStatus(sessionId, {
+          event: event.type,
+          commands: event.commands.map(command => ({
+            name: command.name,
+            ...(command.description !== undefined ? { description: command.description } : {}),
+            ...(command.inputHint !== undefined ? { inputHint: command.inputHint } : {}),
+          })),
+        })
+        return
+      case 'writer.changed':
+        this.kernel.emitSessionStatus(sessionId, {
+          event: event.type,
+          writer: {
+            holder: event.writer.holder,
+            ...(event.writer.by !== undefined ? { by: event.writer.by } : {}),
+            ...(event.writer.execution !== undefined ? { execution: event.writer.execution } : {}),
+          },
+        })
+        return
+      case 'usage.updated':
+        this.kernel.emitSessionStatus(sessionId, {
+          event: event.type,
+          ...(event.usedTokens !== undefined ? { usedTokens: event.usedTokens } : {}),
+          ...(event.contextWindow !== undefined ? { contextWindow: event.contextWindow } : {}),
+          ...(event.cost !== undefined ? { cost: { amount: event.cost.amount, currency: event.cost.currency } } : {}),
+        })
+        return
+      case 'background.updated':
+        this.kernel.emitSessionStatus(sessionId, { event: event.type, task: { taskId: event.taskId, kind: event.kind, title: event.title, state: event.state } })
+        return
+      case 'capabilities.changed':
+        this.kernel.emitSessionCapabilities(sessionId, event.capabilities)
+        return
     }
-    this.kernel.emitSessionStatus(sessionId, { event: event.type, fact })
   }
 
   /** The Runtime session ended under us: the running turn fails with an unknown outcome; nothing is resent. */

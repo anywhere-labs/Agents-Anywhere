@@ -47,8 +47,7 @@ export class SessionCommandCatalog {
     const { sessionId } = event.payload
     const status: Record<string, unknown> = event.payload.status
     if (typeof sessionId !== 'string' || status.event !== 'commands.updated') return
-    // The Runtime event is in `fact` (`RuntimeFactStatus`).
-    const commands = commandsOf(record(status.fact)?.commands)
+    const commands = commandsOf(status.commands)
     if (commands === null) return
     this.catalogs.delete(sessionId)
     this.catalogs.set(sessionId, commands)

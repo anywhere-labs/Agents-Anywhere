@@ -8,7 +8,7 @@ import { OutboxSignal, SessionCommandCatalog } from '../../src/sync/index.js'
 const COMMANDS_UPDATED = {
   runtimeId: 'rti_pi',
   sessionId: 'sess_1',
-  status: { event: 'commands.updated', fact: { type: 'commands.updated', commands: [{ name: 'review', description: 'Review the diff' }] } },
+  status: { event: 'commands.updated', commands: [{ name: 'review', description: 'Review the diff' }] },
 } as const satisfies LiveEventPayloads['runtime.status']
 
 describe('the device live fan-out', () => {

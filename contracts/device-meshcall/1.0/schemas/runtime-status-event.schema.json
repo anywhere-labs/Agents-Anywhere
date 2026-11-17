@@ -1,7 +1,69 @@
 {
   "$defs": {
+    "BackgroundTask": {
+      "description": "A background task of a session (a background command, a sub-Agent) and its state.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "command",
+            "subagent",
+            "other"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "running",
+            "requires_action",
+            "idle",
+            "completed",
+            "failed",
+            "stopped"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "taskId": {
+          "minLength": 1,
+          "title": "Taskid",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "taskId",
+        "kind",
+        "title",
+        "state"
+      ],
+      "title": "BackgroundTask",
+      "type": "object"
+    },
+    "BackgroundUpdatedStatus": {
+      "description": "One background task of the session changed (the task is nested: a top-level ``state`` is the health fact).",
+      "properties": {
+        "event": {
+          "const": "background.updated",
+          "title": "Event",
+          "type": "string"
+        },
+        "task": {
+          "$ref": "#/$defs/BackgroundTask"
+        }
+      },
+      "required": [
+        "event",
+        "task"
+      ],
+      "title": "BackgroundUpdatedStatus",
+      "type": "object"
+    },
     "CapabilitiesChangedStatus": {
-      "description": "The instance's capability set changed; the set is ``RuntimeStatusEvent.capabilities``.",
+      "description": "The capability set of the instance (no ``sessionId``) or of one session changed; the set is\n``RuntimeStatusEvent.capabilities`` (``scope: \"session\"`` items for a session).",
       "properties": {
         "event": {
           "const": "capabilities.changed",
@@ -30,6 +92,28 @@
         "event"
       ],
       "title": "CatalogsChangedStatus",
+      "type": "object"
+    },
+    "CommandsUpdatedStatus": {
+      "description": "The session's slash commands as its Runtime reported them last (the whole list).",
+      "properties": {
+        "commands": {
+          "items": {
+            "$ref": "#/$defs/SlashCommand"
+          },
+          "title": "Commands",
+          "type": "array"
+        },
+        "event": {
+          "const": "commands.updated",
+          "title": "Event",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event"
+      ],
+      "title": "CommandsUpdatedStatus",
       "type": "object"
     },
     "ConfigUpdatedStatus": {
@@ -1715,6 +1799,75 @@
       "title": "RuntimeTypesStatus",
       "type": "object"
     },
+    "RuntimeUsageCost": {
+      "properties": {
+        "amount": {
+          "title": "Amount",
+          "type": "number"
+        },
+        "currency": {
+          "minLength": 1,
+          "title": "Currency",
+          "type": "string"
+        }
+      },
+      "required": [
+        "amount",
+        "currency"
+      ],
+      "title": "RuntimeUsageCost",
+      "type": "object"
+    },
+    "RuntimeWriter": {
+      "description": "Who writes to the session: this device (``self``), another program (``external``), nobody or unknown.",
+      "properties": {
+        "by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "By"
+        },
+        "execution": {
+          "anyOf": [
+            {
+              "enum": [
+                "idle",
+                "running",
+                "waiting_for_input",
+                "unknown"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Execution"
+        },
+        "holder": {
+          "enum": [
+            "self",
+            "external",
+            "none",
+            "unknown"
+          ],
+          "title": "Holder",
+          "type": "string"
+        }
+      },
+      "required": [
+        "holder"
+      ],
+      "title": "RuntimeWriter",
+      "type": "object"
+    },
     "SessionCatalogs": {
       "description": "A session's catalogs: models, permissions, slash commands and the current selections.",
       "properties": {
@@ -1839,6 +1992,76 @@
       ],
       "title": "SlashCommand",
       "type": "object"
+    },
+    "UsageUpdatedStatus": {
+      "description": "The session's context usage as its Runtime reported it last.",
+      "properties": {
+        "contextWindow": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Contextwindow"
+        },
+        "cost": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuntimeUsageCost"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "event": {
+          "const": "usage.updated",
+          "title": "Event",
+          "type": "string"
+        },
+        "usedTokens": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Usedtokens"
+        }
+      },
+      "required": [
+        "event"
+      ],
+      "title": "UsageUpdatedStatus",
+      "type": "object"
+    },
+    "WriterChangedStatus": {
+      "properties": {
+        "event": {
+          "const": "writer.changed",
+          "title": "Event",
+          "type": "string"
+        },
+        "writer": {
+          "$ref": "#/$defs/RuntimeWriter"
+        }
+      },
+      "required": [
+        "event",
+        "writer"
+      ],
+      "title": "WriterChangedStatus",
+      "type": "object"
     }
   },
   "$id": "urn:agents-anywhere:device-meshcall:1.0:runtime-status-event",
@@ -1895,6 +2118,18 @@
         },
         {
           "$ref": "#/$defs/ConfigUpdatedStatus"
+        },
+        {
+          "$ref": "#/$defs/CommandsUpdatedStatus"
+        },
+        {
+          "$ref": "#/$defs/WriterChangedStatus"
+        },
+        {
+          "$ref": "#/$defs/UsageUpdatedStatus"
+        },
+        {
+          "$ref": "#/$defs/BackgroundUpdatedStatus"
         },
         {
           "$ref": "#/$defs/PlanningStateUpdated"

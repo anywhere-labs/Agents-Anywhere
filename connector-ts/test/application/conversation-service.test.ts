@@ -235,17 +235,31 @@ describe('runtime events', () => {
     expect(await store.interactions.list('sess_1', true)).toEqual([])
   })
 
-  it('reports Runtime live facts as runtime.status, with config.updated options in the status itself', async () => {
+  it('reports Runtime live facts as their runtime.status members', async () => {
     await makeSession()
     await service.binding('sess_1')
     const runtime = sessions[0]!
     const options = [{ id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: 'm1' }] as const
     runtime.emit({ type: 'config.updated', options })
-    runtime.emit({ type: 'commands.updated', commands: [{ name: 'review' }] })
+    runtime.emit({ type: 'commands.updated', commands: [{ name: 'review', description: 'Review', inputHint: 'path' }] })
+    runtime.emit({ type: 'writer.changed', writer: { holder: 'external', by: 'codex-app', execution: 'running' } })
+    runtime.emit({ type: 'usage.updated', usedTokens: 1200, contextWindow: 200000, cost: { amount: 0.5, currency: 'USD' } })
+    runtime.emit({ type: 'background.updated', taskId: 'bg_1', kind: 'command', title: 'npm test', state: 'running' })
+    runtime.emit({ type: 'capabilities.changed', capabilities: { revision: 3, items: [{ id: 'session.goal', supported: true, available: false, unavailableReason: 'busy' }] } })
     await settle(40)
     const statuses = live.filter(event => event.method === 'runtime.status').map(event => event.payload)
-    expect(statuses).toContainEqual({ runtimeId: 'rti_pi', sessionId: 'sess_1', status: { event: 'config.updated', options, fact: { type: 'config.updated', options } } })
-    expect(statuses).toContainEqual({ runtimeId: 'rti_pi', sessionId: 'sess_1', status: { event: 'commands.updated', fact: { type: 'commands.updated', commands: [{ name: 'review' }] } } })
+    const base = { runtimeId: 'rti_pi', sessionId: 'sess_1' }
+    expect(statuses).toContainEqual({ ...base, status: { event: 'config.updated', options } })
+    expect(statuses).toContainEqual({ ...base, status: { event: 'commands.updated', commands: [{ name: 'review', description: 'Review', inputHint: 'path' }] } })
+    expect(statuses).toContainEqual({ ...base, status: { event: 'writer.changed', writer: { holder: 'external', by: 'codex-app', execution: 'running' } } })
+    expect(statuses).toContainEqual({ ...base, status: { event: 'usage.updated', usedTokens: 1200, contextWindow: 200000, cost: { amount: 0.5, currency: 'USD' } } })
+    expect(statuses).toContainEqual({ ...base, status: { event: 'background.updated', task: { taskId: 'bg_1', kind: 'command', title: 'npm test', state: 'running' } } })
+    // The session's capability set is in the event's `capabilities`, scoped to the session.
+    expect(statuses).toContainEqual({
+      ...base,
+      status: { event: 'capabilities.changed' },
+      capabilities: { revision: 3, capabilities: [{ capabilityId: 'session.goal', supported: true, available: false, unavailableReason: 'busy', runtime: expect.any(String), scope: 'session', sessionId: 'sess_1' }] },
+    })
   })
 
   it('replaces the history on history.reset and raises the fence', async () => {

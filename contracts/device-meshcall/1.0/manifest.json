@@ -141,7 +141,7 @@
       "model": "RuntimeStatusEvent",
       "path": "schemas/runtime-status-event.schema.json",
       "pydanticMode": "validation",
-      "sha256": "0c2bafa39bf99c6fff9c4c81b69a47eb1f9364a04dcc444a900b7c51d52f565a",
+      "sha256": "e96752de6596fc9a9b9a03b3aff27b5876a1b1427ac3f552f2cd68af743c8751",
       "slug": "runtime-status-event"
     },
     {

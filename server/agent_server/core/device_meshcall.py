@@ -455,7 +455,8 @@ class RuntimeHealthStatus(DeviceModel):
 
 
 class CapabilitiesChangedStatus(DeviceModel):
-    """The instance's capability set changed; the set is ``RuntimeStatusEvent.capabilities``."""
+    """The capability set of the instance (no ``sessionId``) or of one session changed; the set is
+    ``RuntimeStatusEvent.capabilities`` (``scope: "session"`` items for a session)."""
 
     event: Literal["capabilities.changed"]
 
@@ -490,6 +491,57 @@ class ConfigUpdatedStatus(DeviceModel):
 
     event: Literal["config.updated"]
     options: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class CommandsUpdatedStatus(DeviceModel):
+    """The session's slash commands as its Runtime reported them last (the whole list)."""
+
+    event: Literal["commands.updated"]
+    commands: list[SlashCommand] = Field(default_factory=list)
+
+
+class RuntimeWriter(DeviceModel):
+    """Who writes to the session: this device (``self``), another program (``external``), nobody or unknown."""
+
+    holder: Literal["self", "external", "none", "unknown"]
+    #: The external writer (``codex-app``, ``dsh-desktop``, ``terminal``, …).
+    by: str | None = None
+    execution: Literal["idle", "running", "waiting_for_input", "unknown"] | None = None
+
+
+class WriterChangedStatus(DeviceModel):
+    event: Literal["writer.changed"]
+    writer: RuntimeWriter
+
+
+class RuntimeUsageCost(DeviceModel):
+    amount: float
+    currency: NonEmpty
+
+
+class UsageUpdatedStatus(DeviceModel):
+    """The session's context usage as its Runtime reported it last."""
+
+    event: Literal["usage.updated"]
+    usedTokens: int | None = Field(default=None, ge=0)
+    contextWindow: int | None = Field(default=None, ge=0)
+    cost: RuntimeUsageCost | None = None
+
+
+class BackgroundTask(DeviceModel):
+    """A background task of a session (a background command, a sub-Agent) and its state."""
+
+    taskId: NonEmpty
+    kind: Literal["command", "subagent", "other"]
+    title: str
+    state: Literal["running", "requires_action", "idle", "completed", "failed", "stopped"]
+
+
+class BackgroundUpdatedStatus(DeviceModel):
+    """One background task of the session changed (the task is nested: a top-level ``state`` is the health fact)."""
+
+    event: Literal["background.updated"]
+    task: BackgroundTask
 
 
 class PlanningStateUpdated(DeviceModel):
@@ -528,6 +580,10 @@ RuntimeStatusPayload = Annotated[
     | Annotated[CatalogsChangedStatus, Tag("catalogs.changed")]
     | Annotated[SessionStatusChanged, Tag("session.status")]
     | Annotated[ConfigUpdatedStatus, Tag("config.updated")]
+    | Annotated[CommandsUpdatedStatus, Tag("commands.updated")]
+    | Annotated[WriterChangedStatus, Tag("writer.changed")]
+    | Annotated[UsageUpdatedStatus, Tag("usage.updated")]
+    | Annotated[BackgroundUpdatedStatus, Tag("background.updated")]
     | Annotated[PlanningStateUpdated, Tag("planning.state.updated")]
     | Annotated[GoalStateUpdated, Tag("goal.state.updated")],
     Discriminator(_runtime_status_tag),

@@ -3,26 +3,17 @@ import type { RuntimeStatusEvent } from '../../generated/device-meshcall/v1_0/ru
 
 export type { EventMethod } from '../../generated/device-meshcall/v1_0/payloads.js'
 
-/** One of the nine `runtime.status` facts device-meshcall 1.0 defines. */
+/** One of the `runtime.status` facts device-meshcall 1.0 defines. */
 export type ContractRuntimeStatus = RuntimeStatusEvent['status']
 
 /** The contract's `runtime.status` fact named `event` (`goal.state.updated`, `runtime.types`, …). */
 export type ContractStatusOf<E extends string> = Extract<ContractRuntimeStatus, { event: E }>
 
-/**
- * A Runtime live fact device-meshcall 1.0's `runtime.status` union has no member for, sent as `{event, fact}` with
- * the Runtime event in `fact`. The Server stores the latest `runtime.status` per instance without validating it.
- */
-export type RuntimeFactStatus = {
-  readonly event: 'commands.updated' | 'writer.changed' | 'usage.updated' | 'background.updated'
-  readonly fact: Record<string, unknown>
-}
-
-/** `runtime.status` as the device emits it: the contract's event, whose `status` may also be a `RuntimeFactStatus`. */
+/** `runtime.status` as the device emits it. */
 export type RuntimeStatusPayload = {
   readonly runtimeId: string
   readonly sessionId?: string | null
-  readonly status: ContractRuntimeStatus | RuntimeFactStatus
+  readonly status: ContractRuntimeStatus
   readonly capabilities?: RuntimeStatusEvent['capabilities']
 }
 

@@ -245,8 +245,8 @@ describe('aa.device.v1.Workspace handlers', () => {
     const svc = services()
     expect(await svc.runtime.catalogs!({ sessionId: 'sess_1' }, context())).toEqual({ sessionId: 'sess_1', catalogs: { models: [{ id: 'm1' }], commands: [] } })
     // What ConversationService emits for a Runtime's `commands.updated`.
-    catalog.observe('runtime.status', { runtimeId: 'rti_1', sessionId: 'sess_1', status: { event: 'commands.updated', fact: { type: 'commands.updated', commands: [{ name: 'review', description: 'Review the diff', inputHint: 'files' }, { name: 'init' }, { description: 'nameless' }] } } })
-    catalog.observe('runtime.status', { runtimeId: 'rti_1', sessionId: 'sess_2', status: { event: 'config.updated', fact: { commands: [{ name: 'x' }] } } })
+    catalog.observe('runtime.status', { runtimeId: 'rti_1', sessionId: 'sess_1', status: { event: 'commands.updated', commands: [{ name: 'review', description: 'Review the diff', inputHint: 'files' }, { name: 'init' }, { description: 'nameless' } as never] } })
+    catalog.observe('runtime.status', { runtimeId: 'rti_1', sessionId: 'sess_2', status: { event: 'config.updated', options: [], commands: [{ name: 'x' }] } })
     expect(await svc.runtime.catalogs!({ sessionId: 'sess_1' }, context())).toEqual({
       sessionId: 'sess_1',
       catalogs: { models: [{ id: 'm1' }], commands: [{ name: 'review', description: 'Review the diff', inputHint: 'files' }, { name: 'init' }] },

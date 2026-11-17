@@ -85,12 +85,12 @@ describe('slash commands (command_views, command_text)', () => {
 
   it('keeps the latest catalog per session from commands.updated', () => {
     const commands = new SessionCommandCatalog(2)
-    commands.observe('runtime.status', { runtimeId: 'rti_1', sessionId: 's1', status: { event: 'commands.updated', fact: { commands: [{ name: 'a' }, { name: '' }, 'x'] } } })
-    commands.observe('runtime.status', { runtimeId: 'rti_1', sessionId: 's2', status: { event: 'commands.updated', fact: { commands: [{ name: 'b', description: 'B' }] } } })
+    commands.observe('runtime.status', { runtimeId: 'rti_1', sessionId: 's1', status: { event: 'commands.updated', commands: [{ name: 'a' }, { name: '' }, 'x' as never] } })
+    commands.observe('runtime.status', { runtimeId: 'rti_1', sessionId: 's2', status: { event: 'commands.updated', commands: [{ name: 'b', description: 'B' }] } })
     commands.observe('runtime.status', { runtimeId: 'rti_1', sessionId: 's1', status: { event: 'config.updated' } })
     expect(commands.get('s1')).toEqual([{ name: 'a' }])
     expect(commands.get('s2')).toEqual([{ name: 'b', description: 'B' }])
-    commands.observe('runtime.status', { runtimeId: 'rti_1', sessionId: 's3', status: { event: 'commands.updated', fact: { commands: [] } } })
+    commands.observe('runtime.status', { runtimeId: 'rti_1', sessionId: 's3', status: { event: 'commands.updated', commands: [] } })
     expect(commands.get('s1')).toEqual([])
   })
 })
