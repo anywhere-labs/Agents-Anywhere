@@ -20,8 +20,12 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from agent_server.core.events import event_cursor
-from agent_server.core.models import SessionRuntimeState, SessionView
-from agent_server.core.protocol import ProtocolCapabilitySet, ProtocolTimelineSnapshot
+from agent_server.core.models import SessionView
+from agent_server.core.protocol import (
+    ProtocolCapabilitySet,
+    ProtocolTimelineSnapshot,
+    SessionRuntimeState,
+)
 from agent_server.core.protocol_v1_2 import (
     ProtocolEventRecoveryResponseV12,
     ProtocolSessionSnapshotResponseV12,

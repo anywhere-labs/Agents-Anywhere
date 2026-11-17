@@ -132,6 +132,17 @@ def test_session_create_and_assistant_reply(e2e: E2E) -> None:
     e2e.session_id = session_id
 
 
+def test_snapshot_opens_the_session(e2e: E2E) -> None:
+    # The first screen of the Web client: one snapshot with the latest Timeline page and the event cursor.
+    sid = e2e.need("session_id")
+    snapshot = e2e.api.get(f"/sessions/{sid}/snapshot", params={"limit": 50})
+    assert snapshot["session"]["id"] == sid, snapshot
+    texts = json.dumps(snapshot["timeline"]["items"])
+    assert "echo: hello e2e" in texts and "echo: second message" in texts, snapshot
+    assert snapshot["eventCursor"], snapshot
+    assert snapshot["state"]["sessionId"] == sid and snapshot["state"]["selections"], snapshot
+
+
 def test_selections_switch_model_and_permission(e2e: E2E) -> None:
     api = e2e.api
     sid = e2e.need("session_id")

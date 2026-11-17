@@ -141,6 +141,15 @@ def test_snapshot_chunks_merge_in_order_and_inflate() -> None:
     }
 
 
+def test_snapshot_chunks_join_json_text_slices() -> None:
+    body = {"timeline": {"items": [{"id": "a"}, {"id": "b"}], "nextSeq": 9}, "eventCursor": "seq:9", "notices": []}
+    text = json.dumps(body)
+    slices = [text[:7], text[7:20], text[20:]]
+    chunks = [StreamChunk(seq=index, chunk=part, end=index == 2) for index, part in enumerate(slices)]
+    assert merge_snapshot_chunks(list(reversed(chunks))) == body
+    assert merge_snapshot_chunks([StreamChunk(seq=0, chunk=text, end=True)]) == body
+
+
 def _reads() -> DeviceReadService:
     return DeviceReadService(None, None, None)  # type: ignore[arg-type]
 

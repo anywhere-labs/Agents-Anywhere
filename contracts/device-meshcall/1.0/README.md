@@ -63,6 +63,7 @@ v3 中 Server 与 Connector 之间的契约，取代 v2 的 `/api/v2/connector/w
 
 MeshCall 层的模型只约束外壳，`p` 与读响应里的业务字段如下。两端共用样例 `server/tests/fixtures/device_shapes.json`：Server 发出的请求与设备真实的返回都在里面，任何一边改了形状，另一边的测试都会失败。
 
+- `Sessions/snapshot` 的 `StreamChunk.chunk`：JSON 对象，或字符串。字符串有两种写法，Server 都接受：按 `seq` 拼接后是一个 JSON 对象（TS Connector 把 JSON 文本按帧上限切片）；或者每块各是一个 JSON 对象的 base64 deflate。
 - `Sessions/state {sessionId, part?}`：`part` 为 `planning` 时返回 `{planning}`，为 `goal` 时返回 `{goal}`，形状与 v2 的计划、目标状态相同；不带 `part` 时返回 `{state, planning, goal}`。其他取值报 `invalid_argument`。
 - `Store/planDocument {sessionId, planId?, revision?}`：带 `planId` 与 `revision` 时返回 `{document}`；只带 `sessionId` 时返回 `{plans}`（新的在前）。找不到时报 `plan_document_not_found`。
 - `session.select`（`Commands/sessionSelect`）：`p` 为 `{sessionId, runtime, runtimeId, externalSessionId?, selections}`，`selections` 可一次带多项，值为 null 的项跳过。返回 v2 形状 `{updated, applied, sessionId, externalSessionId, selections, state}`。

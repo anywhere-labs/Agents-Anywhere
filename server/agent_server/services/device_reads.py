@@ -60,13 +60,22 @@ class DeviceReadError(Exception):
 def merge_snapshot_chunks(chunks: list[StreamChunk]) -> dict[str, Any]:
     """Join ``Sessions/snapshot`` chunks into one client-shaped body.
 
-    A chunk is a JSON object, or a base64 deflate string of one (``encoding: deflate``).
-    Timeline items are concatenated in chunk order; other keys take the last value.
+    A chunk is a JSON object, or a base64 deflate string of one (``encoding: deflate``). When every chunk is a
+    string and they join, in order, into one JSON object, that object is the body (the TS Connector slices the
+    JSON text under the frame limit). Timeline items are concatenated in chunk order; other keys take the last value.
     """
 
+    ordered = sorted(chunks, key=lambda value: value.seq)
+    if ordered and all(isinstance(chunk.chunk, str) for chunk in ordered):
+        try:
+            whole = json.loads("".join(str(chunk.chunk) for chunk in ordered))
+        except ValueError:
+            whole = None
+        if isinstance(whole, dict):
+            ordered = [StreamChunk(seq=0, chunk=whole, end=True)]
     body: dict[str, Any] = {}
     items: list[Any] = []
-    for chunk in sorted(chunks, key=lambda value: value.seq):
+    for chunk in ordered:
         part = chunk.chunk
         if isinstance(part, str):
             part = json.loads(zlib.decompress(base64.b64decode(part)))
