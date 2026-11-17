@@ -42,6 +42,11 @@ CONNECTOR_WS_MAX_NOTIFICATION_BYTES = 900 * 1024
 CRITICAL_RPC_METHODS = frozenset({"interaction.respond",
     "workspace.preparation.get", "workspace.preparation.respond", "workspace.preparation.cancel",
     "session.creation.get", "session.creation.respond", "session.creation.cancel", "session.notices"})
+READ_RPC_TIMEOUT_SECONDS = 20.0
+TIMED_READ_RPC_METHODS = frozenset({
+    "session.state", "session.capabilities", "runtime.config", "runtime.capabilities",
+    "runtime.modelCatalog", "runtime.permissionCatalog",
+})
 
 
 class WebSocketSender(Protocol):
@@ -164,6 +169,13 @@ class ConnectorRpcChannel:
             )
             if generation == self._generation:
                 await self.send_response(request_id, ok=True, result=result)
+        except TimeoutError:
+            logger.warning("connector request timed out method={} id={}", method, request_id)
+            if generation == self._generation:
+                await self.send_response(
+                    request_id, ok=False,
+                    error={"code": "TimeoutError", "message": "Connector request timed out"},
+                )
         except RuntimeProtocolError as exc:
             logger.warning(
                 "connector runtime request failed method={} id={} code={} message={}",
@@ -208,8 +220,8 @@ class ConnectorRpcChannel:
         Side effects:
         - schedules request dispatch in a background task
         - sends the JSON-RPC response when the request finishes
-        - never cancels slow dispatch work because operation completion is
-          owned by the runtime method, not by a frontend timeout
+        - bounds selected reads, including their queue wait
+        - leaves write operation completion to the runtime method
         """
 
         if message.get("type") != "request":
@@ -235,8 +247,15 @@ class ConnectorRpcChannel:
             if method in CRITICAL_RPC_METHODS
             else self._request_semaphore
         )
-        async with semaphore:
-            await self.handle_message(message, dispatch, generation=generation)
+        async def dispatch_with_limit(method: str, params: dict[str, Any]) -> Any:
+            timeout = READ_RPC_TIMEOUT_SECONDS if method in TIMED_READ_RPC_METHODS else None
+            async with asyncio.timeout(timeout):
+                async with semaphore:
+                    return await dispatch(method, params)
+
+        # Response delivery must not retain an execution slot or be interrupted
+        # by the read deadline after a successful result has already been queued.
+        await self.handle_message(message, dispatch_with_limit, generation=generation)
 
     def handle_request_task_done(self, task: asyncio.Task[None]) -> None:
         self._request_tasks.discard(task)

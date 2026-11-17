@@ -5,6 +5,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from weakref import WeakValueDictionary
 
+from connector.logging import logger
 from connector.runtime_protocol import RuntimeSessionStateCache, SessionState
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex.domain import sessions as codex_sessions
@@ -29,6 +30,7 @@ class CodexTurnLifecycleHandler:
     _history_terminals: OrderedDict[tuple[str, str], None] = field(
         default_factory=OrderedDict, init=False,
     )
+    _history_reads: dict[str, asyncio.Task[SessionState | None]] = field(default_factory=dict, init=False)
 
     def session_lock(self, session_id: str) -> asyncio.Lock:
         return self._session_locks.setdefault(session_id, asyncio.Lock())
@@ -39,9 +41,33 @@ class CodexTurnLifecycleHandler:
     async def reconcile_history_state(
         self, state: SessionState | None, expected: SessionState | None,
     ) -> SessionState | None:
-        """Commit explicit terminal evidence only against the state it was read for."""
         if state is None:
             return None
+        # A read may commit a turn end before publishing it. Let that publication
+        # finish even if the RPC reader times out, sharing one task per session.
+        task = self._history_reads.get(state.session_id)
+        if task is None:
+            task = asyncio.create_task(self._reconcile_history_state(state, expected))
+            self._history_reads[state.session_id] = task
+            task.add_done_callback(lambda done: self._history_read_done(state.session_id, done))
+        return await asyncio.shield(task)
+
+    def _history_read_done(self, session_id: str, task: asyncio.Task[SessionState | None]) -> None:
+        if self._history_reads.get(session_id) is task:
+            self._history_reads.pop(session_id)
+        if not task.cancelled() and (error := task.exception()) is not None:
+            logger.opt(exception=error).error("history state reconciliation failed session_id={}", session_id)
+
+    async def close(self) -> None:
+        tasks = list(self._history_reads.values())
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _reconcile_history_state(
+        self, state: SessionState, expected: SessionState | None,
+    ) -> SessionState | None:
+        """Commit explicit terminal evidence only against the state it was read for."""
         async with self.session_lock(state.session_id):
             cached = self.session_states.get(state.session_id)
             if cached is not expected:

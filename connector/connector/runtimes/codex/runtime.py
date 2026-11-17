@@ -201,6 +201,7 @@ class CodexRuntime(AgentRuntime):
             await self.goals.recover()
 
     async def stop(self) -> None:
+        await self._notifications.turn_lifecycle.close()
         if self.goals is not None:
             await self.goals.close()
         if self.ipc_owner is not None:

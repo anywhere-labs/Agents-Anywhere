@@ -4,15 +4,16 @@ import asyncio
 from typing import Any
 
 import pytest
-
-from agent_server.app import create_app
-from agent_server.infra.db import device_runtimes
-from agent_server.services.device_runtimes import (
-    DeviceRuntimeStartingError,
-    DeviceRuntimeService,
-)
 from conftest import ApiV2TestClient as TestClient
 from sqlalchemy import insert
+
+from agent_server.app import create_app
+from agent_server.infra.connector_rpc import ConnectorRpcError
+from agent_server.infra.db import device_runtimes
+from agent_server.services.device_runtimes import (
+    DeviceRuntimeService,
+    DeviceRuntimeStartingError,
+)
 
 ADMIN_USER = "user1"
 ADMIN_PASSWORD = "secret"
@@ -760,6 +761,33 @@ def test_v2_runtime_read_rpcs_resolve_named_instance_dual_identity(
         if limit is not None:
             expected["limit"] = limit
         assert params == expected
+
+
+@pytest.mark.parametrize("error, status", [
+    (TimeoutError(), 504),
+    (ConnectorRpcError("TimeoutError", "Connector request timed out"), 504),
+    (ConnectorRpcError("runtime_error", "Runtime failed"), 502),
+])
+def test_runtime_read_endpoints_report_timeouts(tmp_path, error, status):
+    client, rpc, connector_id, headers = _make_client(tmp_path, _v2_discovery())
+    _discover_types(client, connector_id, headers)
+    created = client.post(
+        f"/connectors/{connector_id}/runtimes", headers=headers,
+        json={"runtimeType": "codex", "name": "Timeout test", "config": {}, "active": True},
+    )
+    assert created.status_code == 201, created.text
+    runtime_id = created.json()["runtimeId"]
+
+    async def failed_request(*args, **kwargs):
+        raise error
+
+    rpc.request = failed_request
+    for path in ("capabilities", "catalogs/model", "catalogs/permission", "commands"):
+        response = client.get(
+            f"/connectors/{connector_id}/runtimes/{runtime_id}/{path}", headers=headers,
+        )
+        assert response.status_code == status, response.text
+        assert response.json()["detail"]["code"] == ("TimeoutError" if status == 504 else "runtime_error")
 
 
 def test_named_session_create_starts_an_active_stopped_instance(
