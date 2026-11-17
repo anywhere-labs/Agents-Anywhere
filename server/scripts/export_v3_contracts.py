@@ -116,7 +116,6 @@ DEVICE_MESHCALL = Contract(
         _a("select-command", dl.SelectCommand),
         _a("select-result", dl.SelectResult),
         _a("creation-begin-command", dl.CreationBeginCommand),
-        _a("creation-begin-result", dl.CreationBeginResult),
         _a("creation-respond-command", dl.CreationRespondCommand),
         _a("creation-cancel-command", dl.CreationCancelCommand),
         _a("workspace-prepare-command", dl.WorkspacePrepareCommand),

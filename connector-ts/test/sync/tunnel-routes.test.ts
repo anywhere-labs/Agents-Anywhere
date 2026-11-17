@@ -118,6 +118,32 @@ describe('command identity', () => {
     await device.start('sess_named')
     expect(await device.store.sessions.get('sess_named')).not.toBeNull()
   })
+
+  it('creates and starts a session once under the caller\'s commandId, replays it, and passes the planning intent on', async () => {
+    const acks: unknown[] = []
+    const identity = { commandId: 'cm_plan', inputDigest: 'sha256:plan', deadline: '2099-01-01T00:00:00Z' }
+    const context = { command: identity, server: { sessionId: 'sess_plan' }, onCommand: (commandId: string, ack: unknown) => acks.push({ commandId, ack }) }
+    const body = { connectorId: DEVICE, runtime: 'opencode', runtimeId: RUNTIME, cwd: device.root, content: 'design the cache', clientMessageId: 'cm_plan', planningIntent: { mode: 'plan', operationId: 'cm_plan' } }
+    const created = await device.request('POST', '/sessions/create-and-start', body, context)
+    expect(created.status, JSON.stringify(created.body)).toBe(200)
+    expect(created.body).toMatchObject({ session: { id: 'sess_plan' }, connectorResult: { sessionId: 'sess_plan', delivery: 'accepted' } })
+    expect(acks).toEqual([{ commandId: 'cm_plan', ack: expect.objectContaining({ outcome: 'accepted' }) }])
+    expect(await device.store.commands.get('cm_plan')).toMatchObject({ method: 'session.createAndStart', inputDigest: 'sha256:plan', outcome: 'accepted' })
+    await settle()
+    // One Agent session; the intent reached the use case: this Runtime cannot plan, so the first message is refused
+    // instead of being sent as a plain prompt.
+    expect(device.sessions).toHaveLength(1)
+    expect(device.sessions[0]!.calls.filter(call => call.method === 'prompt')).toEqual([])
+    expect(await device.store.deliveries.get('sess_plan', 'cm_plan')).toMatchObject({ state: 'rejected', errorCode: 'planning_unavailable' })
+    const calls = JSON.stringify(device.sessions[0]!.calls)
+    // A retry replays the receipt: the same session, no second Agent session.
+    const again = await device.request('POST', '/sessions/create-and-start', body, context)
+    expect(again.status).toBe(200)
+    expect(again.body).toMatchObject({ session: { id: 'sess_plan' } })
+    await settle()
+    expect(device.sessions).toHaveLength(1)
+    expect(JSON.stringify(device.sessions[0]!.calls)).toBe(calls)
+  })
 })
 
 describe('selections', () => {

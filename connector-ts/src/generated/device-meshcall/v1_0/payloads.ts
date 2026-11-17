@@ -11,7 +11,6 @@ import type { CommandResultOut } from "./command-result-out.js"
 import type { CommandStatusRequest } from "./command-status-request.js"
 import type { CommandStatusResponse } from "./command-status-response.js"
 import type { CreationBeginCommand } from "./creation-begin-command.js"
-import type { CreationBeginResult } from "./creation-begin-result.js"
 import type { CreationCancelCommand } from "./creation-cancel-command.js"
 import type { CreationGetRequest } from "./creation-get-request.js"
 import type { CreationRespondCommand } from "./creation-respond-command.js"
@@ -71,7 +70,7 @@ export interface CommandPayloads {
   "preview.close": { request: PreviewCloseCommand; response: PreviewCloseResult }
   "preview.open": { request: PreviewOpenCommand; response: PreviewOpenResult }
   "runtime.apply": { request: RuntimeApplyCommand; response: RuntimeApplyResult }
-  "session.creation.begin": { request: CreationBeginCommand; response: CreationBeginResult }
+  "session.creation.begin": { request: CreationBeginCommand; response: WorkflowState }
   "session.creation.cancel": { request: CreationCancelCommand; response: WorkflowState }
   "session.creation.respond": { request: CreationRespondCommand; response: WorkflowState }
   "session.goal": { request: SessionGoalCommand; response: GoalResponse }

@@ -161,10 +161,16 @@ describe.skipIf(binary === null)('aa.device.v1.Client over a real Router', () =>
     service = new ConversationService({ store, feed, live: { emit: () => undefined }, runtimes, clock, ids })
     const inbox = new CommandInbox(store, clock, service)
     // The tunnel's commands pass the gate first; Commands/* use the inbox directly.
-    const gated = { handle: async (...args: Parameters<CommandInbox['handle']>) => {
-      await gate.wait()
-      return inbox.handle(...args)
-    } } as unknown as CommandInbox
+    const gated = {
+      handle: async (...args: Parameters<CommandInbox['handle']>) => {
+        await gate.wait()
+        return inbox.handle(...args)
+      },
+      createAndStart: async (...args: Parameters<CommandInbox['createAndStart']>) => {
+        await gate.wait()
+        return inbox.createAndStart(...args)
+      },
+    } as unknown as CommandInbox
     // The session capabilities the client routes check (sending, interrupting, answering notices, selections).
     const readers = new DeviceReaders(store, clock.nowIso, {
       sessionCapabilities: async sessionId => {

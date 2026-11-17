@@ -1336,199 +1336,7 @@
                   "type": "object"
                 },
                 "CreationBeginCommand": {
-                  "description": "``session.creation.begin``: direct, or from a workspace preparation (``preparationId``).",
-                  "oneOf": [
-                    {
-                      "$ref": "#/$defs/DirectCreationCommand"
-                    },
-                    {
-                      "$ref": "#/$defs/PreparedCreationCommand"
-                    }
-                  ],
-                  "title": "CreationBeginCommand"
-                },
-                "DirectCreationCommand": {
-                  "description": "``session.creation.begin`` without a workspace preparation: the device opens the session and runs\nthe first turn. ``sessionId`` is the directory row the Server created.",
-                  "properties": {
-                    "attachments": {
-                      "items": {
-                        "$ref": "#/$defs/CommandAttachmentRef"
-                      },
-                      "title": "Attachments",
-                      "type": "array"
-                    },
-                    "clientMessageId": {
-                      "minLength": 1,
-                      "title": "Clientmessageid",
-                      "type": "string"
-                    },
-                    "content": {
-                      "default": "",
-                      "title": "Content",
-                      "type": "string"
-                    },
-                    "cwd": {
-                      "minLength": 1,
-                      "title": "Cwd",
-                      "type": "string"
-                    },
-                    "goalIntent": {
-                      "anyOf": [
-                        {
-                          "$ref": "#/$defs/GoalCreationIntent"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ],
-                      "default": null
-                    },
-                    "planningIntent": {
-                      "anyOf": [
-                        {
-                          "$ref": "#/$defs/PlanningCreationIntent"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ],
-                      "default": null
-                    },
-                    "preparationId": {
-                      "default": null,
-                      "title": "Preparationid",
-                      "type": "null"
-                    },
-                    "projectId": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ],
-                      "default": null,
-                      "title": "Projectid"
-                    },
-                    "runtimeId": {
-                      "minLength": 1,
-                      "title": "Runtimeid",
-                      "type": "string"
-                    },
-                    "runtimeType": {
-                      "minLength": 1,
-                      "title": "Runtimetype",
-                      "type": "string"
-                    },
-                    "selections": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": {
-                            "anyOf": [
-                              {
-                                "type": "string"
-                              },
-                              {
-                                "type": "null"
-                              }
-                            ]
-                          },
-                          "type": "object"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ],
-                      "default": null,
-                      "title": "Selections"
-                    },
-                    "sessionId": {
-                      "minLength": 1,
-                      "title": "Sessionid",
-                      "type": "string"
-                    },
-                    "takeover": {
-                      "anyOf": [
-                        {
-                          "type": "boolean"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ],
-                      "default": null,
-                      "title": "Takeover"
-                    },
-                    "title": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ],
-                      "default": null,
-                      "title": "Title"
-                    }
-                  },
-                  "required": [
-                    "sessionId",
-                    "runtimeId",
-                    "runtimeType",
-                    "cwd",
-                    "clientMessageId"
-                  ],
-                  "title": "DirectCreationCommand",
-                  "type": "object"
-                },
-                "GoalCreationIntent": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "mode": {
-                      "const": "goal",
-                      "default": "goal",
-                      "title": "Mode",
-                      "type": "string"
-                    },
-                    "operationId": {
-                      "maxLength": 160,
-                      "minLength": 1,
-                      "title": "Operationid",
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "operationId"
-                  ],
-                  "title": "GoalCreationIntent",
-                  "type": "object"
-                },
-                "PlanningCreationIntent": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "mode": {
-                      "const": "plan",
-                      "title": "Mode",
-                      "type": "string"
-                    },
-                    "operationId": {
-                      "maxLength": 160,
-                      "minLength": 1,
-                      "title": "Operationid",
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "mode",
-                    "operationId"
-                  ],
-                  "title": "PlanningCreationIntent",
-                  "type": "object"
-                },
-                "PreparedCreationCommand": {
-                  "description": "``session.creation.begin`` consuming a reserved workspace preparation (runtime-workflows 1.2).",
+                  "description": "``session.creation.begin``: consumes a reserved workspace preparation (runtime-workflows 1.2).",
                   "properties": {
                     "attachments": {
                       "items": {
@@ -1653,7 +1461,29 @@
                     "sessionId",
                     "clientMessageId"
                   ],
-                  "title": "PreparedCreationCommand",
+                  "title": "CreationBeginCommand",
+                  "type": "object"
+                },
+                "PlanningCreationIntent": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "mode": {
+                      "const": "plan",
+                      "title": "Mode",
+                      "type": "string"
+                    },
+                    "operationId": {
+                      "maxLength": 160,
+                      "minLength": 1,
+                      "title": "Operationid",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "mode",
+                    "operationId"
+                  ],
+                  "title": "PlanningCreationIntent",
                   "type": "object"
                 }
               },
@@ -1696,99 +1526,9 @@
           },
           "response": {
             "module": "agent_server.core.device_meshcall",
-            "qualname": "CommandAck[CreationBeginResult]",
+            "qualname": "CommandAck[WorkflowState]",
             "schema": {
               "$defs": {
-                "CreationBeginResult": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/DirectCreationResult"
-                    },
-                    {
-                      "$ref": "#/$defs/WorkflowState"
-                    }
-                  ],
-                  "description": "Direct: the first message's delivery; prepared: the creation's workflow state.",
-                  "title": "CreationBeginResult"
-                },
-                "DirectCreationResult": {
-                  "properties": {
-                    "clientMessageId": {
-                      "minLength": 1,
-                      "title": "Clientmessageid",
-                      "type": "string"
-                    },
-                    "delivery": {
-                      "enum": [
-                        "accepted",
-                        "queued",
-                        "duplicate"
-                      ],
-                      "title": "Delivery",
-                      "type": "string"
-                    },
-                    "item": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": true,
-                          "type": "object"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ],
-                      "default": null,
-                      "title": "Item"
-                    },
-                    "queue": {
-                      "anyOf": [
-                        {
-                          "$ref": "#/$defs/SessionQueueState"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ],
-                      "default": null
-                    },
-                    "queuePosition": {
-                      "anyOf": [
-                        {
-                          "type": "integer"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ],
-                      "default": null,
-                      "title": "Queueposition"
-                    },
-                    "sessionId": {
-                      "minLength": 1,
-                      "title": "Sessionid",
-                      "type": "string"
-                    },
-                    "state": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ],
-                      "default": null,
-                      "title": "State"
-                    }
-                  },
-                  "required": [
-                    "delivery",
-                    "clientMessageId",
-                    "sessionId"
-                  ],
-                  "title": "DirectCreationResult",
-                  "type": "object"
-                },
                 "LinkError": {
                   "properties": {
                     "code": {
@@ -2002,181 +1742,6 @@
                   "title": "ProtocolReasoningItem",
                   "type": "object"
                 },
-                "SessionQueueAttachment": {
-                  "properties": {
-                    "fileId": {
-                      "title": "Fileid",
-                      "type": "string"
-                    },
-                    "mediaType": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ],
-                      "default": null,
-                      "title": "Mediatype"
-                    },
-                    "name": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ],
-                      "default": null,
-                      "title": "Name"
-                    },
-                    "size": {
-                      "anyOf": [
-                        {
-                          "type": "integer"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ],
-                      "default": null,
-                      "title": "Size"
-                    }
-                  },
-                  "required": [
-                    "fileId"
-                  ],
-                  "title": "SessionQueueAttachment",
-                  "type": "object"
-                },
-                "SessionQueueError": {
-                  "properties": {
-                    "code": {
-                      "title": "Code",
-                      "type": "string"
-                    },
-                    "message": {
-                      "title": "Message",
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "code",
-                    "message"
-                  ],
-                  "title": "SessionQueueError",
-                  "type": "object"
-                },
-                "SessionQueueItem": {
-                  "properties": {
-                    "attachments": {
-                      "items": {
-                        "$ref": "#/$defs/SessionQueueAttachment"
-                      },
-                      "title": "Attachments",
-                      "type": "array"
-                    },
-                    "clientMessageId": {
-                      "title": "Clientmessageid",
-                      "type": "string"
-                    },
-                    "content": {
-                      "title": "Content",
-                      "type": "string"
-                    },
-                    "createdAt": {
-                      "title": "Createdat",
-                      "type": "string"
-                    },
-                    "createdBy": {
-                      "title": "Createdby",
-                      "type": "string"
-                    },
-                    "error": {
-                      "anyOf": [
-                        {
-                          "$ref": "#/$defs/SessionQueueError"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ],
-                      "default": null
-                    },
-                    "interruptRequested": {
-                      "default": false,
-                      "title": "Interruptrequested",
-                      "type": "boolean"
-                    },
-                    "messageId": {
-                      "title": "Messageid",
-                      "type": "string"
-                    },
-                    "position": {
-                      "minimum": 1,
-                      "title": "Position",
-                      "type": "integer"
-                    },
-                    "sessionId": {
-                      "title": "Sessionid",
-                      "type": "string"
-                    },
-                    "status": {
-                      "enum": [
-                        "queued",
-                        "sending",
-                        "failed"
-                      ],
-                      "title": "Status",
-                      "type": "string"
-                    },
-                    "updatedAt": {
-                      "title": "Updatedat",
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "messageId",
-                    "sessionId",
-                    "clientMessageId",
-                    "content",
-                    "status",
-                    "position",
-                    "createdBy",
-                    "createdAt",
-                    "updatedAt"
-                  ],
-                  "title": "SessionQueueItem",
-                  "type": "object"
-                },
-                "SessionQueueState": {
-                  "properties": {
-                    "items": {
-                      "items": {
-                        "$ref": "#/$defs/SessionQueueItem"
-                      },
-                      "title": "Items",
-                      "type": "array"
-                    },
-                    "revision": {
-                      "minimum": 0,
-                      "title": "Revision",
-                      "type": "integer"
-                    },
-                    "sessionId": {
-                      "title": "Sessionid",
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "sessionId",
-                    "revision"
-                  ],
-                  "title": "SessionQueueState",
-                  "type": "object"
-                },
                 "WorkflowState": {
                   "additionalProperties": true,
                   "description": "Keep runtime extensions while validating the shared model catalog.",
@@ -2197,7 +1762,7 @@
                   "type": "object"
                 }
               },
-              "description": "CommandAck of session.creation.begin: r is CreationBeginResult.",
+              "description": "CommandAck of session.creation.begin: r is WorkflowState.",
               "properties": {
                 "e": {
                   "anyOf": [
@@ -2221,7 +1786,7 @@
                 "r": {
                   "anyOf": [
                     {
-                      "$ref": "#/$defs/CreationBeginResult"
+                      "$ref": "#/$defs/WorkflowState"
                     },
                     {
                       "type": "null"

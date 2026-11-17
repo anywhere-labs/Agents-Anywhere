@@ -10,32 +10,6 @@
       },
       "externalSessionId": "thr_sess_shape"
     },
-    "creationPlan": {
-      "sessionId": "sess_shape_plan",
-      "runtimeId": "codex",
-      "runtimeType": "codex",
-      "cwd": "/repo",
-      "clientMessageId": "m_create_plan",
-      "content": "design the cache",
-      "takeover": true,
-      "planningIntent": {
-        "mode": "plan",
-        "operationId": "m_create_plan"
-      }
-    },
-    "creationGoal": {
-      "sessionId": "sess_shape_goal",
-      "runtimeId": "codex",
-      "runtimeType": "codex",
-      "cwd": "/repo",
-      "clientMessageId": "m_create_goal",
-      "content": "ship the release",
-      "takeover": true,
-      "goalIntent": {
-        "mode": "goal",
-        "operationId": "m_create_goal"
-      }
-    },
     "workspacePrepare": {
       "runtime": "opencode",
       "runtimeId": "rti_shape",

@@ -84,8 +84,8 @@
       },
       "response": {
         "contract": "device-meshcall",
-        "model": "CreationBeginResult",
-        "slug": "creation-begin-result",
+        "model": "WorkflowState",
+        "slug": "workflow-state",
         "version": "1.0"
       },
       "route": "aa.device.v1.Commands/sessionCreationBegin"

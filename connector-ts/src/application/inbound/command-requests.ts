@@ -1,7 +1,7 @@
 import type { CommandMethod, CommandPayloads } from '../../generated/device-meshcall/v1_0/payloads.js'
 import type { CommandAttachmentRef } from '../../generated/device-meshcall/v1_0/send-message-command.js'
-import type { DirectCreationCommand, PreparedCreationCommand } from '../../generated/device-meshcall/v1_0/creation-begin-command.js'
-import { UseCaseError } from '../conversation-service.js'
+import type { CreationBeginCommand } from '../../generated/device-meshcall/v1_0/creation-begin-command.js'
+import { UseCaseError, type AttachmentRef, type CreateSessionCommand } from '../conversation-service.js'
 
 export type CommandRequest<M extends CommandMethod> = CommandPayloads[M]['request']
 export type CommandResponse<M extends CommandMethod> = CommandPayloads[M]['response']
@@ -94,13 +94,6 @@ type SelectRequest = CommandRequest<'session.select'> & (
   | { selections?: null; optionId: string; value: string | boolean }
 )
 
-type DirectCreation = DirectCreationCommand & {
-  content: string
-  attachments: CommandAttachmentRef[]
-  planningIntent: { mode: 'plan'; operationId: string } | null
-  goalIntent: { mode: 'goal'; operationId: string } | null
-}
-
 /**
  * The one runtime check of every command's payload (`CommandCall.p`), run by `CommandInbox` before its handler: it
  * turns foreign data into the generated request type, or throws `invalid_argument`. Each parser may narrow its
@@ -147,25 +140,10 @@ export const REQUEST_PARSERS = {
       ...(actionId !== null ? { actionId } : {}),
     }
   },
-  'session.creation.begin': (p): DirectCreation | PreparedCreationCommand => {
-    // From a prepared workspace: PreparationService.begin checks it.
-    if (p.preparationId !== undefined && p.preparationId !== null) return p as PreparedCreationCommand
-    const projectId = optionalString(p.projectId)
-    return {
-      sessionId: text(p.sessionId, 'sessionId'),
-      runtimeId: text(p.runtimeId, 'runtimeId'),
-      runtimeType: text(p.runtimeType, 'runtimeType'),
-      cwd: text(p.cwd, 'cwd'),
-      ...(projectId !== null ? { projectId } : {}),
-      title: optionalString(p.title),
-      ...(p.selections !== null && typeof p.selections === 'object' ? { selections: p.selections as Record<string, string | null> } : {}),
-      clientMessageId: text(p.clientMessageId, 'clientMessageId'),
-      content: typeof p.content === 'string' ? p.content : '',
-      attachments: attachments(p.attachments),
-      ...(typeof p.takeover === 'boolean' ? { takeover: p.takeover } : {}),
-      planningIntent: intent(p.planningIntent, 'plan', 'planningIntent'),
-      goalIntent: intent(p.goalIntent, 'goal', 'goalIntent'),
-    }
+  // The use case (PreparationService.begin) checks the rest of a prepared creation.
+  'session.creation.begin': (p): CreationBeginCommand => {
+    text(p.preparationId, 'preparationId')
+    return p as unknown as CreationBeginCommand
   },
   'session.creation.respond': checkedBy<CommandRequest<'session.creation.respond'>>(),
   'session.creation.cancel': checkedBy<CommandRequest<'session.creation.cancel'>>(),
@@ -231,4 +209,30 @@ export type ParsedRequest<M extends CommandMethod> = ReturnType<(typeof REQUEST_
 export function parseRequest<M extends CommandMethod>(method: M, payload: unknown): ParsedRequest<M> {
   const parse = REQUEST_PARSERS[method] as (p: Record<string, unknown>) => ParsedRequest<M>
   return parse(object(payload ?? {}, 'payload'))
+}
+
+/**
+ * The payload of a device-local create-and-start (`POST /sessions/create-and-start`): a new session, its Runtime and
+ * directory, and the first message, with an optional planning or goal intent. Throws `invalid_argument`.
+ */
+export function parseCreateAndStart(payload: unknown): CreateSessionCommand {
+  const p = object(payload ?? {}, 'payload')
+  const projectId = optionalString(p.projectId)
+  const planningIntent = intent(p.planningIntent, 'plan', 'planningIntent')
+  const goalIntent = intent(p.goalIntent, 'goal', 'goalIntent')
+  return {
+    sessionId: text(p.sessionId, 'sessionId'),
+    runtimeId: text(p.runtimeId, 'runtimeId'),
+    runtimeType: text(p.runtimeType, 'runtimeType'),
+    cwd: text(p.cwd, 'cwd'),
+    ...(projectId !== null ? { projectId } : {}),
+    title: optionalString(p.title),
+    ...(p.selections !== null && typeof p.selections === 'object' ? { selections: p.selections as Record<string, string | null> } : {}),
+    clientMessageId: text(p.clientMessageId, 'clientMessageId'),
+    content: typeof p.content === 'string' ? p.content : '',
+    attachments: attachments(p.attachments) as AttachmentRef[],
+    ...(typeof p.takeover === 'boolean' ? { takeover: p.takeover } : {}),
+    ...(planningIntent !== null ? { planningIntent } : {}),
+    ...(goalIntent !== null ? { goalIntent } : {}),
+  }
 }

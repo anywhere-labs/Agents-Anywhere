@@ -177,7 +177,7 @@ export interface ReceiveMessageInput {
 export interface PendingDelivery {
   readonly content: string
   readonly attachments: readonly Record<string, unknown>[]
-  /** `session.creation.begin`: how to open the new Runtime session. */
+  /** A new session's first message: how to open the new Runtime session. */
   readonly open?: {
     readonly cwd: string
     readonly title?: string

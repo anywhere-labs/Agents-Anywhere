@@ -85,7 +85,7 @@ v3 中 Server 与 Connector 之间的契约，取代 v2 的 `/api/v2/connector/w
 
 MeshCall 的外壳（`CommandCall.p`、`CommandAck.r`、`LinkAttachItem.p`、`OutboxItem.p`）在线上仍是对象；每个业务方法放进去的内容由 `COMMAND_PAYLOADS`、`READ_PAYLOADS`、`EVENT_PAYLOADS`、`OUTBOX_PAYLOADS` 规定，导出为 `payloads.json`：
 
-- 命令：`COMMAND_PAYLOADS` 覆盖设备收件箱的全部命令（`DEVICE_COMMANDS`），其中只有 `COMMAND_METHODS` 由 Server 经 `Commands/*` 发出，其余经 `Client/call` 到达。如 `session.sendMessage` 的 `SendMessageCommand` / `SendMessageResult`，`session.creation.begin` 的 `CreationBeginCommand`（不带准备的 `DirectCreationCommand` 或带 `preparationId` 的 `PreparedCreationCommand`），`runtime.apply` 的 `RuntimeApplyCommand` / `RuntimeApplyResult`，`device.settings.apply` 的 `DeviceSettingsApplyCommand`，`session.sync` 的 `SessionSyncCommand {sessionId, takeover?, archived?}`。`session.planning`、`session.goal` 的结果引用 protocol 1.2 的 `planning-response`、`goal-response`，`preview.*` 引用 preview 1.0。
+- 命令：`COMMAND_PAYLOADS` 覆盖设备收件箱的全部命令（`DEVICE_COMMANDS`），其中只有 `COMMAND_METHODS` 由 Server 经 `Commands/*` 发出，其余经 `Client/call` 到达。如 `session.sendMessage` 的 `SendMessageCommand` / `SendMessageResult`，`session.creation.begin` 的 `CreationBeginCommand`（带 `preparationId`，只用于消费工作区准备，结果为 `WorkflowState`），`runtime.apply` 的 `RuntimeApplyCommand` / `RuntimeApplyResult`，`device.settings.apply` 的 `DeviceSettingsApplyCommand`，`session.sync` 的 `SessionSyncCommand {sessionId, takeover?, archived?}`。`session.planning`、`session.goal` 的结果引用 protocol 1.2 的 `planning-response`、`goal-response`，`preview.*` 引用 preview 1.0。
 - 工作区准备与创建：请求为 `WorkspacePrepareCommand`、`PreparationReserveCommand` 等，回答为 runtime-workflows 1.2 的工作流状态（`workflow-state`）。
 - 读：`Sessions/watch` 的 `SessionWatchRequest` / `ChangesEvent`，`Store/readBlob` 的 `ReadBlobRequest` / `ReadBlobChunk`，`Store/exportShare` 的 `ExportShareRequest` / `ExportShareChunk` 等。
 - 事件：`runtime.status` 的 `status` 是按 `event` 区分的 `RuntimeStatusPayload`：`runtime.types`、`capabilities.changed`、`catalogs.changed`、`session.status`、`config.updated`、`planning.state.updated`、`goal.state.updated`；没有 `event` 时按带的是 `instance`（应用期望状态之后的实例）还是 `state`（运行中实例的健康状态）区分。`runtime.notice.updated` 带 protocol 1.2 的 notice，`runtime.queue.updated` 带队列状态，`port.*` 引用 preview 1.0。
@@ -106,7 +106,7 @@ Server 发送每条命令之前按请求模型校验 `p`（`validate_command_pay
 各方法的模型见[业务载荷](#业务载荷)，下面是语义。两端共用样例 `server/tests/fixtures/device_shapes.json` 与 `runtime_control_commands.json`：Server 发出的请求与设备真实的返回都在里面，任何一边改了形状，另一边的测试都会失败；每一项还要分别通过 Server 的 pydantic 模型和 Connector 侧按生成的 JSON Schema 做的校验（ajv）。
 
 - `session.select`（经 `Client/call` 到达收件箱）：`p` 为 `{sessionId, runtime, runtimeId, externalSessionId?, selections}`，`selections` 可一次带多项，值为 null 的项跳过。返回 v2 形状 `{updated, applied, sessionId, externalSessionId, selections, state}`。
-- `session.creation.begin`：`p` 可带 `planningIntent`、`goalIntent`，各为 `{mode, operationId}`。带计划意图时设备先进入计划模式再发首条消息，失败则拒发；带目标意图时把内容设为目标，不当作消息发出。
+- 建会话并开始（`POST /sessions/create-and-start`，经 `Client/call` 到达设备的客户端 API）：请求体可带 `planningIntent`、`goalIntent`，各为 `{mode, operationId}`。带计划意图时设备先进入计划模式再发首条消息，失败则拒发；带目标意图时把内容设为目标，不当作消息发出。它是设备上的独立用例，不经 `session.creation.begin`；`session.creation.begin` 只消费工作区准备，`p` 可带 `planningIntent`。
 - 接管开关用现有的 `session.sync {sessionId, takeover}`。设备离线或没有确认时，Server 记在 Redis 的 `device-takeover:{deviceId}` 里，设备上线后按 Server 当时的值重发。
 - `runtime.status` 里的计划、目标事件为 `status: {event, revision, state}`。
 

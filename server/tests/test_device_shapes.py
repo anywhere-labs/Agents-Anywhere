@@ -296,8 +296,6 @@ class _Body:
 # client API body.
 SHAPE_MODELS: dict[str, tuple[str, str] | type[Any] | _Body] = {
     "requests.select": ("session.select", "request"),
-    "requests.creationPlan": ("session.creation.begin", "request"),
-    "requests.creationGoal": ("session.creation.begin", "request"),
     "requests.workspacePrepare": ("workspace.prepare", "request"),
     "requests.workspacePreparationReserve": ("workspace.preparation.reserve", "request"),
     "requests.creationPrepared": ("session.creation.begin", "request"),

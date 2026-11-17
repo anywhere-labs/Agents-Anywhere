@@ -153,6 +153,16 @@ async function command(route: string, commandId: string, p: Record<string, unkno
   return ack.r as Record<string, unknown>
 }
 
+/** What the device's create-and-start runs for a client body (`CommandInbox.createAndStart`). */
+const CREATE_PLAN = { sessionId: 'sess_shape_plan', runtimeId: 'codex', runtimeType: 'codex', cwd: '/repo', clientMessageId: 'm_create_plan', content: 'design the cache', takeover: true, planningIntent: { mode: 'plan', operationId: 'm_create_plan' } }
+const CREATE_GOAL = { sessionId: 'sess_shape_goal', runtimeId: 'codex', runtimeType: 'codex', cwd: '/repo', clientMessageId: 'm_create_goal', content: 'ship the release', takeover: true, goalIntent: { mode: 'goal', operationId: 'm_create_goal' } }
+
+async function createAndStart(commandId: string, p: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const ack = await inbox.createAndStart({ commandId, deadline: '2026-11-16T00:01:00.000Z', p }, 'client:shapes')
+  expect(ack, 'create-and-start was rejected').toMatchObject({ outcome: 'accepted' })
+  return ack.r as Record<string, unknown>
+}
+
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'aa-shapes-'))
   store = inProcessStore(openSqliteStore({ dataDir: dir, durability: 'normal', now: clock.nowIso }))
@@ -211,23 +221,23 @@ describe('what the device answers the Server', () => {
   })
 
   it('switches plan mode on before the first message of a /plan session', async () => {
-    const result = await command('sessionCreationBegin', 'm_create_plan', REQUESTS.creationPlan!)
-    expect(result).toMatchObject({ delivery: 'accepted' })
+    const result = await createAndStart('m_create_plan', CREATE_PLAN)
+    expect(result).toMatchObject({ sessionId: CREATE_PLAN.sessionId, delivery: 'accepted' })
     await settle()
     const runtime = sessions[0]!
     expect(runtime.modes).toEqual(['plan'])
     expect(runtime.calls.map(call => (call.method === 'command' ? call.name : call.method))).toEqual(['mode:plan', 'prompt'])
-    expect((await store.planning.load(String(REQUESTS.creationPlan!.sessionId)))?.effectiveMode).toBe('plan')
-    expect((await store.deliveries.get(String(REQUESTS.creationPlan!.sessionId), 'm_create_plan'))?.state).toBe('started')
+    expect((await store.planning.load(CREATE_PLAN.sessionId))?.effectiveMode).toBe('plan')
+    expect((await store.deliveries.get(CREATE_PLAN.sessionId, 'm_create_plan'))?.state).toBe('started')
   })
 
   it('sets the goal instead of sending the first message of a /goal session', async () => {
-    await command('sessionCreationBegin', 'm_create_goal', REQUESTS.creationGoal!)
+    await createAndStart('m_create_goal', CREATE_GOAL)
     await settle()
     const runtime = sessions[0]!
     expect(runtime.goalCalls).toEqual(['set:ship the release'])
     expect(runtime.calls.filter(call => call.method === 'prompt')).toEqual([])
-    const sessionId = String(REQUESTS.creationGoal!.sessionId)
+    const sessionId = CREATE_GOAL.sessionId
     expect((await store.goals.load(sessionId))?.goal?.objective).toBe('ship the release')
     expect((await store.deliveries.get(sessionId, 'm_create_goal'))?.state).toBe('started')
   })
@@ -306,7 +316,7 @@ describe('device rules behind those shapes', () => {
   })
 
   it('refuses a creation with both a planning and a goal intent', async () => {
-    const ack = await inbox.handle('sessionCreationBegin', { commandId: 'm_both', deadline: '2026-11-16T00:01:00.000Z', p: { ...REQUESTS.creationPlan, sessionId: 'sess_both', clientMessageId: 'm_both', goalIntent: { mode: 'goal', operationId: 'm_both' } } } as never)
+    const ack = await inbox.createAndStart({ commandId: 'm_both', deadline: '2026-11-16T00:01:00.000Z', p: { ...CREATE_PLAN, sessionId: 'sess_both', clientMessageId: 'm_both', goalIntent: { mode: 'goal', operationId: 'm_both' } } }, 'client:shapes')
     expect(ack).toMatchObject({ outcome: 'rejected', e: { code: 'invalid_argument' } })
     expect(await store.sessions.get('sess_both')).toBeNull()
   })

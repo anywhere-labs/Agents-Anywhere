@@ -357,16 +357,8 @@
       "model": "CreationBeginCommand",
       "path": "schemas/creation-begin-command.schema.json",
       "pydanticMode": "validation",
-      "sha256": "3806c2a6fe29e1e01490d3a1619579dac2cb2135806c02e8761e8faf14f73dae",
+      "sha256": "4fe661ec57f06a67019cc8b00ff0c58ecd3de10ee8202c65a8b1fe6088093fec",
       "slug": "creation-begin-command"
-    },
-    {
-      "direction": "bidirectional",
-      "model": "CreationBeginResult",
-      "path": "schemas/creation-begin-result.schema.json",
-      "pydanticMode": "validation",
-      "sha256": "b40f986fcc87584c0f2e506c175a851af6dece8a2e612c90d1c09033c3502e49",
-      "slug": "creation-begin-result"
     },
     {
       "direction": "bidirectional",
@@ -574,7 +566,7 @@
   "extras": [
     {
       "path": "device.meshcall.json",
-      "sha256": "228d78a66ebcaf5f1d3453f30622760b2231ff2b64d7ad1b46034e4a4e6270f6"
+      "sha256": "66e9f91f96205610c560c05a8f8d39b6a4ca8c53928d5f1bf4e7b58827feefe2"
     },
     {
       "path": "mesh-errors.json",
@@ -586,7 +578,7 @@
     },
     {
       "path": "payloads.json",
-      "sha256": "5e763f9d1b3ba47f83b4d08c520de2d2f2cc7e71393b0b1635c7e672bfe5f500"
+      "sha256": "4fa600f5805a867f92730b3ecc3def0d2f852578acf83625bbc98c7f437a9040"
     },
     {
       "path": "client-routes.json",

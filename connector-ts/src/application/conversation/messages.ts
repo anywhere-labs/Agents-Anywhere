@@ -59,7 +59,7 @@ export class MessageService {
     private readonly goals: GoalService,
   ) {}
 
-  /** `session.creation.begin`: the Server allocated the id; the device creates the Conversation and sends the first message. */
+  /** Create-and-start, or a prepared creation: the session id is given; the device creates the Conversation and sends the first message. */
   public async createSession(command: CreateSessionCommand, context: CommandContext): Promise<SendResult> {
     if (command.planningIntent != null && command.goalIntent != null) throw new UseCaseError('invalid_argument', 'A new session takes a planning intent or a goal intent, not both.')
     if (command.goalIntent != null && command.content.trim() === '') throw new UseCaseError('invalid_argument', 'The goal of a new session cannot be empty.')
@@ -164,7 +164,7 @@ export class MessageService {
 
   /**
    * The Runtime hand-off of an accepted delivery, after the ack (and again after a restart, from what the
-   * delivery kept). `open` creates the Runtime session first (`session.creation.begin`).
+   * delivery kept). `open` creates the Runtime session first (a new session's first message).
    */
   public handOff(sessionId: string, clientMessageId: string, content: string, refs: AttachmentRef[], open?: OpenSpec): void {
     void this.kernel.serial(sessionId, async () => {

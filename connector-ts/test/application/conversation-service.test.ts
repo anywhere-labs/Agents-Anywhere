@@ -329,6 +329,20 @@ describe('command inbox', () => {
     const results = (await store.outbox.pending(0, 50)).filter(record => record.kind === 'command.result')
     expect(results.map(record => record.payload.commandId)).toEqual(['c1', 'c2'])
   })
+
+  it('creates and starts a session under one receipt; a retry with the same commandId returns the same session', async () => {
+    const inbox = new CommandInbox(store, clock, service)
+    const call = { commandId: 'cm_new', deadline: 'x', p: { sessionId: 'sess_new', runtimeId: 'rti_pi', runtimeType: 'pi', cwd: '/project', clientMessageId: 'cm_new', content: 'start', takeover: true } }
+    expect(await inbox.createAndStart(call, 'client:c')).toEqual({ outcome: 'accepted', r: { sessionId: 'sess_new', delivery: 'accepted', clientMessageId: 'cm_new' } })
+    await settle(40)
+    expect(await inbox.createAndStart(call, 'client:c')).toEqual({ outcome: 'accepted', r: { sessionId: 'sess_new', delivery: 'accepted', clientMessageId: 'cm_new' } })
+    expect(await inbox.createAndStart({ ...call, p: { ...call.p, content: 'other' } }, 'client:c')).toMatchObject({ outcome: 'rejected', e: { code: 'command_conflict' } })
+    // One Agent session, opened once, with the first message sent once.
+    expect(opened).toHaveLength(1)
+    expect(sessions[0]!.calls.filter(entry => entry.method === 'prompt')).toHaveLength(1)
+    expect((await store.sessions.get('sess_new'))?.takeover).toBe(true)
+    expect(await store.commands.get('cm_new')).toMatchObject({ method: 'session.createAndStart', sessionId: 'sess_new', outcome: 'accepted' })
+  })
 })
 
 describe('command payload checks', () => {
@@ -342,7 +356,10 @@ describe('command payload checks', () => {
     expect(await reject('sessionPlanning', 'v4', { sessionId: 'sess_1', command: 'take_over', operationId: 'op' })).toMatchObject({ outcome: 'rejected', e: { code: 'invalid_argument', message: 'unknown planning command take_over' } })
     expect(await reject('sessionGoal', 'v5', { sessionId: 'sess_1', action: 'restart', operationId: 'op' })).toMatchObject({ outcome: 'rejected', e: { code: 'invalid_argument', message: 'unknown goal action restart' } })
     expect(await reject('sessionSelect', 'v6', { sessionId: 'sess_1', selections: null })).toMatchObject({ outcome: 'rejected', e: { code: 'invalid_argument', message: 'selections must be an object' } })
-    expect(await reject('sessionCreationBegin', 'v7', { sessionId: 'sess_2', runtimeId: 'rti_pi', runtimeType: 'pi', cwd: '/w', clientMessageId: 'm', planningIntent: { mode: 'goal', operationId: 'op' } })).toMatchObject({ outcome: 'rejected', e: { code: 'invalid_argument', message: 'planningIntent.mode must be plan' } })
+    // session.creation.begin only consumes a workspace preparation; a creation without one is refused.
+    expect(await reject('sessionCreationBegin', 'v7', { sessionId: 'sess_2', runtimeId: 'rti_pi', runtimeType: 'pi', cwd: '/w', clientMessageId: 'm', content: 'hi' })).toMatchObject({ outcome: 'rejected', e: { code: 'invalid_argument', message: 'preparationId is required' } })
+    expect(await inbox.createAndStart({ commandId: 'v8', deadline: 'x', p: { sessionId: 'sess_2', runtimeId: 'rti_pi', runtimeType: 'pi', cwd: '/w', clientMessageId: 'm', planningIntent: { mode: 'goal', operationId: 'op' } } }, 'client:c')).toMatchObject({ outcome: 'rejected', e: { code: 'invalid_argument', message: 'planningIntent.mode must be plan' } })
+    expect(await store.sessions.get('sess_2')).toBeNull()
     // Nothing ran: no Runtime session opened, and the rejections are receipts a retry replays.
     expect(opened).toEqual([])
     expect(await new DeviceReaders(store, clock.nowIso).commandStatus({ commandId: 'v1' })).toMatchObject({ known: true, outcome: 'rejected' })

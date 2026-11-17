@@ -11,11 +11,13 @@
 
 import { randomBytes } from 'node:crypto'
 
-import type { CommandInbox } from '../application/inbound/commands.js'
+import { CREATE_AND_START_METHOD, type CommandInbox } from '../application/inbound/commands.js'
 import type { ChannelCaller, TunnelApi, TunnelApiRequest, TunnelApiResponse, TunnelCallContext, TunnelSubscription } from '../application/inbound/tunnel-api.js'
 import type { Clock, ConversationStore } from '../application/ports/index.js'
 import { eventCursor, type Session } from '../domain/conversation/index.js'
 import type { AttachmentRef } from '../generated/device-meshcall/v1_0/client-call-request.js'
+import type { CommandAck } from '../generated/device-meshcall/v1_0/command-ack.js'
+import type { CommandCall } from '../generated/device-meshcall/v1_0/command-call.js'
 import { commandText, commandViews, slashResult, type SessionCommand } from './client-api/commands.js'
 import { TunnelHttpError, conflict, errorBody, int, invalid, notFound, okBody, parse, record, statusOf, text, type Route } from './client-api/http.js'
 import { NOTICE_GONE_CODES, capabilityUsable, findCapability, noticeAnswerInput, parsePlanCommand, sessionSourceError, unsupportedMediaType } from './client-api/rules.js'
@@ -269,11 +271,17 @@ export class DeviceTunnelApi implements TunnelApi {
    * wins over the body's; the inbox gets no cancellation, so a caller that stops waiting never stops the command.
    */
   private async command(caller: ChannelCaller, call: Call, route: string, payload: Record<string, unknown>, commandId: string | null): Promise<Record<string, unknown>> {
+    return this.settle(caller, call, route, payload, commandId, (command, actor) => this.deps.inbox.handle(route, command, actor))
+  }
+
+  /** Runs `submit` under the call's command identity and reports its ack; a rejection throws `CommandRejected`. */
+  private async settle(caller: ChannelCaller, call: Call, method: string, payload: Record<string, unknown>, commandId: string | null,
+    submit: (command: CommandCall, actor: string) => Promise<CommandAck>): Promise<Record<string, unknown>> {
     const identity = call.command
     const id = identity?.commandId ?? commandId ?? this.newId('c_')
-    const ack = await this.deps.inbox.handle(route, {
+    const ack = await submit({
       commandId: id,
-      m: route,
+      m: method,
       p: payload,
       ...(identity?.inputDigest != null ? { inputDigest: identity.inputDigest } : {}),
       ...(identity?.deadline != null ? { deadline: identity.deadline } : {}),
@@ -665,8 +673,8 @@ export class DeviceTunnelApi implements TunnelApi {
   /**
    * `POST /sessions/create-and-start`: the session id is the Server's when it forwarded the call, else the device
    * allocates one (no Server row exists yet in encrypted mode); the device creates and starts the session with the
-   * first message and reports it through the outbox. A retry with the same `clientMessageId` returns the first
-   * attempt's session.
+   * first message (`CommandInbox.createAndStart`, with an optional planning or goal intent) and reports it through
+   * the outbox. A retry with the same `clientMessageId` returns the first attempt's session.
    */
   private async createAndStart(caller: ChannelCaller, call: Call, body: Record<string, unknown>): Promise<TunnelApiResponse> {
     if (text(body.connectorId) !== null && body.connectorId !== this.deps.deviceId) throw invalid('connectorId is not this device')
@@ -680,7 +688,7 @@ export class DeviceTunnelApi implements TunnelApi {
     const clientMessageId = call.command?.commandId ?? text(body.clientMessageId) ?? this.newId('create_')
     const previous = await this.deps.store.commands.get(clientMessageId)
     const sessionId = call.sessionId ?? (typeof previous?.sessionId === 'string' ? previous.sessionId : `sess_${randomBytes(16).toString('hex')}`)
-    const result = await this.commandAs(null, caller, call, 'sessionCreationBegin', {
+    const payload = {
       sessionId,
       runtimeId: text(body.runtimeId) ?? runtimeType,
       runtimeType,
@@ -692,7 +700,16 @@ export class DeviceTunnelApi implements TunnelApi {
       content: typeof body.content === 'string' ? body.content : '',
       ...(attachments.length > 0 ? { attachments } : {}),
       takeover: true,
-    }, clientMessageId)
+      ...(body.planningIntent != null ? { planningIntent: body.planningIntent } : {}),
+      ...(body.goalIntent != null ? { goalIntent: body.goalIntent } : {}),
+    }
+    let result: Record<string, unknown>
+    try {
+      result = await this.settle(caller, call, CREATE_AND_START_METHOD, payload, clientMessageId, (command, actor) => this.deps.inbox.createAndStart(command, actor))
+    } catch (error) {
+      if (!(error instanceof CommandRejected)) throw error
+      throw new TunnelHttpError(statusOf(error.code), error.code, error.message)
+    }
     const session = await this.requireSession(sessionId)
     return { status: 200, body: { session: sessionView(this.deps.deviceId, session, text(body.title)), connectorResult: result, attachments } }
   }

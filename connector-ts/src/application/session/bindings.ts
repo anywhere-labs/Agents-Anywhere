@@ -5,7 +5,7 @@ import type { RuntimeEvent, RuntimeSession } from '../ports/index.js'
 import { TimelineProjector } from '../projection.js'
 import type { SessionKernel } from './kernel.js'
 
-/** `planningIntent` / `goalIntent` of `session.creation.begin` (runtime-workflows 1.2). */
+/** `planningIntent` / `goalIntent` of a new session (create-and-start; a prepared creation takes `planningIntent`). */
 export interface CreationIntent {
   readonly mode: 'plan' | 'goal'
   readonly operationId: string

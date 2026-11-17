@@ -64,164 +64,6 @@
       "title": "CommandAttachmentRef",
       "type": "object"
     },
-    "DirectCreationCommand": {
-      "description": "``session.creation.begin`` without a workspace preparation: the device opens the session and runs\nthe first turn. ``sessionId`` is the directory row the Server created.",
-      "properties": {
-        "attachments": {
-          "items": {
-            "$ref": "#/$defs/CommandAttachmentRef"
-          },
-          "title": "Attachments",
-          "type": "array"
-        },
-        "clientMessageId": {
-          "minLength": 1,
-          "title": "Clientmessageid",
-          "type": "string"
-        },
-        "content": {
-          "default": "",
-          "title": "Content",
-          "type": "string"
-        },
-        "cwd": {
-          "minLength": 1,
-          "title": "Cwd",
-          "type": "string"
-        },
-        "goalIntent": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/GoalCreationIntent"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "planningIntent": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/PlanningCreationIntent"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "preparationId": {
-          "default": null,
-          "title": "Preparationid",
-          "type": "null"
-        },
-        "projectId": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Projectid"
-        },
-        "runtimeId": {
-          "minLength": 1,
-          "title": "Runtimeid",
-          "type": "string"
-        },
-        "runtimeType": {
-          "minLength": 1,
-          "title": "Runtimetype",
-          "type": "string"
-        },
-        "selections": {
-          "anyOf": [
-            {
-              "additionalProperties": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Selections"
-        },
-        "sessionId": {
-          "minLength": 1,
-          "title": "Sessionid",
-          "type": "string"
-        },
-        "takeover": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Takeover"
-        },
-        "title": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Title"
-        }
-      },
-      "required": [
-        "sessionId",
-        "runtimeId",
-        "runtimeType",
-        "cwd",
-        "clientMessageId"
-      ],
-      "title": "DirectCreationCommand",
-      "type": "object"
-    },
-    "GoalCreationIntent": {
-      "additionalProperties": false,
-      "properties": {
-        "mode": {
-          "const": "goal",
-          "default": "goal",
-          "title": "Mode",
-          "type": "string"
-        },
-        "operationId": {
-          "maxLength": 160,
-          "minLength": 1,
-          "title": "Operationid",
-          "type": "string"
-        }
-      },
-      "required": [
-        "operationId"
-      ],
-      "title": "GoalCreationIntent",
-      "type": "object"
-    },
     "PlanningCreationIntent": {
       "additionalProperties": false,
       "properties": {
@@ -243,149 +85,137 @@
       ],
       "title": "PlanningCreationIntent",
       "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:creation-begin-command",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "``session.creation.begin``: consumes a reserved workspace preparation (runtime-workflows 1.2).",
+  "properties": {
+    "attachments": {
+      "items": {
+        "$ref": "#/$defs/CommandAttachmentRef"
+      },
+      "title": "Attachments",
+      "type": "array"
     },
-    "PreparedCreationCommand": {
-      "description": "``session.creation.begin`` consuming a reserved workspace preparation (runtime-workflows 1.2).",
-      "properties": {
-        "attachments": {
-          "items": {
-            "$ref": "#/$defs/CommandAttachmentRef"
-          },
-          "title": "Attachments",
-          "type": "array"
-        },
-        "clientMessageId": {
-          "minLength": 1,
-          "title": "Clientmessageid",
-          "type": "string"
-        },
-        "configuration": {
-          "anyOf": [
-            {
-              "additionalProperties": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "boolean"
-                  }
-                ]
-              },
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Configuration"
-        },
-        "content": {
-          "default": "",
-          "title": "Content",
-          "type": "string"
-        },
-        "createOperationId": {
-          "minLength": 1,
-          "title": "Createoperationid",
-          "type": "string"
-        },
-        "planningIntent": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/PlanningCreationIntent"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "preparationId": {
-          "minLength": 1,
-          "title": "Preparationid",
-          "type": "string"
-        },
-        "runtime": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Runtime"
-        },
-        "runtimeId": {
-          "minLength": 1,
-          "title": "Runtimeid",
-          "type": "string"
-        },
-        "selections": {
+    "clientMessageId": {
+      "minLength": 1,
+      "title": "Clientmessageid",
+      "type": "string"
+    },
+    "configuration": {
+      "anyOf": [
+        {
           "additionalProperties": {
             "anyOf": [
               {
                 "type": "string"
               },
               {
-                "type": "null"
+                "type": "boolean"
               }
             ]
           },
-          "title": "Selections",
           "type": "object"
         },
-        "sessionId": {
-          "minLength": 1,
-          "title": "Sessionid",
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Configuration"
+    },
+    "content": {
+      "default": "",
+      "title": "Content",
+      "type": "string"
+    },
+    "createOperationId": {
+      "minLength": 1,
+      "title": "Createoperationid",
+      "type": "string"
+    },
+    "planningIntent": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PlanningCreationIntent"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "preparationId": {
+      "minLength": 1,
+      "title": "Preparationid",
+      "type": "string"
+    },
+    "runtime": {
+      "anyOf": [
+        {
           "type": "string"
         },
-        "timelineAttachments": {
-          "items": {
-            "$ref": "#/$defs/CommandAttachmentRef"
-          },
-          "title": "Timelineattachments",
-          "type": "array"
-        },
-        "title": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Title"
+        {
+          "type": "null"
         }
-      },
-      "required": [
-        "runtimeId",
-        "preparationId",
-        "createOperationId",
-        "sessionId",
-        "clientMessageId"
       ],
-      "title": "PreparedCreationCommand",
+      "default": null,
+      "title": "Runtime"
+    },
+    "runtimeId": {
+      "minLength": 1,
+      "title": "Runtimeid",
+      "type": "string"
+    },
+    "selections": {
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "title": "Selections",
       "type": "object"
+    },
+    "sessionId": {
+      "minLength": 1,
+      "title": "Sessionid",
+      "type": "string"
+    },
+    "timelineAttachments": {
+      "items": {
+        "$ref": "#/$defs/CommandAttachmentRef"
+      },
+      "title": "Timelineattachments",
+      "type": "array"
+    },
+    "title": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Title"
     }
   },
-  "$id": "urn:agents-anywhere:device-meshcall:1.0:creation-begin-command",
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "``session.creation.begin``: direct, or from a workspace preparation (``preparationId``).",
-  "oneOf": [
-    {
-      "$ref": "#/$defs/DirectCreationCommand"
-    },
-    {
-      "$ref": "#/$defs/PreparedCreationCommand"
-    }
+  "required": [
+    "runtimeId",
+    "preparationId",
+    "createOperationId",
+    "sessionId",
+    "clientMessageId"
   ],
   "title": "CreationBeginCommand",
+  "type": "object",
   "x-contract": "device-meshcall",
   "x-direction": "bidirectional",
   "x-protocol-version": "1.0",

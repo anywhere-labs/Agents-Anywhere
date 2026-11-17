@@ -39,7 +39,6 @@ from agent_server.core.client_routes import CLIENT_CALL_ROUTE_IDS, MAX_CHUNK_BYT
 from agent_server.core.device_runtime import RuntimeTypeDescriptor
 from agent_server.core.device_settings import ConnectorDeviceSettings
 from agent_server.core.goal.models import (
-    GoalCreationIntent,
     GoalRequest,
     GoalResponse,
     GoalState,
@@ -855,28 +854,8 @@ class SelectResult(DeviceModel):
     state: SessionRuntimeState | None = None
 
 
-class DirectCreationCommand(DeviceModel):
-    """``session.creation.begin`` without a workspace preparation: the device opens the session and runs
-    the first turn. ``sessionId`` is the directory row the Server created."""
-
-    sessionId: NonEmpty
-    runtimeId: NonEmpty
-    runtimeType: NonEmpty
-    cwd: NonEmpty
-    clientMessageId: NonEmpty
-    content: str = ""
-    projectId: str | None = None
-    title: str | None = None
-    selections: dict[str, str | None] | None = None
-    attachments: list[CommandAttachmentRef] = Field(default_factory=list)
-    takeover: bool | None = None
-    planningIntent: PlanningCreationIntent | None = None
-    goalIntent: GoalCreationIntent | None = None
-    preparationId: None = None
-
-
-class PreparedCreationCommand(WorkflowTarget):
-    """``session.creation.begin`` consuming a reserved workspace preparation (runtime-workflows 1.2)."""
+class CreationBeginCommand(WorkflowTarget):
+    """``session.creation.begin``: consumes a reserved workspace preparation (runtime-workflows 1.2)."""
 
     preparationId: NonEmpty
     createOperationId: NonEmpty
@@ -889,29 +868,6 @@ class PreparedCreationCommand(WorkflowTarget):
     title: str | None = None
     attachments: list[CommandAttachmentRef] = Field(default_factory=list)
     timelineAttachments: list[CommandAttachmentRef] = Field(default_factory=list)
-
-
-def _creation_tag(value: Any) -> str:
-    prepared = value.get("preparationId") if isinstance(value, dict) else getattr(value, "preparationId", None)
-    return "prepared" if prepared is not None else "direct"
-
-
-SessionCreationBeginCommand = Annotated[
-    Annotated[DirectCreationCommand, Tag("direct")] | Annotated[PreparedCreationCommand, Tag("prepared")],
-    Discriminator(_creation_tag),
-]
-
-
-class CreationBeginCommand(RootModel[SessionCreationBeginCommand]):
-    """``session.creation.begin``: direct, or from a workspace preparation (``preparationId``)."""
-
-
-class DirectCreationResult(SendMessageResult):
-    sessionId: NonEmpty
-
-
-class CreationBeginResult(RootModel[DirectCreationResult | WorkflowState]):
-    """Direct: the first message's delivery; prepared: the creation's workflow state."""
 
 
 class WorkspacePrepareCommand(WorkflowTarget):
@@ -1403,7 +1359,7 @@ COMMAND_PAYLOADS: dict[str, MethodPayloads] = {
     "session.interrupt": MethodPayloads(SessionCommand, InterruptResult),
     "session.respondNotice": MethodPayloads(RespondNoticeCommand, RespondNoticeResult),
     "session.select": MethodPayloads(SelectCommand, SelectResult),
-    "session.creation.begin": MethodPayloads(CreationBeginCommand, CreationBeginResult),
+    "session.creation.begin": MethodPayloads(CreationBeginCommand, WorkflowState),
     "session.creation.respond": MethodPayloads(CreationRespondCommand, WorkflowState),
     "session.creation.cancel": MethodPayloads(CreationCancelCommand, WorkflowState),
     "workspace.prepare": MethodPayloads(WorkspacePrepareCommand, WorkflowState),

@@ -93,8 +93,6 @@ describe('shared fixtures against device-meshcall 1.0', () => {
     const fixture = JSON.parse(readFileSync(join(FIXTURES, 'device_shapes.json'), 'utf8')) as Record<string, unknown>
     check(fixture, {
       'requests.select': req('session.select'),
-      'requests.creationPlan': req('session.creation.begin'),
-      'requests.creationGoal': req('session.creation.begin'),
       'requests.workspacePrepare': req('workspace.prepare'),
       'requests.workspacePreparationReserve': req('workspace.preparation.reserve'),
       'requests.creationPrepared': req('session.creation.begin'),
@@ -147,8 +145,6 @@ describe('shared fixtures against device-meshcall 1.0', () => {
   it('the device\'s request checks accept every command request the Server sends', () => {
     const requests: [string, CommandMethod, string][] = [
       ['device_shapes.json', 'session.select', 'select'],
-      ['device_shapes.json', 'session.creation.begin', 'creationPlan'],
-      ['device_shapes.json', 'session.creation.begin', 'creationGoal'],
       ['device_shapes.json', 'session.creation.begin', 'creationPrepared'],
       ['device_shapes.json', 'workspace.prepare', 'workspacePrepare'],
       ['device_shapes.json', 'workspace.preparation.reserve', 'workspacePreparationReserve'],

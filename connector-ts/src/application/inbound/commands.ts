@@ -10,10 +10,10 @@ import { PreparationError } from '../../domain/creation/index.js'
 import { UseCaseError, type AttachmentRef, type ConversationService } from '../conversation-service.js'
 import type { PreparationService } from '../creation/index.js'
 import type { Clock, CommandHandlerContext, CommandHandlers, CommandReceipt, CommandRecord, ConversationStore, InteractionAnswer } from '../ports/index.js'
-import { parseRequest, type CommandRequest, type CommandResponse, type ParsedRequest } from './command-requests.js'
+import { parseCreateAndStart, parseRequest, type CommandRequest, type CommandResponse, type ParsedRequest } from './command-requests.js'
 
 export type { CommandHandler, CommandHandlerContext, CommandHandlers } from '../ports/index.js'
-export { parseRequest, REQUEST_PARSERS, type CommandRequest, type CommandResponse, type ParsedRequest } from './command-requests.js'
+export { parseCreateAndStart, parseRequest, REQUEST_PARSERS, type CommandRequest, type CommandResponse, type ParsedRequest } from './command-requests.js'
 
 /** Business method name (`session.queue.sendNow`) → MeshCall method (`sessionQueueSendNow`), as the contract says. */
 export function commandRoute(method: string): string {
@@ -34,6 +34,12 @@ interface Entry {
   readonly method: CommandMethod
   readonly handler: (payload: unknown, context: CommandHandlerContext) => Promise<unknown>
 }
+
+/** What a command runs once its receipt is not on disk yet: the use case, with the receipt to commit with its effect. */
+type CommandRun = (payload: Record<string, unknown>, context: CommandHandlerContext) => Promise<unknown>
+
+/** The receipt method of `createAndStart` (a device-local use case, not a MeshCall command). */
+export const CREATE_AND_START_METHOD = 'session.createAndStart'
 
 /** The error code a client sees for a rejected command. */
 export function errorCode(error: unknown): { code: string; message: string; retryable?: boolean } {
@@ -67,7 +73,7 @@ export class CommandInbox {
   public constructor(
     private readonly store: ConversationStore,
     private readonly clock: Clock,
-    service: ConversationService,
+    private readonly service: ConversationService,
     extra: CommandHandlers = {},
     /** Workspace preparation (runtime-workflows 1.2); absent: `workspace.*` commands are not served. */
     preparations?: PreparationService,
@@ -91,29 +97,10 @@ export class CommandInbox {
     })
     register('session.interrupt', async p => service.interrupt(p.sessionId))
     register('session.respondNotice', async (p, context) => service.respondNotice(p.sessionId, p.noticeId, p.responseId ?? context.commandId, answerOf(p)))
+    // Only a prepared workspace is consumed here; create-and-start is `createAndStart`.
     register('session.creation.begin', async (p, context) => {
-      // From a prepared workspace (the Server's creation workflow): the prepared Agent session is consumed.
-      if (p.preparationId != null) {
-        if (preparations === undefined) throw new UseCaseError('workflow_unsupported', 'Workspace preparation is not available on this device.')
-        return untyped<'session.creation.begin'>(preparations.begin(p, context))
-      }
-      const direct = p as Exclude<typeof p, { preparationId: string }>
-      const created = await service.createSession({
-        sessionId: direct.sessionId,
-        runtimeId: direct.runtimeId,
-        runtimeType: direct.runtimeType,
-        cwd: direct.cwd,
-        ...(direct.projectId != null ? { projectId: direct.projectId } : {}),
-        title: direct.title ?? null,
-        ...(direct.selections != null ? { selections: direct.selections } : {}),
-        clientMessageId: direct.clientMessageId,
-        content: direct.content,
-        attachments: direct.attachments as AttachmentRef[],
-        ...(direct.takeover != null ? { takeover: direct.takeover } : {}),
-        planningIntent: direct.planningIntent,
-        goalIntent: direct.goalIntent,
-      }, context)
-      return { sessionId: direct.sessionId, ...created } as CommandResponse<'session.creation.begin'>
+      if (preparations === undefined) throw new UseCaseError('workflow_unsupported', 'Workspace preparation is not available on this device.')
+      return untyped<'session.creation.begin'>(preparations.begin(p, context))
     })
     if (preparations !== undefined) {
       // PreparationService answers runtime-workflows 1.2 views (`WorkflowState`) and checks its own requests.
@@ -178,11 +165,28 @@ export class CommandInbox {
   public async handle(route: string, call: CommandCall, actor = 'server'): Promise<CommandAck> {
     const entry = this.handlers.get(route)
     if (entry === undefined) return { outcome: 'rejected', e: { code: 'method_not_found', message: `unknown command ${route}` } }
+    return this.once(entry.method, call, actor, (payload, context) => entry.handler(parseRequest(entry.method, payload), context))
+  }
+
+  /**
+   * `POST /sessions/create-and-start` on this device: creates the session (the Runtime session opens on the first
+   * delivery) and accepts its first message, with the same durable receipt as a command. A retry with the same
+   * `commandId` returns the recorded ack.
+   */
+  public createAndStart(call: CommandCall, actor: string): Promise<CommandAck> {
+    return this.once(CREATE_AND_START_METHOD, call, actor, async (payload, context) => {
+      const command = parseCreateAndStart(payload)
+      const created = await this.service.createSession(command, context)
+      return { sessionId: command.sessionId, ...created }
+    })
+  }
+
+  private async once(method: string, call: CommandCall, actor: string, run: CommandRun): Promise<CommandAck> {
     const inputDigest = call.inputDigest ?? `sha256:${createHash('sha256').update(JSON.stringify(call.p ?? {})).digest('hex')}`
     // Concurrent duplicates (MeshCall retries, a second worker) share one execution.
     const inFlight = this.running.get(call.commandId)
     if (inFlight !== undefined) return inFlight
-    const work = this.execute(entry, call, inputDigest, actor)
+    const work = this.execute(method, run, call, inputDigest, actor)
     this.running.set(call.commandId, work)
     try {
       return await work
@@ -191,7 +195,7 @@ export class CommandInbox {
     }
   }
 
-  private async execute({ method, handler }: Entry, call: CommandCall, inputDigest: string, actor: string): Promise<CommandAck> {
+  private async execute(method: string, run: CommandRun, call: CommandCall, inputDigest: string, actor: string): Promise<CommandAck> {
     const recorded = await this.store.commands.get(call.commandId)
     if (recorded !== null) {
       if (recorded.inputDigest !== null && recorded.inputDigest !== inputDigest) {
@@ -205,8 +209,8 @@ export class CommandInbox {
     const receipt: CommandReceipt = { commandId: call.commandId, method, sessionId, inputDigest, createdAt, result: null }
     let record: CommandRecord
     try {
-      // The payload is checked here, once: a payload that does not fit the contract is a rejected command.
-      const result = (await handler(parseRequest(method, payload), { commandId: call.commandId, inputDigest: call.inputDigest ?? null, actor, receipt })) as Record<string, unknown>
+      // The run checks the payload first: a payload that does not fit the contract is a rejected command.
+      const result = (await run(payload, { commandId: call.commandId, inputDigest: call.inputDigest ?? null, actor, receipt })) as Record<string, unknown>
       record = { commandId: call.commandId, method, sessionId, inputDigest, outcome: 'accepted', result, error: null, createdAt, updatedAt: this.clock.nowIso() }
     } catch (error) {
       const coded = errorCode(error)
