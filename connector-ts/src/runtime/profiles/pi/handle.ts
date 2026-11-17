@@ -14,8 +14,11 @@ import type {
   NativeHistoryPage,
   NativeSessionPage,
   NativeSessionRef,
+  NewSessionSpec,
   OpenOptions,
   OpenTarget,
+  PreparedSession,
+  PrepareOptions,
   RuntimeCapabilities,
   RuntimeHandle,
   RuntimeHandleEvent,
@@ -23,7 +26,8 @@ import type {
 import { piNativeSessionId } from '../../../domain/identity/index.js'
 import type { AcpDialect } from '../../acp/dialect.js'
 import { RuntimeFailure } from '../../acp/errors.js'
-import { AcpRuntimeHandle, catalogsFromConfig, processConnection, type AcpConnection } from '../../acp/handle.js'
+import { AcpRuntimeHandle, WORKSPACE_PREPARATION_CAPABILITIES, catalogsFromConfig, processConnection, type AcpConnection } from '../../acp/handle.js'
+import { prepareFailure, preparedSession } from '../../acp/prepared.js'
 import { EventQueue } from '../../acp/queue.js'
 import { runtimeError } from '../../acp/session.js'
 import { piHistoryPage, piTimeline, PiNativeIndex } from '../../companions/native-history/index.js'
@@ -70,7 +74,8 @@ const INITIAL_CAPABILITIES: readonly Capability[] = [
   { id: 'session.list', supported: true },
   { id: 'session.history.native', supported: true },
   { id: 'catalog.permission', supported: true },
-  { id: 'session.planning', supported: true },
+  // A new session can start in plan mode from a prepared workspace (the planning intent of its creation).
+  { id: 'session.planning', supported: true, parameters: { preparedCreation: true } },
   { id: 'session.plan_document', supported: true },
   { id: 'session.plan_review', supported: true },
 ]
@@ -113,11 +118,15 @@ export class PiRuntimeHandle implements RuntimeHandle {
   }
 
   capabilities(): RuntimeCapabilities {
-    return { revision: this.revision, items: this.capabilityItems }
+    return { revision: this.revision, items: [...this.capabilityItems, ...WORKSPACE_PREPARATION_CAPABILITIES] }
   }
 
   async catalogs(): Promise<Catalogs> {
-    const fromConfig = catalogsFromConfig('pi', this.lastConfig)
+    return this.catalogsOf(this.lastConfig)
+  }
+
+  private catalogsOf(config: readonly ConfigOption[]): Catalogs {
+    const fromConfig = catalogsFromConfig('pi', config)
     return {
       ...fromConfig,
       permissions: {
@@ -151,6 +160,28 @@ export class PiRuntimeHandle implements RuntimeHandle {
       : await PiRuntimeSession.open(this.host(), options.sessionId, { kind: 'existing', source: await this.index.find(target.ref), replay: options.replay })
     this.sessions.add(session)
     return session
+  }
+
+  /**
+   * Starts a Pi process for `spec.cwd` and creates its session ahead of the AA session. A failure to set up the Pi
+   * environment is definite (the Agent never got the request).
+   */
+  async prepare(spec: NewSessionSpec, options: PrepareOptions): Promise<PreparedSession> {
+    if (this.stopped) throw new RuntimeFailure({ code: 'runtime_stopped', message: 'Pi 实例已停止。' })
+    if (this.options.connect === undefined) {
+      try {
+        await this.options.launch()
+      } catch (error) {
+        throw prepareFailure(error instanceof RuntimeFailure ? error : new RuntimeFailure(runtimeError(error, 'pi_environment_failed')), true)
+      }
+    }
+    let session: PiRuntimeSession
+    try {
+      session = await this.open({ kind: 'new', spec: { cwd: spec.cwd } }, { sessionId: options.preparationId, replay: 'none' })
+    } catch (error) {
+      throw prepareFailure(error, false)
+    }
+    return preparedSession(session, { catalogs: async () => this.catalogsOf(session.configOptions), canPlan: true })
   }
 
   async stop(): Promise<void> {

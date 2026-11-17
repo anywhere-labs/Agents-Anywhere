@@ -5,7 +5,9 @@ import { GoalConflict, GoalInvalid } from '../../domain/goals/index.js'
 import { PlanningConflict, PlanningInvalid } from '../../domain/planning/index.js'
 import type { CommandAck } from '../../generated/device-meshcall/v1_0/command-ack.js'
 import type { CommandCall } from '../../generated/device-meshcall/v1_0/command-call.js'
+import { PreparationError } from '../../domain/creation/index.js'
 import { UseCaseError, type AttachmentRef, type ConversationService, type CreationIntent } from '../conversation-service.js'
+import type { PreparationService } from '../creation/index.js'
 import type { Clock, CommandReceipt, CommandRecord, ConversationStore, InteractionAnswer } from '../ports/index.js'
 
 /**
@@ -42,6 +44,7 @@ export function errorCode(error: unknown): { code: string; message: string; retr
   if (error instanceof ConversationError) return { code: error.code, message: error.message }
   if (error instanceof PlanningConflict || error instanceof GoalConflict) return { code: 'conflict', message: error.message }
   if (error instanceof PlanningInvalid || error instanceof GoalInvalid) return { code: 'invalid_argument', message: error.message }
+  if (error instanceof PreparationError) return { code: error.code, message: error.message }
   const code = (error as { code?: unknown }).code
   if (typeof code === 'string') return { code, message: (error as Error).message }
   return { code: 'internal', message: (error as Error)?.message ?? String(error), retryable: true }
@@ -69,6 +72,8 @@ export class CommandInbox {
     private readonly clock: Clock,
     service: ConversationService,
     extra: Readonly<Record<string, CommandHandler>> = {},
+    /** Workspace preparation (runtime-workflows 1.2); absent: `workspace.*` commands are not served. */
+    preparations?: PreparationService,
   ) {
     const register = (method: string, handler: CommandHandler): void => {
       this.handlers.set(commandRoute(method), { method, handler })
@@ -102,7 +107,15 @@ export class CommandInbox {
       optionalString(p.responseId) ?? context.commandId,
       answerOf(p),
     ))
-    register('session.creation.begin', async (p, context) => ({ sessionId: text(p.sessionId, 'sessionId'), ...(await service.createSession({
+    register('session.creation.begin', async (p, context) => {
+      // From a prepared workspace (the Server's creation workflow): the prepared Agent session is consumed.
+      if (p.preparationId !== undefined && p.preparationId !== null) {
+        if (preparations === undefined) throw new UseCaseError('workflow_unsupported', 'Workspace preparation is not available on this device.')
+        return preparations.begin(p, context)
+      }
+      return createDirect(p, context)
+    })
+    const createDirect: CommandHandler = async (p, context) => ({ sessionId: text(p.sessionId, 'sessionId'), ...(await service.createSession({
       sessionId: text(p.sessionId, 'sessionId'),
       runtimeId: text(p.runtimeId, 'runtimeId'),
       runtimeType: text(p.runtimeType, 'runtimeType'),
@@ -116,7 +129,15 @@ export class CommandInbox {
       ...(typeof p.takeover === 'boolean' ? { takeover: p.takeover } : {}),
       planningIntent: intentOf(p.planningIntent, 'plan', 'planningIntent'),
       goalIntent: intentOf(p.goalIntent, 'goal', 'goalIntent'),
-    }, context)) }))
+    }, context)) })
+    if (preparations !== undefined) {
+      register('workspace.prepare', async p => preparations.prepare(p))
+      register('workspace.preparation.reserve', async p => preparations.reserve(p))
+      register('workspace.preparation.cancel', async p => preparations.cancel(p))
+      register('workspace.preparation.respond', async p => preparations.respond(p))
+      register('session.creation.respond', async p => preparations.respondCreation(p))
+      register('session.creation.cancel', async p => preparations.cancelCreation(p))
+    }
     register('session.planning', async (p, context) => service.planning(text(p.sessionId, 'sessionId'), {
       command: text(p.command, 'command'),
       operationId: text(p.operationId, 'operationId'),

@@ -18,6 +18,7 @@ import type {
   OutboxRecord,
   OutboxStore,
   PendingDelivery,
+  PreparationRepository,
   PlanningRepository,
   QueueOp,
   QueueRepository,
@@ -56,6 +57,7 @@ import {
   type TimelineDraft,
   type TimelineItem,
 } from '../domain/conversation/index.js'
+import type { Preparation } from '../domain/creation/index.js'
 import { goalStateSummary, type GoalState } from '../domain/goals/index.js'
 import { planStateSummary, type PlanDocument, type PlanningState } from '../domain/planning/index.js'
 import { BlobFiles } from './blob-files.js'
@@ -981,6 +983,33 @@ export function openSqliteStore(options: OpenStoreOptions): SyncStore {
     },
   }
 
+  const preparationRows = (rows: Row[]): Preparation[] => rows.map(row => parse<Preparation>(row.state_json))
+  const preparations: Sync<PreparationRepository> = {
+    get(preparationId) {
+      const row = get('SELECT state_json FROM preparations WHERE preparation_id = ?', preparationId)
+      return row === undefined ? null : parse<Preparation>(row.state_json)
+    },
+    byCreation(createOperationId) {
+      const row = get('SELECT state_json FROM preparations WHERE create_operation_id = ?', createOperationId)
+      return row === undefined ? null : parse<Preparation>(row.state_json)
+    },
+    save(preparation) {
+      tx(() => {
+        const operation = preparation.creation?.createOperationId ?? preparation.reservation?.createOperationId ?? null
+        run(
+          'INSERT INTO preparations(preparation_id, create_operation_id, phase, state_json, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(preparation_id) DO UPDATE SET create_operation_id = excluded.create_operation_id, phase = excluded.phase, state_json = excluded.state_json, updated_at = excluded.updated_at',
+          preparation.preparationId, operation, preparation.phase, json(preparation), preparation.updatedAt,
+        )
+      })
+    },
+    unsettled() {
+      return preparationRows(all("SELECT state_json FROM preparations WHERE phase NOT IN ('consumed', 'cancelled', 'expired') OR (phase = 'consumed' AND json_extract(state_json, '$.creation.settled') IS NULL) ORDER BY updated_at"))
+    },
+    prune(before) {
+      return tx(() => Number(run("DELETE FROM preparations WHERE phase IN ('consumed', 'cancelled', 'expired', 'failed', 'outcome_unknown') AND updated_at < ?", before).changes))
+    },
+  }
+
   /**
    * At open: timeline blobs no item points at (left by a crash between a blob write and its item, or by stores
    * from before `blob_refs`), files no blob row names, and temporary files of interrupted writes. Files younger
@@ -1019,6 +1048,7 @@ export function openSqliteStore(options: OpenStoreOptions): SyncStore {
     outbox,
     blobs: blobRepository,
     kv,
+    preparations,
     readOnly,
     storeEpoch,
     close() {

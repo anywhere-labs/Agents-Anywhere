@@ -35,6 +35,38 @@
         "mode": "goal",
         "operationId": "m_create_goal"
       }
+    },
+    "workspacePrepare": {
+      "runtime": "opencode",
+      "runtimeId": "rti_shape",
+      "preparationId": "prep_shape",
+      "clientPreparationId": "client_prep_shape",
+      "cwd": "/repo",
+      "projectId": "prj_shape"
+    },
+    "workspacePreparationReserve": {
+      "runtime": "opencode",
+      "runtimeId": "rti_shape",
+      "preparationId": "prep_shape",
+      "createOperationId": "op_shape_prepared",
+      "platformSessionId": "sess_shape_prepared",
+      "expectedRevision": 1,
+      "catalogRevision": 1,
+      "selections": {
+        "model": "acp-selection:WyJtMiIsImhpZ2giXQ=="
+      }
+    },
+    "creationPrepared": {
+      "runtime": "opencode",
+      "runtimeId": "rti_shape",
+      "preparationId": "prep_shape",
+      "createOperationId": "op_shape_prepared",
+      "selections": {
+        "model": "acp-selection:WyJtMiIsImhpZ2giXQ=="
+      },
+      "clientMessageId": "m_shape_prepared",
+      "content": "hello prepared",
+      "sessionId": "sess_shape_prepared"
     }
   },
   "select.result": {
@@ -333,5 +365,203 @@
       "lastOutcome": null,
       "pendingOperationId": null
     }
+  },
+  "runtime.capabilities.prepared": {
+    "revision": 1,
+    "capabilities": [
+      {
+        "capabilityId": "runtime.workspace.prepare",
+        "supported": true,
+        "available": true,
+        "parameters": {
+          "workflowVersion": "1.2"
+        },
+        "runtime": "opencode",
+        "scope": "runtime",
+        "sessionId": null
+      },
+      {
+        "capabilityId": "runtime.session.async_create",
+        "supported": true,
+        "available": true,
+        "parameters": {
+          "workflowVersion": "1.2"
+        },
+        "runtime": "opencode",
+        "scope": "runtime",
+        "sessionId": null
+      }
+    ]
+  },
+  "workspacePrepare.result": {
+    "preparationId": "prep_shape",
+    "phase": "opening",
+    "revision": 0,
+    "catalogRevision": 0,
+    "catalog": {
+      "runtime": "opencode",
+      "models": [],
+      "revision": 0
+    },
+    "configuration": {
+      "revision": 0,
+      "options": []
+    },
+    "interactions": [],
+    "canRespond": false,
+    "canCancel": true,
+    "failure": null,
+    "expiresAt": 300,
+    "cwd": "/repo"
+  },
+  "workspacePreparation.ready": {
+    "preparationId": "prep_shape",
+    "phase": "ready",
+    "revision": 1,
+    "catalogRevision": 1,
+    "catalog": {
+      "runtime": "opencode",
+      "revision": 1,
+      "models": [
+        {
+          "id": "m1",
+          "displayName": "Model 1",
+          "default": true,
+          "selectionId": "m1",
+          "reasoningItems": [
+            {
+              "id": "low",
+              "displayName": "Low",
+              "default": true,
+              "selectionId": "acp-selection:WyJtMSIsImxvdyJd"
+            },
+            {
+              "id": "high",
+              "displayName": "High",
+              "default": false,
+              "selectionId": "acp-selection:WyJtMSIsImhpZ2giXQ=="
+            }
+          ]
+        },
+        {
+          "id": "m2",
+          "displayName": "Model 2",
+          "default": false,
+          "selectionId": "m2",
+          "reasoningItems": [
+            {
+              "id": "low",
+              "displayName": "Low",
+              "default": true,
+              "selectionId": "acp-selection:WyJtMiIsImxvdyJd"
+            },
+            {
+              "id": "high",
+              "displayName": "High",
+              "default": false,
+              "selectionId": "acp-selection:WyJtMiIsImhpZ2giXQ=="
+            }
+          ]
+        }
+      ]
+    },
+    "configuration": {
+      "revision": 1,
+      "options": [
+        {
+          "id": "mode",
+          "name": "Mode",
+          "category": "mode",
+          "type": "select",
+          "currentValue": "default",
+          "options": [
+            {
+              "value": "default",
+              "name": "Default"
+            },
+            {
+              "value": "plan",
+              "name": "Plan"
+            }
+          ]
+        },
+        {
+          "id": "model",
+          "name": "Model",
+          "category": "model",
+          "type": "select",
+          "currentValue": "m1",
+          "options": [
+            {
+              "value": "m1",
+              "name": "Model 1"
+            },
+            {
+              "value": "m2",
+              "name": "Model 2"
+            }
+          ]
+        },
+        {
+          "id": "effort",
+          "name": "Effort",
+          "category": "effort",
+          "type": "select",
+          "currentValue": "low",
+          "options": [
+            {
+              "value": "low",
+              "name": "Low"
+            },
+            {
+              "value": "high",
+              "name": "High"
+            }
+          ]
+        }
+      ]
+    },
+    "interactions": [],
+    "canRespond": true,
+    "canCancel": true,
+    "failure": null,
+    "expiresAt": 300,
+    "cwd": "/repo"
+  },
+  "workspacePreparationReserve.stale": {
+    "reserved": false,
+    "failure": {
+      "code": "preparation_stale",
+      "message": "工作区配置已变化，请重新确认。"
+    }
+  },
+  "workspacePreparationReserve.result": {
+    "reserved": true
+  },
+  "creationPrepared.result": {
+    "createOperationId": "op_shape_prepared",
+    "revision": 1,
+    "platformSessionId": "sess_shape_prepared",
+    "phase": "submitting",
+    "platformSessionCreated": true,
+    "created": true,
+    "messageAccepted": null,
+    "interactions": [],
+    "canRespond": false,
+    "canCancelInitialization": true,
+    "failure": null
+  },
+  "creationPrepared.accepted": {
+    "createOperationId": "op_shape_prepared",
+    "revision": 2,
+    "platformSessionId": "sess_shape_prepared",
+    "phase": "accepted",
+    "platformSessionCreated": true,
+    "created": true,
+    "messageAccepted": true,
+    "interactions": [],
+    "canRespond": false,
+    "canCancelInitialization": false,
+    "failure": null
   }
 }

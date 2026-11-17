@@ -14,8 +14,11 @@ import type {
   NativeSessionPage,
   NativeSessionRef,
   NativeSessionSummary,
+  NewSessionSpec,
   OpenOptions,
   OpenTarget,
+  PreparedSession,
+  PrepareOptions,
   RuntimeCapabilities,
   RuntimeHandle,
   RuntimeHandleEvent,
@@ -32,6 +35,7 @@ import type { AcpDialect, SelectionCodec } from './dialect.js'
 import { RuntimeFailure } from './errors.js'
 import type { JsonRpcPeer } from './jsonrpc.js'
 import { translateUpdate } from './mapping.js'
+import { prepareFailure, preparedSession } from './prepared.js'
 import { EventQueue } from './queue.js'
 import { AcpRuntimeSession, defaultIdentity } from './session.js'
 
@@ -111,7 +115,15 @@ export interface AcpHandleOptions {
   readonly permissionOptions?: ReadonlyArray<readonly [string, string]>
   /** 完整的权限目录条目（带 v2 的 i18n、identity 等元数据），可按当前配置过滤；优先于 permissionOptions。 */
   readonly permissionCatalog?: (config: readonly ConfigOption[]) => readonly ProtocolPermissionItem[]
+  /** Workspace preparation (`prepare`, capabilities `runtime.workspace.prepare` and `runtime.session.async_create`). */
+  readonly workspacePreparation?: boolean
 }
+
+/** Runtime capabilities of a Runtime that prepares workspaces (runtime-workflows 1.2). */
+export const WORKSPACE_PREPARATION_CAPABILITIES: readonly Capability[] = [
+  { id: 'runtime.workspace.prepare', supported: true, parameters: { workflowVersion: '1.2' } },
+  { id: 'runtime.session.async_create', supported: true, parameters: { workflowVersion: '1.2' } },
+]
 
 /** 会话能力：协商得到的 sessionCapabilities 里有没有某一项。 */
 export function hasSessionCapability(info: AgentInfo, name: string): boolean {
@@ -185,6 +197,8 @@ export class AcpRuntimeHandle implements RuntimeHandle {
 
   capabilities(): RuntimeCapabilities {
     const items: Capability[] = this.info ? this.options.dialect.capabilities(this.info) : []
+    // Known before any Agent process ran: the new-session page decides on it before a session exists.
+    if (this.options.workspacePreparation === true) items.push(...WORKSPACE_PREPARATION_CAPABILITIES)
     return { revision: 1, items }
   }
 
@@ -290,6 +304,29 @@ export class AcpRuntimeHandle implements RuntimeHandle {
     if (replayed.length) session.replay(replayed)
     if (target.kind === 'new' && target.spec.selections) await this.applySelections(session, target.spec.selections)
     return session
+  }
+
+  /**
+   * Creates the native session in `spec.cwd` ahead of its AA session (its id is the preparation's until `adopt`).
+   * Errors carry `details.definite` when the Agent never got the session request (the process did not start).
+   */
+  async prepare(spec: NewSessionSpec, options: PrepareOptions): Promise<PreparedSession> {
+    if (this.options.workspacePreparation !== true) throw new RuntimeFailure({ code: 'workflow_unsupported', message: 'this Runtime does not prepare workspaces' })
+    try {
+      await this.connection(spec.cwd)
+    } catch (error) {
+      throw prepareFailure(error, true)
+    }
+    let session: AcpRuntimeSession
+    try {
+      session = await this.open({ kind: 'new', spec: { cwd: spec.cwd } }, { sessionId: options.preparationId, replay: 'none' })
+    } catch (error) {
+      throw prepareFailure(error, false)
+    }
+    return preparedSession(session, {
+      catalogs: () => this.catalogs(session.sessionId),
+      ...(this.options.dialect.selections !== undefined ? { codec: this.options.dialect.selections } : {}),
+    })
   }
 
   /**

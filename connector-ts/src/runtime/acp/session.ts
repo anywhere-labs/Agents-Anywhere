@@ -107,7 +107,8 @@ export interface AcpSessionOptions {
 }
 
 export class AcpRuntimeSession implements RuntimeSession {
-  readonly sessionId: string
+  /** The AA session id; a prepared session starts with its preparation id and `rebind` gives it the real one. */
+  sessionId: string
   readonly nativeSessionId: string
   readonly events = new EventQueue<RuntimeEvent>()
   readonly goal?: GoalPort
@@ -115,8 +116,8 @@ export class AcpRuntimeSession implements RuntimeSession {
   steer?: (input: PromptInput, delivery: DeliveryRef) => Promise<SteerResult>
   private readonly client: AcpClient
   private readonly dialect: AcpDialect
-  private readonly context: SessionContext
-  private readonly identity: ItemIdentity
+  private context: SessionContext
+  private identity: ItemIdentity
   private config: NormalizedConfig
   private capabilityRevision = 1
   private turn: ActiveTurn | undefined
@@ -166,6 +167,23 @@ export class AcpRuntimeSession implements RuntimeSession {
 
   get configOptions(): readonly ConfigOption[] {
     return this.config.options
+  }
+
+  /** The option that carries plan mode, as the dialect declares it; null when there is none. */
+  get planningOptionId(): string | null {
+    return this.dialect.planMode?.(this.config.options)?.optionId ?? null
+  }
+
+  /**
+   * A prepared session becomes its AA session: item ids are computed from the new session id from now on. Called
+   * before the first message, when no item has reached the timeline yet.
+   */
+  rebind(sessionId: string): void {
+    if (sessionId === this.sessionId) return
+    if (this.turn !== undefined) throw new RuntimeFailure({ code: 'session_busy', message: 'a prepared session cannot change its identity during a turn' })
+    this.sessionId = sessionId
+    this.context = { ...this.context, sessionId, epoch: randomUUID() }
+    this.identity = this.dialect.identity?.(this.context) ?? defaultIdentity(this.context)
   }
 
   get busy(): boolean {

@@ -8,7 +8,7 @@ from typing import Any, Protocol
 
 from pydantic import ValidationError
 
-from agent_server.core.protocol import ProtocolModelCatalog
+from agent_server.core.protocol import ProtocolCapabilitySet, ProtocolModelCatalog
 from agent_server.core.runtime_workflows import (
     BeginCreationRequest,
     PrepareWorkspaceRequest,
@@ -24,7 +24,9 @@ from agent_server.services.runtime_workflow_ports import WorkflowRepository
 
 # Errors a v3 device (or the v2 RPC bridge in front of it) gives for a method device-meshcall 1.0 does
 # not carry: a definite "not on this device", never an upstream failure.
-UNSUPPORTED_DEVICE_METHOD_CODES = frozenset({"device_method_unsupported", "method_not_found", "unimplemented"})
+UNSUPPORTED_DEVICE_METHOD_CODES = frozenset(
+    {"device_method_unsupported", "method_not_found", "unimplemented", "workflow_unsupported"}
+)
 
 
 class WorkflowError(RuntimeError):
@@ -42,6 +44,22 @@ class WorkflowRpc(Protocol):
         *,
         timeout: float = 30,
     ) -> Any: ...
+
+
+def _usable(item: dict[str, Any]) -> bool:
+    return bool(item.get("supported") and item.get("available") and item.get("allowed"))
+
+
+def _prepared_creation(item: dict[str, Any]) -> bool:
+    """``session.planning`` declares that a new session may start in plan mode from a prepared workspace.
+
+    Connectors on the socket link report it in ``metadata``; protocol 1.2 capability sets carry it in ``parameters``.
+    """
+
+    return any(
+        isinstance(item.get(key), dict) and item[key].get("preparedCreation") is True
+        for key in ("metadata", "parameters")
+    )
 
 
 def fingerprint(value: Any) -> str:
@@ -80,10 +98,7 @@ class RuntimeWorkflowService:
             payload.connectorId, runtime.runtimeType, runtime.runtimeId
         )
         if not any(
-            item.get("capabilityId") == "runtime.workspace.prepare"
-            and item.get("supported")
-            and item.get("available")
-            and item.get("allowed")
+            item.get("capabilityId") == "runtime.workspace.prepare" and _usable(item)
             for item in capabilities.get("capabilitySet", {}).get("capabilities", [])
         ):
             raise WorkflowError(
@@ -305,12 +320,18 @@ class RuntimeWorkflowService:
         """``{capabilitySet}`` of an instance.
 
         v3 devices have no ``runtime.capabilities`` method: the set is the one the device reported
-        (``DeviceRuntimeService.runtime_capabilities``). A device that does not declare
-        ``runtime.workspace.prepare`` there gets ``workflow_unsupported`` and clients create directly.
+        (``DeviceRuntimeService.runtime_capabilities``), in protocol 1.2 where ``available`` and ``allowed``
+        default to true. A device that does not declare ``runtime.workspace.prepare`` there gets
+        ``workflow_unsupported`` and clients create directly.
         """
 
         if await self.runtimes.is_v3_device(connector_id):
-            return {"capabilitySet": await self.runtimes.runtime_capabilities(connector_id, runtime_id)}
+            reported = await self.runtimes.runtime_capabilities(connector_id, runtime_id)
+            try:
+                normalized = ProtocolCapabilitySet.model_validate(reported).model_dump(mode="json")
+            except ValidationError:
+                normalized = {"revision": 0, "capabilities": []}
+            return {"capabilitySet": normalized}
         result = await self.rpc.request(
             connector_id,
             "runtime.capabilities",
@@ -337,9 +358,7 @@ class RuntimeWorkflowService:
                         row["connector_id"], row["runtime_type"], row["runtime_id"]
                     )
                     if not any(
-                        item.get("capabilityId") == "session.planning"
-                        and item.get("supported") and item.get("available") and item.get("allowed")
-                        and item.get("metadata", {}).get("preparedCreation") is True
+                        item.get("capabilityId") == "session.planning" and _usable(item) and _prepared_creation(item)
                         for item in capabilities.get("capabilitySet", {}).get("capabilities", [])
                     ):
                         rejected = await self.store.reject_unreserved_creation(

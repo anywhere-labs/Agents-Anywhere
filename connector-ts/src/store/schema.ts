@@ -212,6 +212,24 @@ INSERT OR IGNORE INTO blob_refs(session_id, item_id, blob_id)
   WHERE json_type(t.payload_json, '$.blobRefs') = 'array' AND json_extract(r.value, '$.blobId') IS NOT NULL;
 `,
   },
+  {
+    // Workspace preparations (domain/creation): the Agent session a new-session page warmed up before the first
+    // message, its reservation and the creation that consumed it. `create_operation_id` is the reserved or
+    // consuming creation, so `session.creation.get` finds its preparation.
+    version: 6,
+    breaksPrevious: false,
+    sql: `
+CREATE TABLE IF NOT EXISTS preparations (
+  preparation_id TEXT PRIMARY KEY,
+  create_operation_id TEXT,
+  phase TEXT NOT NULL,
+  state_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS preparations_creation ON preparations(create_operation_id) WHERE create_operation_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS preparations_phase ON preparations(phase);
+`,
+  },
 ]
 
 export const SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]?.version ?? 0

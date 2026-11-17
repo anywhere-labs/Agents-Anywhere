@@ -13,6 +13,7 @@ import type {
   TimelineItem,
   ActiveTurn,
 } from '../../domain/conversation/index.js'
+import type { Preparation } from '../../domain/creation/index.js'
 import type { GoalState } from '../../domain/goals/index.js'
 import type { PlanDocument, PlanningState } from '../../domain/planning/index.js'
 
@@ -34,6 +35,7 @@ export interface ConversationStore {
   readonly outbox: OutboxStore
   readonly blobs: BlobRepository
   readonly kv: RuntimeKv
+  readonly preparations: PreparationRepository
   close(): Promise<void>
 }
 
@@ -175,7 +177,13 @@ export interface PendingDelivery {
   readonly content: string
   readonly attachments: readonly Record<string, unknown>[]
   /** `session.creation.begin`: how to open the new Runtime session. */
-  readonly open?: { readonly cwd: string; readonly title?: string; readonly selections?: Record<string, string | null> }
+  readonly open?: {
+    readonly cwd: string
+    readonly title?: string
+    readonly selections?: Record<string, string | null>
+    /** Agent options (runtime-workflows 1.2 `configuration`), applied before the first message. */
+    readonly configuration?: Record<string, string | boolean>
+  }
 }
 
 export interface ReceiveMessageResult {
@@ -328,4 +336,18 @@ export interface RuntimeKv {
   get(runtimeId: string, key: string): Promise<unknown>
   set(runtimeId: string, key: string, value: unknown): Promise<void>
   delete(runtimeId: string, key: string): Promise<void>
+}
+
+/**
+ * Workspace preparations (domain/creation), one row per preparation with the creation that consumed it. Lookups by
+ * `createOperationId` find the preparation whose reservation or creation carries it.
+ */
+export interface PreparationRepository {
+  get(preparationId: string): Promise<Preparation | null>
+  byCreation(createOperationId: string): Promise<Preparation | null>
+  save(preparation: Preparation): Promise<void>
+  /** Preparations still open (not cancelled or expired, or consumed by a creation without an outcome), for restart recovery. */
+  unsettled(): Promise<Preparation[]>
+  /** Deletes settled preparations last changed before `before` (ISO time); returns how many. */
+  prune(before: string): Promise<number>
 }

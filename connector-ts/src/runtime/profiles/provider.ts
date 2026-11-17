@@ -103,6 +103,7 @@ export class AcpAgentProvider implements RuntimeProvider {
       ...(definition.permissionCatalog ? { permissionCatalog: definition.permissionCatalog } : {}),
       ...(definition.nativeInventory === false ? { nativeInventory: false } : {}),
       ...(definition.launchInWorkspace ? { processPerWorkspace: true } : {}),
+      ...(definition.workspacePreparation === true ? { workspacePreparation: true } : {}),
     })
   }
 }

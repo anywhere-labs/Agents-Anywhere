@@ -578,6 +578,9 @@ COMMAND_METHODS: tuple[str, ...] = (
     "session.creation.begin",
     "session.creation.respond",
     "session.creation.cancel",
+    # Workspace preparation (runtime-workflows 1.2): the Agent session opens before the first message.
+    "workspace.prepare",
+    "workspace.preparation.reserve",
     "workspace.preparation.respond",
     "workspace.preparation.cancel",
     "session.planning",

@@ -417,9 +417,23 @@ V2_COMMAND_METHODS: dict[str, str] = {
     "session.creation.begin": "session.creation.begin",
     "session.creation.respond": "session.creation.respond",
     "session.creation.cancel": "session.creation.cancel",
+    "workspace.prepare": "workspace.prepare",
+    "workspace.preparation.reserve": "workspace.preparation.reserve",
     "workspace.preparation.respond": "workspace.preparation.respond",
     "workspace.preparation.cancel": "workspace.preparation.cancel",
 }
+# Runtime workflow commands (workspace preparation and the creation that consumes it). Their results are workflow
+# views the receipt does not keep, and the device makes each of them idempotent by its own identity
+# (``preparationId``, ``createOperationId``): every call gets a fresh ``commandId``, so a retry runs on the device
+# and answers the current view instead of replaying a receipt without one.
+V2_WORKFLOW_COMMANDS: frozenset[str] = frozenset({
+    "workspace.prepare",
+    "workspace.preparation.reserve",
+    "workspace.preparation.respond",
+    "workspace.preparation.cancel",
+    "session.creation.respond",
+    "session.creation.cancel",
+})
 # v2 slash commands: served from ``Runtime/catalogs`` and ``Commands/sessionSendMessage`` (no device command).
 V2_SLASH_METHODS: frozenset[str] = frozenset({"session.commands", "session.command.execute"})
 
@@ -434,7 +448,9 @@ _COMMAND_UI = {"kind": "execute", "acceptsMultiline": True, "allowedStatuses": [
 _RAW_COMMAND = re.compile(r"\s*/([^\s]+)([\s\S]*)")
 
 
-def _command_id(params: dict[str, Any]) -> str:
+def _command_id(params: dict[str, Any], method: str | None = None) -> str:
+    if method in V2_WORKFLOW_COMMANDS or (method == "session.creation.begin" and params.get("preparationId")):
+        return f"wf_{secrets.token_urlsafe(16)}"
     for key in ("commandId", "clientMessageId", "operationId", "responseId"):
         value = params.get(key)
         if isinstance(value, str) and value:
@@ -636,7 +652,7 @@ class DeviceRpcBridge:
 
         if self.commands is not None:
             return await self._send_command(device_id, method, params, timeout=timeout)
-        command_id = _command_id(params)
+        command_id = _command_id(params, method)
         deadline = datetime.now(UTC) + timedelta(seconds=timeout)
         ack = await self._mesh.unary(
             device_id,
@@ -760,7 +776,7 @@ class DeviceRpcBridge:
             ConnectorRpcError,
         )
 
-        command_id = _command_id(params)
+        command_id = _command_id(params, method)
         session_id = params.get("sessionId")
         try:
             outcome = await self.commands.send(

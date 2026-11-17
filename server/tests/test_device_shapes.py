@@ -31,8 +31,13 @@ from mesh_fixtures import RouterProcess
 from agent_server.core.goal.models import GoalState
 from agent_server.core.models import SessionSelectionPatchRequest, SessionView
 from agent_server.core.planning.models import PlanningState
+from agent_server.core.runtime_workflows import (
+    BeginCreationRequest,
+    PrepareWorkspaceRequest,
+)
 from agent_server.infra.device_link import V2_COMMAND_METHODS, _device_payload
 from agent_server.services.device_link import DeviceLinkService
+from agent_server.services.runtime_workflows import RuntimeWorkflowService
 from agent_server.services.session_run import SessionRunService
 from scripts.v3_fake_device import connect_device
 
@@ -291,5 +296,135 @@ def test_source_availability_follows_the_device_both_ways(mesh_router: RouterPro
                     assert (await app.state.store.get_session(SID)).sourceAvailability == availability
             finally:
                 await device.stop()
+
+    asyncio.run(scenario())
+
+
+# -- 8. workspace preparation and the creation that consumes it -----------------------------------------
+
+
+class _PreparingDevice:
+    """Answers the workflow methods with what the real device answered (``workspacePrepare.result`` and the rest)."""
+
+    def __init__(self, reserve: str = "workspacePreparationReserve.result") -> None:
+        self.sent: list[tuple[str, dict[str, Any]]] = []
+        self.answers = {
+            "workspace.prepare": SHAPES["workspacePrepare.result"],
+            "workspace.preparation.get": SHAPES["workspacePreparation.ready"],
+            "workspace.preparation.reserve": SHAPES[reserve],
+            "session.creation.begin": SHAPES["creationPrepared.result"],
+            "session.creation.get": SHAPES["creationPrepared.accepted"],
+        }
+
+    async def request(self, device_id: str, method: str, params: dict[str, Any], *, timeout: float = 0) -> Any:
+        self.sent.append((method, params))
+        return self.answers[method]
+
+
+class _Runtimes:
+    """A running v3 instance that reported the device's preparation capabilities."""
+
+    async def get_runtime(self, connector_id: str, runtime_id: str, *, user_id: str) -> Any:
+        return SimpleNamespace(status="running", runtimeType="opencode", runtimeId=runtime_id)
+
+    async def is_v3_device(self, connector_id: str) -> bool:
+        return True
+
+    async def runtime_capabilities(self, connector_id: str, runtime_id: str) -> dict[str, Any]:
+        return SHAPES["runtime.capabilities.prepared"]
+
+
+def test_a_prepared_creation_is_sent_as_the_device_reads_it(mesh_router: RouterProcess, monkeypatch) -> None:
+    """prepare -> get (real catalog) -> begin (reserve, then creation.begin) -> get, against the real device answers."""
+
+    async def scenario() -> None:
+        async with server(mesh_router, monkeypatch) as (app, client):
+            headers, device_id, _token = await user_and_device(app, client)
+            project_id = (await client.get("/api/v2/projects", headers=headers)).json()["projects"][0]["id"]
+            device = _PreparingDevice()
+            workflows = RuntimeWorkflowService(app.state.store, device, _Runtimes())  # type: ignore[arg-type]
+            prepare = REQUESTS["workspacePrepare"]
+            opening = await workflows.prepare(
+                PrepareWorkspaceRequest(
+                    connectorId=device_id, runtimeId=prepare["runtimeId"], projectId=project_id,
+                    clientPreparationId=prepare["clientPreparationId"],
+                ),
+                user_id="user_v3",
+            )
+            preparation_id = opening.id
+            assert device.sent[-1] == (
+                "workspace.prepare", {**prepare, "preparationId": preparation_id, "projectId": project_id}
+            )
+            assert opening.state.model_dump()["phase"] == "opening"
+
+            ready = await workflows.get(preparation_id, "preparation", user_id="user_v3")
+            assert device.sent[-1] == (
+                "workspace.preparation.get",
+                {"runtime": "opencode", "runtimeId": prepare["runtimeId"], "preparationId": preparation_id},
+            )
+            catalog = ready.state.catalog
+            assert catalog is not None and [model.id for model in catalog.models] == ["m1", "m2"]
+            state = ready.state.model_dump(mode="json")
+            assert state["configuration"]["options"] and state["revision"] == 1
+
+            begin = REQUESTS["creationPrepared"]
+            reserve = REQUESTS["workspacePreparationReserve"]
+            view = await workflows.begin(
+                BeginCreationRequest(
+                    preparationId=preparation_id,
+                    createOperationId=begin["createOperationId"],
+                    expectedRevision=reserve["expectedRevision"],
+                    catalogRevision=reserve["catalogRevision"],
+                    selections=begin["selections"],
+                    clientMessageId=begin["clientMessageId"],
+                    content=begin["content"],
+                ),
+                user_id="user_v3",
+            )
+            (reserve_method, reserve_sent), (begin_method, begin_sent) = device.sent[-2:]
+            session_id = view.sessionId
+            assert session_id is not None and session_id.startswith("sess_")
+            assert reserve_method == "workspace.preparation.reserve"
+            assert reserve_sent == {**reserve, "preparationId": preparation_id, "platformSessionId": session_id}
+            assert begin_method == "session.creation.begin"
+            assert begin_sent == {**begin, "preparationId": preparation_id, "sessionId": session_id}
+            assert view.state.model_dump()["phase"] == "submitting"
+            session = await app.state.store.get_session(session_id)
+            assert session.cwd == "/repo" and session.runtime == "opencode" and session.takeover is True
+
+            accepted = await workflows.get(begin["createOperationId"], "creation", user_id="user_v3")
+            assert device.sent[-1] == (
+                "session.creation.get",
+                {"runtime": "opencode", "runtimeId": prepare["runtimeId"], "createOperationId": begin["createOperationId"]},
+            )
+            assert accepted.state.model_dump()["messageAccepted"] is True and accepted.sessionId == session_id
+
+    asyncio.run(scenario())
+
+
+def test_a_refused_reservation_rejects_the_creation_without_a_session(mesh_router: RouterProcess, monkeypatch) -> None:
+    async def scenario() -> None:
+        async with server(mesh_router, monkeypatch) as (app, client):
+            headers, device_id, _token = await user_and_device(app, client)
+            project_id = (await client.get("/api/v2/projects", headers=headers)).json()["projects"][0]["id"]
+            device = _PreparingDevice(reserve="workspacePreparationReserve.stale")
+            workflows = RuntimeWorkflowService(app.state.store, device, _Runtimes())  # type: ignore[arg-type]
+            opening = await workflows.prepare(
+                PrepareWorkspaceRequest(
+                    connectorId=device_id, runtimeId="rti_shape", projectId=project_id, clientPreparationId="client_stale"
+                ),
+                user_id="user_v3",
+            )
+            view = await workflows.begin(
+                BeginCreationRequest(
+                    preparationId=opening.id, createOperationId="op_stale", expectedRevision=1, catalogRevision=0,
+                    selections={"model": "m1"}, clientMessageId="m_stale", content="hello",
+                ),
+                user_id="user_v3",
+            )
+            assert [method for method, _params in device.sent] == ["workspace.prepare", "workspace.preparation.reserve"]
+            state = view.state.model_dump()
+            assert state["phase"] == "rejected" and state["failure"]["code"] == "preparation_stale"
+            assert view.sessionId is None
 
     asyncio.run(scenario())

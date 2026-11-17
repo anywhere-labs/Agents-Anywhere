@@ -146,6 +146,12 @@ export interface RuntimeHandle {
   readNativeHistory(ref: NativeSessionRef, window: HistoryWindow): Promise<NativeHistoryPage>
   /** 打开（新建或附着）一个会话。 */
   open(target: OpenTarget, options: OpenOptions): Promise<RuntimeSession>
+  /**
+   * Workspace preparation (capability `runtime.workspace.prepare`): creates the native session in a directory before
+   * the AA session exists, so its real options and catalog can be read; `adopt` hands it to the session engine on
+   * the first message. A Runtime without it does not declare the capability and clients create sessions directly.
+   */
+  prepare?(spec: NewSessionSpec, options: PrepareOptions): Promise<PreparedSession>
   /** 运行时级事件：原生会话目录变化、运行时状态、跟随建议等。 */
   readonly events: AsyncIterable<RuntimeHandleEvent>
   /**
@@ -299,6 +305,47 @@ export interface OpenOptions {
   readonly replay: 'none' | 'full'
   /** 本地库里已有的最后一个原生条目，用于增量回放（支持时）。 */
   readonly replayAfter?: string
+}
+
+// ---------------------------------------------------------------------------------------------
+// Workspace preparation
+// ---------------------------------------------------------------------------------------------
+
+export interface PrepareOptions {
+  /** The preparation id: the native session uses it as its AA session id until `adopt` gives it the real one. */
+  readonly preparationId: string
+}
+
+/**
+ * A native session prepared ahead of its AA session. While prepared, its options are read and the Agent's requests
+ * answered; after `adopt` it is an ordinary `RuntimeSession` with the same event stream (whoever consumed the
+ * events during the preparation stays their only consumer).
+ */
+export interface PreparedSession {
+  readonly nativeSessionId: string
+  /** The session's current options as the Agent reported them (model, effort, permission and the rest). */
+  readonly configOptions: readonly ConfigOption[]
+  /** The option that carries plan mode: kept out of the new-session options, plan mode is set through a planning intent only. */
+  readonly planningOptionId: string | null
+  /** Whether plan mode can be entered before the first message. */
+  readonly canPlan: boolean
+  /** The session's model catalog (selection ids by the Runtime's rule). */
+  catalogs(): Promise<Catalogs>
+  /** Events while prepared: the Agent's requests (authentication, forms), option and command changes, the session going away. */
+  readonly events: AsyncIterable<RuntimeEvent>
+  respond(interactionId: string, answer: InteractionAnswer): Promise<void>
+  /** Why the selections and configuration do not map onto the session options; null when they do. */
+  check(frozen: FrozenCreation): RuntimeError | null
+  /** Hands the session to the session engine: item ids follow the AA session id from now on, and the frozen choices are applied. Once only. */
+  adopt(sessionId: string, frozen: FrozenCreation): Promise<RuntimeSession>
+  /** Gives it up (cancel, expiry, Connector stop): closes the native session without deleting its native record. */
+  close(): Promise<void>
+}
+
+/** The first message's choices, frozen at the reservation and applied at the creation (runtime-workflows 1.2 `selections` and `configuration`). */
+export interface FrozenCreation {
+  readonly selections: Readonly<Record<string, string | null>>
+  readonly configuration: Readonly<Record<string, string | boolean>>
 }
 
 // ---------------------------------------------------------------------------------------------

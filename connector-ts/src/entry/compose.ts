@@ -1,8 +1,9 @@
 import { randomBytes } from 'node:crypto'
-import { join } from 'node:path'
+import { stat } from 'node:fs/promises'
+import { isAbsolute, join } from 'node:path'
 
 import { CommandInbox, type CommandHandler } from '../application/inbound/index.js'
-import { ConversationService, NativeHistory } from '../application/index.js'
+import { ConversationService, NativeHistory, PreparationService } from '../application/index.js'
 import type { LiveEvents, RuntimeHandle, RuntimeHandleEvent, RuntimeProvider } from '../application/ports/index.js'
 import { legacyDataDir, type ConnectorRuntime, type ConnectorSettings, type RuntimeFactory } from '../host/index.js'
 import { ControlPlane, DeviceLink, blobLookup, deviceAttachmentFetcher, deviceTransferUploader, readSystemProxySettings, resolveEgress, type Egress, type LinkLogger } from '../link/index.js'
@@ -122,6 +123,7 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
         onEvent: (spec, handle, event) => onRuntimeEvent(spec, handle, event),
       })
       let service: ConversationService | null = null
+      let preparations: PreparationService | null = null
       const history = new NativeHistory({
         store,
         feed,
@@ -196,11 +198,24 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
             now: clock.nowIso,
           }).catch(error => log('warn', `v2 import failed: ${message(error)}`))
         }
+        // Workspace preparation: Agent sessions opened for the new-session page, consumed by the first message.
+        const prepared = new PreparationService({
+          store,
+          runtimes,
+          clock,
+          ids,
+          conversation,
+          directoryExists: async cwd => isAbsolute(cwd) && (await stat(cwd).catch(() => null))?.isDirectory() === true,
+          onError: (preparationId, error) => log('warn', `workspace preparation ${preparationId}: ${message(error)}`),
+        })
+        preparations = prepared
+        await prepared.recover()
         await conversation.recover()
+        prepared.start()
         // Runtime Control 3.0 (runtime.apply, channel.switch, device.settings.apply); a host's own handlers win.
         const control = runtimeControlCommands({ registry: runtimes, deviceSettings: settings => hooks.deviceSettings(settings) })
-        const inbox = new CommandInbox(store, clock, conversation, { ...control, ...(options.commands ?? {}) })
-        const readers = new DeviceReaders(store, clock.nowIso, facts, history)
+        const inbox = new CommandInbox(store, clock, conversation, { ...control, ...(options.commands ?? {}) }, prepared)
+        const readers = new DeviceReaders(store, clock.nowIso, facts, history, prepared)
         const watch = { store, feed, now: clock.nowIso }
         const workspace = workspaceMethods(files, new ShellOps(policy), terminals ?? undefined)
         const tunnel = new DeviceTunnelApi({
@@ -285,6 +300,7 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
         scans.close()
         if (trust !== null) track?.trust?.(null)
         await trust?.close().catch(() => undefined)
+        await preparations?.close().catch(() => undefined)
         await service?.close().catch(() => undefined)
         terminals?.shutdown()
         await runtimes.close().catch(() => undefined)

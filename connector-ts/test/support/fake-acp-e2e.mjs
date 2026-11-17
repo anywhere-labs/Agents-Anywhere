@@ -2,7 +2,7 @@
 // 按 prompt 的文字决定行为：
 //   含 "#slow"：先回一段文字，然后一直等到 session/cancel（或 60 秒）；
 //   含 "#plan"：发一份 Markdown 计划（plan_update）再回复；
-//   其他：回复 "echo: <文字> [model=<当前模型> permission=<当前权限>]"。
+//   otherwise: replies "echo: <text> [model=<model> permission=<permission>] sessions-in-cwd=<session/new calls in that cwd>".
 // session/new 之后上报斜杠命令目录（available_commands_update）。
 import { createInterface } from 'node:readline'
 
@@ -26,6 +26,11 @@ const configs = new Map()
 /** @type {Map<string, () => void>} */
 const running = new Map()
 let sessions = 0
+/** session/new calls per working directory, and the directory of each session. */
+/** @type {Map<string, number>} */
+const createdIn = new Map()
+/** @type {Map<string, string>} */
+const cwdOf = new Map()
 
 /** @param {string} sessionId */
 function configOf(sessionId) {
@@ -68,7 +73,8 @@ async function prompt(message) {
     update(sessionId, { sessionUpdate: 'plan_update', plan: { type: 'markdown', planId: 'plan-e2e', content: '# E2E plan\n\n1. Read the code\n2. Fix the bug\n' } })
   }
   const current = Object.fromEntries(configOf(sessionId).map(option => [option.id, option.currentValue]))
-  update(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `echo: ${text} [model=${current.model} permission=${current.permission}]` } })
+  const created = createdIn.get(cwdOf.get(sessionId) ?? '') ?? 0
+  update(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `echo: ${text} [model=${current.model} permission=${current.permission}] sessions-in-cwd=${created}` } })
   send({ id: message.id, result: { stopReason: 'end_turn' } })
 }
 
@@ -82,6 +88,9 @@ createInterface({ input: process.stdin }).on('line', line => {
     case 'session/new': {
       sessions += 1
       const sessionId = `e2e-${process.pid}-${sessions}`
+      const cwd = String(params.cwd ?? '')
+      createdIn.set(cwd, (createdIn.get(cwd) ?? 0) + 1)
+      cwdOf.set(sessionId, cwd)
       send({ id: message.id, result: { sessionId, configOptions: configOf(sessionId) } })
       announceCommands(sessionId)
       return

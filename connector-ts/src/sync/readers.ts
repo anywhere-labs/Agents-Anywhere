@@ -26,6 +26,12 @@ export interface HistoryBackfill {
   hasOlder(sessionId: string): Promise<boolean>
 }
 
+/** Workspace preparation and the creation that consumed it (application `PreparationService`). */
+export interface WorkflowReads {
+  view(preparationId: string): Promise<Record<string, unknown>>
+  creationView(createOperationId: string): Promise<Record<string, unknown>>
+}
+
 const NO_FACTS: RuntimeFacts = {
   sessionCapabilities: async () => null,
   catalogs: async () => null,
@@ -49,6 +55,7 @@ export class DeviceReaders {
     private readonly now: () => string,
     private readonly facts: RuntimeFacts = NO_FACTS,
     private readonly history: HistoryBackfill | null = null,
+    private readonly workflows: WorkflowReads | null = null,
   ) {}
 
   private async session(sessionId: string): Promise<Session> {
@@ -213,6 +220,18 @@ export class DeviceReaders {
       throw error
     }
     return { document }
+  }
+
+  /** `workspace.preparation.get`: phase, model catalog, Agent options and open requests. */
+  public async workspacePreparation(request: { preparationId: string }): Promise<Record<string, unknown>> {
+    if (this.workflows === null) throw Object.assign(new Error('workspace preparation is not available on this device'), { code: 'workflow_unsupported' })
+    return this.workflows.view(request.preparationId)
+  }
+
+  /** `session.creation.get` of a creation that consumed a preparation. */
+  public async creation(request: { createOperationId: string }): Promise<Record<string, unknown>> {
+    if (this.workflows === null) throw Object.assign(new Error('workspace preparation is not available on this device'), { code: 'workflow_unsupported' })
+    return this.workflows.creationView(request.createOperationId)
   }
 
   /** `Commands/status`: read-only receipt lookup; never executes anything. */

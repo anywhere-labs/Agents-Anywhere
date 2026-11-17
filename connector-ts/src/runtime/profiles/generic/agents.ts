@@ -15,6 +15,7 @@ export const OPENCODE: AcpAgentDefinition = {
   check: ['acp', '--help'],
   version: ['--version'],
   nativeInventory: false,
+  workspacePreparation: true,
   dialect: () => genericDialect('opencode'),
 }
 
@@ -27,6 +28,7 @@ export const ANTIGRAVITY: AcpAgentDefinition = {
   check: ['acp', '--help'],
   version: ['--version'],
   nativeInventory: false,
+  workspacePreparation: true,
   dialect: () => genericDialect('antigravity'),
 }
 
@@ -39,6 +41,7 @@ export const CODEBUDDY: AcpAgentDefinition = {
   check: ['--acp', '--help'],
   version: ['--version'],
   nativeInventory: false,
+  workspacePreparation: true,
   dialect: () => genericDialect('codebuddy'),
 }
 
@@ -61,6 +64,7 @@ export const COMMAND_CODE: AcpAgentDefinition = {
   check: ['--no-auto-update', 'acp', '--help'],
   version: ['--version'],
   nativeInventory: false,
+  workspacePreparation: true,
   dialect: () => commandCodeDialect(),
 }
 
@@ -74,6 +78,7 @@ export const MIMO: AcpAgentDefinition = {
   version: ['--version'],
   launchInWorkspace: true,
   nativeInventory: false,
+  workspacePreparation: true,
   dialect: () => genericDialect('mimo'),
 }
 
@@ -93,6 +98,7 @@ export const MINIMAX: AcpAgentDefinition = {
   check: ['acp', '--help'],
   version: ['--version'],
   nativeInventory: false,
+  workspacePreparation: true,
   dialect: () => miniMaxDialect(),
 }
 

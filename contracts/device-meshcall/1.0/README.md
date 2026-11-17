@@ -78,7 +78,29 @@ MeshCall 层的模型只约束外壳，`p` 与读响应里的业务字段如下�
 - `LinkWelcome.desired.runtimes` 的每一项与 `runtime.apply` 的 `p` 相同（含 `revision`）。
 - 错误码：`invalid_config`、`runtime_type_unknown`、`switch_revision_stale`、`model_gateway_unsupported`。
 - 这三种命令可以延迟投递（`DEFERRABLE_COMMANDS`），但回执**只存**实例标识与栅栏（`RECEIPT_PAYLOAD_FIELDS`），不存配置、网关密钥和设备设置。补发时 Server 按当前的期望状态重建 `p`（`replay_payload()`）；实例已删除的不再补发。
-- 工作区准备（`workspace.prepare`、`workspace.preparation.reserve`）与会话树、执行位置等 Runtime 工作流在 v3 设备上还没有实现：设备不声明 `runtime.workspace.prepare`，Server 对这些请求返回 422 `workflow_unsupported` 或 409，不再是 502。
+- 会话树、执行位置、关闭与恢复等 Runtime 工作流在 v3 设备上还没有实现：Server 对这些请求返回 409 `workflow_unsupported`，不再是 502。
+
+## 工作区准备
+
+新建会话页选好 Agent 和目录、还没发首条消息时，设备先在该目录启动 Agent 并建好原生会话，把真实的模型、思考强度和 Agent 通用配置交给新建会话页；发首条消息时创建操作直接消费这个已建好的会话。HTTP 接口、状态与边界见 [runtime-workflows 1.2](../../runtime-workflows/1.2/README.md)，`p` 与读响应的业务字段与 v2 的 `workspace.*` / `session.creation.*` 相同。
+
+| 业务方法 | 路由 | 作用 |
+| --- | --- | --- |
+| `workspace.prepare` | `Commands/workspacePrepare` | 建准备 `{preparationId, clientPreparationId, cwd, projectId}`；同一 `preparationId` 换了目录或客户端标识报 `operation_input_conflict`。立即返回准备视图（`phase: opening`），Agent 在后台打开 |
+| `workspace.preparation.get` | `Sessions/workspacePreparationGet` | 读准备视图：`phase`、`revision`、`catalogRevision`、`catalog`（`ProtocolModelCatalog`）、`configuration {revision, options}`、`interactions`、`canRespond`、`canCancel`、`failure`、`expiresAt`、`cwd` |
+| `workspace.preparation.reserve` | `Commands/workspacePreparationReserve` | 为一个创建操作预留：`{reserved: true}`，或带确定原因的 `{reserved: false, failure}` |
+| `workspace.preparation.respond` | `Commands/workspacePreparationRespond` | 回答准备期间 Agent 的请求（如认证表单） |
+| `workspace.preparation.cancel` | `Commands/workspacePreparationCancel` | 取消并关闭持有的 Agent 会话；已预留的准备报 `preparation_consumed` |
+| `session.creation.begin`（带 `preparationId`） | `Commands/sessionCreationBegin` | 消费预留的准备，建会话并接纳首条消息，返回创建视图 |
+| `session.creation.get` | `Sessions/creationGet` | 读创建视图：`phase`、`platformSessionCreated`、`created`、`messageAccepted`、`failure` 等，首条消息的结局来自会话的投递记录 |
+| `session.creation.respond` / `session.creation.cancel` | `Commands/sessionCreation*` | 创建开始后 Agent 的请求是会话 notice，`respond` 报 `interaction_not_found`；`cancel` 中断还没有结论的首条消息，结局记为 `outcome_unknown` |
+
+- **状态**：`opening` → `ready` → `reserved` → `consumed`；`cancelled`、`expired`（5 分钟内没被预留）为终态。Agent 启动前就失败（目录无效、启动检查失败）或明确拒绝认证为 `failed`，启动之后失败为 `outcome_unknown`。
+- **预留**：同一预留重放返回 `reserved: true`，不同预留报 `operation_input_conflict`；`catalogRevision` 对不上（准备期间 Agent 报告了不同的配置）、`expectedRevision` 对不上、已过期或 Agent 已退出报 `preparation_stale`；选择或通用配置不能无损落到会话配置上报 `configuration_mapping_unavailable` / `invalid_configuration_value` / `configuration_conflict`；带规划意图而会话不能进入计划模式报 `planning_unavailable`。选择、通用配置与规划意图在预留时冻结，创建时必须一致。
+- **创建**：创建不再 `session/new`，把准备时打开的会话换上平台会话 ID、应用冻结的选择与配置后交给会话。同一 `createOperationId` 重放返回同一视图。设备的命令回执里 `r` 是视图，Server 为工作流命令每次调用分配新的 `commandId`，重试依赖上面的业务幂等，不回放旧回执。
+- **能力**：声明 `runtime.workspace.prepare`、`runtime.session.async_create`（`parameters.workflowVersion: "1.2"`）的 Runtime 才接受准备：通用 ACP Agent、Hermes、Pi。Pi 的 `session.planning` 带 `parameters.preparedCreation: true`，新建会话可以带规划意图；Server 同时接受 `parameters` 与 v2 的 `metadata`。
+- **重启**：Connector 重启时未消费的准备一律过期；已预留但还没开始创建的，创建视图为 `rejected`（`initialization_interrupted`，`messageAccepted: false`）；创建已开始、首条消息已落盘但还没交给 Agent 的，重启后在新的 Agent 会话上发出（Agent 从没收到它，不算重发）；连首条消息都没落盘的，创建视图为 `rejected`。
+- **加密模式**：`required` 模式不注册这些方法，Server 也拒绝 `/api/v2/runtime-workflows`，并从设备上报的 Runtime 能力里去掉这两项能力，新建会话页直接创建。
 
 `CRITICAL_METHODS` 是 v2 关键通道（#484）的全部方法：审批回复、notices、建会话与工作区准备的查询、回复和取消。设备要为它们单独留出执行额度，长读请求不能占满。
 

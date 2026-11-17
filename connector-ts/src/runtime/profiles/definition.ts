@@ -98,6 +98,8 @@ export interface AcpAgentDefinition {
   readonly idleMs?: number
   /** 方言之外的运行时级能力上限（附件等）。 */
   readonly extraCapabilities?: readonly Capability[]
+  /** Prepares workspaces: the Agent session opens when the new-session page picks a directory, before the first message. */
+  readonly workspacePreparation?: boolean
 }
 
 /** 实例配置 schema（v2 `AcpAgentDefinition.instance_schema`）。 */

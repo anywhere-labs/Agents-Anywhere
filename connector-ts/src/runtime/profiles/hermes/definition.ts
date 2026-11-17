@@ -22,5 +22,6 @@ export const HERMES: AcpAgentDefinition = {
     ['session', "Don't Ask"],
   ],
   metadata: { localInstallation: true, nativeHistory: false },
+  workspacePreparation: true,
   dialect: () => hermesDialect(),
 }

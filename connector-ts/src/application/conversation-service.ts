@@ -110,6 +110,8 @@ export interface CreateSessionCommand {
   planningIntent?: CreationIntent | null
   /** v2 `/goal`: the first message is the session goal's objective, not a prompt. */
   goalIntent?: CreationIntent | null
+  /** runtime-workflows 1.2 `configuration`: Agent options set before the first message. */
+  configuration?: Record<string, string | boolean>
 }
 
 /** `planningIntent` / `goalIntent` of `session.creation.begin` (runtime-workflows 1.2). */
@@ -123,8 +125,23 @@ interface OpenSpec {
   readonly cwd: string
   readonly title?: string
   readonly selections?: Record<string, string | null>
+  readonly configuration?: Record<string, string | boolean>
   readonly planningIntent?: CreationIntent
   readonly goalIntent?: CreationIntent
+}
+
+/**
+ * A Runtime session a workspace preparation opened before the session existed (`PreparationService`): the session
+ * engine adopts it when it opens the session instead of starting a new one.
+ */
+export interface PreparedHandOver {
+  /**
+   * The prepared Runtime session under the session's id, with its event stream (the preparation consumed it
+   * until now); null when the Agent session is gone, and the engine opens a new one instead.
+   */
+  adopt(sessionId: string): Promise<{ readonly session: RuntimeSession; readonly events: AsyncIterable<RuntimeEvent> } | null>
+  /** Not adopted after all (the creation failed, the Connector stops). */
+  discard(): Promise<void>
 }
 
 export type SendResult =
@@ -170,6 +187,8 @@ class SessionBinding {
     runtimeType: string,
     latest: Parameters<typeof TimelineProjector.prototype.remember>[0] | null,
     private readonly deps: ConversationDeps,
+    /** The session's events when someone else consumed them first (a prepared session's relay). */
+    private readonly events: AsyncIterable<RuntimeEvent> = session.events,
   ) {
     this.projector = new TimelineProjector(runtimeType, session.nativeSessionId, latest, () => deps.clock.nowIso())
     this.coalescer = new Coalescer(ids => this.enqueueFlush(ids), deps.coalesceMs ?? 100, () => deps.clock.nowMs())
@@ -181,7 +200,7 @@ class SessionBinding {
 
   private async consume(): Promise<void> {
     try {
-      for await (const event of this.session.events) {
+      for await (const event of this.events) {
         if (this.closed) break
         try {
           await this.onEvent(event)
@@ -326,6 +345,8 @@ export class ConversationService {
   private readonly opening = new Map<string, Promise<SessionBinding>>()
   private readonly chains = new Map<string, Promise<unknown>>()
   private readonly errors: { sessionId: string; error: unknown }[] = []
+  /** Prepared Runtime sessions waiting for their session to open (workspace preparation), by session id. */
+  private readonly prepared = new Map<string, PreparedHandOver>()
 
   public constructor(private readonly deps: ConversationDeps) {}
 
@@ -412,31 +433,71 @@ export class ConversationService {
     return pending
   }
 
-  private async open(sessionId: string, spec?: { cwd: string; title?: string | null; selections?: Record<string, string | null> }): Promise<SessionBinding> {
+  /** A workspace preparation hands its Runtime session over to the session it creates (opened on first use). */
+  public offerPrepared(sessionId: string, handOver: PreparedHandOver): void {
+    const previous = this.prepared.get(sessionId)
+    this.prepared.set(sessionId, handOver)
+    if (previous !== undefined && previous !== handOver) void previous.discard().catch(error => this.reportError(sessionId, error))
+  }
+
+  /** The creation did not go ahead: close the prepared Runtime session nobody adopted. */
+  public async withdrawPrepared(sessionId: string): Promise<void> {
+    const offered = this.prepared.get(sessionId)
+    this.prepared.delete(sessionId)
+    await offered?.discard()
+  }
+
+  private async open(sessionId: string, spec?: OpenSpec): Promise<SessionBinding> {
     const session = await this.requireSession(sessionId)
-    const handle = await this.deps.runtimes.handle(session.runtimeId)
-    if (handle === null) throw new UseCaseError('runtime_unavailable', `runtime ${session.runtimeId} is not available on this device`)
-    // History first: live items then count up from the newest projected one.
-    if (session.externalSessionId !== null && this.deps.history !== undefined) {
-      await this.deps.history.ensureLatest(sessionId).catch(error => this.reportError(sessionId, error))
+    const offered = this.prepared.get(sessionId)
+    this.prepared.delete(sessionId)
+    // A prepared session is adopted as it is: no second `session/new`, no cold start on the first message.
+    const adopted = offered !== undefined && session.externalSessionId === null ? await offered.adopt(sessionId).catch(async error => {
+      await offered.discard().catch(() => undefined)
+      throw error
+    }) : null
+    if (offered !== undefined && adopted === null) await offered.discard().catch(error => this.reportError(sessionId, error))
+    let runtimeSession: RuntimeSession
+    let events: AsyncIterable<RuntimeEvent> | undefined
+    if (adopted !== null) {
+      runtimeSession = adopted.session
+      events = adopted.events
+    } else {
+      const handle = await this.deps.runtimes.handle(session.runtimeId)
+      if (handle === null) throw new UseCaseError('runtime_unavailable', `runtime ${session.runtimeId} is not available on this device`)
+      // History first: live items then count up from the newest projected one.
+      if (session.externalSessionId !== null && this.deps.history !== undefined) {
+        await this.deps.history.ensureLatest(sessionId).catch(error => this.reportError(sessionId, error))
+      }
+      runtimeSession = session.externalSessionId !== null
+        ? await handle.open({ kind: 'existing', ref: { nativeSessionId: session.externalSessionId } }, { sessionId, replay: 'none' })
+        : await handle.open({
+          kind: 'new',
+          spec: {
+            cwd: spec?.cwd ?? session.cwd ?? '.',
+            ...(spec?.title ? { title: spec.title } : {}),
+            ...(spec?.selections !== undefined ? { selections: spec.selections } : {}),
+          },
+        }, { sessionId, replay: 'none' })
+      if (session.externalSessionId === null && spec?.configuration !== undefined) await this.configureNew(runtimeSession, spec.configuration)
     }
-    const runtimeSession = session.externalSessionId !== null
-      ? await handle.open({ kind: 'existing', ref: { nativeSessionId: session.externalSessionId } }, { sessionId, replay: 'none' })
-      : await handle.open({
-        kind: 'new',
-        spec: {
-          cwd: spec?.cwd ?? session.cwd ?? '.',
-          ...(spec?.title ? { title: spec.title } : {}),
-          ...(spec?.selections !== undefined ? { selections: spec.selections } : {}),
-        },
-      }, { sessionId, replay: 'none' })
     if (session.externalSessionId !== runtimeSession.nativeSessionId) {
       await this.patchSession(sessionId, { externalSessionId: runtimeSession.nativeSessionId })
     }
-    const binding = new SessionBinding(this, runtimeSession, session.runtimeType, await this.deps.store.timeline.latest(sessionId), this.deps)
+    const binding = new SessionBinding(this, runtimeSession, session.runtimeType, await this.deps.store.timeline.latest(sessionId), this.deps, events ?? runtimeSession.events)
     this.bindings.set(sessionId, binding)
     binding.start()
     return binding
+  }
+
+  /** A new session's frozen Agent options (runtime-workflows 1.2 `configuration`); a refused value fails the creation. */
+  private async configureNew(runtimeSession: RuntimeSession, configuration: Readonly<Record<string, string | boolean>>): Promise<void> {
+    try {
+      for (const [optionId, value] of Object.entries(configuration)) await runtimeSession.configure({ optionId, value })
+    } catch (error) {
+      await runtimeSession.close().catch(() => undefined)
+      throw error
+    }
   }
 
   // ---------------------------------------------------------------- use cases
@@ -451,6 +512,7 @@ export class ConversationService {
       ...(command.selections !== undefined ? { selections: command.selections } : {}),
       ...(command.planningIntent != null ? { planningIntent: command.planningIntent } : {}),
       ...(command.goalIntent != null ? { goalIntent: command.goalIntent } : {}),
+      ...(command.configuration !== undefined && Object.keys(command.configuration).length > 0 ? { configuration: command.configuration } : {}),
     }
     return this.serial(command.sessionId, async () => {
       const at = this.deps.clock.nowIso()
@@ -1166,7 +1228,10 @@ export class ConversationService {
   }
 
   public async close(): Promise<void> {
+    const offered = [...this.prepared.values()]
+    this.prepared.clear()
     await Promise.all([...this.bindings.values()].map(binding => binding.close()))
+    await Promise.all(offered.map(handOver => handOver.discard().catch(() => undefined)))
     this.bindings.clear()
   }
 

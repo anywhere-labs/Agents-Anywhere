@@ -252,6 +252,14 @@ export class DeviceServices {
       }),
       this.unary(S, 'capabilities', 'Effective capabilities of a session.', async request => readers.capabilities({ sessionId: sessionId(request) })),
       this.unary(S, 'queue', 'Queued messages of a session.', async request => readers.queue({ sessionId: sessionId(request) })),
+      this.unary(S, 'workspacePreparationGet', 'A workspace preparation: phase, model catalog, Agent options and open requests.', async request => {
+        if (typeof request.preparationId !== 'string' || request.preparationId === '') throw new MeshCallError('invalid_argument', 'preparationId is required')
+        return readers.workspacePreparation({ preparationId: request.preparationId })
+      }),
+      this.unary(S, 'creationGet', 'A creation that consumed a workspace preparation: whether the first message was accepted.', async request => {
+        if (typeof request.createOperationId !== 'string' || request.createOperationId === '') throw new MeshCallError('invalid_argument', 'createOperationId is required')
+        return readers.creation({ createOperationId: request.createOperationId })
+      }),
     ]
   }
 

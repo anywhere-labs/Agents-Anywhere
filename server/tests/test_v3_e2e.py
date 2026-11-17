@@ -579,6 +579,48 @@ def test_session_model_and_permission_catalogs(e2e: E2E) -> None:
     assert isinstance(permissions["catalog"]["permissions"], list), permissions
 
 
+def test_prepared_creation_opens_the_agent_session_once(e2e: E2E) -> None:
+    """The new-session page: prepare the workspace, read the real options, create; the creation reuses the session."""
+
+    api = e2e.api
+    e2e.need("runtime_id")
+    # A directory of its own, so the Agent's count of sessions opened there is this test's alone.
+    workspace = e2e.device.workspace / "prepared"
+    workspace.mkdir(parents=True, exist_ok=True)
+    project = api.post("/projects", {"connectorId": e2e.connector_id, "name": "prepared", "workspacePath": str(workspace)})
+    capabilities = api.get(f"{e2e.dev}/runtimes/{e2e.runtime_id}/capabilities")["capabilitySet"]["capabilities"]
+    assert "runtime.workspace.prepare" in {c["capabilityId"] for c in capabilities if c["supported"]}, capabilities
+    opening = api.post("/runtime-workflows/preparations", {
+        "connectorId": e2e.connector_id, "runtimeId": e2e.runtime_id, "projectId": project["project"]["id"],
+        "clientPreparationId": f"client_{uuid.uuid4().hex}",
+    }, expect=202)
+    preparation_id = opening["id"]
+    ready = _wait(lambda: (v := api.get(f"/runtime-workflows/preparation/{preparation_id}"))["state"]["phase"] == "ready" and v,
+                  30, 0.2, "the preparation to be ready")
+    state = ready["state"]
+    models = {model["id"]: model for model in state["catalog"]["models"]}
+    assert set(models) == {"m1", "m2"}, state
+    assert "permission" in {option["id"] for option in state["configuration"]["options"]}, state
+    # The Agent opened one session in the directory before anything was sent.
+    created = api.post("/runtime-workflows/creations", {
+        "preparationId": preparation_id, "createOperationId": f"op_{uuid.uuid4().hex}",
+        "expectedRevision": state["revision"], "catalogRevision": state["catalogRevision"],
+        "selections": {"model": models["m2"]["selectionId"]}, "configuration": {"permission": "auto"},
+        "clientMessageId": f"cm_{uuid.uuid4().hex}", "content": "prepared hello",
+    }, expect=202)
+    assert created["state"].get("failure") is None, created
+    session_id = created["sessionId"]
+    accepted = _wait(
+        lambda: (v := api.get(f"/runtime-workflows/creation/{created['id']}"))["state"].get("messageAccepted") is True and v,
+        30, 0.2, "the first message accepted")
+    assert accepted["state"]["phase"] == "accepted", accepted
+    # The reply comes from the prepared session with the frozen choices applied; no second session was opened.
+    _wait_text(e2e, session_id, "echo: prepared hello [model=m2 permission=auto] sessions-in-cwd=1")
+    assert _session(e2e, session_id)["cwd"] == str(workspace)
+    _send(e2e, session_id, "prepared again")
+    _wait_text(e2e, session_id, "echo: prepared again [model=m2 permission=auto] sessions-in-cwd=1")
+
+
 def test_planning_and_goal_state_are_fresh(e2e: E2E) -> None:
     api = e2e.api
     sid = e2e.need("session_id")

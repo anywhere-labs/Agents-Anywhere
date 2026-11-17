@@ -58,7 +58,8 @@ import {
 import { privateJson } from './settings.js'
 
 const PLAN_CAPABILITIES: readonly Capability[] = [
-  { id: 'session.planning', supported: true },
+  // A new session can start in plan mode from a prepared workspace (the planning intent of its creation).
+  { id: 'session.planning', supported: true, parameters: { preparedCreation: true } },
   { id: 'session.plan_document', supported: true },
   { id: 'session.plan_review', supported: true },
 ]
@@ -182,7 +183,11 @@ export class PiRuntimeSession implements RuntimeSession {
   private lastActivity = Date.now()
   private idleTimer: ReturnType<typeof setInterval> | undefined
 
-  private constructor(readonly sessionId: string, private readonly host: PiSessionHost) {
+  /** The AA session id; a prepared session starts with its preparation id and `rebind` gives it the real one. */
+  sessionId: string
+
+  private constructor(sessionId: string, private readonly host: PiSessionHost) {
+    this.sessionId = sessionId
     this.planning = {
       setMode: async mode => {
         await this.configure({ optionId: PLAN_OPTION, value: mode })
@@ -217,6 +222,18 @@ export class PiRuntimeSession implements RuntimeSession {
 
   get configOptions(): readonly ConfigOption[] {
     return [...this.innerConfig, this.planOption(), this.permissionOption()]
+  }
+
+  /** Plan mode is the synthetic plan option. */
+  get planningOptionId(): string {
+    return PLAN_OPTION
+  }
+
+  /** A prepared session becomes its AA session (before its first message). */
+  rebind(sessionId: string): void {
+    if (sessionId === this.sessionId) return
+    this.sessionId = sessionId
+    this.active?.inner.rebind(sessionId)
   }
 
   get busy(): boolean {

@@ -286,7 +286,7 @@
   "extras": [
     {
       "path": "device.meshcall.json",
-      "sha256": "e4bcebaa41460c84340e4b7d070fa67c5a47f8a8a45a5f6d4c24f7e419937679"
+      "sha256": "4d8d35ea411a4d7d1cc3a6a362fcf694788135cb8905d83a28deb463f4eff976"
     },
     {
       "path": "mesh-errors.json",
@@ -294,7 +294,7 @@
     },
     {
       "path": "e2ee-registration.json",
-      "sha256": "5b55a8e23d512b132503eeaf39d3b5f9fad4b27223bc874dd66f994c7932996c"
+      "sha256": "1a886c81080321b7e2bdb0121a6f02569042ff97b59449de95c7120d23aa7db7"
     }
   ],
   "jsonSchemaDraft": "https://json-schema.org/draft/2020-12/schema",

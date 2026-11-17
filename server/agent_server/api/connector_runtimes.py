@@ -15,6 +15,7 @@ from agent_server.core.device_runtime import (
     RuntimeTypeListResponse,
     public_runtime_view,
 )
+from agent_server.core.e2ee_settings import E2eeSettings
 from agent_server.core.models import (
     RuntimeCommandListResponse,
     RuntimeCommandView,
@@ -31,6 +32,7 @@ from agent_server.core.utc import utc_now
 from agent_server.deps import (
     current_user_id,
     get_device_runtime_service,
+    get_e2ee_settings,
     get_model_channel_service,
     get_rpc,
 )
@@ -280,6 +282,7 @@ async def get_connector_runtime_capabilities(
     service: DeviceRuntimeService = Depends(get_device_runtime_service),
     manager: ConnectorRpcManager = Depends(get_rpc),
     user_id: str = Depends(current_user_id),
+    e2ee: E2eeSettings = Depends(get_e2ee_settings),
 ) -> ProtocolCapabilitiesResponse:
     try:
         runtime = await service.ensure_active_running(
@@ -287,7 +290,10 @@ async def get_connector_runtime_capabilities(
         )
         if await service.is_v3_device(connector_id):
             # device-meshcall has no capability read: the set the device reported with the instance.
-            result = {"capabilitySet": await service.runtime_capabilities(connector_id, runtime.runtimeId)}
+            reported = await service.runtime_capabilities(connector_id, runtime.runtimeId)
+            if e2ee.required:
+                reported = without_plaintext_workflows(reported)
+            result = {"capabilitySet": reported}
         else:
             result = await request_runtime_rpc(
                 manager,
@@ -433,6 +439,22 @@ async def request_runtime_rpc(
             status_code=502,
             detail={"code": exc.code, "message": exc.message or exc.code},
         ) from exc
+
+
+# Runtime workflows carry first messages, answers and paths, so required mode refuses them (``e2ee_settings``); a
+# client that saw them declared would prepare a workspace and fail instead of creating the session directly.
+PLAINTEXT_WORKFLOW_CAPABILITIES = frozenset({"runtime.workspace.prepare", "runtime.session.async_create"})
+
+
+def without_plaintext_workflows(capability_set: dict[str, Any]) -> dict[str, Any]:
+    items = capability_set.get("capabilities")
+    if not isinstance(items, list):
+        return capability_set
+    kept = [
+        item for item in items
+        if not (isinstance(item, dict) and item.get("capabilityId") in PLAINTEXT_WORKFLOW_CAPABILITIES)
+    ]
+    return {**capability_set, "capabilities": kept}
 
 
 def parse_runtime_capability_response(result: Any) -> ProtocolCapabilitySet:

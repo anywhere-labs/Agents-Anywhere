@@ -16,11 +16,15 @@ import { fileURLToPath } from 'node:url'
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { CommandInbox } from '../../src/application/inbound/index.js'
-import { ConversationService } from '../../src/application/index.js'
+import { ConversationService, PreparationService } from '../../src/application/index.js'
 import type { ConfigChange, ConfigOption, ConfigResult, GoalPort, OpenTarget, PlanningPort, RuntimeHandle, RuntimeHandles } from '../../src/application/ports/index.js'
 import type { GoalState as GoalWire } from '../../src/generated/protocol/v1_2/goal-state.js'
+import { AcpRuntimeHandle, peerConnection } from '../../src/runtime/acp/handle.js'
+import { genericDialect } from '../../src/runtime/profiles/generic/dialect.js'
 import { inProcessStore, openSqliteStore, type RemoteStore } from '../../src/store/index.js'
+import { capabilitySet } from '../../src/sync/capabilities.js'
 import { DeviceReaders, MemoryChangeFeed, type RuntimeFacts } from '../../src/sync/index.js'
+import { FakeAcpAgent } from '../support/fake-acp-agent.js'
 import { FakeRuntimeSession } from '../support/fake-runtime-session.js'
 
 const FIXTURE = resolve(dirname(fileURLToPath(import.meta.url)), '../../../server/tests/fixtures/device_shapes.json')
@@ -226,6 +230,70 @@ describe('what the device answers the Server', () => {
     const sessionId = String(REQUESTS.creationGoal!.sessionId)
     expect((await store.goals.load(sessionId))?.goal?.objective).toBe('ship the release')
     expect((await store.deliveries.get(sessionId, 'm_create_goal'))?.state).toBe('started')
+  })
+})
+
+describe('what the device answers the Server for a prepared creation', () => {
+  let agent: FakeAcpAgent
+  let acp: AcpRuntimeHandle
+  let prepared: ConversationService
+  let preparations: PreparationService
+  let preparedInbox: CommandInbox
+  let preparedReaders: DeviceReaders
+
+  beforeEach(() => {
+    agent = new FakeAcpAgent()
+    agent.onPrompt = async params => {
+      agent.text(String(params.sessionId), 'prepared echo')
+      return { stopReason: 'end_turn' }
+    }
+    const dialect = genericDialect('opencode')
+    acp = new AcpRuntimeHandle({ type: 'opencode', instanceId: 'rti_shape', dialect, connect: peerConnection(agent.clientPeer, dialect), workspacePreparation: true })
+    const acpRuntimes: RuntimeHandles = { handle: async runtimeId => (runtimeId === 'rti_shape' ? acp : null) }
+    prepared = new ConversationService({ store, feed: new MemoryChangeFeed(), live: { emit: () => undefined }, runtimes: acpRuntimes, clock, ids, coalesceMs: 5 })
+    preparations = new PreparationService({ store, runtimes: acpRuntimes, clock, ids, conversation: prepared, directoryExists: async () => true })
+    preparedInbox = new CommandInbox(store, clock, prepared, {}, preparations)
+    preparedReaders = new DeviceReaders(store, clock.nowIso, undefined, null, preparations)
+  })
+
+  afterEach(async () => {
+    await preparations.close()
+    await prepared.close()
+    await acp.stop()
+  })
+
+  async function preparedCommand(route: string, commandId: string, p: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const ack = await preparedInbox.handle(route, { commandId, deadline: '2026-11-16T00:01:00.000Z', p } as never)
+    expect(ack, `${route} was rejected`).toMatchObject({ outcome: 'accepted' })
+    return ack.r as Record<string, unknown>
+  }
+
+  async function until(read: () => Promise<Record<string, unknown>>, done: (value: Record<string, unknown>) => boolean): Promise<Record<string, unknown>> {
+    for (let i = 0; i < 400; i++) {
+      const value = await read()
+      if (done(value)) return value
+      await new Promise(resolve => setTimeout(resolve, 5))
+    }
+    throw new Error('timed out')
+  }
+
+  it('reports the preparation capabilities, prepares, reserves and begins on the prepared session', async () => {
+    shape('runtime.capabilities.prepared', capabilitySet(acp.capabilities(), { runtime: 'opencode', sessionId: null }))
+    const request = REQUESTS.workspacePrepare!
+    shape('workspacePrepare.result', await preparedCommand('workspacePrepare', 'wf_prepare', request))
+    const preparationId = String(request.preparationId)
+    shape('workspacePreparation.ready', await until(() => preparedReaders.workspacePreparation({ preparationId }), view => view.phase === 'ready'))
+
+    const reserve = REQUESTS.workspacePreparationReserve!
+    shape('workspacePreparationReserve.stale', await preparedCommand('workspacePreparationReserve', 'wf_reserve_stale', { ...reserve, createOperationId: 'op_shape_stale', catalogRevision: 0 }))
+    shape('workspacePreparationReserve.result', await preparedCommand('workspacePreparationReserve', 'wf_reserve', reserve))
+    const begin = REQUESTS.creationPrepared!
+    shape('creationPrepared.result', await preparedCommand('sessionCreationBegin', 'wf_begin', begin))
+    const createOperationId = String(begin.createOperationId)
+    shape('creationPrepared.accepted', await until(() => preparedReaders.creation({ createOperationId }), view => view.messageAccepted === true))
+    expect(agent.received.filter(call => call.method === 'session/new')).toHaveLength(1)
+    expect(agent.received.filter(call => call.method === 'session/prompt').map(call => call.params.sessionId)).toEqual(['native-1'])
+    expect(await store.sessions.get(String(begin.sessionId))).toMatchObject({ externalSessionId: 'native-1', cwd: '/repo' })
   })
 })
 

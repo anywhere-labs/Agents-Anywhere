@@ -14,6 +14,8 @@ export const REGISTERED_SERVICES = {
       "sessionCreationBegin",
       "sessionCreationRespond",
       "sessionCreationCancel",
+      "workspacePrepare",
+      "workspacePreparationReserve",
       "workspacePreparationRespond",
       "workspacePreparationCancel",
       "sessionPlanning",
