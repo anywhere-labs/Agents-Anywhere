@@ -363,10 +363,6 @@ def create_app(
         app.state.session_runtime_state_cache,
         terminal_broker=app.state.terminal_broker,
     )
-    app.state.connector_deletion_recovery = ConnectorDeletionRecovery(
-        app.state.store, app.state.rpc, app.state.terminal_broker,
-        app.state.session_runtime_state_cache, app.state.timeline_broker,
-    )
     app.state.usage_recorder = UsageRecorder(
         app.state.store,
         flush_interval_seconds=float(
@@ -385,6 +381,11 @@ def create_app(
         capability_refresh=app.state.capability_refresh,
         usage_recorder=app.state.usage_recorder,
         e2ee_settings=_e2ee_settings,
+    )
+    app.state.connector_deletion_recovery = ConnectorDeletionRecovery(
+        app.state.store, app.state.rpc, app.state.terminal_broker,
+        app.state.session_runtime_state_cache, app.state.timeline_broker,
+        app.state.device_link,
     )
     app.state.device_reads = DeviceReadService(
         app.state.store, app.state.device_mesh, app.state.device_link_hub

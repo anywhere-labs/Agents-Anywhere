@@ -26,7 +26,7 @@ export const DSH_SYNC_SERVICE = 'aa.dsh.v2.Sync'
 export const DSH_BRIDGE_SERVICE = 'aa.dsh.v2.Bridge'
 export const REGISTRY_SERVICE = 'meshcall.router.v1.Registry'
 
-export type LocalRole = 'connector' | 'host' | 'dsh-bridge' | 'handover'
+export type LocalRole = 'connector' | 'host' | 'dsh-bridge' | 'handover' | 'client-pairing'
 
 /** register: services the role may serve; call: service/method rules (local-machine 2.0 + `handover`). */
 export const ROLE_PERMISSIONS: Readonly<Record<LocalRole, { register: readonly string[]; call: readonly string[] }>> = {
@@ -36,6 +36,9 @@ export const ROLE_PERMISSIONS: Readonly<Record<LocalRole, { register: readonly s
   'dsh-bridge': { register: [DSH_BRIDGE_SERVICE], call: [`${DSH_SYNC_SERVICE}/*`, ...['write', 'read', 'tail'].map(method => `${LOGS_SERVICE}/${method}`)] },
   // A newer Connector on this machine asking this one to hand over (04-connector.md §9.1): that method only.
   handover: { register: [], call: [`${CONTROL_SERVICE}/requestHandover`] },
+  // `anywhere-cli pair-client` while another host owns the machine: a pairing invitation and nothing else (no
+  // confirmations, no direct grants, no lifecycle).
+  'client-pairing': { register: [], call: [`${CONTROL_SERVICE}/startClientPairing`] },
 }
 
 const UNIX_PATH_LIMIT = 103
@@ -139,7 +142,7 @@ export class LocalHub {
 
   public constructor(private readonly options: LocalHubOptions = {}) {
     let directory = options.directory ?? routerDirectory()
-    this.keys = { connector: apiKey('connector'), host: apiKey('host'), 'dsh-bridge': apiKey('dsh-bridge'), handover: apiKey('handover') }
+    this.keys = { connector: apiKey('connector'), host: apiKey('host'), 'dsh-bridge': apiKey('dsh-bridge'), handover: apiKey('handover'), 'client-pairing': apiKey('client-pairing') }
     if (process.platform === 'win32') {
       this.endpoint = { pipe: `agents-anywhere-${this.instanceId}` }
     } else {

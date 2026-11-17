@@ -316,7 +316,8 @@ class ConnectorRpcManager:
         if not self._coordinator.distributed:
             return False
         lease = await self._get_lease(connector_id)
-        if lease is None:
+        if lease is None or lease.transport == "mesh":
+            # A v3 link has no WebSocket to close; ``DeviceLinkService.revoke`` ends it.
             return False
         result = await self._route(
             lease,

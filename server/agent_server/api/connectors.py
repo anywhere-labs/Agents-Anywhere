@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 
 from agent_server.api.connector_common import require_owned_connector
+from agent_server.api.device_link import get_device_link_service
 from agent_server.core.models import (
     ArchiveAllRequest,
     ArchiveAllResponse,
@@ -44,6 +45,7 @@ from agent_server.services.connector_presence import (
     with_effective_session_connector_statuses,
 )
 from agent_server.services.dashboard_events import publish_dashboard_changed
+from agent_server.services.device_link import DeviceLinkService
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 
 router = APIRouter(prefix="/connectors", tags=["connectors"])
@@ -68,6 +70,7 @@ async def create_connector(
     user_id: str = Depends(current_user_id),
     store: Store = Depends(get_store),
     broker: TimelineBroker = Depends(get_timeline_broker),
+    links: DeviceLinkService = Depends(get_device_link_service),
 ) -> ConnectorCreateResponse:
     try:
         connector, token, prefix = await store.create_connector(
@@ -78,6 +81,11 @@ async def create_connector(
         )
     except KeyError:
         raise HTTPException(status_code=409, detail="installation was deleted; use a new installationId") from None
+    if payload.installationId:
+        # A registration retry reissues the credentials of an existing device: a v3 link opened
+        # with the old ones ends (a no-op for a new device).
+        async with store.connector_lifecycle(connector.id):
+            await links.revoke(connector.id, "connector credentials reissued")
     await publish_dashboard_changed(
         store,
         broker,
@@ -177,9 +185,10 @@ async def delete_connector(
     broker: TimelineBroker = Depends(get_timeline_broker),
     terminals: TerminalBroker = Depends(get_terminal_broker),
     runtime_state_cache: SessionRuntimeStateCache = Depends(get_session_runtime_state_cache),
+    links: DeviceLinkService = Depends(get_device_link_service),
 ) -> None:
     try:
-        await delete_connector_data(connector_id, user_id, store, manager, terminals, runtime_state_cache)
+        await delete_connector_data(connector_id, user_id, store, manager, terminals, runtime_state_cache, links)
     except KeyError:
         raise HTTPException(status_code=404, detail="connector not found") from None
     await publish_dashboard_changed(
@@ -199,6 +208,7 @@ async def revoke_connector_token(
     manager: ConnectorRpcManager = Depends(get_rpc),
     broker: TimelineBroker = Depends(get_timeline_broker),
     terminals: TerminalBroker = Depends(get_terminal_broker),
+    links: DeviceLinkService = Depends(get_device_link_service),
 ) -> ConnectorRevokeResponse:
     async with store.connector_lifecycle(connector_id):
         try:
@@ -208,6 +218,8 @@ async def revoke_connector_token(
             )
         except KeyError:
             raise HTTPException(status_code=404, detail="connector not found") from None
+        # The v3 MeshCall link first (any worker may hold it), then a v2 WebSocket.
+        await links.revoke(connector_id, "connector token revoked")
         await manager.disconnect(connector_id, reason="connector token revoked")
         await terminals.remove_relays_for_connector(connector_id)
     await publish_dashboard_changed(

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from agent_server.services.connector_deletion import delete_connector_data
+from agent_server.services.connector_deletion import (
+    DeviceLinkRevoker,
+    delete_connector_data,
+)
 from agent_server.services.repository_ports import UserDeletionRepository
 
 if TYPE_CHECKING:
@@ -25,6 +28,7 @@ async def delete_user_account(
     manager: ConnectorRpcManager,
     terminals: TerminalBroker,
     runtime_state_cache: SessionRuntimeStateCache,
+    device_link: DeviceLinkRevoker,
 ) -> None:
     """Remove every device (and its sessions/projects) first, then the user.
 
@@ -49,6 +53,7 @@ async def delete_user_account(
                 manager,
                 terminals,
                 runtime_state_cache,
+                device_link,
             )
         except KeyError:
             continue  # Deleted concurrently by the owner or the recovery worker.

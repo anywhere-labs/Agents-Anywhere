@@ -373,7 +373,7 @@ class SessionRunService:
             ) from exc
         except ConnectorOutcomeUnknownError as exc:
             # The device may have taken it: not offline, and never re-sent (a replay with the
-            # same clientMessageId returns the device's answer).
+            # same clientMessageId returns the recorded outcome).
             raise SessionRunTimeoutError({"code": "command_outcome_unknown", "message": exc.message}) from exc
         except ConnectorRpcError as exc:
             raise SessionRunConflictError({"code": exc.code, "message": exc.message or exc.code}) from exc

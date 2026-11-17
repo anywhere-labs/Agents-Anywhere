@@ -95,8 +95,29 @@ export type BackendControlMessage =
   | { type: "connectorOutput"; id: number; line: string }
   /** Main → Backend: the process is gone (`code` null when it never started). */
   | { type: "connectorExit"; id: number; code: number | null; error?: string }
+  /**
+   * Backend → Main: the Connector asks the person at this computer to confirm a
+   * client that an already paired client approved (v3 design 11-e2ee-noise.md
+   * §7.2). Main shows a dialog; no answer is a refusal.
+   */
+  | { type: "confirmClientApproval"; id: number; request: ClientApprovalPrompt }
+  /** Backend → Main: the request was settled elsewhere or timed out; close the dialog. */
+  | { type: "confirmClientApprovalCancel"; id: number }
+  /** Main → Backend: what the person chose. */
+  | { type: "confirmClientApprovalResult"; id: number; approved: boolean }
   | { type: "shutdown" }
   | { type: "shutdownComplete" };
+
+/** What the dialog shows: who approved whom, and the fingerprint to compare with the new client's screen. */
+export type ClientApprovalPrompt = {
+  approverLabel: string;
+  label: string;
+  fingerprint: string;
+  expiresAt: string;
+};
+
+/** Asks the person at this computer; resolves false for anything but an explicit yes, and when `signal` aborts. */
+export type ConfirmClientApproval = (request: ClientApprovalPrompt, signal: AbortSignal) => Promise<boolean>;
 
 export type BackendEventName = "ownership" | "state" | "logs" | "logsCleared" | "settings";
 

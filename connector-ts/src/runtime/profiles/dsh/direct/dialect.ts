@@ -7,14 +7,31 @@
  * `-32603` (S7). `DshRuntime` names it `writer_held`; see `writerHeld()`.
  */
 import type { PromptInput, RuntimeError } from '../../../../application/ports/runtime-session.js'
-import type { AcpDialect } from '../../../acp/dialect.js'
+import { acpFingerprint } from '../../../../domain/identity/index.js'
+import type { AcpDialect, SessionContext } from '../../../acp/dialect.js'
 import { JsonRpcError } from '../../../acp/jsonrpc.js'
 import { contentText } from '../../../acp/mapping.js'
-import { defaultIdentity } from '../../../acp/session.js'
 import { DIRECT_ROUTE_REASON, directCapabilities } from '../capabilities.js'
 import { DSH_SELECTIONS } from '../selections.js'
 
+/**
+ * Item ids of the direct route. Every agent chunk is a whole committed message, so each one is its own item:
+ * DSH's `messageId` when it sends one, else a per-session counter under the connection epoch (the generic rule
+ * would merge consecutive chunks of one kind into a single item, and a fresh rule per update numbers them all 1).
+ */
+function directItemId(counters: WeakMap<SessionContext, { n: number }>, context: SessionContext, kind: string, messageId: unknown): string {
+  if (typeof messageId === 'string' && messageId !== '') return acpFingerprint([context.sessionId, 'dsh', kind, messageId])
+  let counter = counters.get(context)
+  if (counter === undefined) {
+    counter = { n: 0 }
+    counters.set(context, counter)
+  }
+  counter.n += 1
+  return acpFingerprint([context.sessionId, context.epoch, 'dsh', kind, counter.n])
+}
+
 export function dshDirectDialect(): AcpDialect {
+  const counters = new WeakMap<SessionContext, { n: number }>()
   return {
     runtime: 'dsh',
     clientCapabilities: () => ({ fs: { readTextFile: false, writeTextFile: false }, terminal: false }),
@@ -26,8 +43,8 @@ export function dshDirectDialect(): AcpDialect {
     translateUpdate(update, context) {
       if (update.sessionUpdate !== 'agent_message_chunk' && update.sessionUpdate !== 'agent_thought_chunk') return undefined
       const text = contentText(update.content)
-      const itemId = defaultIdentity(context).itemFor(update)
-      if (text === undefined || !itemId) return undefined
+      if (text === undefined) return undefined
+      const itemId = directItemId(counters, context, String(update.sessionUpdate), update.messageId)
       return [{ type: 'message.completed', itemId, role: update.sessionUpdate === 'agent_thought_chunk' ? 'reasoning' : 'assistant', text }]
     },
     classifyError: (error): RuntimeError | undefined => {

@@ -238,6 +238,34 @@ test('turns started in the DSH UI reach AA, queueing works, and a Connector disc
   } finally { await f.close() }
 })
 
+test('resume replays nothing and then forwards every committed event, not only streaming chunks', { timeout: 30_000 }, async () => {
+  const f = await fixture()
+  try {
+    await f.connect()
+    const id = 'aa_0123456789abcdef_platform-resume'
+    await f.connector.conn!.newSession({ cwd: f.home, mcpServers: [], _meta: { dsh: { sessionId: id } } })
+    const ask = async (requestId: string, text: string): Promise<void> => {
+      f.adapter.release = undefined
+      await f.ctx.sessionController.prompt({ sessionId: id as SessionId, requestId: requestId as never, mode: 'queue',
+        content: [{ type: 'text', text }] }, new AbortController().signal)
+      await until(() => f.adapter.release !== undefined, `turn for ${requestId} started`)
+      f.adapter.release?.()
+      await until(() => f.native.status(id as SessionId) === 'idle', `turn for ${requestId} finished`)
+    }
+    await ask('ui-before', '恢复前的消息')
+
+    f.connector.updates = []; f.connector.ext = []
+    await f.connector.conn!.resumeSession({ sessionId: id, cwd: f.home, mcpServers: [] })
+    assert.deepEqual(f.connector.texts(id, 'user_message_chunk'), [], 'resume does not replay history')
+
+    await ask('ui-after', '恢复后的消息')
+    await until(() => f.connector.texts(id, 'user_message_chunk').includes('恢复后的消息'), 'committed user message after resume')
+    await until(() => f.connector.texts(id, 'agent_message_chunk', meta => meta.committed !== undefined).length > 0, 'committed reply after resume')
+    await until(() => f.connector.turns(id).some(item => item.phase === 'ended'), 'turn end after resume')
+    assert.ok(!f.connector.texts(id, 'user_message_chunk').includes('恢复前的消息'))
+  } finally { await f.close() }
+})
+
 test('approvals can be answered from AA, and an answer in the DSH UI withdraws the AA request', { timeout: 30_000 }, async () => {
   const f = await fixture()
   try {

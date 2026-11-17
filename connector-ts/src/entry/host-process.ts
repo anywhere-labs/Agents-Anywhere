@@ -4,6 +4,7 @@ import {
   ConfigFile,
   ConnectorController,
   ControlEvents,
+  LocalConfirmations,
   LocalHub,
   LogStore,
   RuntimeLease,
@@ -13,10 +14,13 @@ import {
   defaultConfigPath,
   handoverRequester,
   logsService,
+  publishClientPairing,
   publishHandover,
   routerDirectory,
   runtimeRecordPath,
   systemHome,
+  type ClientPairingInvitation,
+  type ClientTrustControl,
   type FetchJson,
   type HostKind,
   type LocalDescriptor,
@@ -25,6 +29,7 @@ import { readSystemProxySettings, requestJson, resolveEgress } from '../link/ind
 import type { RemoteStore } from '../store/index.js'
 import { SCHEMA_VERSION } from '../store/index.js'
 import { activeTurns, connectorRuntime, type ComposeOptions, type Log } from './compose.js'
+import type { DeviceTrust } from './trust.js'
 
 /** This build's Connector version (package metadata is not readable from a single-file build). */
 export const CONNECTOR_VERSION = process.env.AA_CONNECTOR_VERSION ?? '3.0.0-dev'
@@ -52,8 +57,15 @@ export interface HostProcess {
   readonly log: Log
   /** What the host needs to reach this Connector's control channel (`host` role). */
   readonly descriptor: LocalDescriptor
+  /** Where Device Trust asks the person at this computer (the CLI registers its terminal here). */
+  readonly confirmations: LocalConfirmations
+  /** A client pairing invitation of the running Connector (also `Control/startClientPairing`). */
+  startClientPairing(): Promise<ClientPairingInvitation>
   shutdown(): Promise<void>
 }
+
+/** How long a pairing request waits for a just-started runtime to open Device Trust. */
+const TRUST_WAIT_MS = 20_000
 
 const COMPOSE_HOST: Record<HostKind, ComposeOptions['host']> = { cli: 'cli', 'desktop-workbench': 'desktop', 'dsh-plugin': 'dsh-plugin' }
 
@@ -82,12 +94,47 @@ export async function startHostProcess(options: HostProcessOptions): Promise<Hos
   const events = new ControlEvents()
   const lease = new RuntimeLease({ path: runtimeRecordPath(home), identity: { kind: options.kind, version: CONNECTOR_VERSION, schemaVersion: SCHEMA_VERSION } })
   let store: RemoteStore | null = null
+  let trust: DeviceTrust | null = null
+  const trustWaiters = new Set<() => void>()
+  const confirmations = new LocalConfirmations()
+  /** The running Connector's Device Trust; a runtime that just started opens it shortly (bounded wait). */
+  const running = async (): Promise<DeviceTrust> => {
+    const fail = (code: string, message: string): Error => Object.assign(new Error(message), { code })
+    if (options.compose?.trust === false) throw fail('not_available', 'end-to-end encryption is off in this Connector')
+    const deadline = Date.now() + TRUST_WAIT_MS
+    while (trust === null) {
+      if (!controller.getState().running) throw fail('connector_not_running', 'the Connector is not running; start it first')
+      if (Date.now() >= deadline) throw fail('connector_offline', 'the Connector has not finished starting; try again')
+      await new Promise<void>(resolve => {
+        const timer = setTimeout(done, 250)
+        function done(): void {
+          clearTimeout(timer)
+          trustWaiters.delete(done)
+          resolve()
+        }
+        trustWaiters.add(done)
+      })
+    }
+    return trust
+  }
+  const clientTrust: ClientTrustControl = {
+    startClientPairing: async () => (await running()).invite(),
+    grantLocalClient: async request => (await running()).grantLocal(request),
+  }
+  // Every approval is confirmed here unless a test supplies its own confirmation.
+  const composeTrust: ComposeOptions['trust'] = options.compose?.trust === false ? false : { confirmation: confirmations, ...options.compose?.trust }
   const hub = new LocalHub({ directory: routerDir, ...(options.routerBinary !== undefined ? { binaryPath: options.routerBinary } : {}), onLog: log })
   const controller = new ConnectorController({
     config: new ConfigFile(options.configPath ?? (options.home !== undefined ? join(dir, 'connector.json') : defaultConfigPath())),
     lease,
     runtimePath: runtimeRecordPath(home),
-    runtime: connectorRuntime({ legacyDataDir: legacyDataDir(process.env, home), ...options.compose, dataDir: dir, host: COMPOSE_HOST[options.kind], connectorVersion: CONNECTOR_VERSION, log }, { store: value => (store = value) }),
+    runtime: connectorRuntime({ legacyDataDir: legacyDataDir(process.env, home), ...options.compose, trust: composeTrust, dataDir: dir, host: COMPOSE_HOST[options.kind], connectorVersion: CONNECTOR_VERSION, log }, {
+      store: value => (store = value),
+      trust: value => {
+        trust = value
+        for (const wake of [...trustWaiters]) wake()
+      },
+    }),
     fetchJson: fetchJsonViaEgress,
     notify: (kind, payload) => events.publish(kind, payload),
     handover: {
@@ -99,8 +146,13 @@ export async function startHostProcess(options: HostProcessOptions): Promise<Hos
     log,
   })
   await hub.start()
-  await hub.mount(controlService(controller, events), logsService(logs))
-  const unpublish = publishHandover(lease.instanceId, CONNECTOR_VERSION, hub.descriptor('handover'), routerDir)
+  await hub.mount(controlService(controller, events, { trust: clientTrust, confirmations }), logsService(logs))
+  const unpublishHandover = publishHandover(lease.instanceId, CONNECTOR_VERSION, hub.descriptor('handover'), routerDir)
+  const unpublishPairing = publishClientPairing(lease.instanceId, CONNECTOR_VERSION, hub.descriptor('client-pairing'), routerDir)
+  const unpublish = (): void => {
+    unpublishHandover()
+    unpublishPairing()
+  }
   log('info', `connector ${CONNECTOR_VERSION} (${options.kind}) serving local control at ${JSON.stringify(hub.endpoint)}`)
   let closing: Promise<void> | null = null
   return {
@@ -110,6 +162,8 @@ export async function startHostProcess(options: HostProcessOptions): Promise<Hos
     logs,
     log,
     descriptor: hub.descriptor('host'),
+    confirmations,
+    startClientPairing: () => clientTrust.startClientPairing(),
     shutdown: () => {
       closing ??= (async () => {
         try {

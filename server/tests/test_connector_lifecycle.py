@@ -113,6 +113,7 @@ def test_failed_delete_keeps_revoked_tombstone_and_can_finish_on_retry(tmp_path)
             "broker": state.timeline_broker,
             "terminals": state.terminal_broker,
             "runtime_state_cache": state.session_runtime_state_cache,
+            "links": state.device_link,
         }
         state.rpc.disconnect = fail
         with pytest.raises(TimeoutError):

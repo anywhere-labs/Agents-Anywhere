@@ -7,6 +7,7 @@ import { InvalidArgumentError, Mesh, MeshCallError, Router, type RpcContext } fr
 
 import { defineService, type MethodDef } from '../mesh/index.js'
 import type { ConnectorSettings } from './config.js'
+import type { ConfirmationEvent, LocalConfirmations } from './confirmations.js'
 import type { ConnectorController, ConnectorState, PairingStatus } from './controller.js'
 import { EventHub } from './events.js'
 import type { OwnerView } from './lease.js'
@@ -41,6 +42,9 @@ function wirePairing(status: PairingStatus): PairingStatus {
   return status.config === undefined || status.config === null ? status : { ...status, config: wireSettings(status.config) as ConnectorSettings }
 }
 
+/** Client pairing failures a host can act on (say what to do), passed through with their code. */
+const PAIRING_CODES = new Set(['connector_not_running', 'connector_offline', 'e2ee_off', 'pairing_limit', 'not_available'])
+
 /** v2 mapping: AA codes stay; `connector_busy` is not retryable; bad input is invalid_argument; the rest connector_error. */
 function asControlError(error: unknown): unknown {
   if (error instanceof MeshCallError) return error
@@ -49,7 +53,48 @@ function asControlError(error: unknown): unknown {
   if (code === 'connector_busy') return new MeshCallError('connector_busy', message, { retryable: false })
   if (code === 'connector_already_running') return new MeshCallError(code, message, { details: (error as { details?: Record<string, unknown> }).details ?? {} })
   if (code === 'invalid_argument') return new InvalidArgumentError(message)
+  if (typeof code === 'string' && PAIRING_CODES.has(code)) return new MeshCallError(code, message, { retryable: false })
   return new MeshCallError(CONNECTOR_ERROR, message)
+}
+
+/** A client pairing invitation (contracts/e2ee/1.0 `PairingPayload`): the QR code content and when it expires. */
+export interface ClientPairingInvitation {
+  readonly uri: string
+  readonly deviceId: string
+  readonly pairingId: string
+  readonly expiresAt: string
+  /** The device identity key's fingerprint, for comparing on the client before pairing. */
+  readonly fingerprint: string
+}
+
+/** A client this computer's host vouches for directly (§7.1: Desktop next to the Connector, no QR code). */
+export interface LocalClientGrant {
+  readonly clientId: string
+  readonly label: string
+  readonly identityPubFingerprint: string
+}
+
+/** Device Trust as the local control interface exposes it; wired by entry/ to the running Connector's trust. */
+export interface ClientTrustControl {
+  /** A pairing invitation of the running Connector (`DeviceTrustService.startPairing` with the Server's mode). */
+  startClientPairing(): Promise<ClientPairingInvitation>
+  /** Writes a grant without a pairing (`DeviceTrustService.grantLocally`); `host` role only. */
+  grantLocalClient(request: { clientIdentityPub: string; label: string; platform: string | null }): Promise<LocalClientGrant>
+}
+
+export interface ControlExtras {
+  readonly trust?: ClientTrustControl
+  readonly confirmations?: LocalConfirmations
+}
+
+function notAvailable(what: string): never {
+  throw Object.assign(new Error(`${what} is not available in this Connector`), { code: 'not_available' })
+}
+
+function requiredString(request: Record<string, unknown>, name: string): string {
+  const value = request[name]
+  if (typeof value !== 'string' || value === '') throw new InvalidArgumentError(`${name} is required`)
+  return value
 }
 
 function unary(name: string, description: string, run: (request: Record<string, unknown>, context: RpcContext) => unknown, extra: Partial<MethodDef> = {}): MethodDef {
@@ -77,7 +122,7 @@ function optionalConfig(request: Record<string, unknown>): unknown {
  * are never declared idempotent, so the SDK never replays one (a repeated restart or startPairing is a second user
  * action).
  */
-export function controlService(controller: ConnectorController, events: ControlEvents): object {
+export function controlService(controller: ConnectorController, events: ControlEvents, extras: ControlExtras = {}): object {
   return defineService(CONTROL_SERVICE, 'Configure, start and stop this Connector, and follow its state.', [
     unary('getState', 'The runtime status and the last error it reported.', () => controller.getState(), { readOnly: true }),
     unary('getPaths', 'Where this Connector keeps its configuration and the machine runtime record.', () => controller.getPaths(), { readOnly: true }),
@@ -90,6 +135,30 @@ export function controlService(controller: ConnectorController, events: ControlE
     unary('startPairing', 'Start a pairing against server; progress arrives as pairing events.', async request => wirePairing(await controller.startPairing(request)), { readOnly: false, destructive: false }),
     unary('cancelPairing', 'Cancel the pairing in progress, if any.', () => controller.cancelPairing(), { readOnly: false, destructive: false }),
     unary('requestHandover', 'A newer Connector on this machine asks this one to hand over (04-connector.md §9.1).', request => controller.requestHandover(request), { readOnly: false, destructive: false }),
+    unary('startClientPairing', 'Create a pairing invitation for a client in encrypted mode (QR code link, 10 minutes, one use).', () => (extras.trust ?? notAvailable('client pairing')).startClientPairing(), { readOnly: false, destructive: false }),
+    unary('grantLocalClient', 'Authorise a client on this computer directly, without a pairing code (host only).', request => {
+      const platform = request.platform
+      return (extras.trust ?? notAvailable('client pairing')).grantLocalClient({
+        clientIdentityPub: requiredString(request, 'clientIdentityPub'),
+        label: typeof request.label === 'string' ? request.label : '',
+        platform: typeof platform === 'string' ? platform : null,
+      })
+    }, { readOnly: false, destructive: false }),
+    unary('answerConfirmation', 'Answer a confirmation request from the confirmations stream; anything but approved: true refuses.', request => {
+      const confirmations = extras.confirmations ?? notAvailable('local confirmation')
+      return { accepted: confirmations.answer(requiredString(request, 'confirmationId'), request.approved === true) }
+    }, { readOnly: false, destructive: false }),
+    {
+      name: 'confirmations',
+      kind: 'server_stream',
+      description: 'Requests that need the person at this computer (a client approved by another client), pending ones first; unanswered requests time out as refused.',
+      readOnly: true,
+      handler: (async function* (_request: Record<string, unknown>, context: RpcContext): AsyncGenerator<ConfirmationEvent> {
+        const confirmations = extras.confirmations
+        if (confirmations === undefined) throw asControlError(Object.assign(new Error('local confirmation is not available in this Connector'), { code: 'not_available' }))
+        yield* confirmations.follow(context.signal)
+      }) as never,
+    },
     {
       name: 'events',
       kind: 'server_stream',
@@ -106,6 +175,38 @@ export function controlService(controller: ConnectorController, events: ControlE
       }) as never,
     },
   ], { targeted: false })
+}
+
+/** Where an owner publishes how to ask it for a client pairing: `<router dir>/<lease instance id>.pairing.json` (0600). */
+export function clientPairingPath(leaseInstanceId: string, directory = routerDirectory()): string {
+  return join(directory, `${leaseInstanceId}.pairing.json`)
+}
+
+/** The `client-pairing` role key, for `anywhere-cli pair-client` while another host owns the machine. */
+export function publishClientPairing(leaseInstanceId: string, connectorVersion: string, descriptor: LocalDescriptor, directory?: string): () => void {
+  const path = clientPairingPath(leaseInstanceId, directory)
+  writePrivateJson(path, { version: 1, connectorVersion, pid: descriptor.pid, endpoint: descriptor.endpoint, key: descriptor.key } satisfies HandoverRendezvous)
+  return () => rmSync(path, { force: true })
+}
+
+/**
+ * Asks the Connector that owns the machine for a client pairing invitation (`Control/startClientPairing` with the
+ * `client-pairing` key it published). Throws with a message for the user when it cannot.
+ */
+export async function requestClientPairing(owner: OwnerView, directory?: string): Promise<ClientPairingInvitation> {
+  let rendezvous: HandoverRendezvous
+  try {
+    rendezvous = JSON.parse(readFileSync(clientPairingPath(owner.instanceId, directory), 'utf8')) as HandoverRendezvous
+  } catch {
+    throw new Error(`the Connector running on this computer (${owner.kind}, PID ${owner.pid}) cannot create client pairings; create the pairing link in that app, or stop it and run this command again`)
+  }
+  const router = new Router('unixPath' in rendezvous.endpoint ? { unixPath: rendezvous.endpoint.unixPath } : { pipe: rendezvous.endpoint.pipe })
+  const mesh = new Mesh(router, { token: rendezvous.key, reconnect: { enabled: false }, retry: false })
+  try {
+    return await mesh.unary<Record<string, unknown>, ClientPairingInvitation>(CONTROL_SERVICE, 'startClientPairing', {}, { timeoutMs: 30_000 })
+  } finally {
+    await mesh.close().catch(() => undefined)
+  }
 }
 
 const SOURCES = new Set<LogSource>(['connector', 'bridge'])

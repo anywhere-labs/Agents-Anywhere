@@ -41,7 +41,25 @@ export {
   type RuntimeFactory,
   type RuntimeHooks,
 } from './controller.js'
-export { CONNECTOR_ERROR, ControlEvents, controlService, handoverPath, handoverRequester, logsService, publishHandover, type ControlEvent, type HandoverRendezvous } from './control-service.js'
+export {
+  CONNECTOR_ERROR,
+  ControlEvents,
+  clientPairingPath,
+  controlService,
+  handoverPath,
+  handoverRequester,
+  logsService,
+  publishClientPairing,
+  publishHandover,
+  requestClientPairing,
+  type ClientPairingInvitation,
+  type ClientTrustControl,
+  type ControlEvent,
+  type ControlExtras,
+  type HandoverRendezvous,
+  type LocalClientGrant,
+} from './control-service.js'
+export { CONFIRMATION_TIMEOUT_MS, LocalConfirmations, type ClientApprovalRequest, type ConfirmationEvent, type LocalConfirmationsOptions, type PendingConfirmation, type TerminalConfirmer } from './confirmations.js'
 export { EventHub, type Sequenced } from './events.js'
 export {
   CONTROL_SERVICE,

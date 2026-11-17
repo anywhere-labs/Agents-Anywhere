@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from loguru import logger
 
@@ -19,6 +19,12 @@ if TYPE_CHECKING:
     )
 
 
+class DeviceLinkRevoker(Protocol):
+    """``DeviceLinkService``: ends a v3 device's link from any worker."""
+
+    async def revoke(self, device_id: str, reason: str) -> None: ...
+
+
 async def delete_connector_data(
     connector_id: str,
     user_id: str,
@@ -26,11 +32,14 @@ async def delete_connector_data(
     manager: ConnectorRpcManager,
     terminals: TerminalBroker,
     runtime_state_cache: SessionRuntimeStateCache,
+    device_link: DeviceLinkRevoker,
 ) -> None:
     async with store.connector_lifecycle(connector_id):
         session_ids = await store.begin_connector_deletion(
             connector_id, user_id=user_id
         )
+        # The v3 MeshCall link first (any worker may hold it), then a v2 WebSocket.
+        await device_link.revoke(connector_id, "connector deleted")
         await manager.disconnect(connector_id, reason="connector deleted")
         await terminals.remove_for_connector(connector_id)
         for session_id in session_ids:
@@ -46,12 +55,14 @@ class ConnectorDeletionRecovery:
         terminals: TerminalBroker,
         runtime_state_cache: SessionRuntimeStateCache,
         broker: TimelineBroker,
+        device_link: DeviceLinkRevoker,
     ) -> None:
         self._store = store
         self._manager = manager
         self._terminals = terminals
         self._runtime_state_cache = runtime_state_cache
         self._broker = broker
+        self._device_link = device_link
 
     async def run_once(self) -> None:
         # Only explicit pending deletions (2), never legacy revoked credentials (1).
@@ -64,6 +75,7 @@ class ConnectorDeletionRecovery:
                     self._manager,
                     self._terminals,
                     self._runtime_state_cache,
+                    self._device_link,
                 )
             except KeyError:
                 continue  # A different worker completed the same deletion.

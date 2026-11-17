@@ -104,6 +104,33 @@ describe('sending messages', () => {
     expect(sessions[0]!.calls.filter(call => call.method === 'prompt')).toHaveLength(1)
   })
 
+  it('hands off a delivery left in accepted by a crash after the ack, and rejects one that kept nothing', async () => {
+    await makeSession()
+    // The process died after the delivery was on disk and acknowledged, before the Runtime hand-off.
+    await store.deliveries.receive({ sessionId: 'sess_1', clientMessageId: 'm1', inputDigest: 'd1', userItem: null, enqueue: null, pending: { content: 'after restart', attachments: [] }, commandId: 'c1', at: clock.nowIso() })
+    await store.deliveries.receive({ sessionId: 'sess_1', clientMessageId: 'm0', inputDigest: 'd0', userItem: null, enqueue: null, commandId: null, at: clock.nowIso() })
+    await service.recover()
+    await settle()
+    expect(sessions[0]!.calls).toMatchObject([{ method: 'prompt', input: { text: 'after restart' }, delivery: { clientMessageId: 'm1' } }])
+    expect((await store.deliveries.get('sess_1', 'm1'))?.state).toBe('started')
+    expect(await store.deliveries.get('sess_1', 'm0')).toMatchObject({ state: 'rejected', errorCode: 'connector_restarted' })
+    expect((await store.timeline.findByClientMessageId('sess_1', 'm0'))?.status).toBe('failed')
+    // Nothing is kept once the delivery left accepted: a second restart sends nothing again.
+    expect(await store.deliveries.acceptedPending()).toEqual([])
+    await service.recover()
+    await settle()
+    expect(sessions[0]!.calls.filter(call => call.method === 'prompt')).toHaveLength(1)
+  })
+
+  it('opens the new Runtime session of a creation left in accepted', async () => {
+    await store.sessions.create({ sessionId: 'sess_new', runtimeType: 'pi', runtimeId: 'rti_pi', externalSessionId: null, cwd: '/proj', nativeTitle: null, status: 'pending', sourceAvailability: 'available', takeover: true, at: clock.nowIso() })
+    await store.deliveries.receive({ sessionId: 'sess_new', clientMessageId: 'm1', inputDigest: 'd1', userItem: null, enqueue: null, pending: { content: 'start', attachments: [], open: { cwd: '/proj', title: 'T' } }, commandId: 'c1', at: clock.nowIso() })
+    await service.recover()
+    await settle()
+    expect(opened).toEqual([{ kind: 'new', spec: { cwd: '/proj', title: 'T' } }])
+    expect((await store.deliveries.get('sess_new', 'm1'))?.state).toBe('started')
+  })
+
   it('queues while a turn runs and dispatches the head when the turn ends idle', async () => {
     await makeSession()
     await service.sendMessage({ sessionId: 'sess_1', clientMessageId: 'm1', content: 'first' }, ctx())

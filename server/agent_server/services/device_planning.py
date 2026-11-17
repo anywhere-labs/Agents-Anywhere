@@ -13,7 +13,9 @@ lists and for offline display). Everything else goes to the device:
 - **Changes**: ``Commands/sessionPlanning`` / ``Commands/sessionGoal`` with the v2
   request body plus ``sessionId``; ``commandId = operationId``. ``CommandAck.r`` is
   the v2 response body (``PlanningResponse`` / ``GoalResponse`` fields).
-- **Operations**: ``GET .../operations/{operationId}`` reads the command receipt.
+- **Operations**: ``GET .../operations/{operationId}`` reads the command receipt: the
+  outcome and error code only (the receipt keeps no ``r``, D1); the state is read
+  from the device.
 """
 
 from __future__ import annotations
@@ -174,13 +176,23 @@ class DevicePlanningService:
             receipt = await self._commands.reconcile_one(receipt, settle_unseen=False) or receipt
         result = receipt.get("result") or {}
         if receipt["state"] == "accepted":
-            body = _accepted(operation_id, result.get("r") or {})
+            body = _accepted(operation_id, {**(result.get("r") or {}), **await self._current_state(session, kind)})
         elif receipt["state"] == "rejected":
             error = result.get("e") or {}
             body = _response(operation_id, "rejected", code=error.get("code"), message=error.get("message"))
         else:
             body = _response(operation_id, "pending" if receipt["state"] == "pending" else "unknown")
         return _validated(RESPONSE_MODELS[kind], body)
+
+    async def _current_state(self, session: Any, kind: str) -> dict[str, Any]:
+        """The state after an applied operation, read from the device (receipts keep none)."""
+
+        try:
+            if kind == "session.planning":
+                return {"state": (await self.planning_state(session)).model_dump(mode="json")}
+            return {"state": (await self.goal_state(session)).model_dump(mode="json")}
+        except DeviceReadError:
+            return {}
 
 
 def _response(operation_id: str, outcome: str, *, code: str | None = None, message: str | None = None) -> dict[str, Any]:

@@ -1,21 +1,40 @@
+import { createInterface } from 'node:readline/promises'
 import { parseArgs } from 'node:util'
 
-import { ConnectorAlreadyRunning, type ConnectorState, type PairingStatus } from '../host/index.js'
+import {
+  ConnectorAlreadyRunning,
+  ownerAlive,
+  readRuntimeState,
+  requestClientPairing,
+  routerDirectory,
+  runtimeRecordPath,
+  systemHome,
+  type ClientPairingInvitation,
+  type ConnectorState,
+  type OwnerView,
+  type PairingStatus,
+  type PendingConfirmation,
+  type TerminalConfirmer,
+} from '../host/index.js'
 import { startHostProcess, CONNECTOR_VERSION, type HostProcess, type HostProcessOptions } from './host-process.js'
 import { terminalQr } from './qr.js'
 import { runRpc } from './rpc.js'
-
-/** F's client pairing (DeviceTrustService.startPairing), when this build has it. */
-export type ClientPairing = (serverUrl: string) => Promise<{ readonly uri: string; readonly payload: { readonly expiresAt: string } }>
 
 export interface CliIo {
   readonly out: (line: string) => void
   readonly err: (line: string) => void
 }
 
+/**
+ * Asks the person at this terminal a yes/no question; anything but yes, an abort or an error is a no. Default: a
+ * prompt when stdin and stdout are a TTY, otherwise none (a request with nobody to ask is refused).
+ */
+export type CliConfirm = (question: readonly string[], signal: AbortSignal) => Promise<boolean>
+
 export interface CliOptions {
   readonly io?: CliIo
-  readonly clientPairing?: ClientPairing
+  /** The terminal confirmation for client approvals (tests); `null` = this terminal cannot answer. */
+  readonly confirm?: CliConfirm | null
   /** Colours for the pairing QR code (default: when writing to a terminal). */
   readonly color?: boolean
   /** The OS user's home (tests). */
@@ -33,7 +52,7 @@ commands:
   start        start the Connector (saved configuration, or --server-url/--connector-id/--connector-token)
   pair [url]   pair with a Server, save the credentials and start (--no-start to only save)
   configure    save credentials (--server-url --connector-id --connector-token)
-  pair-client  show the pairing code for a client in encrypted mode
+  pair-client  show a pairing code for a client in encrypted mode (asks the running Connector, or starts one)
   rpc          serve the local control API (aa.local.v2) for Desktop and plugins
 
 common options: --config <path>  --debug  --version`
@@ -59,6 +78,56 @@ async function follow(host: HostProcess, stop: Promise<void>, onEvent: (kind: st
     if (onEvent(event.kind, event.item) === true) break
   }
   abort.abort()
+}
+
+/** A y/N prompt on the process's terminal; aborting closes it unanswered (a no). */
+const ttyConfirm: CliConfirm = async (question, signal) => {
+  const rl = createInterface({ input: process.stdin, output: process.stderr })
+  try {
+    for (const line of question.slice(0, -1)) process.stderr.write(`${line}\n`)
+    const answer = await rl.question(`${question.at(-1) ?? ''} [y/N] `, { signal })
+    return /^y(es)?$/iu.test(answer.trim())
+  } catch {
+    return false
+  } finally {
+    rl.close()
+  }
+}
+
+function defaultConfirm(): CliConfirm | null {
+  return process.stdin.isTTY === true && process.stderr.isTTY === true ? ttyConfirm : null
+}
+
+/** §7.2 on this terminal: who approved whom, and the fingerprint to compare with the new client's screen. */
+function terminalConfirmer(confirm: CliConfirm): TerminalConfirmer {
+  return (request: PendingConfirmation, signal: AbortSignal) => confirm([
+    '',
+    `The paired client "${request.approverLabel}" asks to authorise a new client on this computer:`,
+    `  name:        ${request.label || '(unnamed)'}`,
+    `  fingerprint: ${request.fingerprint}`,
+    `Compare the fingerprint with the one the new client shows. Unanswered, this is refused at ${request.expiresAt}.`,
+    'Authorise this client?',
+  ], signal)
+}
+
+/** The live Connector that owns this computer, other than this process; null when there is none. */
+async function liveOwner(home: string): Promise<OwnerView | null> {
+  try {
+    const owner = (await readRuntimeState(runtimeRecordPath(home))).runtime
+    if (owner === undefined || !(await ownerAlive(owner))) return null
+    return { kind: owner.kind, pid: owner.pid, instanceId: owner.instanceId, connectorVersion: owner.connectorVersion ?? null }
+  } catch {
+    // An unreadable record: starting here reports it properly.
+    return null
+  }
+}
+
+function printInvitation(io: CliIo, invitation: ClientPairingInvitation, color: boolean): void {
+  io.out('Scan this code with the Agents Anywhere app, or paste the link into the client:')
+  for (const line of terminalQr(invitation.uri, { color })) io.out(line)
+  io.out(invitation.uri)
+  io.out(`Device fingerprint: ${invitation.fingerprint}`)
+  io.out(`It works once and expires at ${invitation.expiresAt}.`)
 }
 
 /** `anywhere-cli`: the same commands as the v2 CLI (`start`, `pair`, `configure`, `rpc`) plus `pair-client`. Returns the exit code. */
@@ -96,6 +165,25 @@ export async function runCli(argv: readonly string[], options: CliOptions = {}):
   const debug = values.debug === true
   const flags = { serverUrl: values['server-url'], connectorId: values['connector-id'], connectorToken: values['connector-token'] }
   const until = options.until ?? signals()
+  const color = options.color ?? (options.io === undefined && process.stdout.isTTY === true)
+  const home = options.home ?? systemHome()
+  // The Connector already running on this computer (Desktop, the DSH plugin, another `start`) serves the pairing:
+  // single instance, and its psk lives in that process.
+  const askOwner = async (owner: OwnerView): Promise<number> => {
+    try {
+      const invitation = await requestClientPairing(owner, routerDirectory(home))
+      printInvitation(io, invitation, color)
+      io.out(`The Connector already running on this computer (${owner.kind}, PID ${owner.pid}) serves this pairing; keep it running until the client has paired.`)
+      return 0
+    } catch (error) {
+      io.err((error as Error).message)
+      return 1
+    }
+  }
+  if (command === 'pair-client') {
+    const owner = await liveOwner(home)
+    if (owner !== null) return askOwner(owner)
+  }
   switch (command) {
     case 'rpc':
       await runRpc({ ...(configPath !== undefined ? { configPath } : {}), debug, ...(options.home !== undefined ? { home: options.home } : {}), ...(options.routerBinary !== undefined ? { routerBinary: options.routerBinary } : {}) })
@@ -115,6 +203,9 @@ export async function runCli(argv: readonly string[], options: CliOptions = {}):
   })
   const host = await startHostProcess({ kind: 'cli', ...(options.compose !== undefined ? { compose: options.compose } : {}), ...(configPath !== undefined ? { configPath } : {}), debug, ...(options.home !== undefined ? { home: options.home } : {}), ...(options.routerBinary !== undefined ? { routerBinary: options.routerBinary } : {}), echo: (level, message) => io.err(`[${level}] ${message}`), onHandedOver: () => handedOver() })
   const stop = Promise.race([until, exit])
+  // This process hosts the Connector: approvals are confirmed on its terminal (none without a TTY: refused).
+  const confirm = options.confirm === undefined ? defaultConfirm() : options.confirm
+  if (confirm !== null) host.confirmations.useTerminal(terminalConfirmer(confirm))
   try {
     if (command === 'configure') {
       const saved = await host.controller.saveConfig(flags)
@@ -122,23 +213,24 @@ export async function runCli(argv: readonly string[], options: CliOptions = {}):
       return 0
     }
     if (command === 'pair-client') {
-      if (options.clientPairing === undefined) {
-        io.err('client pairing (encrypted mode) is not available in this build')
-        return 1
-      }
-      const settings = host.controller.getConfig()
-      if (settings.serverUrl === '') {
+      // No Connector was running: this process becomes it, and must keep running for the client to pair.
+      if (host.controller.getConfig().serverUrl === '') {
         io.err('pair this Connector with a Server first (anywhere-cli pair <server>)')
         return 1
       }
-      const invitation = await options.clientPairing(settings.serverUrl)
-      io.out('Scan this code with the Agents Anywhere app, or open the link on the client:')
-      for (const line of terminalQr(invitation.uri, { color: options.color ?? (options.io === undefined && process.stdout.isTTY === true) })) io.out(line)
-      io.out(invitation.uri)
-      io.out(`It expires at ${invitation.payload.expiresAt}.`)
-      return 0
-    }
-    if (command === 'pair') {
+      try {
+        await host.controller.start()
+      } catch (error) {
+        // Another host started in between: ask it instead, once this process has let go (shutdown is idempotent).
+        if (error instanceof ConnectorAlreadyRunning) {
+          await host.shutdown()
+          return await askOwner(error.owner)
+        }
+        throw error
+      }
+      printInvitation(io, await host.startClientPairing(), color)
+      io.out(`connector ${CONNECTOR_VERSION} running; keep it running until the client has paired, then press Ctrl-C to stop`)
+    } else if (command === 'pair') {
       const server = parsed.positionals[0] ?? flags.serverUrl ?? null
       let claimed = false
       const following = follow(host, stop, (kind, payload) => {
@@ -164,7 +256,7 @@ export async function runCli(argv: readonly string[], options: CliOptions = {}):
       const given = flags.serverUrl !== undefined || flags.connectorId !== undefined || flags.connectorToken !== undefined
       await host.controller.start(given ? flags : undefined)
     }
-    io.out(`connector ${CONNECTOR_VERSION} running; press Ctrl-C to stop`)
+    if (command !== 'pair-client') io.out(`connector ${CONNECTOR_VERSION} running; press Ctrl-C to stop`)
     let failed = false
     await follow(host, stop, (kind, payload) => {
       if (kind !== 'state') return

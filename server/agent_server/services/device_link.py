@@ -19,6 +19,7 @@ from loguru import logger
 from pydantic import ValidationError
 
 from agent_server.core.device_meshcall import (
+    DEFERRABLE_COMMANDS,
     DEVICE_MESHCALL_VERSION,
     MESH_MAX_FRAME_BYTES,
     AttachmentConsumedOut,
@@ -48,7 +49,6 @@ from agent_server.services.e2ee_commands import E2eeCommandService
 
 LINK_CONTRACT = f"device-meshcall/{DEVICE_MESHCALL_VERSION}"
 REQUIRED_SERVICES = frozenset({"aa.device.v1.Link", "aa.device.v1.Commands"})
-DEFERRABLE_COMMANDS = frozenset({"device.settings.apply", "runtime.apply", "channel.switch"})
 _SERVER_VERSION = "3.0.0-dev"
 
 
@@ -117,6 +117,17 @@ class DeviceLinkService:
             self._local_records[device_id] = record
             return previous
         raw = await self._coordinator.client.getset(self._record_key(device_id), encoded)
+        try:
+            return json.loads(raw) if raw else None
+        except (TypeError, ValueError):
+            return None
+
+    async def _take_record(self, device_id: str) -> dict[str, Any] | None:
+        """Remove and return the record, so a later ``ready`` with its connectionId is refused."""
+
+        if not self._coordinator.distributed:
+            return self._local_records.pop(device_id, None)
+        raw = await self._coordinator.client.getdel(self._record_key(device_id))
         try:
             return json.loads(raw) if raw else None
         except (TypeError, ValueError):
@@ -235,12 +246,31 @@ class DeviceLinkService:
             task.add_done_callback(self._reconcile_tasks.discard)
 
     async def revoke(self, device_id: str, reason: str) -> None:
-        """Credentials revoked or device deleted: revoke its Router token and drop the link."""
+        """Credentials revoked or reset, or the device deleted: end its v3 link from any worker.
 
-        record = await self.link_record(device_id)
+        Callers hold ``connector_lifecycle(device_id)``, the same lock ``hello`` and ``ready`` take, and
+        have already made the old credentials invalid, so the device cannot link again with them.
+
+        - The link record is removed: a ``ready`` with its connectionId is refused.
+        - The Router token is revoked: the Router closes the device connection (4401) whichever
+          worker holds the link, so that worker's streams end.
+        - This worker stops holding the link if it is the holder; the presence lease is deleted
+          whoever holds it, so every worker sees the device offline at once and the holder, whose
+          next renewal fails, closes its streams and reports the device offline.
+
+        Harmless for a v2 device or one that never linked.
+        """
+
+        record = await self._take_record(device_id)
         if record and record.get("tokenId"):
             await self._mesh.revoke_token(str(record["tokenId"]))
         await self._hub.drop(device_id, reason)
+        evicted = await self._hub.evict(device_id)
+        self.runtime_status.pop(device_id, None)
+        if record or evicted:
+            logger.info(
+                "device link revoked device_id={} reason={} lease_evicted={}", device_id, reason, evicted
+            )
 
     # -- outbox -----------------------------------------------------------------
 

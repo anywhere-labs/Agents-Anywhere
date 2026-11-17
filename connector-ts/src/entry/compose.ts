@@ -75,7 +75,7 @@ export async function activeTurns(store: RemoteStore): Promise<number> {
  * The composition root of a configured Connector (04-connector.md §2): the local store, the use cases, the device
  * link and the Runtime providers, wired once per `start`. Everything else in `entry/` is process plumbing.
  */
-export function connectorRuntime(options: ComposeOptions, track?: { store(store: RemoteStore | null): void }): RuntimeFactory {
+export function connectorRuntime(options: ComposeOptions, track?: { store(store: RemoteStore | null): void; trust?(trust: DeviceTrust | null): void }): RuntimeFactory {
   return (settings, hooks): ConnectorRuntime => ({
     async run(signal) {
       const storeOptions = { dataDir: join(options.dataDir, 'store'), durability: 'normal' as const, now: clock.nowIso }
@@ -186,12 +186,14 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
           trust = await DeviceTrust.open({
             dataDir: options.dataDir,
             deviceId: settings.connectorId,
+            serverUrl: settings.serverUrl,
             log,
             api: tunnel,
             republishSummaries: () => store.sessions.republishSummaries(),
             outbox: store.outbox,
             ...(options.trust ?? {}),
           })
+          track?.trust?.(trust)
         }
         const deviceTrust = trust
         const outboxSignal = new OutboxSignal()
@@ -232,6 +234,7 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
         await link.run(signal)
       } finally {
         scans.close()
+        if (trust !== null) track?.trust?.(null)
         await trust?.close().catch(() => undefined)
         await service?.close().catch(() => undefined)
         terminals?.shutdown()

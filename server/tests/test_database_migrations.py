@@ -286,6 +286,7 @@ def test_v2_0_database_upgrades_through_current_revision(fresh_database_url) -> 
         ("v2_60", "v2_61"),
         ("v2_61", "v2_62"),
         ("v2_62", "v2_63"),
+        ("v2_63", "v2_64"),
     ],
 )
 def test_every_adjacent_schema_upgrade(tmp_path,
@@ -1026,9 +1027,9 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(tmp_path,
     )
 
 
-def test_current_schema_version_is_v2_63() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_63"
-    assert CURRENT_SCHEMA_VERSION == "2.63"
+def test_current_schema_version_is_v2_64() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_64"
+    assert CURRENT_SCHEMA_VERSION == "2.64"
 
 
 def test_v2_57_starts_the_seq_ceiling_above_v2_sequences(fresh_database_url) -> None:
@@ -2870,3 +2871,51 @@ def test_v2_63_adds_e2ee_command_registrations(fresh_database_url) -> None:
         assert not inspect(engine).has_table("e2ee_command_registrations")
     finally:
         engine.dispose()
+
+
+def test_v2_64_removes_conversation_content_from_command_receipts(fresh_database_url) -> None:
+    url = fresh_database_url
+    upgrade_database(db_url=url, revision="v2_63")
+    engine = create_engine(_sync_url(url))
+    rows = {
+        "c_msg": ("session.sendMessage", {"sessionId": "s1", "content": "secret prompt"},
+                  {"r": {"ok": True, "echo": "secret prompt"}, "e": None}),
+        "c_queue": ("session.queue.update", {"sessionId": "s1", "text": "queued secret"},
+                    {"r": None, "e": {"code": "queue_conflict", "message": "queued secret", "retryable": True}}),
+        "c_plan": ("session.planning", {"sessionId": "s1", "feedback": "plan secret"},
+                   {"r": {"execution": "started", "state": {"plan": "plan secret"}}, "e": None}),
+        "c_apply": ("runtime.apply", {"runtimeId": "codex", "active": True}, None),
+    }
+    try:
+        with engine.begin() as connection:
+            _insert_required(connection, "users", {"id": "alice"})
+            _insert_required(connection, "connectors", {"id": "c1", "user_id": "alice"})
+            for command_id, (kind, payload, result) in rows.items():
+                _insert_required(connection, "device_commands", {
+                    "user_id": "alice", "command_id": command_id, "kind": kind, "device_id": "c1",
+                    "state": "accepted" if result else "unknown", "input_digest": "sha256:x",
+                    "payload_json": json.dumps(payload), "result_json": json.dumps(result) if result else None,
+                })
+    finally:
+        engine.dispose()
+
+    upgrade_database(db_url=url, revision="v2_64")
+
+    engine = create_engine(_sync_url(url))
+    try:
+        with engine.begin() as connection:
+            stored = {
+                row.command_id: (row.payload_json, row.result_json, row.input_digest)
+                for row in connection.execute(
+                    text("SELECT command_id, payload_json, result_json, input_digest FROM device_commands")
+                )
+            }
+    finally:
+        engine.dispose()
+    assert "secret" not in json.dumps(stored)
+    assert stored["c_msg"] == (None, None, "sha256:x")
+    assert json.loads(stored["c_queue"][1]) == {"e": {"code": "queue_conflict", "retryable": True}}
+    assert stored["c_queue"][0] is None
+    assert json.loads(stored["c_plan"][1]) == {"r": {"execution": "started"}}
+    # A deferrable command keeps the payload it is replayed with on hello.
+    assert json.loads(stored["c_apply"][0]) == {"runtimeId": "codex", "active": True}

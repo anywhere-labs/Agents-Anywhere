@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from agent_server.api.device_link import get_device_link_service
 from agent_server.core.auth import hash_password_verifier
 from agent_server.core.models import (
     AdminUserCreateRequest,
@@ -22,6 +23,7 @@ from agent_server.deps import (
 from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.terminal_broker import TerminalBroker
+from agent_server.services.device_link import DeviceLinkService
 from agent_server.services.email_delivery import (
     get_email_settings,
     public_email_settings,
@@ -152,13 +154,14 @@ async def delete_user(
     manager: ConnectorRpcManager = Depends(get_rpc),
     terminals: TerminalBroker = Depends(get_terminal_broker),
     runtime_state_cache: SessionRuntimeStateCache = Depends(get_session_runtime_state_cache),
+    links: DeviceLinkService = Depends(get_device_link_service),
 ) -> None:
     target = (user_id or "").strip().lower()
     if target == admin.userId:
         raise HTTPException(status_code=409, detail="cannot delete yourself")
     try:
         await delete_user_account(
-            target, db, manager, terminals, runtime_state_cache
+            target, db, manager, terminals, runtime_state_cache, links
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="user not found") from None

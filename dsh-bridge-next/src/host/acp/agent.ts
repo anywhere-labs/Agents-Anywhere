@@ -251,18 +251,22 @@ export class DshAcpAgent implements acp.Agent {
     return this.open(params.sessionId, from)
   }
 
+  /** Resume replays nothing: the Connector gets every event after the current end of the log (`replayFromSeq = seq + 1`). */
   async resumeSession(params: acp.ResumeSessionRequest): Promise<acp.ResumeSessionResponse> {
-    return this.open(params.sessionId, Number.MAX_SAFE_INTEGER)
+    return this.open(params.sessionId, 'tail')
   }
 
-  private async open(id: string, from: number): Promise<acp.LoadSessionResponse> {
+  private async open(id: string, start: number | 'tail'): Promise<acp.LoadSessionResponse> {
     try {
       await this.native.ensureKnown(id)
       if (!await this.native.visible(id)) throw notFound()
       // Buffer live changes while replaying so nothing is lost or reordered.
-      const entry = this.attach(id, from - 1, [])
+      const entry = this.attach(id, start === 'tail' ? Number.MAX_SAFE_INTEGER : start - 1, [])
       const live = this.ctx.sessions.get(id as SessionId)
       const events = live?.snapshotEvents() ?? (await this.native.read(id as SessionId)).events
+      const lastSeq = events.length > 0 ? Number(events[events.length - 1]!.seq) : -1
+      const from = start === 'tail' ? Math.max(lastSeq, this.currentSeq(id)) + 1 : start
+      entry.sentThrough = from - 1
       const turn = this.replayTurnState(events)
       if (turn && !this.turns.has(id)) this.turns.set(id, turn)
       entry.turn = this.turns.get(id)
@@ -276,7 +280,7 @@ export class DshAcpAgent implements acp.Agent {
       for (const change of buffered) await this.deliver(id, entry, change)
       // Requests already waiting when the Connector attached are asked now.
       void this.syncApprovals(id).then(() => this.syncQuestions(id)).catch(() => undefined)
-      const truncated = from > 0 && from !== Number.MAX_SAFE_INTEGER && events.length > 0 && Number(events[0]!.seq) > from
+      const truncated = start !== 'tail' && from > 0 && events.length > 0 && Number(events[0]!.seq) > from
       return { configOptions: await this.configOptions(id), _meta: { dsh: await this.loadMeta(id, truncated) } }
     } catch (error) {
       this.attached.delete(id)

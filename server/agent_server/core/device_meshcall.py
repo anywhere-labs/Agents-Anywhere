@@ -516,6 +516,42 @@ COMMAND_METHODS: tuple[str, ...] = (
     "preview.close",
 )
 
+# Commands the device may receive late: a receipt still unsettled when the device says hello is
+# replayed in ``LinkWelcome.pendingCommands`` (desired state, not conversation). Only their receipts
+# keep the payload; every other receipt keeps ``inputDigest`` and the outcome, never the input (D1).
+DEFERRABLE_COMMANDS: frozenset[str] = frozenset({"runtime.apply", "device.settings.apply", "channel.switch"})
+
+
+def receipt_payload(method: str, payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    """What a command receipt may store of the input: the payload of a deferrable command, else nothing."""
+
+    return payload if method in DEFERRABLE_COMMANDS else None
+
+
+# Status enums of ``r`` a receipt may keep (``session.planning``: whether execution started).
+RECEIPT_RESULT_FIELDS: tuple[str, ...] = ("execution",)
+
+
+def receipt_result(result: dict[str, Any] | None) -> dict[str, Any] | None:
+    """What a command receipt may store of the outcome (D1): the error code and status enums only.
+
+    Never the device's ``r`` body (queue contents, states, messages): a caller that needs it takes
+    it from the ``CommandAck`` it is waiting on.
+    """
+
+    if not isinstance(result, dict):
+        return None
+    out: dict[str, Any] = {}
+    r = result.get("r")
+    if isinstance(r, dict):
+        kept = {key: r[key] for key in RECEIPT_RESULT_FIELDS if isinstance(r.get(key), str) and len(r[key]) <= 64}
+        if kept:
+            out["r"] = kept
+    error = result.get("e")
+    if isinstance(error, dict):
+        out["e"] = {"code": str(error.get("code") or "error"), "retryable": bool(error.get("retryable"))}
+    return out or None
+
 
 def command_route(method: str) -> MeshRoute:
     """``session.queue.sendNow`` -> ``aa.device.v1.Commands/sessionQueueSendNow``."""

@@ -5,7 +5,8 @@ import path from "node:path";
 import test, { type TestContext } from "node:test";
 import { DesktopBindingStore } from "./desktop-binding";
 import { DesktopSettingsStore } from "./desktop-settings";
-import { ConnectorSupervisor, type ConnectorChannel, type Rendezvous } from "./connector-supervisor";
+import { ConnectorSupervisor, type ConfirmationEvent, type ConnectorChannel, type Rendezvous } from "./connector-supervisor";
+import type { ConfirmClientApproval } from "./backend/protocol";
 import type { ConnectorHostMessage, ConnectorProcess } from "./connector-launcher";
 import { ConnectorLogStore } from "./log-store";
 import { ConnectorRpcError } from "./connector-rpc-error";
@@ -107,6 +108,7 @@ function fixture(t: TestContext, options: {
   routerBinary?: string;
   frpcBinary?: string;
   onShutdown?: "exit" | "hang";
+  confirmClientApproval?: ConfirmClientApproval;
 } = {}): Fixture {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "aa-desktop-supervisor-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -140,6 +142,7 @@ function fixture(t: TestContext, options: {
     onState: () => {},
     onLog: entry => logs.push(entry),
     connectControl: async value => { rendezvous.push(value); return (options.channel ?? fakeChannel)(); },
+    ...(options.confirmClientApproval ? { confirmClientApproval: options.confirmClientApproval } : {}),
   });
   t.after(() => supervisor.shutdown());
   return { root, supervisor, settings, processes, rendezvous, ownership, logs, configPath };
@@ -168,6 +171,62 @@ test("the embedded Connector runs with Desktop's config, its Router and the desk
   // A second request reuses the running process.
   await f.supervisor.getState();
   assert.equal(f.processes.length, 1);
+});
+
+/** A `Control/confirmations` stream the test feeds, and the answers the supervisor sent. */
+function confirmationFeed() {
+  const queue: ConfirmationEvent[] = [];
+  let wake: (() => void) | null = null;
+  const answers: Array<{ confirmationId: string; approved: boolean }> = [];
+  return {
+    answers,
+    push(event: ConfirmationEvent) { queue.push(event); wake?.(); },
+    channel: {
+      follow: async function* ({ signal }: { signal: AbortSignal }) {
+        while (!signal.aborted) {
+          const next = queue.shift();
+          if (next) { yield next; continue; }
+          await new Promise<void>(resolve => { wake = resolve; signal.addEventListener("abort", () => resolve(), { once: true }); });
+        }
+      },
+      answer: async (confirmationId: string, approved: boolean) => { answers.push({ confirmationId, approved }); return { accepted: true }; },
+    },
+  };
+}
+
+const prompt = (confirmationId: string): ConfirmationEvent => ({
+  kind: "requested",
+  confirmation: { confirmationId, kind: "client_approval", approverLabel: "Phone", label: "Browser", fingerprint: "0123 4567 89ab cdef 0123 4567 89ab cdef", expiresAt: "2026-11-17T12:02:00.000Z" },
+});
+
+test("client approvals the Connector asks about are confirmed in a dialog; only a yes approves, a settled request closes it", async (t) => {
+  const feed = confirmationFeed();
+  const dialogs: Array<{ label: string; signal: AbortSignal; answer: (approved: boolean) => void }> = [];
+  const f = fixture(t, {
+    channel: () => ({ ...fakeChannel(), confirmations: feed.channel }),
+    confirmClientApproval: (request, signal) => new Promise<boolean>(resolve => {
+      dialogs.push({ label: request.label, signal, answer: resolve });
+      signal.addEventListener("abort", () => resolve(true), { once: true });
+    }),
+  });
+  await f.supervisor.start();
+  feed.push(prompt("conf_1"));
+  feed.push(prompt("conf_1"));
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(dialogs.length, 1, "one dialog per request");
+  dialogs[0]!.answer(true);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  feed.push(prompt("conf_2"));
+  await new Promise(resolve => setTimeout(resolve, 20));
+  dialogs[1]!.answer(false);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  // Timed out on the Connector: the dialog closes and nothing is answered for it.
+  feed.push(prompt("conf_3"));
+  await new Promise(resolve => setTimeout(resolve, 20));
+  feed.push({ kind: "settled", confirmationId: "conf_3", approved: false });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(dialogs[2]!.signal.aborted, true);
+  assert.deepEqual(feed.answers, [{ confirmationId: "conf_1", approved: true }, { confirmationId: "conf_2", approved: false }]);
 });
 
 test("a Connector that fails to start reports its code and output", async (t) => {

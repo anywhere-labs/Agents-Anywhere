@@ -113,3 +113,14 @@ Python 和 Desktop 各自写入的字段位于同一文件，因此读取、合�
 Python 首次成功写入时迁移旧 `.agentsanywhere/machine.json`、`.agentsanywhere/desktop/install.json` 及旧版扁平 PID 记录，保留有序历史、Desktop 发布的安装信息和未知字段，完成后标记 `legacyMachineMigrated`。两个旧文件都不存在时直接标记完成，不锁定也不创建 `.agentsanywhere` 目录。Host 在迁移前仅提供兼容的内存读取视图。自定义配置目录中的旧运行记录也会检查；旧记录中的活跃 Connector 子进程仍阻止并发启动。所有入口应一起升级，避免旧入口继续按 v1 协议写入。
 
 自动化测试在临时用户目录运行真实 Python CLI/RPC，覆盖三种启动来源竞争、RPC 重试、进程异常退出、无关 PID、ID 去重、Desktop 并发写安装信息和跨端设备复用。测试不启动真实后端、Electron 或 DSH GUI。
+
+## 加密模式的客户端配对（v3 Connector 增加）
+
+部署开启端到端加密（`AGENT_SERVER_E2EE=required`）时，客户端要先和设备配对（`contracts/e2ee/1.0`）。配对码只能在工作机本机生成，本机确认也在工作机上完成。
+
+- `Control/startClientPairing()`：用 Server 在 `LinkWelcome` 里声明的 `e2eeMode` 生成一次性配对邀请，返回 `{uri, deviceId, pairingId, expiresAt, fingerprint}`。`uri` 是 `aa-pair://` 链接（二维码内容），10 分钟内有效、只能用一次。可能的错误：`connector_not_running`、`connector_offline`、`e2ee_off`（Server 没有开启加密模式）、`pairing_limit`、`not_available`。
+- `Control/grantLocalClient({clientIdentityPub, label, platform})`：同一台电脑上的宿主直接授权一个客户端，不经过配对码。只有 `host` 角色可以调用。
+- `Control/confirmations()`：server stream，推送需要工作机前的人确认的请求（已配对客户端批准新客户端），待处理的先推。
+- `Control/answerConfirmation({confirmationId, approved})`：应答确认请求。只有 `approved: true` 算同意；超时（120 秒）、没有宿主订阅、出错，都按拒绝处理。
+
+持有租约的 Connector 另发一个 `client-pairing` 角色的 API key，只能调用 `Control/startClientPairing`；key 与 endpoint 写在 `~/.agents-anywhere/router/<runtime.instanceId>.pairing.json`（`0600`，格式同 `handover.json`），释放租约时删除。`anywhere-cli pair-client` 发现本机已有别的宿主时读取该文件请求邀请，不抢占单实例租约；本机没有 Connector 时由 CLI 自己启动并生成邀请。

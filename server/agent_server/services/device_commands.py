@@ -14,8 +14,12 @@
 - ``unknown`` converges: the device reports ``command.result`` through its
   outbox; and when the same ``commandId`` is replayed, or the device comes back
   (``ready``), the Server asks ``Commands/status``, which is read-only.
-- A replay with the same ``commandId`` returns the recorded result; with a
+- A replay with the same ``commandId`` returns the recorded outcome; with a
   different input digest it is a conflict.
+- No conversation content is stored (D1): a receipt keeps ``inputDigest`` and the
+  payload only of deferrable commands (``DEFERRABLE_COMMANDS``, replayed on
+  hello), and of the outcome only the error code. The device's ``r`` goes to the
+  caller waiting on the call; a replay returns the outcome with an empty result.
 """
 
 from __future__ import annotations
@@ -129,9 +133,11 @@ class DeviceCommandService:
         )
         if not created:
             return await self._replay(receipt, kind=kind, device_id=device_id, digest=digest)
-        return await self._deliver(receipt, timeout=timeout)
+        return await self._deliver(receipt, payload, timeout=timeout)
 
-    async def _deliver(self, receipt: dict[str, Any], *, timeout: float | None) -> CommandOutcome:
+    async def _deliver(
+        self, receipt: dict[str, Any], payload: dict[str, Any], *, timeout: float | None
+    ) -> CommandOutcome:
         device_id = receipt["deviceId"]
         command_id = receipt["commandId"]
         connection_id = await self._hub.current_connection(device_id)
@@ -148,7 +154,7 @@ class DeviceCommandService:
                     commandId=command_id,
                     deadline=deadline.isoformat(),
                     inputDigest=receipt["inputDigest"],
-                    p=receipt["payload"] or {},
+                    p=payload,
                 ),
                 CommandAck,
                 connection_id=connection_id,
@@ -166,7 +172,11 @@ class DeviceCommandService:
             code = str(exc.details.get("aaCode") or exc.code)
             settled = await self._settle(receipt, "rejected", {"e": {"code": code, "message": exc.message}})
             raise DeviceCommandRejected(code, exc.message or code, settled) from exc
-        return self._finish(receipt, await self._settle_ack(receipt, ack.outcome, ack.r, ack.e), replayed=False)
+        settled = await self._settle_ack(receipt, ack.outcome, ack.r, ack.e)
+        live = {"r": ack.r, "e": ack.e.model_dump(mode="json") if ack.e is not None else None}
+        if self._e2ee_settings().required:
+            live = scrub_for_e2ee("command.ack", live)
+        return self._finish(receipt, settled, replayed=False, live=live)
 
     async def _replay(self, receipt: dict[str, Any], *, kind: str, device_id: str, digest: str) -> CommandOutcome:
         if receipt["kind"] != kind or receipt["deviceId"] != device_id or (
@@ -182,11 +192,20 @@ class DeviceCommandService:
             raise DeviceCommandOutcomeUnknown(receipt)
         return self._finish(receipt, receipt, replayed=True)
 
-    def _finish(self, original: dict[str, Any], receipt: dict[str, Any] | None, *, replayed: bool) -> CommandOutcome:
+    def _finish(
+        self,
+        original: dict[str, Any],
+        receipt: dict[str, Any] | None,
+        *,
+        replayed: bool,
+        live: dict[str, Any] | None = None,
+    ) -> CommandOutcome:
+        """``live``: the ``CommandAck`` this call received; the receipt never stores ``r``."""
+
         receipt = receipt or original
-        result = receipt.get("result") or {}
+        result = live or receipt.get("result") or {}
         if receipt["state"] == "rejected":
-            error = result.get("e") or {}
+            error = result.get("e") or (receipt.get("result") or {}).get("e") or {}
             raise DeviceCommandRejected(
                 str(error.get("code") or "command_rejected"),
                 str(error.get("message") or "the device rejected the command"),

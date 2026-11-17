@@ -6,6 +6,7 @@
 
 ### 升级须知
 
+- Server 需要执行 `v2_64` 数据库迁移：操作记录里保存的消息原文、排队文本和计划反馈会被清除，只保留结果状态；之后用同一个操作重试时只返回是否成功，不再返回设备当时的完整结果。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - Server 需要执行 `v2_62` 数据库迁移，删除记录终端工作目录的表，改为保存在 Redis（未配置 Redis 时保存在 Server 进程内）；删除设备或运行环境时一并清理。升级时已打开的终端仍在设备上运行，但 Server 重新接入它时可能提示找不到终端，重新打开一个即可。（[#739](https://github.com/anywhere-labs/Agents-Anywhere/pull/739)）
 - 端口预览需要 Server 执行 `v2_61` 数据库迁移（只新增预览表），并配置单独注册的预览域名 `AGENT_SERVER_PREVIEW_DOMAIN`（不能是 AA 站点的子域名）和至少 32 个字符的随机 `AGENT_SERVER_PREVIEW_INTERNAL_TOKEN`；预览域名要有通配符 DNS 记录和通配符证书（需要 DNS-01 验证，在网关前终止 TLS）。自托管 Compose 默认带上 frps 和 preview-auth，网关同时承载预览域名，填好这两项即开启；没有配置时端口预览在各端隐藏，其他功能不受影响。加密模式下预览流量不在端到端加密范围内，可用 `AGENT_SERVER_E2EE_PREVIEW=deny` 关闭。（[#734](https://github.com/anywhere-labs/Agents-Anywhere/pull/734)、[#735](https://github.com/anywhere-labs/Agents-Anywhere/pull/735)）
 - Server 需要执行 `v2_60` 数据库迁移，迁移会删除 Server 上保存的会话内容（对话记录、计划、目标和排队消息）且不能降级，升级前请备份数据库：会话列表、标题、归档、置顶和分享都会保留，v3 设备连上后会从电脑上的原始记录重新生成内容；以前上传的附件在 Server 启动后于后台删除，分享里用到的文件保留；升级前已读的会话保持已读，未读的保持未读，直到设备升级到 v3 后随新的回合更新。（[#733](https://github.com/anywhere-labs/Agents-Anywhere/pull/733)）
@@ -23,6 +24,7 @@
 
 ### 会话创建与消息交付
 
+- 设备上的 Connector 在收下消息、还没交给 Agent 时重启，重启后会接着发出这条消息，不再一直停在已接收却没有发出的状态。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 连接 v3 Connector 的设备上可以新建会话并发出第一条消息，带附件也可以；网络不稳重试时不会建出重复的会话，设备拒绝或离线时不留下空会话。（[#732](https://github.com/anywhere-labs/Agents-Anywhere/pull/732)）
 - 连接 v3 Connector 的设备上，运行中排队的消息改由设备保存和按序发出，Server 不再保存消息内容；设备离线时排队区显示为空并提示设备离线。（[#718](https://github.com/anywhere-labs/Agents-Anywhere/pull/718)）
 - 连接 v3 Connector 的设备上，发送消息、审批等操作在设备没有及时确认时显示「操作结果不确定」而不是设备离线，也不会被自动重发；用同一条消息重试会拿到设备上的实际结果，不会重复执行。（[#704](https://github.com/anywhere-labs/Agents-Anywhere/pull/704)）
@@ -32,6 +34,7 @@
 
 ### DSH 同步
 
+- DSH 插件接上已有会话后，DSH 里新产生的消息、工具调用和回合开始结束都会同步到 AA，不再只剩流式片段；直接连接 DSH 时，连续的多条回复不再互相覆盖、只剩最后一条。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - DSH 插件可以直接连接新版 Connector：DSH 里打开的会话实时同步到 AA，在 AA 里可以发送图片和文件、回答 DSH 的提问、审阅计划，在 DSH 和 AA 之间切换时不会出现重复的消息；本机只有旧版 Connector 时，插件仍按原来的方式同步。（[#747](https://github.com/anywhere-labs/Agents-Anywhere/pull/747)）
 - 打开装有插件的 DSH Desktop 或 `dsh web` 后，AA 里的 DSH 会话会自动交给它继续：空闲的会话马上切换，正在运行的等这一轮结束再切换；DSH 退出后会话自动回到本机 DSH 继续，退出时正在进行的那一轮显示为结果未知，不会自动重发。会话在 DSH Desktop 里打开而没有安装插件时，AA 会提示关闭它或安装插件。（[#752](https://github.com/anywhere-labs/Agents-Anywhere/pull/752)、[#755](https://github.com/anywhere-labs/Agents-Anywhere/pull/755)）
 
@@ -44,6 +47,8 @@
 
 ### 本机连接
 
+- 吊销设备凭据、删除设备或删除账号后，连接 v3 Connector 的设备会立即断开并显示离线，不再继续接收操作。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
+- 加密模式下可以在工作设备上运行 `anywhere-cli pair-client` 显示配对二维码和链接（Desktop 等在运行时也可以）；已配对的客户端批准新客户端时，要在工作设备上确认（命令行询问或 Desktop 弹窗），超时或无人回答视为拒绝。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 设备配对码和配对时下发的连接凭据不再写入数据库，只在 Redis 里以哈希和加密形式保存到配对过期，凭据被领取一次后立即删除。（[#723](https://github.com/anywhere-labs/Agents-Anywhere/pull/723)）
 - 连接 v3 Connector 的设备上，会话内容改为打开时从设备读取、有人在看时由设备实时推送，Server 不再保存；设备离线时仍能看到会话标题和状态，并提示设备离线、历史暂不可用，设备没有及时响应时提示超时而不是离线；设备重新连上后，打开着的会话会自动补齐断线期间的内容；发出的附件被设备取走后由设备保存，之后查看时从设备读取；分享改由设备导出，设备离线时提示「设备上线后才能创建分享」；计划和目标同样由设备保存和修改，设备离线时只显示是否在规划、目标是否进行中，不能查看或修改。（[#696](https://github.com/anywhere-labs/Agents-Anywhere/pull/696)、[#702](https://github.com/anywhere-labs/Agents-Anywhere/pull/702)、[#707](https://github.com/anywhere-labs/Agents-Anywhere/pull/707)、[#730](https://github.com/anywhere-labs/Agents-Anywhere/pull/730)）
 - 准备 Pi 时会复用本机 Node 22.19 及以上版本（包括 Node 24），不再强制下载；需要下载时，官方源连不上会自动改用 npmmirror，Python 安装源选了镜像的设备会优先使用 npmmirror；Windows 上多个进程同时准备不再报 `Resource deadlock avoided`，而是排队等待；数据目录通过 Junction 挂到其他盘时，不再误报「Node 安装包路径无效」；Node 下载失败时会提示检查网络。（[#657](https://github.com/anywhere-labs/Agents-Anywhere/pull/657)）

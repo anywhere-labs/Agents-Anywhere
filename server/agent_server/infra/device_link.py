@@ -171,6 +171,33 @@ class DeviceLinkHub:
             return False
         return await self._coordinator.delete_if_value(self.lease_key(held.device_id), held.lease_value)
 
+    async def _lease_absent(self, device_id: str) -> bool:
+        if not self._coordinator.distributed:
+            entry = self._local_leases.get(device_id)
+            return entry is None or entry[1] < time.monotonic()
+        return not await self._coordinator.client.exists(self.lease_key(device_id))
+
+    async def evict(self, device_id: str) -> bool:
+        """Delete the device's v3 presence lease whichever worker holds it (credentials revoked, device deleted).
+
+        Every worker sees the device offline at once; the holder's next renewal fails, so it closes
+        its streams and reports the device offline. A v2 WebSocket lease is left alone.
+        """
+
+        if not self._coordinator.distributed:
+            return self._local_leases.pop(device_id, None) is not None
+        key = self.lease_key(device_id)
+        raw = await self._coordinator.client.get(key)
+        if not raw:
+            return False
+        try:
+            lease = json.loads(raw)
+        except (TypeError, ValueError):
+            return False
+        if not isinstance(lease, dict) or lease.get("transport") != "mesh":
+            return False
+        return await self._coordinator.delete_if_value(key, raw if isinstance(raw, str) else raw.decode())
+
     # -- holding a link -----------------------------------------------------
 
     async def hold(self, device_id: str, connection_id: str, *, wait_seconds: float = 10.0) -> None:
@@ -226,7 +253,7 @@ class DeviceLinkHub:
                     )
                     await self._notify_presence(held.device_id, True)
                 elif not await self._write_lease(held, first=False):
-                    held.close_reason = "lease taken by a newer connection"
+                    held.close_reason = "lease taken by a newer connection or revoked"
                     return
                 if item.kind == "event" and item.m and self.on_event is not None:
                     try:
@@ -313,7 +340,14 @@ class DeviceLinkHub:
             held.close_reason,
             released,
         )
-        if released and held.first_item.is_set():
+        if not held.first_item.is_set():
+            return
+        if not released:
+            # Revoked (``evict``) or expired while this worker stalled: nobody else holds the device,
+            # so this worker still reports it offline. A newer holder's lease means it stays online.
+            with contextlib.suppress(Exception):
+                released = await self._lease_absent(held.device_id)
+        if released:
             await self._notify_presence(held.device_id, False)
 
     async def _notify_presence(self, device_id: str, online: bool) -> None:

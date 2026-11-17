@@ -1,5 +1,5 @@
 import { IpcConnectorLauncher } from "../connector-launcher";
-import type { BackendControlMessage, BackendInit } from "./protocol";
+import type { BackendControlMessage, BackendInit, ConfirmClientApproval } from "./protocol";
 import { BackendServer } from "./server";
 import { BackendState, type BackendFetcher } from "./state";
 
@@ -43,8 +43,28 @@ const fetcher: BackendFetcher = (input, requestInit) => new Promise<Response>((r
   send({ type: "netFetch", id, url: String(input), method: requestInit?.method ?? "GET", headers, body });
 });
 
+/** Client approvals are confirmed in a dialog only Main can show; an aborted request closes it. */
+const pendingConfirmations = new Map<number, (approved: boolean) => void>();
+let nextConfirmationId = 1;
+const confirmClientApproval: ConfirmClientApproval = (request, signal) => new Promise<boolean>((resolve) => {
+  if (signal.aborted) return resolve(false);
+  const id = nextConfirmationId++;
+  const settle = (approved: boolean) => {
+    if (!pendingConfirmations.delete(id)) return;
+    signal.removeEventListener("abort", onAbort);
+    resolve(approved === true);
+  };
+  const onAbort = () => {
+    if (pendingConfirmations.has(id)) send({ type: "confirmClientApprovalCancel", id });
+    settle(false);
+  };
+  pendingConfirmations.set(id, settle);
+  signal.addEventListener("abort", onAbort, { once: true });
+  send({ type: "confirmClientApproval", id, request });
+});
+
 const connectors = new IpcConnectorLauncher(send);
-const state = new BackendState(init, fetcher, connectors.launch);
+const state = new BackendState(init, fetcher, connectors.launch, confirmClientApproval);
 const server = new BackendServer(state);
 
 process.on("message", (message: BackendControlMessage) => {
@@ -63,6 +83,10 @@ process.on("message", (message: BackendControlMessage) => {
     pendingFetches.delete(message.id);
     clearTimeout(pending.timer);
     pending.reject(new Error(message.message));
+    return;
+  }
+  if (message.type === "confirmClientApprovalResult") {
+    pendingConfirmations.get(message.id)?.(message.approved === true);
     return;
   }
   if (message.type === "shutdown") void shutdown("shutdown");

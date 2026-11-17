@@ -6,6 +6,7 @@ import { ConnectorRpcError, CONNECTOR_CONFLICT_MESSAGE } from "./connector-rpc-e
 import type { ConnectorHostMessage, ConnectorProcess, LaunchConnector } from "./connector-launcher";
 import type { DesktopBindingStore } from "./desktop-binding";
 import type { DesktopSettingsStore } from "./desktop-settings";
+import type { ClientApprovalPrompt, ConfirmClientApproval } from "./backend/protocol";
 import { removeFile, writeJsonFile } from "./json-store";
 import { localRuntimePath, type OwnershipState, type RuntimeOwner } from "./local-runtime";
 import type { ConnectorLogStore } from "./log-store";
@@ -56,6 +57,15 @@ export interface ConnectorChannel {
     restart(config: unknown | null, options?: { timeoutMs?: number }): Promise<{ running: boolean; authFailed: boolean }>;
     events(since: number | null, options?: { signal?: AbortSignal }): AsyncIterable<{ seq: number; kind: string; state?: unknown }>;
   };
+  /**
+   * Requests that need the person at this computer (`Control/confirmations`,
+   * `Control/answerConfirmation`): a client approved by an already paired
+   * client (v3 design 11-e2ee-noise.md §7.2). Absent on Connectors without them.
+   */
+  confirmations?: {
+    follow(options: { signal: AbortSignal }): AsyncIterable<ConfirmationEvent>;
+    answer(confirmationId: string, approved: boolean): Promise<unknown>;
+  };
   logs: {
     tail(since: number | null, source?: ConnectorLogSource | null, options?: { signal?: AbortSignal }): AsyncIterable<LogEntry>;
     read(source?: ConnectorLogSource | null, beforeSeq?: number | null, afterSeq?: number | null, limit?: number): Promise<LogPage & { logsPath?: string }>;
@@ -63,6 +73,11 @@ export interface ConnectorChannel {
   };
   close?(): Promise<void>;
 }
+
+/** One item of `Control/confirmations`. */
+export type ConfirmationEvent =
+  | { kind: "requested"; confirmation: ClientApprovalPrompt & { confirmationId: string; kind: string } }
+  | { kind: "settled"; confirmationId: string; approved: boolean };
 
 /** What a ready Connector posted: how to reach its control channel as the `host` role. */
 export interface Rendezvous {
@@ -99,6 +114,8 @@ type ConnectorSupervisorOptions = {
   onDeviceSettings?: (settings: { confirmQuitOnShutdown: boolean }) => void;
   /** Test seam; production connects a Mesh to the Connector's Router. */
   connectControl?: (rendezvous: Rendezvous) => Promise<ConnectorChannel>;
+  /** Shows the Connector's confirmation requests to the person at this computer; absent = never answered (refused on timeout). */
+  confirmClientApproval?: ConfirmClientApproval;
 };
 
 type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void; reject: (error: Error) => void };
@@ -571,7 +588,15 @@ export class ConnectorSupervisor {
       throw new Error("Connector 进程在连接期间已退出。");
     }
     this.mesh = mesh;
-    const channel: ConnectorChannel = { control: new ControlServiceClient(mesh), logs: new LogsServiceClient(mesh) };
+    const channel: ConnectorChannel = {
+      control: new ControlServiceClient(mesh),
+      logs: new LogsServiceClient(mesh),
+      // Not in the generated local-machine 2.0 client: v3 Connectors add these two methods.
+      confirmations: {
+        follow: ({ signal }) => mesh.serverStream<Record<string, never>, ConfirmationEvent>("aa.local.v2.Control", "confirmations", {}, { signal }),
+        answer: (confirmationId, approved) => mesh.unary("aa.local.v2.Control", "answerConfirmation", { confirmationId, approved }, { timeoutMs: DEFAULT_RPC_TIMEOUT_MS }),
+      },
+    };
     this.channel = channel;
     this.watchStreams(channel);
     return channel;
@@ -626,6 +651,56 @@ export class ConnectorSupervisor {
     };
     void follow("Connector state", (since, signal) => channel.control.events(since, { signal }));
     void follow("Connector log", (since, signal) => channel.logs.tail(since, null, { signal }));
+    if (channel.confirmations && this.options.confirmClientApproval) void this.followConfirmations(channel.confirmations, this.options.confirmClientApproval, controller.signal);
+  }
+
+  /**
+   * The Connector's confirmation requests, one dialog each. Only an explicit
+   * yes approves; a request settled elsewhere (timeout, another answer) closes
+   * its dialog. A Connector without the stream is left alone: its approvals
+   * time out as refused.
+   */
+  private async followConfirmations(confirmations: NonNullable<ConnectorChannel["confirmations"]>, confirm: ConfirmClientApproval, signal: AbortSignal): Promise<void> {
+    const open = new Map<string, AbortController>();
+    let backoff = 500;
+    try {
+      while (!signal.aborted) {
+        try {
+          for await (const event of confirmations.follow({ signal })) {
+            backoff = 500;
+            if (event.kind === "settled") {
+              open.get(event.confirmationId)?.abort();
+              open.delete(event.confirmationId);
+              continue;
+            }
+            if (event.kind !== "requested" || open.has(event.confirmation.confirmationId)) continue;
+            const id = event.confirmation.confirmationId;
+            const dialog = new AbortController();
+            open.set(id, dialog);
+            const { approverLabel, label, fingerprint, expiresAt } = event.confirmation;
+            void confirm({ approverLabel, label, fingerprint, expiresAt }, dialog.signal)
+              .catch(() => false)
+              .then(async approved => {
+                if (dialog.signal.aborted) return;
+                open.delete(id);
+                await confirmations.answer(id, approved === true);
+              })
+              .catch(error => this.log({ level: "WARNING", message: `Answering a confirmation request failed: ${errorMessage(error)}` }));
+          }
+          if (!signal.aborted) throw new Error("confirmations stream ended");
+        } catch (error) {
+          if (signal.aborted) return;
+          const code = (error as { code?: unknown } | null)?.code;
+          // An older Connector: nothing to follow.
+          if (code === "not_available" || code === "unimplemented" || code === "not_found") return;
+          this.log({ level: "WARNING", message: `Connector confirmations stream interrupted: ${errorMessage(error)}` });
+          await new Promise(resolve => setTimeout(resolve, backoff));
+          backoff = Math.min(backoff * 2, 5_000);
+        }
+      }
+    } finally {
+      for (const dialog of open.values()) dialog.abort();
+    }
   }
 
   private handleEvent(event: unknown): void {

@@ -431,21 +431,16 @@ export class ConversationService {
         inputDigest: context.inputDigest ?? digestOf({ content: command.content, attachments: command.attachments ?? [] }),
         userItem: null,
         enqueue: null,
+        pending: {
+          content: command.content,
+          attachments: (command.attachments ?? []) as unknown as Record<string, unknown>[],
+          open: { cwd: command.cwd, ...(command.title != null ? { title: command.title } : {}), ...(command.selections !== undefined ? { selections: command.selections } : {}) },
+        },
         commandId: context.commandId,
         at,
       })
       if (received.duplicate) return { delivery: 'duplicate', clientMessageId: command.clientMessageId, state: received.delivery.state }
-      void this.serial(command.sessionId, async () => {
-        try {
-          if (!this.bindings.has(command.sessionId)) {
-            const binding = await this.open(command.sessionId, { cwd: command.cwd, ...(command.title !== undefined ? { title: command.title } : {}), ...(command.selections !== undefined ? { selections: command.selections } : {}) })
-            this.bindings.set(command.sessionId, binding)
-          }
-          await this.deliver(command.sessionId, command.clientMessageId, command.content, command.attachments ?? [])
-        } catch (error) {
-          await this.failDelivery(command.sessionId, command.clientMessageId, command.content, error)
-        }
-      })
+      this.handOff(command.sessionId, command.clientMessageId, command.content, command.attachments ?? [], { cwd: command.cwd, ...(command.title != null ? { title: command.title } : {}), ...(command.selections !== undefined ? { selections: command.selections } : {}) })
       return { delivery: 'accepted', clientMessageId: command.clientMessageId }
     })
   }
@@ -486,6 +481,7 @@ export class ConversationService {
             item: { messageId: this.deps.ids.newId('qmsg_'), sessionId: command.sessionId, clientMessageId: command.clientMessageId, content: command.content, attachments, createdBy: context.actor, createdAt: at, updatedAt: at },
           }
           : null,
+        pending: admission.kind === 'enqueue' ? null : { content: command.content, attachments: (command.attachments ?? []) as unknown as Record<string, unknown>[] },
         commandId: context.commandId,
         at,
       })
@@ -496,14 +492,26 @@ export class ConversationService {
         const item = state.items.find(entry => entry.messageId === received.queueItem?.messageId)
         return { delivery: 'queued', clientMessageId: command.clientMessageId, item: item as unknown as Record<string, unknown>, queuePosition: item?.position ?? 0, queue: state as unknown as Record<string, unknown> }
       }
-      void this.serial(command.sessionId, async () => {
-        try {
-          await this.deliver(command.sessionId, command.clientMessageId, command.content, command.attachments ?? [])
-        } catch (error) {
-          await this.failDelivery(command.sessionId, command.clientMessageId, command.content, error)
-        }
-      })
+      this.handOff(command.sessionId, command.clientMessageId, command.content, command.attachments ?? [])
       return { delivery: 'accepted', clientMessageId: command.clientMessageId }
+    })
+  }
+
+  /**
+   * The Runtime hand-off of an accepted delivery, after the ack (and again after a restart, from what the
+   * delivery kept). `open` creates the Runtime session first (`session.creation.begin`).
+   */
+  private handOff(sessionId: string, clientMessageId: string, content: string, refs: AttachmentRef[], open?: { cwd: string; title?: string; selections?: Record<string, string | null> }): void {
+    void this.serial(sessionId, async () => {
+      try {
+        if (open !== undefined && !this.bindings.has(sessionId)) {
+          const binding = await this.open(sessionId, open)
+          this.bindings.set(sessionId, binding)
+        }
+        await this.deliver(sessionId, clientMessageId, content, refs)
+      } catch (error) {
+        await this.failDelivery(sessionId, clientMessageId, content, error)
+      }
     })
   }
 
@@ -978,10 +986,20 @@ export class ConversationService {
   /**
    * After a restart: deliveries left in `sending` settle as started (evidence) or unknown; queue items left in
    * `sending` fail with `queue_dispatch_unknown`; open interactions are shown as expired; turns that were
-   * running are closed as failed. Nothing is resent.
+   * running are closed as failed. Nothing the Runtime may have seen is resent. Deliveries left in `accepted`
+   * never reached the Runtime: they are handed off now from what they kept, or rejected when nothing was kept.
    */
   public async recover(): Promise<void> {
     const at = this.deps.clock.nowIso()
+    const resume: Array<() => void> = []
+    for (const { delivery, pending } of await this.deps.store.deliveries.acceptedPending()) {
+      if (pending === null) {
+        await this.deps.store.deliveries.transition(delivery.sessionId, delivery.clientMessageId, 'rejected', { at, errorCode: 'connector_restarted' })
+        await this.writeFailedUserMessage(delivery.sessionId, delivery.clientMessageId, '', 'connector_restarted', 'The Connector restarted before this message reached the agent.')
+        continue
+      }
+      resume.push(() => this.handOff(delivery.sessionId, delivery.clientMessageId, pending.content, pending.attachments as unknown as AttachmentRef[], pending.open))
+    }
     for (const delivery of await this.deps.store.deliveries.inFlight()) {
       const evidence = await this.deps.store.timeline.findByClientMessageId(delivery.sessionId, delivery.clientMessageId)
       await this.deps.store.deliveries.transition(delivery.sessionId, delivery.clientMessageId, evidence !== null ? 'started' : 'unknown', { at, ...(evidence === null ? { errorCode: 'delivery_outcome_unknown' } : {}) })
@@ -999,6 +1017,7 @@ export class ConversationService {
     for (const session of await this.deps.store.sessions.list()) {
       if (session.activeTurn !== null) await this.onSessionLost(session.sessionId, { code: 'connector_restarted', message: 'The Connector restarted during this turn.' })
     }
+    for (const start of resume) start()
   }
 
   public async close(): Promise<void> {

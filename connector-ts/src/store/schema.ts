@@ -177,6 +177,13 @@ CREATE TABLE runtime_kv (
     breaksPrevious: false,
     sql: 'ALTER TABLE sessions ADD COLUMN project_id TEXT;',
   },
+  {
+    // What an accepted delivery still has to hand to the Runtime, kept until it leaves `accepted`, so a restart
+    // in between can still send it (the Runtime never saw it, so this is not a resend of an unknown outcome).
+    version: 3,
+    breaksPrevious: false,
+    sql: 'ALTER TABLE deliveries ADD COLUMN pending_json TEXT;',
+  },
 ]
 
 export const SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]?.version ?? 0

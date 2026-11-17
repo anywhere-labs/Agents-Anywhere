@@ -6,4 +6,4 @@ export { builtinProviders, nativeSessionId, RuntimeRegistry, runtimeSpecFrom, ty
 export { CONNECTOR_VERSION, fetchJsonViaEgress, startHostProcess, type HostProcess, type HostProcessOptions } from './host-process.js'
 export { READY_KIND, READY_VERSION, runRpc } from './rpc.js'
 export { runDesktopHost, type DesktopHostMessage, type DesktopParentMessage, type ParentPort } from './desktop-host.js'
-export { runCli, type ClientPairing, type CliIo, type CliOptions } from './cli.js'
+export { runCli, type CliConfirm, type CliIo, type CliOptions } from './cli.js'

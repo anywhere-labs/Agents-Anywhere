@@ -11,6 +11,7 @@ import {
   type BackendControlMessage,
   type BackendEvent,
   type BackendInit,
+  type ConfirmClientApproval,
 } from "./backend/protocol";
 
 const SHUTDOWN_GRACE_MS = 5_000;
@@ -30,6 +31,8 @@ export type BackendClientOptions = {
   entryPath?: string;
   /** Forks the Connector utility process the backend asks for (Main only: `utilityProcess.fork`). */
   forkConnector?: ForkUtility;
+  /** Asks the person at this computer to confirm a client approval (a dialog); absent = refused. */
+  confirmClientApproval?: ConfirmClientApproval;
 };
 
 /**
@@ -56,6 +59,8 @@ export class DesktopBackendClient {
   private readonly recentOutput: string[] = [];
   private outputClosed: Promise<void> = Promise.resolve();
   private connectors: ConnectorUtilityHost | null = null;
+  /** Open confirmation dialogs by request id; the backend cancels the ones settled elsewhere. */
+  private readonly confirmations = new Map<number, AbortController>();
 
   constructor(private readonly options: BackendClientOptions) {}
 
@@ -129,6 +134,8 @@ export class DesktopBackendClient {
         else this.sendToChild({ type: "connectorExit", id: message.id, code: null, error: "This Desktop process cannot start the Connector." });
       } else if (message.type === "connectorPost") connectors?.post(message.id, message.message);
       else if (message.type === "connectorKill") connectors?.kill(message.id);
+      else if (message.type === "confirmClientApproval") void this.handleConfirmation(message);
+      else if (message.type === "confirmClientApprovalCancel") this.confirmations.get(message.id)?.abort();
       // A crash after `ready` reports itself here just before the process exits.
       else if (message.type === "error") this.lastError = message.message;
     });
@@ -136,6 +143,8 @@ export class DesktopBackendClient {
       this.child = null;
       // Nobody is left to stop the Connector; it would also notice its parent port closing.
       connectors?.killAll();
+      // Nobody is left to receive an answer either.
+      for (const dialog of this.confirmations.values()) dialog.abort();
       this.stream?.abort();
       this.stream = null;
       // Before `ready`, the startup handshake reports the exit instead.
@@ -266,6 +275,20 @@ export class DesktopBackendClient {
     if (this.lastError) lines.push(this.lastError);
     if (this.recentOutput.length > 0) lines.push("Last output:", ...this.recentOutput);
     return lines.join("\n");
+  }
+
+  private async handleConfirmation(message: Extract<BackendControlMessage, { type: "confirmClientApproval" }>): Promise<void> {
+    const abort = new AbortController();
+    this.confirmations.set(message.id, abort);
+    let approved = false;
+    try {
+      approved = (await this.options.confirmClientApproval?.(message.request, abort.signal)) === true;
+    } catch {
+      approved = false;
+    } finally {
+      this.confirmations.delete(message.id);
+    }
+    if (!abort.signal.aborted) this.sendToChild({ type: "confirmClientApprovalResult", id: message.id, approved } satisfies BackendControlMessage);
   }
 
   private async handleNetFetch(message: Extract<BackendControlMessage, { type: "netFetch" }>): Promise<void> {

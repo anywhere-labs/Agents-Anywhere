@@ -16,6 +16,7 @@ import type {
   NewSession,
   OutboxRecord,
   OutboxStore,
+  PendingDelivery,
   PlanningRepository,
   QueueOp,
   QueueRepository,
@@ -521,11 +522,14 @@ export function openSqliteStore(options: OpenStoreOptions): SyncStore {
     return row === undefined ? null : deliveryFromRow(row)
   }
 
-  function putDelivery(value: Delivery): void {
+  /** `pending` is written on insert only; it is dropped as soon as the delivery leaves `accepted`. */
+  function putDelivery(value: Delivery, pending: PendingDelivery | null = null): void {
     run(
-      `INSERT INTO deliveries(session_id, client_message_id, state, input_digest, native_ref, error_code, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(session_id, client_message_id) DO UPDATE SET state = excluded.state, native_ref = excluded.native_ref, error_code = excluded.error_code, updated_at = excluded.updated_at`,
+      `INSERT INTO deliveries(session_id, client_message_id, state, input_digest, native_ref, error_code, created_at, updated_at, pending_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(session_id, client_message_id) DO UPDATE SET state = excluded.state, native_ref = excluded.native_ref, error_code = excluded.error_code, updated_at = excluded.updated_at,
+         pending_json = CASE WHEN excluded.state = 'accepted' THEN deliveries.pending_json ELSE NULL END`,
       value.sessionId, value.clientMessageId, value.state, value.inputDigest, value.nativeRef, value.errorCode, value.createdAt, value.updatedAt,
+      value.state === 'accepted' && pending !== null ? json(pending) : null,
     )
   }
 
@@ -555,7 +559,7 @@ export function openSqliteStore(options: OpenStoreOptions): SyncStore {
           const queueItem = queue.items.find(item => item.clientMessageId === input.clientMessageId) ?? null
           return { delivery: decision.delivery, duplicate: true, queue: queueItem === null ? null : queue, queueItem, commit: null }
         }
-        putDelivery(decision.delivery)
+        putDelivery(decision.delivery, input.enqueue === null ? input.pending ?? null : null)
         let queue: SessionQueue | null = null
         let queueItem: QueueItem | null = null
         let commit: SessionCommit | null = null
@@ -588,6 +592,12 @@ export function openSqliteStore(options: OpenStoreOptions): SyncStore {
     },
     inFlight() {
       return all("SELECT * FROM deliveries WHERE state = 'sending'").map(deliveryFromRow)
+    },
+    acceptedPending() {
+      return all("SELECT * FROM deliveries WHERE state = 'accepted' ORDER BY created_at").map(row => ({
+        delivery: deliveryFromRow(row),
+        pending: row.pending_json === null || row.pending_json === undefined ? null : parse<PendingDelivery>(row.pending_json),
+      }))
     },
   }
 

@@ -2,7 +2,8 @@
 
 - Directory fields a v3 device reports for its sessions (never content).
 - ``seq_ceiling`` and the per-session floors handed to the device on hello.
-- ``device_commands``: durable command receipts.
+- ``device_commands``: durable command receipts. No conversation content (D1): the payload only
+  for commands replayed on hello (``DEFERRABLE_COMMANDS``), and of the outcome only the error code.
 """
 
 from __future__ import annotations
@@ -14,7 +15,12 @@ from typing import Any
 from sqlalchemy import and_, case, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from agent_server.core.device_meshcall import DisplayEnvelope, SessionSummary
+from agent_server.core.device_meshcall import (
+    DisplayEnvelope,
+    SessionSummary,
+    receipt_payload,
+    receipt_result,
+)
 from agent_server.core.read_marks import READ_TO_LATEST, UNREAD
 from agent_server.core.utc import utc_now
 from agent_server.infra.db.engine import read_connection
@@ -279,7 +285,10 @@ class DeviceLinkRepositoryMixin:
         input_digest: str | None,
         payload: dict[str, Any] | None,
     ) -> tuple[dict[str, Any], bool]:
-        """Insert a ``pending`` receipt; returns ``(receipt, created)``. An existing one is returned as is."""
+        """Insert a ``pending`` receipt; returns ``(receipt, created)``. An existing one is returned as is.
+
+        ``payload`` is kept only for deferrable commands (``receipt_payload``); replays compare ``input_digest``.
+        """
 
         now = datetime.now(UTC)
         row = {
@@ -290,7 +299,7 @@ class DeviceLinkRepositoryMixin:
             "device_id": device_id,
             "session_id": session_id,
             "state": "pending",
-            "payload_json": _json(payload),
+            "payload_json": _json(receipt_payload(kind, payload)),
             "result_json": None,
             "created_at": now.isoformat(),
             "updated_at": now.isoformat(),
@@ -324,7 +333,10 @@ class DeviceLinkRepositoryMixin:
         user_id: str | None = None,
         only_from: tuple[str, ...] = ("pending", "unknown"),
     ) -> dict[str, Any] | None:
-        """Move a receipt to ``state`` if it is still in ``only_from``; terminal states never move back."""
+        """Move a receipt to ``state`` if it is still in ``only_from``; terminal states never move back.
+
+        Of ``result`` only the error code is stored (``receipt_result``), never the device's ``r``.
+        """
 
         conditions = [
             device_commands.c.device_id == device_id,
@@ -338,7 +350,7 @@ class DeviceLinkRepositoryMixin:
                 await conn.execute(
                     update(device_commands)
                     .where(and_(*conditions))
-                    .values(state=state, result_json=_json(result), updated_at=utc_now())
+                    .values(state=state, result_json=_json(receipt_result(result)), updated_at=utc_now())
                     .returning(*device_commands.c)
                 )
             ).mappings().first()

@@ -158,8 +158,21 @@ export interface ReceiveMessageInput {
   userItem: TimelineDraft | null
   /** When the admission decided to queue: the queue entry and its position mode. */
   enqueue: { item: Omit<QueueItem, 'status' | 'interruptRequested' | 'error'>; mode: 'auto' | 'interrupt' } | null
+  /**
+   * What the Runtime hand-off needs when it happens after the ack (not queued): stored with the delivery and
+   * dropped once it leaves `accepted`, so a restart in between still sends the message.
+   */
+  pending?: PendingDelivery | null
   commandId: string | null
   at: string
+}
+
+/** The message of an accepted delivery that has not reached the Runtime yet. */
+export interface PendingDelivery {
+  readonly content: string
+  readonly attachments: readonly Record<string, unknown>[]
+  /** `session.creation.begin`: how to open the new Runtime session. */
+  readonly open?: { readonly cwd: string; readonly title?: string; readonly selections?: Record<string, string | null> }
 }
 
 export interface ReceiveMessageResult {
@@ -177,6 +190,8 @@ export interface DeliveryRepository {
   transition(sessionId: string, clientMessageId: string, to: DeliveryState, details: { nativeRef?: string | null; errorCode?: string | null; at: string }): Promise<Delivery>
   /** Deliveries left in `sending` by a previous process. */
   inFlight(): Promise<Delivery[]>
+  /** Deliveries left in `accepted` by a previous process, with what they still have to send (null: none kept). */
+  acceptedPending(): Promise<Array<{ delivery: Delivery; pending: PendingDelivery | null }>>
 }
 
 export type QueueOp =

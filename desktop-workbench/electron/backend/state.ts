@@ -25,7 +25,7 @@ import type {
   DesktopSettingsPatch,
   PublicLocalDesktopBinding,
 } from "../connector-types";
-import type { BackendEventName, BackendInit } from "./protocol";
+import type { BackendEventName, BackendInit, ConfirmClientApproval } from "./protocol";
 
 /**
  * Outbound HTTP for device registration. It is injected so the backend can
@@ -57,7 +57,7 @@ export class BackendState {
   private closed = false;
   private initialized = false;
 
-  constructor(private readonly init: BackendInit, fetcher: BackendFetcher, launch: LaunchConnector) {
+  constructor(private readonly init: BackendInit, fetcher: BackendFetcher, launch: LaunchConnector, confirmClientApproval?: ConfirmClientApproval) {
     this.server = { serverUrl: init.defaultServerUrl, apiNamespace: init.apiNamespace };
     this.machineState = new MachineStateStore(undefined, (message) => this.appendLog({ level: "WARNING", message }));
     this.settings = new DesktopSettingsStore(init.settingsPath, init.preferredLanguages);
@@ -87,6 +87,7 @@ export class BackendState {
       onDeviceSettings: (settings) => {
         if (this.settings.saveDeviceSettings(settings)) this.emit("settings", this.settings.get());
       },
+      ...(confirmClientApproval ? { confirmClientApproval } : {}),
     });
     this.devices = new DesktopDeviceService({
       requireOwnership: () => this.requireOwnership(),

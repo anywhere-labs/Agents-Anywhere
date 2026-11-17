@@ -38,7 +38,7 @@ import {
 import { DesktopUpdateService } from "./desktop-updates";
 import { nextSilentLaunchState, shouldLaunchSilently, type SilentLaunchState } from "./silent-launch";
 import { validateTitleBarColors, validateWindowTheme } from "./title-bar";
-import type { BackendInit } from "./backend/protocol";
+import type { BackendInit, ClientApprovalPrompt } from "./backend/protocol";
 import { DesktopBackendClient } from "./backend-client";
 import { readDesktopSettings } from "./desktop-settings";
 import { ConnectorLogStore } from "./log-store";
@@ -941,6 +941,7 @@ async function startDesktopBackend(): Promise<void> {
   const client = new DesktopBackendClient({
     fetcher: (input, init) => net.fetch(String(input), init),
     forkConnector,
+    confirmClientApproval,
     onEvent: (event) => {
       if (backend !== client) return;
       if (event.event === "ownership") {
@@ -992,6 +993,30 @@ function applySilentLaunchState(): void {
   const revealed = next === "revealed" && silentLaunch !== "revealed";
   silentLaunch = next;
   if (revealed) showMainWindow();
+}
+
+/**
+ * A paired client asks the Connector to trust a new client (v3 design
+ * 11-e2ee-noise.md §7.2). Refusing is the default: Escape, closing the dialog
+ * and the Connector's timeout all refuse.
+ */
+async function confirmClientApproval(request: ClientApprovalPrompt, signal: AbortSignal): Promise<boolean> {
+  const options = {
+    type: "question" as const,
+    title: "允许新的客户端访问这台电脑？",
+    message: `已配对的「${request.approverLabel || "客户端"}」请求授权新的客户端「${request.label || "未命名"}」`,
+    detail: `新客户端的指纹：\n${request.fingerprint}\n\n请与新客户端上显示的指纹逐组核对，一致才允许。授权后它可以查看和操作这台电脑上的会话、文件与终端。不处理将在 ${new Date(request.expiresAt).toLocaleTimeString()} 自动拒绝。`,
+    buttons: ["拒绝", "允许"],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+    signal,
+  };
+  if (signal.aborted) return false;
+  const result = mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()
+    ? await dialog.showMessageBox(mainWindow, options)
+    : await dialog.showMessageBox(options);
+  return !signal.aborted && result.response === 1;
 }
 
 async function confirmQuit(): Promise<boolean> {

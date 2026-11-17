@@ -237,7 +237,7 @@ describe('data upgrades', () => {
     await createSession()
     await store.close()
     const raw = new DatabaseSync(join(dir, 'store.sqlite'))
-    raw.exec("ALTER TABLE sessions DROP COLUMN project_id; UPDATE meta SET value = '1' WHERE key = 'schema_version'")
+    raw.exec("ALTER TABLE sessions DROP COLUMN project_id; ALTER TABLE deliveries DROP COLUMN pending_json; UPDATE meta SET value = '1' WHERE key = 'schema_version'")
     raw.close()
     sync = openSqliteStore({ dataDir: dir, now })
     store = inProcessStore(sync)

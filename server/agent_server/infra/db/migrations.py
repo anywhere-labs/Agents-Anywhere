@@ -21,8 +21,8 @@ from sqlalchemy.pool import NullPool
 from agent_server.infra.db.engine import resolve_db_url
 
 BASELINE_V2_REVISION = "v2_0"
-CURRENT_SCHEMA_REVISION = "v2_63"
-CURRENT_SCHEMA_VERSION = "2.63"
+CURRENT_SCHEMA_REVISION = "v2_64"
+CURRENT_SCHEMA_VERSION = "2.64"
 POSTGRES_MIGRATION_LOCK_ID = 0x414147454E545332
 DEFAULT_MIGRATION_LOCK_TIMEOUT_SECONDS = 120.0
 
@@ -241,7 +241,8 @@ def _classify_sync(connection) -> UnversionedDatabase:
         and "read_seq" in session_columns
     ):
         # v2_61 adds port previews; v2_62 moves terminal roots to Redis; v2_63 registers
-        # commands sent through an E2EE secure channel.
+        # commands sent through an E2EE secure channel. v2_64 only rewrites receipt rows (no
+        # layout change), so a v2_63 layout is reported as v2_63 and upgraded through it.
         e2ee_commands = "e2ee_command_registrations" in tables
         if "previews" not in tables:
             if "connector_terminal_roots" not in tables or e2ee_commands:

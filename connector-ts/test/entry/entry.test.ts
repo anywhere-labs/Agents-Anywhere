@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, existsSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -15,6 +15,14 @@ import { FakeRuntimeSession, PushQueue } from '../support/fake-runtime-session.j
 import { FakeServer, RouterProcess, routerBinary } from '../support/mesh-harness.js'
 
 const binary = routerBinary()
+
+function pairingPayload(uri: string): Record<string, unknown> {
+  return JSON.parse(Buffer.from(uri.slice('aa-pair://'.length), 'base64url').toString('utf8')) as Record<string, unknown>
+}
+
+function ownerInstanceId(home: string): string {
+  return (JSON.parse(readFileSync(join(home, '.agents-anywhere', 'connector-runtime.json'), 'utf8')) as { runtime: { instanceId: string } }).runtime.instanceId
+}
 
 async function until(condition: () => boolean, timeoutMs = 10_000, what = 'condition'): Promise<void> {
   const started = Date.now()
@@ -79,7 +87,7 @@ describe.skipIf(binary === null)('entry: rpc, CLI and the composition root', () 
     expect(server.held).not.toBeNull()
   }, 40_000)
 
-  it('CLI: configure saves, start runs until stopped, pair-client needs encrypted-mode support, --version', async () => {
+  it('CLI: configure saves, start runs until stopped, --version', async () => {
     const out: string[] = []
     const err: string[] = []
     const io = { out: (line: string) => out.push(line), err: (line: string) => err.push(line) }
@@ -97,14 +105,113 @@ describe.skipIf(binary === null)('entry: rpc, CLI and the composition root', () 
     stop()
     expect(await running).toBe(0)
 
-    expect(await runCli(['pair-client'], { io, home, routerBinary: binary! })).toBe(1)
-    expect(err.some(line => line.includes('not available in this build'))).toBe(true)
-    expect(await runCli(['pair-client'], { io, home, routerBinary: binary!, clientPairing: async () => ({ uri: 'aa-pair://abc', payload: { expiresAt: '2026-11-17T00:10:00.000Z' } }) })).toBe(0)
-    expect(out).toContain('aa-pair://abc')
-    expect(out.some(line => line.includes('█'))).toBe(true)
     expect(await runCli(['--version'], { io })).toBe(0)
     expect(await runCli(['bogus'], { io })).toBe(64)
   }, 60_000)
+
+  it('CLI pair-client as the host: starts the Connector and prints an invitation of the Server\'s encrypted mode', async () => {
+    server.e2eeMode = 'required'
+    const out: string[] = []
+    const err: string[] = []
+    const io = { out: (line: string) => out.push(line), err: (line: string) => err.push(line) }
+    const credential = server.deviceCredential
+    expect(await runCli(['configure', '--server-url', server.url, '--connector-id', credential.deviceId, '--connector-token', credential.token], { io, home, routerBinary: binary! })).toBe(0)
+    let stop!: () => void
+    const stopped = new Promise<void>(resolve => (stop = resolve))
+    const running = runCli(['pair-client'], { io, home, routerBinary: binary!, until: stopped, confirm: null, compose: { storeMode: 'in-process', providers: [], trust: { vault: noVault() }, terminals: false } })
+    await until(() => out.some(line => line.startsWith('aa-pair://')), 30_000, 'pairing link').catch(error => {
+      throw new Error(`${(error as Error).message}\n${err.join('\n')}`)
+    })
+    const payload = pairingPayload(out.find(line => line.startsWith('aa-pair://'))!)
+    expect(payload).toMatchObject({ v: 1, deviceId: credential.deviceId, serverUrl: server.url, e2eeMode: 'required' })
+    expect(out.some(line => line.includes('█'))).toBe(true)
+    expect(out.some(line => /^Device fingerprint: [0-9a-f]{4}( [0-9a-f]{4}){7}$/u.test(line))).toBe(true)
+    expect(out.at(-1)).toContain('keep it running until the client has paired')
+    stop()
+    expect(await running).toBe(0)
+  }, 60_000)
+
+  it('CLI pair-client against a Server without encryption: refused with an explanation', async () => {
+    const out: string[] = []
+    const err: string[] = []
+    const io = { out: (line: string) => out.push(line), err: (line: string) => err.push(line) }
+    const credential = server.deviceCredential
+    expect(await runCli(['configure', '--server-url', server.url, '--connector-id', credential.deviceId, '--connector-token', credential.token], { io, home, routerBinary: binary! })).toBe(0)
+    expect(await runCli(['pair-client'], { io, home, routerBinary: binary!, until: new Promise(() => undefined), confirm: null, compose: { storeMode: 'in-process', providers: [], trust: { vault: noVault() }, terminals: false } })).toBe(1)
+    expect(err.some(line => line.includes('does not use end-to-end encryption'))).toBe(true)
+    expect(out.some(line => line.startsWith('aa-pair://'))).toBe(false)
+  }, 60_000)
+
+  it('CLI pair-client while another host owns the machine: asks it over the local control interface', async () => {
+    server.e2eeMode = 'required'
+    const desktop = await startHostProcess({ kind: 'desktop-workbench', home, routerBinary: binary!, compose: { storeMode: 'in-process', providers: [], trust: { vault: noVault() }, terminals: false } })
+    try {
+      const credential = server.deviceCredential
+      // Desktop's own configuration; the CLI has none and does not need one.
+      await desktop.controller.start({ serverUrl: server.url, connectorId: credential.deviceId, connectorToken: credential.token })
+      await until(() => server.held !== null, 20_000, 'online')
+      const out: string[] = []
+      const err: string[] = []
+      const io = { out: (line: string) => out.push(line), err: (line: string) => err.push(line) }
+      expect(await runCli(['pair-client'], { io, home, routerBinary: binary! })).toBe(0)
+      const payload = pairingPayload(out.find(line => line.startsWith('aa-pair://'))!)
+      expect(payload).toMatchObject({ deviceId: credential.deviceId, serverUrl: server.url, e2eeMode: 'required' })
+      expect(out.at(-1)).toContain('(desktop-workbench, PID')
+      // The owner still runs (the CLI never competed for the machine) and holds that pairing's psk.
+      expect(desktop.controller.getState().running).toBe(true)
+
+      // The published key may ask for a pairing and nothing else.
+      const rendezvous = JSON.parse(readFileSync(join(home, '.agents-anywhere', 'router', `${ownerInstanceId(home)}.pairing.json`), 'utf8')) as { endpoint: { unixPath: string }; key: string }
+      expect(rendezvous.key).toMatch(/^mk_client-pairing_/u)
+      const peer = new Mesh(new Router({ unixPath: rendezvous.endpoint.unixPath }), { token: rendezvous.key, retry: false, reconnect: { enabled: false } })
+      try {
+        await expect(peer.unary('aa.local.v2.Control', 'getState', {})).rejects.toThrow()
+        await expect(peer.unary('aa.local.v2.Control', 'grantLocalClient', { clientIdentityPub: Buffer.alloc(32, 7).toString('base64url') })).rejects.toThrow()
+        await expect(peer.unary('aa.local.v2.Control', 'answerConfirmation', { confirmationId: 'conf_x', approved: true })).rejects.toThrow()
+        expect(await peer.unary('aa.local.v2.Control', 'startClientPairing', {})).toMatchObject({ deviceId: credential.deviceId })
+      } finally {
+        await peer.close()
+      }
+      // The host key also reaches the trust controls (Desktop): an unknown confirmation is not accepted.
+      const host = new Mesh(new Router({ unixPath: rendezvous.endpoint.unixPath }), { token: desktop.descriptor.key, retry: false })
+      try {
+        expect(await host.unary('aa.local.v2.Control', 'answerConfirmation', { confirmationId: 'conf_unknown', approved: true })).toEqual({ accepted: false })
+      } finally {
+        await host.close()
+      }
+    } finally {
+      await desktop.shutdown()
+    }
+  }, 60_000)
+
+  it('local confirmation through the control interface: Desktop follows requests and answers; no answer refuses', async () => {
+    const desktop = await startHostProcess({ kind: 'desktop-workbench', home, routerBinary: binary! })
+    const endpoint = desktop.descriptor.endpoint as { unixPath: string }
+    const host = new Mesh(new Router({ unixPath: endpoint.unixPath }), { token: desktop.descriptor.key, retry: false })
+    const abort = new AbortController()
+    try {
+      const request = { approverLabel: 'Phone', label: 'Browser', fingerprint: '0123 4567 89ab cdef 0123 4567 89ab cdef' }
+      // Nobody follows yet: refused at once.
+      expect(await desktop.confirmations.confirmClientApproval(request)).toBe(false)
+      const seen: { kind: string; confirmation?: { confirmationId: string; label: string }; approved?: boolean }[] = []
+      const following = (async () => {
+        for await (const event of host.serverStream<object, (typeof seen)[number]>('aa.local.v2.Control', 'confirmations', {}, { signal: abort.signal })) {
+          seen.push(event)
+          if (event.kind === 'requested') await host.unary('aa.local.v2.Control', 'answerConfirmation', { confirmationId: event.confirmation!.confirmationId, approved: seen.length === 1 })
+        }
+      })().catch(() => undefined)
+      await until(() => desktop.confirmations.answerable, 10_000, 'subscriber')
+      expect(await desktop.confirmations.confirmClientApproval(request)).toBe(true)
+      expect(await desktop.confirmations.confirmClientApproval(request)).toBe(false)
+      await until(() => seen.length === 4, 10_000, 'settlements')
+      expect(seen.map(event => `${event.kind}:${event.approved ?? event.confirmation?.label}`)).toEqual(['requested:Browser', 'settled:true', 'requested:Browser', 'settled:false'])
+      abort.abort()
+      await following
+    } finally {
+      await host.close()
+      await desktop.shutdown()
+    }
+  }, 30_000)
 
   it('composition root: Runtimes are announced, native sessions scanned into session.inventory and opened on demand', async () => {
     const opened: string[] = []

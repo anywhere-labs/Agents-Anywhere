@@ -7,12 +7,22 @@ import type { DisplayEnvelope, OutboxStore } from '../application/ports/index.js
 import type { LocalConfirmation } from '../application/ports/trust.js'
 import { DeviceTrustService } from '../application/trust/device-trust-service.js'
 import { SEALED_SEGMENT_BYTES, SecureChannelHub, fromB64url, nodeContentSealer, openSegments } from '../channel/index.js'
+import { clientIdFor, identityFingerprint, type ClientPlatform } from '../domain/trust/index.js'
 import { nodeNoiseCrypto, x25519FromSecret } from '../channel/noise/node-crypto.js'
 import type { DisplayFields } from '../domain/conversation/index.js'
 import { FileDeviceSecrets, FileTrustRepository, platformVault, type VaultKeyProvider } from '../keystore/index.js'
 import { secureChannelVia, type E2eeMode, type SecureChannelHandler } from '../link/index.js'
 import { plainSealer, type DisplaySealer } from '../sync/index.js'
+import type { ClientPairingInvitation, LocalClientGrant } from '../host/index.js'
 import type { Log } from './compose.js'
+
+/** How long a pairing request waits for the first `LinkWelcome` (the Server's E2EE mode) after a start. */
+const WELCOME_WAIT_MS = 20_000
+const PLATFORMS: readonly ClientPlatform[] = ['web', 'desktop', 'android', 'ios', 'cli']
+
+function failure(code: string, message: string): Error {
+  return Object.assign(new Error(message), { code })
+}
 
 /** AES-GCM tag after every sealed segment (contracts/e2ee/1.0 「附件与分享」). */
 const SEGMENT_TAG_BYTES = 16
@@ -33,6 +43,8 @@ export function openSealedUpload(ciphertext: Buffer, key: string, sha256: string
 export interface DeviceTrustOptions {
   readonly dataDir: string
   readonly deviceId: string
+  /** The Server this Connector is configured for: the `serverUrl` of a pairing invitation. */
+  readonly serverUrl?: string
   readonly log: Log
   /** The client API served inside channels (`DeviceTunnelApi`). */
   readonly api: TunnelApi
@@ -40,7 +52,7 @@ export interface DeviceTrustOptions {
   readonly deviceLabel?: string
   /** Where the secrets' wrapping key lives (default: the platform's keychain / DPAPI / Secret Service). */
   readonly vault?: VaultKeyProvider
-  /** The person at this device confirms a client approved from another client (Desktop dialog). */
+  /** The person at this device confirms a client approved from another client (CLI prompt, Desktop dialog). */
   readonly confirmation?: LocalConfirmation
   /** Re-sends every session summary (after a directory key rotation). */
   readonly republishSummaries: () => Promise<number>
@@ -59,6 +71,11 @@ export class DeviceTrust {
   private serverMode: E2eeMode = 'off'
   private readonly unsubscribe: () => void
   private closed = false
+  private welcomed!: () => void
+  /** Resolves once the Server declared its mode (`LinkWelcome.e2eeMode`). */
+  private readonly welcome = new Promise<void>(resolve => {
+    this.welcomed = resolve
+  })
 
   private constructor(private readonly options: DeviceTrustOptions, trust: DeviceTrustService, hub: SecureChannelHub) {
     this.trust = trust
@@ -101,6 +118,49 @@ export class DeviceTrust {
   public async declareServerMode(mode: E2eeMode | undefined): Promise<void> {
     this.serverMode = mode === 'required' ? 'required' : 'off'
     await this.trust.declareServerMode(this.serverMode)
+    this.welcomed()
+  }
+
+  /**
+   * A client pairing invitation (§7.1): `startPairing` with the mode the Server declared in `LinkWelcome`. Only in
+   * encrypted mode (the Server's or this device's own policy); before the first welcome it waits for one.
+   */
+  public async invite(waitMs = WELCOME_WAIT_MS): Promise<ClientPairingInvitation> {
+    if (this.closed) throw failure('connector_not_running', 'the Connector is not running')
+    let timer: NodeJS.Timeout | undefined
+    const welcomed = await Promise.race([
+      this.welcome.then(() => true),
+      new Promise<boolean>(resolve => {
+        timer = setTimeout(() => resolve(false), waitMs)
+        timer.unref()
+      }),
+    ])
+    clearTimeout(timer)
+    if (!welcomed) throw failure('connector_offline', 'the Connector has not reached its Server yet; check its connection and try again')
+    if (this.mode !== 'required') throw failure('e2ee_off', 'this Server does not use end-to-end encryption (AGENT_SERVER_E2EE=required), so clients need no pairing')
+    const serverUrl = this.options.serverUrl ?? ''
+    if (serverUrl === '') throw failure('connector_not_running', 'the Connector has no Server configured')
+    // Forget the psks of pairings that ran out before counting the open ones.
+    await this.trust.expirePairings()
+    const invitation = await this.trust.startPairing(serverUrl, this.serverMode)
+    this.options.log('info', `client pairing ${invitation.payload.pairingId} opened (expires ${invitation.payload.expiresAt})`)
+    return {
+      uri: invitation.uri,
+      deviceId: invitation.payload.deviceId,
+      pairingId: invitation.payload.pairingId,
+      expiresAt: invitation.payload.expiresAt,
+      fingerprint: identityFingerprint(Buffer.from(invitation.payload.deviceIdentityPub, 'base64url')),
+    }
+  }
+
+  /** §7.1: Desktop next to this Connector authorises its own client key through the local control interface. */
+  public async grantLocal(request: { clientIdentityPub: string; label: string; platform: string | null }): Promise<LocalClientGrant> {
+    const identityPub = fromB64url(request.clientIdentityPub)
+    if (identityPub.length !== 32) throw failure('invalid_argument', 'clientIdentityPub must be a base64url X25519 public key')
+    const platform = PLATFORMS.includes(request.platform as ClientPlatform) ? (request.platform as ClientPlatform) : null
+    const grant = await this.trust.grantLocally({ clientId: clientIdFor(identityPub), identityPub: Buffer.from(identityPub).toString('base64url'), label: request.label, platform })
+    this.options.log('info', `client ${grant.clientId} authorised on this computer`)
+    return { clientId: grant.clientId, label: grant.label, identityPubFingerprint: identityFingerprint(identityPub) }
   }
 
   /**

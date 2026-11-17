@@ -98,9 +98,14 @@ async def device_ready(
     db: Store = Depends(get_store),
     links: DeviceLinkService = Depends(get_device_link_service),
 ) -> DeviceReadyResponse:
-    connector_id = await _require_active_connector(authorization, db)
-    try:
-        await links.ready(connector_id, payload.connectionId)
-    except DeviceLinkError as exc:
-        _raise(exc)
+    connector_id = _access_token_connector_id(authorization)
+    # Same lock as hello and as revoking or deleting the device: a ready that passed the credential
+    # check cannot finish holding the link after the device was revoked (``DeviceLinkService.revoke``
+    # also removes the link record, so a later ready with this connectionId is refused).
+    async with db.connector_lifecycle(connector_id):
+        await _require_active_connector(authorization, db)
+        try:
+            await links.ready(connector_id, payload.connectionId)
+        except DeviceLinkError as exc:
+            _raise(exc)
     return DeviceReadyResponse(connectionId=payload.connectionId)
