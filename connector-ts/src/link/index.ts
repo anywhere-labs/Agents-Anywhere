@@ -71,3 +71,4 @@ export {
   type WorkspaceMethod,
   type WorkspaceServiceDeps,
 } from './workspace.js'
+export { CLIENT_SERVICE, DEFAULT_CLIENT_LIMITS, clientCall, clientRoute, clientSubscribe, type ClientLimits } from './client-call.js'

@@ -1,6 +1,7 @@
 import { MeshCallError, ResourceExhaustedError, z, type DuplexChannel, type RpcContext } from 'meshcall'
 
 import { CommandInbox, errorCode } from '../application/inbound/index.js'
+import type { TunnelApi } from '../application/inbound/tunnel-api.js'
 import type { OutboxStore } from '../application/ports/index.js'
 import type { CommandCall } from '../generated/device-meshcall/v1_0/command-call.js'
 import { REGISTERED_SERVICES } from '../generated/device-meshcall/v1_0/e2ee-registration.js'
@@ -8,6 +9,7 @@ import { chunkJson, outboxStream, scrubForE2ee, watchSession, type DeviceReaders
 import { defineService, type MethodDef } from '../mesh/index.js'
 import type { AttachHub } from './attach.js'
 import type { LocalBlob } from './blobs.js'
+import { CLIENT_CALL_REQUEST, CLIENT_SERVICE, CLIENT_SUBSCRIBE_REQUEST, DEFAULT_CLIENT_LIMITS, clientCall, clientRoute, clientSubscribe, type ClientLimits } from './client-call.js'
 import type { BlobTransfer, TransferUpload } from './device-files.js'
 import type { SessionCommand } from './session-commands.js'
 import { TerminalWatchers, workspaceCall, type WorkspaceServiceDeps } from './workspace.js'
@@ -40,7 +42,8 @@ export const DEFAULT_LIMITS: Readonly<Record<CallClass, number>> = {
 
 /**
  * The Server's `CRITICAL_METHODS` (the critical channel: approvals, notices, session creation and workspace
- * preparation prompts), plus the link's own streams and receipt lookups.
+ * preparation prompts), plus the link's own streams and receipt lookups. A `Client/call` takes the lane of its
+ * route's `kind` instead (`client-routes.json`).
  */
 const CRITICAL = new Set([
   'attach', 'outbox', 'ackOutbox', 'status', 'sessionInterrupt',
@@ -48,7 +51,12 @@ const CRITICAL = new Set([
   'workspacePreparationGet', 'workspacePreparationRespond', 'workspacePreparationCancel',
 ])
 
-export function callClass(serviceName: string, methodName: string): CallClass {
+/**
+ * The lane of a call. For `Client/call` it is the route's `kind`, read from `request` after the route is checked
+ * (an unknown or mismatched route throws `invalid_argument` here, before the call takes a lane).
+ */
+export function callClass(serviceName: string, methodName: string, request?: Record<string, unknown>): CallClass {
+  if (serviceName === CLIENT_SERVICE) return methodName === 'call' ? clientRoute(request ?? {}).kind : 'stream'
   if (CRITICAL.has(methodName)) return 'critical'
   if (serviceName === 'aa.device.v1.Secure') return 'secure'
   if (serviceName === 'aa.device.v1.Commands') return 'command'
@@ -82,6 +90,9 @@ export interface DeviceServicesDeps {
   readonly workspace?: WorkspaceServiceDeps
   /** A session's slash commands for `Runtime/catalogs` (`catalogs.commands`); the link keeps them. */
   readonly sessionCommands?: (sessionId: string) => readonly SessionCommand[]
+  /** `aa.device.v1.Client` (normal mode): the client API the secure channel also answers through. Absent: not registered. */
+  readonly client?: TunnelApi
+  readonly clientLimits?: Partial<ClientLimits>
 }
 
 
@@ -166,7 +177,7 @@ export class DeviceServices {
       ...extra,
       handler: (async (request: Record<string, unknown>, context: RpcContext) => {
         this.gate(context)
-        const leave = this.limiter.enter(callClass(serviceName, name))
+        const leave = this.limiter.enter(callClass(serviceName, name, request))
         try {
           return await run(request, context)
         } catch (error) {
@@ -188,7 +199,7 @@ export class DeviceServices {
       ...extra,
       handler: (async function* (request: Record<string, unknown>, context: RpcContext) {
         self.gate(context, name === 'attach' || name === 'outbox' ? request.connectionId : undefined)
-        const leave = self.limiter.enter(callClass(serviceName, name))
+        const leave = self.limiter.enter(callClass(serviceName, name, request))
         try {
           yield* run(request, context)
         } catch (error) {
@@ -335,6 +346,27 @@ export class DeviceServices {
     ]
   }
 
+  /**
+   * `aa.device.v1.Client` (normal mode only; encrypted mode reaches the same API through `Secure/channel`): `call`
+   * answers one client API request, `subscribe` streams a terminal.
+   */
+  private clientMethods(): MethodDef[] {
+    const api = this.deps.client
+    if (api === undefined) return []
+    const limits: ClientLimits = { ...DEFAULT_CLIENT_LIMITS, ...this.deps.clientLimits }
+    const watchers = this.terminalWatchers
+    const terminals = this.deps.workspace?.terminals
+    return [
+      this.stream(CLIENT_SERVICE, 'call', 'One client API request: a ClientCallHead, then the JSON body in chunks; a started command settles even if the call is cancelled.',
+        request => clientCall(api, request, limits),
+        { readOnly: false, idempotent: false, request: CLIENT_CALL_REQUEST }),
+      this.stream(CLIENT_SERVICE, 'subscribe', 'Opening subscribes to a terminal, cancelling unsubscribes: the terminal WebSocket messages.', (request, context) => {
+        if (watchers === null || terminals === undefined) throw new MeshCallError('unimplemented', 'terminals are not available on this device')
+        return clientSubscribe(watchers, terminals, request, context.signal)
+      }, { request: CLIENT_SUBSCRIBE_REQUEST }),
+    ]
+  }
+
   private commandMethods(names: readonly string[]): MethodDef[] {
     const S = 'aa.device.v1.Commands'
     const callSchema = z.looseObject({ commandId: z.string().min(1), deadline: z.string(), inputDigest: z.string().nullable().optional(), p: z.looseObject({}).optional() })
@@ -388,6 +420,7 @@ export class DeviceServices {
       'aa.device.v1.Runtime': () => this.runtimeMethods(),
       'aa.device.v1.Commands': () => this.commandMethods(registration['aa.device.v1.Commands'] ?? []),
       'aa.device.v1.Workspace': () => this.workspaceMethods(),
+      [CLIENT_SERVICE]: () => this.clientMethods(),
       'aa.device.v1.Secure': () => this.secureMethods(),
     }
     const services: object[] = []
