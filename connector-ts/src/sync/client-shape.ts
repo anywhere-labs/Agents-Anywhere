@@ -48,7 +48,11 @@ export function protocolItems(items: readonly TimelineItem[]): ProtocolTimelineI
  * character), so a snapshot larger than one MeshCall item still streams within the frame limit.
  */
 export function chunkJson(body: unknown, maxBytes: number): { seq: number; chunk: string; end: boolean }[] {
-  const text = JSON.stringify(body)
+  return chunkText(JSON.stringify(body), maxBytes)
+}
+
+/** `chunkJson` for JSON text already serialised (its size checked first, say). */
+export function chunkText(text: string, maxBytes: number): { seq: number; chunk: string; end: boolean }[] {
   const chunks: { seq: number; chunk: string; end: boolean }[] = []
   let start = 0
   let seq = 0

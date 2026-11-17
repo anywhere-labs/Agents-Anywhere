@@ -5,7 +5,7 @@
 import { randomBytes } from 'node:crypto'
 
 import type { CommandInbox } from '../application/inbound/commands.js'
-import type { ChannelCaller, TunnelApi, TunnelApiRequest, TunnelApiResponse, TunnelSubscription } from '../application/inbound/tunnel-api.js'
+import type { ChannelCaller, TunnelApi, TunnelApiRequest, TunnelApiResponse, TunnelCallContext, TunnelSubscription } from '../application/inbound/tunnel-api.js'
 import type { Clock, ConversationStore } from '../application/ports/index.js'
 import { eventCursor, type Session } from '../domain/conversation/index.js'
 import { goalWire } from '../domain/goals/index.js'
@@ -88,6 +88,9 @@ function errorBody(error: unknown): TunnelApiResponse {
   if (typeof code === 'string' && code !== 'internal') return { status: statusOf(code), body: { detail: { code, message } } }
   return { status: 500, body: { detail: { code: 'internal', message } } }
 }
+
+/** A caller with the `Client/call` facts of its request, if any. */
+type ScopedCaller = ChannelCaller & { readonly call?: TunnelCallContext }
 
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
@@ -198,7 +201,8 @@ export class DeviceTunnelApi implements TunnelApi {
     this.newId = deps.newId ?? (prefix => `${prefix}${randomBytes(12).toString('base64url')}`)
   }
 
-  public async request(caller: ChannelCaller, request: TunnelApiRequest): Promise<TunnelApiResponse> {
+  public async request(channelCaller: ChannelCaller, request: TunnelApiRequest, context?: TunnelCallContext): Promise<TunnelApiResponse> {
+    const caller: ScopedCaller = context === undefined ? channelCaller : { ...channelCaller, call: context }
     try {
       const route = parse(request)
       const [area, id] = route.segments
@@ -232,8 +236,12 @@ export class DeviceTunnelApi implements TunnelApi {
   }
 
   /** Runs a command like `aa.device.v1.Commands/*` and answers like the Server's REST route (`{ok, result}`). */
-  private async command(caller: ChannelCaller, route: string, payload: Record<string, unknown>, commandId: string | null): Promise<Record<string, unknown>> {
-    const ack = await this.deps.inbox.handle(route, { commandId: commandId ?? this.newId('cmd_'), m: route, p: payload } as never, `client:${caller.clientId}`)
+  private async command(caller: ScopedCaller, route: string, payload: Record<string, unknown>, commandId: string | null): Promise<Record<string, unknown>> {
+    // A `Client/call` command runs under the Server's receipt identity and input digest.
+    const identity = caller.call?.command
+    const id = identity?.commandId ?? commandId ?? this.newId('cmd_')
+    const ack = await this.deps.inbox.handle(route, { commandId: id, m: route, p: payload, ...(identity !== undefined ? { inputDigest: identity.inputDigest, deadline: identity.deadline } : {}) } as never, `client:${caller.clientId}`)
+    caller.call?.onCommand?.(id, ack)
     if (ack.outcome === 'rejected') {
       const code = ack.e?.code ?? 'command_rejected'
       throw new TunnelHttpError(statusOf(code), code, ack.e?.message ?? code)
@@ -320,13 +328,9 @@ export class DeviceTunnelApi implements TunnelApi {
         return ok(await this.command(caller, 'sessionSync', { sessionId, ...(typeof body.takeover === 'boolean' ? { takeover: body.takeover } : {}) }, text(body.commandId)))
       case 'PATCH runtime/selections': {
         const selections = record(body.selections)
-        const entries = Object.entries(selections)
-        if (entries.length === 0) throw invalid('selections is required')
-        let connectorResult: Record<string, unknown> = {}
-        for (const [optionId, value] of entries) {
-          if (value === null) continue
-          connectorResult = await this.command(caller, 'sessionSelect', { sessionId, optionId, value }, null)
-        }
+        if (Object.keys(selections).length === 0) throw invalid('selections is required')
+        // One command for the whole batch (null keeps a selection), so the request has one receipt.
+        const connectorResult = await this.command(caller, 'sessionSelect', { sessionId, selections }, text(body.commandId))
         return { status: 200, body: { ok: true, state: (await reads.sessionState({ sessionId })).state, connectorResult, serverTime: this.now() } }
       }
       case 'POST planning':
@@ -387,7 +391,7 @@ export class DeviceTunnelApi implements TunnelApi {
    * exists yet), creates and starts it with the first message, and reports it through the outbox like any other
    * session. A retry with the same `clientMessageId` returns the first attempt's session.
    */
-  private async createAndStart(caller: ChannelCaller, body: Record<string, unknown>): Promise<TunnelApiResponse> {
+  private async createAndStart(caller: ScopedCaller, body: Record<string, unknown>): Promise<TunnelApiResponse> {
     if (text(body.connectorId) !== null && body.connectorId !== this.deps.deviceId) throw invalid('connectorId is not this device')
     if (Array.isArray(body.attachments) && body.attachments.length > 0) {
       throw new TunnelHttpError(409, 'e2ee_attachments_unsupported', 'The first message of an end-to-end encrypted session cannot carry attachments yet.')
@@ -397,7 +401,8 @@ export class DeviceTunnelApi implements TunnelApi {
     if (cwd === null) throw invalid('cwd is required')
     const clientMessageId = text(body.clientMessageId) ?? this.newId('create_')
     const previous = await this.deps.store.commands.get(clientMessageId)
-    const sessionId = typeof previous?.sessionId === 'string' ? previous.sessionId : `sess_${randomBytes(16).toString('hex')}`
+    // Through `Client/call` the Server already created the directory row and chose the id.
+    const sessionId = text(caller.call?.server?.sessionId) ?? (typeof previous?.sessionId === 'string' ? previous.sessionId : `sess_${randomBytes(16).toString('hex')}`)
     const result = await this.command(caller, 'sessionCreationBegin', {
       sessionId,
       runtimeId: text(body.runtimeId) ?? runtimeType,

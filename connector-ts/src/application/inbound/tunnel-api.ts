@@ -4,6 +4,9 @@
  * never learns that the request came through Noise, only who the caller is (docs/v3/11-e2ee-noise.md §6).
  */
 
+import type { ClientServerFacts } from '../../generated/device-meshcall/v1_0/client-call-request.js'
+import type { CommandAck } from '../../generated/device-meshcall/v1_0/command-ack.js'
+
 export interface ChannelCaller {
   readonly clientId: string
   readonly label: string
@@ -21,6 +24,19 @@ export interface TunnelApiResponse {
   readonly body: unknown
 }
 
+/**
+ * Per-request facts of a normal-mode `Client/call` (contracts/device-meshcall/1.0, Client section); a request
+ * through a secure channel has none.
+ */
+export interface TunnelCallContext {
+  /** The receipt identity of a command route: the inbox runs (or replays) the request's command under it. */
+  readonly command?: { readonly commandId: string; readonly inputDigest: string; readonly deadline: string }
+  /** Facts the Server owns; they win over the body. */
+  readonly server?: ClientServerFacts
+  /** Called with the ack of the request's command once the inbox settled (or replayed) it. */
+  readonly onCommand?: (commandId: string, ack: CommandAck) => void
+}
+
 export interface TunnelSubscription {
   /** `session` (the session WebSocket) or `terminal` (`terminals-v2/{terminalId}/stream`); default session. */
   readonly stream?: 'session' | 'terminal'
@@ -34,7 +50,7 @@ export interface TunnelSubscription {
 }
 
 export interface TunnelApi {
-  request(caller: ChannelCaller, request: TunnelApiRequest): Promise<TunnelApiResponse>
+  request(caller: ChannelCaller, request: TunnelApiRequest, context?: TunnelCallContext): Promise<TunnelApiResponse>
   /** Start pushing the stream's client events (session or terminal); returns the function that stops it. */
   subscribe(caller: ChannelCaller, subscription: TunnelSubscription, emit: (event: Record<string, unknown>) => void): Promise<() => void>
 }
