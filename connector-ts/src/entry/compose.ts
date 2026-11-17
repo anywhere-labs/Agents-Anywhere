@@ -2,20 +2,32 @@ import { randomBytes } from 'node:crypto'
 import { stat } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 
-import { CommandInbox, type CommandHandler } from '../application/inbound/index.js'
-import { ConversationService, NativeHistory, PreparationService } from '../application/index.js'
-import type { LiveEvents, RuntimeHandle, RuntimeHandleEvent, RuntimeProvider } from '../application/ports/index.js'
+import { CommandInbox, runtimeControlCommands, type CommandHandler } from '../application/inbound/index.js'
+import {
+  ConversationService,
+  NativeHistory,
+  PreparationService,
+  RuntimeRegistry,
+  RuntimeScans,
+  announceRuntimes,
+  applyDesiredRuntimes,
+  capabilitySet,
+  legacyInstanceSpec,
+  nativeSessionId,
+  runtimeEvent,
+  type RuntimeInstanceSpec,
+} from '../application/index.js'
+import type { LiveEvents, Log, RuntimeHandle, RuntimeHandleEvent, RuntimeProvider } from '../application/ports/index.js'
 import { legacyDataDir, type ConnectorRuntime, type ConnectorSettings, type RuntimeFactory } from '../host/index.js'
 import { ControlPlane, DeviceLink, blobLookup, deviceAttachmentFetcher, deviceTransferUploader, readSystemProxySettings, resolveEgress, type Egress, type LinkLogger } from '../link/index.js'
 import { openStoreWorker, inProcessStore, openSqliteStore, type RemoteStore } from '../store/index.js'
-import { DeviceReaders, DeviceTunnelApi, MemoryChangeFeed, OutboxSignal, capabilitySet, plainSealer, type RuntimeFacts, type SessionFacts } from '../sync/index.js'
+import { DeviceReaders, DeviceTunnelApi, MemoryChangeFeed, OutboxSignal, plainSealer, type RuntimeFacts, type SessionFacts } from '../sync/index.js'
 import { AttachmentCache, FileOps, RootPolicy, ShellOps, Terminals, nodePtySpawner, rootsFromEnv, workspaceMethods } from '../workspace/index.js'
 import { importLegacyV2 } from './legacy-import.js'
-import { announceRuntimes, applyDesiredRuntimes, runtimeControlCommands } from './runtime-control.js'
-import { builtinProviders, nativeSessionId, RuntimeRegistry, type RuntimeInstanceSpec } from './runtimes.js'
+import { builtinProviders } from './runtimes.js'
 import { DeviceTrust, openSealedUpload, type DeviceTrustOptions } from './trust.js'
 
-export type Log = (level: 'debug' | 'info' | 'warn' | 'error', message: string) => void
+export type { Log }
 
 export interface ComposeOptions {
   readonly dataDir: string
@@ -46,8 +58,6 @@ export interface ComposeOptions {
 }
 
 const EGRESS_REFRESH_MS = 60_000
-/** Native session changes arrive in bursts (a CLI writes many records); one scan per quiet second. */
-const SCAN_DEBOUNCE_MS = 1000
 
 const clock = { nowIso: () => new Date().toISOString(), nowMs: () => Date.now() }
 const ids = { newId: (prefix: string) => `${prefix}${randomBytes(12).toString('base64url')}` }
@@ -129,11 +139,11 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
         feed,
         runtimes,
         clock,
-        sessionIdFor: (_handle, runtimeId, summary) => nativeSessionId(settings.connectorId, runtimes.spec(runtimeId) ?? legacySpec(runtimeId), summary),
+        sessionIdFor: (_handle, runtimeId, summary) => nativeSessionId(settings.connectorId, runtimes.spec(runtimeId) ?? legacyInstanceSpec(runtimeId), summary),
         isBound: sessionId => service?.isBound(sessionId) ?? false,
         onError: (sessionId, error) => log('warn', `native history${sessionId === null ? '' : ` of ${sessionId}`}: ${(error as Error)?.message ?? String(error)}`),
       })
-      const scans = new RuntimeScans(history, log)
+      const scans = new RuntimeScans(history, ids, log)
       const policy = new RootPolicy({ roots: options.workspaceRoots ?? rootsFromEnv() })
       const files = new FileOps(policy)
       const terminals = await openTerminals(policy, options.terminals !== false, log)
@@ -172,7 +182,7 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
           },
         })
         service = conversation
-        onRuntimeEvent = (spec, handle, event) => runtimeEvent({ spec, handle, event, live, scans, service: conversation, store, connectorId: settings.connectorId, log })
+        onRuntimeEvent = (spec, handle, event) => runtimeEvent({ spec, handle, event, live, scans, conversations: conversation, store, connectorId: settings.connectorId, log })
         const facts: RuntimeFacts = {
           sessionCapabilities: async sessionId => {
             const session = await store.sessions.get(sessionId)
@@ -193,7 +203,7 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
           await importLegacyV2(store, {
             legacyRoot: options.legacyDataDir ?? legacyDataDir(),
             connectorId: settings.connectorId,
-            runtimeTypeOf: runtimeId => (runtimes.spec(runtimeId) ?? legacySpec(runtimeId)).runtimeType,
+            runtimeTypeOf: runtimeId => (runtimes.spec(runtimeId) ?? legacyInstanceSpec(runtimeId)).runtimeType,
             log,
             now: clock.nowIso,
           }).catch(error => log('warn', `v2 import failed: ${message(error)}`))
@@ -344,93 +354,6 @@ async function openTerminals(policy: RootPolicy, wanted: boolean, log: Log): Pro
   }
 }
 
-function legacySpec(runtimeId: string): RuntimeInstanceSpec {
-  return { runtimeId, runtimeType: runtimeId, settings: {}, sourceKey: null, enabled: true }
-}
-
 function message(error: unknown): string {
   return (error as Error)?.message ?? String(error)
-}
-
-/** Native session scans, one at a time per Runtime and debounced, so a burst of changes is one scan. */
-class RuntimeScans {
-  private readonly timers = new Map<string, NodeJS.Timeout>()
-  private readonly chains = new Map<string, Promise<unknown>>()
-  private closed = false
-
-  public constructor(private readonly history: NativeHistory, private readonly log: Log) {}
-
-  public soon(runtimeId: string, delayMs = SCAN_DEBOUNCE_MS): void {
-    if (this.closed) return
-    clearTimeout(this.timers.get(runtimeId))
-    const timer = setTimeout(() => {
-      this.timers.delete(runtimeId)
-      void this.now(runtimeId)
-    }, delayMs)
-    timer.unref()
-    this.timers.set(runtimeId, timer)
-  }
-
-  public now(runtimeId: string): Promise<unknown> {
-    const previous = this.chains.get(runtimeId) ?? Promise.resolve()
-    const next = previous.then(async () => {
-      if (this.closed) return
-      const result = await this.history.scan(runtimeId, ids.newId('scan_'))
-      this.log('debug', `native sessions of ${runtimeId}: ${result.sessions}${result.complete ? '' : ' (incomplete)'}`)
-    }).catch(error => this.log('warn', `scanning native sessions of ${runtimeId} failed: ${message(error)}`))
-    this.chains.set(runtimeId, next)
-    return next
-  }
-
-  public close(): void {
-    this.closed = true
-    for (const timer of this.timers.values()) clearTimeout(timer)
-    this.timers.clear()
-  }
-}
-
-interface RuntimeEventContext {
-  readonly spec: RuntimeInstanceSpec
-  readonly handle: RuntimeHandle
-  readonly event: RuntimeHandleEvent
-  readonly live: LiveEvents
-  readonly scans: RuntimeScans
-  readonly service: ConversationService
-  readonly store: RemoteStore
-  readonly connectorId: string
-  readonly log: Log
-}
-
-/** Runtime-level events: status and capabilities go to the Server live; native changes rescan; follow opens. */
-function runtimeEvent(context: RuntimeEventContext): void {
-  const { spec, handle, event, live } = context
-  switch (event.type) {
-    case 'status':
-      live.emit('runtime.status', { runtimeId: spec.runtimeId, status: { state: event.status, ...(event.error !== undefined ? { error: event.error } : {}) } })
-      return
-    case 'capabilities.changed':
-      live.emit('runtime.status', { runtimeId: spec.runtimeId, status: { event: 'capabilities.changed' }, capabilities: capabilitySet(event.capabilities, { runtime: spec.runtimeType, sessionId: null }) as Record<string, unknown> })
-      return
-    case 'catalogs.changed':
-      live.emit('runtime.status', { runtimeId: spec.runtimeId, status: { event: 'catalogs.changed', catalogs: event.catalogs as Record<string, unknown> } })
-      return
-    case 'native_sessions.changed':
-      context.scans.soon(spec.runtimeId)
-      return
-    case 'native_session.follow_suggested': {
-      // The companion saw a native session that should be followed (a thread the Codex App opened): make sure it
-      // is a Conversation, then open it so its live events are projected.
-      const sessionId = nativeSessionId(context.connectorId, spec, { nativeSessionId: event.ref.nativeSessionId, ...(event.ref.locator !== undefined ? { locator: event.ref.locator } : {}) })
-      void (async () => {
-        if ((await context.store.sessions.get(sessionId)) === null) await context.scans.now(spec.runtimeId)
-        if ((await context.store.sessions.get(sessionId)) === null) {
-          context.log('info', `not following ${handle.type} session ${event.ref.nativeSessionId}: not in the native session list`)
-          return
-        }
-        await context.service.binding(sessionId)
-        context.log('info', `following ${handle.type} session ${event.ref.nativeSessionId} (${event.reason})`)
-      })().catch(error => context.log('warn', `following ${event.ref.nativeSessionId} failed: ${message(error)}`))
-      return
-    }
-  }
 }

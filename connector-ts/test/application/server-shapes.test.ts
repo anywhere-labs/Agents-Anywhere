@@ -22,7 +22,7 @@ import type { GoalState as GoalWire } from '../../src/generated/protocol/v1_2/go
 import { AcpRuntimeHandle, peerConnection } from '../../src/runtime/acp/handle.js'
 import { genericDialect } from '../../src/runtime/profiles/generic/dialect.js'
 import { inProcessStore, openSqliteStore, type RemoteStore } from '../../src/store/index.js'
-import { capabilitySet } from '../../src/sync/capabilities.js'
+import { capabilitySet } from '../../src/application/runtimes/capabilities.js'
 import { DeviceReaders, MemoryChangeFeed, type RuntimeFacts } from '../../src/sync/index.js'
 import { FakeAcpAgent } from '../support/fake-acp-agent.js'
 import { FakeRuntimeSession } from '../support/fake-runtime-session.js'

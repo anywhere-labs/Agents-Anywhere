@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 
 import type { ProviderFacts, RuntimeHandle, RuntimeHandleEvent, RuntimeInstanceConfig, RuntimeProvider } from '../../src/application/ports/index.js'
 import { claudeStableSessionId, codexStableSessionId, piNativeSessionId, sessionNamespace } from '../../src/domain/identity/index.js'
-import { builtinProviders, nativeSessionId, RuntimeRegistry, runtimeSpecFrom } from '../../src/entry/runtimes.js'
+import { nativeSessionId, RuntimeRegistry, runtimeSpecFrom } from '../../src/application/runtimes/index.js'
+import { builtinProviders } from '../../src/entry/runtimes.js'
 import { FakeRuntimeSession, PushQueue } from '../support/fake-runtime-session.js'
 
 class FakeHandle implements RuntimeHandle {

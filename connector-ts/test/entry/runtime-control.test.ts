@@ -15,11 +15,10 @@ import { fileURLToPath } from 'node:url'
 
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { CommandInbox } from '../../src/application/inbound/index.js'
+import { CommandInbox, runtimeControlCommands } from '../../src/application/inbound/index.js'
 import type { ConversationService } from '../../src/application/index.js'
 import type { LiveEvents, ProviderFacts, RuntimeInstanceConfig } from '../../src/application/ports/index.js'
-import { announceRuntimes, applyDesiredRuntimes, runtimeControlCommands, runtimeTypeDescriptor } from '../../src/entry/runtime-control.js'
-import { RuntimeRegistry } from '../../src/entry/runtimes.js'
+import { RuntimeRegistry, announceRuntimes, applyDesiredRuntimes, runtimeTypeDescriptor } from '../../src/application/runtimes/index.js'
 import { claudeProvider } from '../../src/runtime/profiles/claude/index.js'
 import { inProcessStore, openSqliteStore, type RemoteStore } from '../../src/store/index.js'
 

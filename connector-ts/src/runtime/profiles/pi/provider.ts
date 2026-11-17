@@ -8,7 +8,7 @@ import { join } from 'node:path'
 
 import type { JsonObject, ModelGatewayConfig, ProviderFacts, RuntimeInstanceConfig, RuntimeProvider } from '../../../application/ports/runtime-session.js'
 import { fail, RuntimeFailure } from '../../acp/errors.js'
-import { checkDefinition, instanceSchema, validateSettings, type LaunchContext } from '../definition.js'
+import { checkDefinition, instanceSchema, validateSettings, type ConfigSchema, type LaunchContext } from '../definition.js'
 import { PI } from './definition.js'
 import { PiRuntimeHandle, type PiConnect } from './handle.js'
 import { resolveLocal, type PiInstallation } from './installation.js'
@@ -65,6 +65,10 @@ export class PiProvider implements RuntimeProvider {
       if (!(error instanceof RuntimeFailure)) throw error
       return { ...base, problems: [error.error] }
     }
+  }
+
+  instanceSchema(): ConfigSchema {
+    return instanceSchema(PI)
   }
 
   /** Validates instance config (schema plus the rules combining execution mode and model gateway). Errors never echo values. */

@@ -8,12 +8,10 @@
 //
 // The command payloads and results are declared here until the device-meshcall contract carries them.
 
-import type { CommandHandler } from '../application/inbound/index.js'
-import type { JsonObject, LiveEvents, ProviderFacts, RuntimeProvider } from '../application/ports/index.js'
-import { instanceSchema, type AcpAgentDefinition } from '../runtime/profiles/definition.js'
-import { capabilitySet } from '../sync/index.js'
-import { GATEWAY_FIELD, GATEWAY_RUNTIME_PROTOCOLS, RuntimeApplyError, runtimeSpecFrom, type InstanceReport, type RuntimeInstanceSpec, type RuntimeRegistry } from './runtimes.js'
-import type { Log } from './compose.js'
+import type { JsonObject, LiveEvents, Log, ProviderFacts, RuntimeProvider } from '../ports/index.js'
+import { capabilitySet } from './capabilities.js'
+import { GATEWAY_FIELD, GATEWAY_RUNTIME_PROTOCOLS, RuntimeApplyError, runtimeSpecFrom, type InstanceReport, type RuntimeInstanceSpec } from './instances.js'
+import type { RuntimeRegistry } from './registry.js'
 
 /** `runtime.apply` / `channel.switch` payload (`device_runtime_entry` on the Server). */
 export interface RuntimeApplyPayload {
@@ -106,17 +104,11 @@ function gatewaySchema(protocols: readonly string[]): JsonObject {
   }
 }
 
-function definitionOf(provider: RuntimeProvider | undefined): AcpAgentDefinition | null {
-  const definition = (provider as { definition?: unknown } | undefined)?.definition
-  return definition !== null && typeof definition === 'object' && 'runtime' in definition ? (definition as AcpAgentDefinition) : null
-}
-
 /** One Runtime Control 2.x `RuntimeTypeDescriptor` (`server/agent_server/core/device_runtime.py`). */
 export function runtimeTypeDescriptor(type: string, facts: ProviderFacts | null, error: string | null, provider?: RuntimeProvider): JsonObject {
   const available = facts !== null && facts.installed && facts.problems.length === 0
   const reason = available ? null : (facts?.problems[0]?.message ?? error ?? `${type} 没有安装`).slice(0, 1024) || `${type} 不可用`
-  const definition = definitionOf(provider)
-  const full = definition !== null ? instanceSchema(definition) : null
+  const full = provider?.instanceSchema?.() ?? null
   const baseSchema = (full?.schema ?? facts?.configSchema ?? null) as JsonObject | null
   const connection = MODEL_CONNECTIONS[type]
   let configSchema: JsonObject | null = null
@@ -180,28 +172,22 @@ async function resultOf(registry: RuntimeRegistry, report: InstanceReport): Prom
   }
 }
 
-export interface RuntimeControlDeps {
-  readonly registry: RuntimeRegistry
-  /** The host's device settings (`RuntimeHooks.deviceSettings`). */
-  readonly deviceSettings: (settings: Record<string, unknown>) => void
+/** `runtime.apply`: one instance's desired state, applied now, with what the device then has. */
+export async function applyRuntime(registry: RuntimeRegistry, payload: unknown): Promise<RuntimeApplyResult> {
+  return resultOf(registry, await registry.applyInstance(payload))
 }
 
-/**
- * The Server-initiated, content-free commands (registered in both E2EE modes): `runtime.apply`, `channel.switch`,
- * `device.settings.apply`, by business method name for `CommandInbox`.
- */
-export function runtimeControlCommands(deps: RuntimeControlDeps): Record<string, CommandHandler> {
-  const { registry } = deps
-  return {
-    'runtime.apply': async payload => ({ ...(await resultOf(registry, await registry.applyInstance(payload))) }),
-    'channel.switch': async payload => ({ ...(await resultOf(registry, await registry.switchChannel(payload))) }),
-    'device.settings.apply': async payload => {
-      const settings = payload.settings
-      if (settings === null || typeof settings !== 'object' || Array.isArray(settings)) throw new RuntimeApplyError('invalid_argument', 'settings must be an object')
-      deps.deviceSettings(settings as Record<string, unknown>)
-      return { applied: true }
-    },
-  }
+/** `channel.switch`: like `runtime.apply`, always restarting the instance, behind the Server's switch fence. */
+export async function switchRuntimeChannel(registry: RuntimeRegistry, payload: unknown): Promise<RuntimeApplyResult> {
+  return resultOf(registry, await registry.switchChannel(payload))
+}
+
+/** `device.settings.apply`: the whole settings object, handed to the host. */
+export function applyDeviceSettings(payload: Record<string, unknown>, apply: (settings: Record<string, unknown>) => void): { applied: true } {
+  const settings = payload.settings
+  if (settings === null || typeof settings !== 'object' || Array.isArray(settings)) throw new RuntimeApplyError('invalid_argument', 'settings must be an object')
+  apply(settings as Record<string, unknown>)
+  return { applied: true }
 }
 
 /**

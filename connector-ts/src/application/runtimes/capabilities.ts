@@ -1,5 +1,5 @@
-import type { RuntimeCapabilities } from '../application/ports/index.js'
-import type { ProtocolCapabilitySet } from '../generated/protocol/v1_2/capability-set.js'
+import type { RuntimeCapabilities } from '../ports/index.js'
+import type { ProtocolCapabilitySet } from '../../generated/protocol/v1_2/capability-set.js'
 
 /**
  * A Runtime's capabilities in the protocol 1.2 shape clients read (`runtimeCapabilities` in a snapshot,

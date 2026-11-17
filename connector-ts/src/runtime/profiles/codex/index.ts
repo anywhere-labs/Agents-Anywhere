@@ -1,5 +1,6 @@
 import type { ProviderFacts, RuntimeInstanceConfig, RuntimeProvider } from '../../../application/ports/runtime-session.js'
 import { CodexRuntimeHandle, resolveCodexHome, type CodexCompanionOptions, type CodexOpenRoute } from '../../companions/codex/handle.js'
+import type { ConfigSchema } from '../definition.js'
 import { AcpAgentProvider, type AcpAgentProviderOptions } from '../provider.js'
 import { CODEX } from './definition.js'
 import { codexDialect } from './dialect.js'
@@ -29,6 +30,10 @@ export class CodexProvider implements RuntimeProvider {
 
   discover(): Promise<ProviderFacts> {
     return this.base.discover()
+  }
+
+  instanceSchema(): ConfigSchema {
+    return this.base.instanceSchema()
   }
 
   async start(instance: RuntimeInstanceConfig): Promise<CodexRuntimeHandle> {

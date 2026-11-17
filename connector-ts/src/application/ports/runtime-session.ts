@@ -94,6 +94,17 @@ export interface RuntimeProvider {
   /** Installation, versions, config schema, instance policy; starts no long-lived process. */
   discover(): Promise<ProviderFacts>
   start(instance: RuntimeInstanceConfig): Promise<RuntimeHandle>
+  /** Checks an instance's settings (and model gateway) before anything starts; throws a coded error on refusal. */
+  validateSettings?(settings: JsonObject, modelGateway?: ModelGatewayConfig): unknown
+  /** The whole instance settings form (schema, field layout, defaults), for providers that define one. */
+  instanceSchema?(): InstanceConfigSchema
+}
+
+/** An instance settings form: the JSON Schema of the settings, the field layout and the defaults. */
+export interface InstanceConfigSchema {
+  readonly schema: JsonObject
+  readonly uiSchema?: JsonObject
+  readonly defaults?: JsonObject
 }
 
 export interface ProviderFacts {

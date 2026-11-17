@@ -14,7 +14,7 @@ import type {
 import { fail, RuntimeFailure } from '../acp/errors.js'
 import { AcpRuntimeHandle, processConnection } from '../acp/handle.js'
 import { agentEnvironment } from '../supervisor/environment.js'
-import { checkDefinition, instanceSchema, validateSettings, type AcpAgentDefinition } from './definition.js'
+import { checkDefinition, instanceSchema, validateSettings, type AcpAgentDefinition, type ConfigSchema } from './definition.js'
 import { launchCommand, localLaunch, resolveExecutable, runCheck, type Platform } from './launch.js'
 
 export interface AcpAgentProviderOptions {
@@ -56,6 +56,10 @@ export class AcpAgentProvider implements RuntimeProvider {
       if (!(error instanceof RuntimeFailure)) throw error
       return { ...base, installed: error.error.code !== 'agent_cli_missing', problems: [error.error] }
     }
+  }
+
+  instanceSchema(): ConfigSchema {
+    return instanceSchema(this.definition)
   }
 
   /** Validates instance config. Errors never echo values. */
