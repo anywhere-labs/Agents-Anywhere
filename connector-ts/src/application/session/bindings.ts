@@ -303,7 +303,7 @@ export class RuntimeBindings {
         await deps.history.ensureLatest(sessionId).catch(error => this.kernel.reportError(sessionId, error))
       }
       runtimeSession = session.externalSessionId !== null
-        ? await handle.open({ kind: 'existing', ref: { nativeSessionId: session.externalSessionId } }, { sessionId, replay: 'none' })
+        ? await handle.open({ kind: 'existing', ref: { nativeSessionId: session.externalSessionId, ...(session.cwd ? { cwd: session.cwd } : {}) } }, { sessionId, replay: 'none' })
         : await handle.open({
           kind: 'new',
           spec: {

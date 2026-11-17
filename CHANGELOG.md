@@ -25,7 +25,7 @@
 
 ### 会话创建与消息交付
 
-- 连接 v3 Connector 的设备上：回答审批时选项无效不再让这一轮卡住，可以重新回答；附件文件缺失时发送会直接提示失败，之后还能继续发消息；Agent 进程意外退出不再让 Connector 一起崩溃；Hermes 和其他通用 ACP Agent 第二轮的回复不再覆盖上一轮的最后一条回复；Connector 在执行完操作、还没记下结果时重启，Server 重试同一操作不会再执行一次。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
+- 连接 v3 Connector 的设备上：回答审批时选项无效不再让这一轮卡住，可以重新回答；附件文件缺失时发送会直接提示失败，之后还能继续发消息；Agent 进程意外退出不再让 Connector 一起崩溃；Hermes 和其他通用 ACP Agent 第二轮的回复不再覆盖上一轮的最后一条回复；Connector 在执行完操作、还没记下结果时重启，Server 重试同一操作不会再执行一次；通用 ACP Agent 的会话再次打开或读取历史时在会话自己的目录里进行，不再落到 Connector 的启动目录。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 连接 v3 Connector 的设备上：会话里可以切换模型、权限和思考强度，模型和权限列表正常显示，刷新后显示当前的选择；计划和目标状态正常显示并可以操作，计划可以下载为 Markdown；用 `/plan`、`/goal` 开始的新会话会先进入规划或设置目标，不再被当成普通消息；接管电脑上已有的会话后可以排队发消息，设备离线时切换的接管开关会在设备上线后生效；电脑上的原始记录恢复后，「不可用」提示会消失；斜杠命令菜单可以列出和执行 Agent 提供的命令。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 连接 v3 Connector 的设备上，新建通用 ACP Agent、Hermes 或 Pi 会话时，选好目录后会先在这个目录里启动 Agent，新建会话页能直接选该 Agent 提供的模型、思考强度和权限，发出首条消息时不用再等 Agent 启动；Agent 需要登录等确认时可以在新建会话页回答；Connector 在准备期间重启后，已准备好但还没发出的会话会提示重新开始，不会留下多余的 Agent 进程。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 设备上的 Connector 在收下消息、还没交给 Agent 时重启，重启后会接着发出这条消息，不再一直停在已接收却没有发出的状态。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）

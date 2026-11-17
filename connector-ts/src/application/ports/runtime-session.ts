@@ -243,6 +243,8 @@ export interface NativeSessionRef {
   readonly nativeSessionId: string
   /** Location of the native record, for Runtimes like Pi that tell sessions apart by file. */
   readonly locator?: string
+  /** Working directory of the session: where an ACP Agent opens it again (`session/load`, `session/resume`). */
+  readonly cwd?: string
 }
 
 export interface NativeSessionSummary extends NativeSessionRef {

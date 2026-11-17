@@ -276,4 +276,13 @@ describe('AcpRuntimeSession', () => {
     expect(resumed.nativeSessionId).toBe('native-old')
     expect(agent.received.some(r => r.method === 'session/resume')).toBe(true)
   })
+
+  it('opens an existing session and reads its history in the session directory, not the process directory', async () => {
+    const agent = new FakeAcpAgent()
+    const handle = new AcpRuntimeHandle({ type: 'acp:fake', instanceId: 'i1', dialect, connect: peerConnection(agent.clientPeer, dialect) })
+    await handle.readNativeHistory({ nativeSessionId: 'native-old', cwd: '/w/project' }, { limit: 10 })
+    await handle.open({ kind: 'existing', ref: { nativeSessionId: 'native-old', cwd: '/w/project' } }, { sessionId: 'aa_old', replay: 'none' })
+    const opened = agent.received.filter(r => r.method === 'session/load' || r.method === 'session/resume')
+    expect(opened.map(r => (r.params as { cwd?: string }).cwd)).toEqual(['/w/project', '/w/project'])
+  })
 })

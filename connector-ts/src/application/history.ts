@@ -112,7 +112,7 @@ export class NativeHistory {
     if (session === null || session.externalSessionId === null) return null
     const handle = await this.deps.runtimes.handle(session.runtimeId)
     if (handle === null) return null
-    return { session, handle, ref: { nativeSessionId: session.externalSessionId } }
+    return { session, handle, ref: { nativeSessionId: session.externalSessionId, ...(session.cwd ? { cwd: session.cwd } : {}) } }
   }
 
   /** Projects the latest page once (discovery, or before a Runtime session is opened). */

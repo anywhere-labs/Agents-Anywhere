@@ -238,13 +238,13 @@ export class AcpRuntimeHandle implements RuntimeHandle {
 
   async readNativeHistory(ref: NativeSessionRef, window: HistoryWindow): Promise<NativeHistoryPage> {
     // The dialect's own read-only implementation (Claude reads JSONL) may not need an Agent process; get a connection only when needed.
-    const special = this.options.dialect.readNativeHistory?.(ref, window, () => this.connection(ref.locator))
+    const special = this.options.dialect.readNativeHistory?.(ref, window, () => this.connection(ref.locator ?? ref.cwd))
     if (special !== undefined) return special
-    const connection = await this.connection(ref.locator)
+    const connection = await this.connection(ref.locator ?? ref.cwd)
     // Generic implementation: load and capture the replay, then close. Runtimes that write native records (Claude) must be handled by the dialect or the native history companion.
     if (connection.info.agentCapabilities.loadSession !== true) return { items: [] }
     const { updates } = await connection.client.capture(ref.nativeSessionId, () => connection.client.request('session/load', {
-      sessionId: ref.nativeSessionId, cwd: ref.locator ?? process.cwd(), mcpServers: [], ...(this.options.dialect.openParams?.(ref) ?? {}),
+      sessionId: ref.nativeSessionId, cwd: ref.locator ?? ref.cwd ?? process.cwd(), mcpServers: [], ...(this.options.dialect.openParams?.(ref) ?? {}),
     }, { timeoutMs: 120_000 }))
     if (hasSessionCapability(connection.info, 'close')) await connection.client.request('session/close', { sessionId: ref.nativeSessionId }, { timeoutMs: 15_000 }).catch(() => undefined)
     const identity = defaultIdentity({ sessionId: `history:${ref.nativeSessionId}`, nativeSessionId: ref.nativeSessionId, epoch: 'history', info: connection.info })
@@ -260,7 +260,7 @@ export class AcpRuntimeHandle implements RuntimeHandle {
 
   async open(target: OpenTarget, options: OpenOptions): Promise<AcpRuntimeSession> {
     if (this.draining) throw new RuntimeFailure({ code: 'runtime_route_switching', message: 'this route is being handed over', retryable: true })
-    const connection = await this.connection(target.kind === 'new' ? target.spec.cwd : target.ref.locator)
+    const connection = await this.connection(target.kind === 'new' ? target.spec.cwd : target.ref.locator ?? target.ref.cwd)
     const { client, info } = connection
     const dialect = this.options.dialect
     let nativeSessionId: string
@@ -276,7 +276,7 @@ export class AcpRuntimeHandle implements RuntimeHandle {
       nativeSessionId = String(response.sessionId)
     } else {
       nativeSessionId = target.ref.nativeSessionId
-      const params = { sessionId: nativeSessionId, cwd: target.ref.locator ?? process.cwd(), mcpServers: [], ...(dialect.openParams?.(target.ref) ?? {}) }
+      const params = { sessionId: nativeSessionId, cwd: target.ref.locator ?? target.ref.cwd ?? process.cwd(), mcpServers: [], ...(dialect.openParams?.(target.ref) ?? {}) }
       const canResume = hasSessionCapability(info, 'resume')
       if (options.replay === 'none' && canResume) {
         response = asRecord(await client.request('session/resume', params, { timeoutMs: 120_000 }))

@@ -80,7 +80,7 @@ describe('sending messages', () => {
     const result = await service.sendMessage({ sessionId: 'sess_1', clientMessageId: 'm1', content: 'hello' }, ctx('c1'))
     expect(result).toEqual({ delivery: 'accepted', clientMessageId: 'm1' })
     await settle()
-    expect(opened).toEqual([{ kind: 'existing', ref: { nativeSessionId: 'native_sess_1' } }])
+    expect(opened).toEqual([{ kind: 'existing', ref: { nativeSessionId: 'native_sess_1', cwd: '/w' } }])
     const runtime = sessions[0]!
     expect(runtime.calls).toMatchObject([{ method: 'prompt', input: { text: 'hello' }, delivery: { clientMessageId: 'm1' } }])
     expect((await store.deliveries.get('sess_1', 'm1'))?.state).toBe('started')
