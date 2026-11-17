@@ -20,6 +20,12 @@ from loguru import logger
 from agent_server.core.connector_presence import ConnectorLease
 from agent_server.infra.redis_coordinator import RedisCoordinator
 
+# Redis pub/sub channel family between Server workers: a worker asks the worker holding a v2 Connector's socket
+# to close it. Workers still on the previous release listen and answer only on the legacy name, so a worker
+# listens on both and falls back to the legacy name when nobody listens on the new one.
+ROUTE_CHANNEL = "connector-socket-routes"
+LEGACY_ROUTE_CHANNEL = "connector-rpc"
+
 
 class ConnectorOfflineError(RuntimeError):
     pass
@@ -115,7 +121,10 @@ class ConnectorRpcManager:
         if not self._coordinator.distributed or self._listener_task is not None:
             return
         self._pubsub = self._coordinator.client.pubsub()
-        await self._pubsub.subscribe(self._instance_channel(self.instance_id))
+        await self._pubsub.subscribe(
+            self._instance_channel(self.instance_id),
+            self._instance_channel(self.instance_id, LEGACY_ROUTE_CHANNEL),
+        )
         self._listener_task = asyncio.create_task(
             self._listen(),
             name=f"connector-routes-{self.instance_id}",
@@ -401,11 +410,15 @@ class ConnectorRpcManager:
             "sourceInstanceId": self.instance_id,
             "connectionId": lease.connection_id,
         }
+        message = json.dumps(envelope, ensure_ascii=False, separators=(",", ":"))
         try:
-            subscribers = await self._coordinator.client.publish(
-                self._instance_channel(lease.instance_id),
-                json.dumps(envelope, ensure_ascii=False, separators=(",", ":")),
-            )
+            subscribers = 0
+            for name in (ROUTE_CHANNEL, LEGACY_ROUTE_CHANNEL):
+                subscribers = await self._coordinator.client.publish(
+                    self._instance_channel(lease.instance_id, name), message
+                )
+                if subscribers:
+                    break
             if not subscribers:
                 raise ConnectorOfflineError("connector owner is unavailable")
             response = await asyncio.wait_for(future, timeout=timeout)
@@ -424,6 +437,7 @@ class ConnectorRpcManager:
 
     async def _listen(self) -> None:
         assert self._pubsub is not None
+        legacy_channel = self._instance_channel(self.instance_id, LEGACY_ROUTE_CHANNEL)
         async for event in self._pubsub.listen():
             if event.get("type") != "message":
                 continue
@@ -437,11 +451,15 @@ class ConnectorRpcManager:
                 if future is not None and not future.done():
                     future.set_result(payload)
                 continue
-            task = asyncio.create_task(self._handle_routed(payload))
+            # Answer on the channel family the request came in on.
+            legacy = self._as_text(event.get("channel")) == legacy_channel
+            task = asyncio.create_task(
+                self._handle_routed(payload, LEGACY_ROUTE_CHANNEL if legacy else ROUTE_CHANNEL)
+            )
             self._routing_tasks.add(task)
             task.add_done_callback(self._routing_tasks.discard)
 
-    async def _handle_routed(self, payload: dict[str, Any]) -> None:
+    async def _handle_routed(self, payload: dict[str, Any], reply_channel: str = ROUTE_CHANNEL) -> None:
         request_id = payload.get("requestId")
         source_instance_id = payload.get("sourceInstanceId")
         if not isinstance(request_id, str) or not isinstance(source_instance_id, str):
@@ -487,7 +505,7 @@ class ConnectorRpcManager:
                 "connector routing failed",
             )
         await self._coordinator.client.publish(
-            self._instance_channel(source_instance_id),
+            self._instance_channel(source_instance_id, reply_channel),
             json.dumps(response, ensure_ascii=False, separators=(",", ":")),
         )
 
@@ -593,8 +611,8 @@ class ConnectorRpcManager:
             sort_keys=True,
         )
 
-    def _instance_channel(self, instance_id: str) -> str:
-        return self._coordinator.channel("connector-rpc", instance_id)
+    def _instance_channel(self, instance_id: str, name: str = ROUTE_CHANNEL) -> str:
+        return self._coordinator.channel(name, instance_id)
 
     @staticmethod
     def _route_error(

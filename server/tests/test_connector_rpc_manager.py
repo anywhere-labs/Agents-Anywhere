@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
 import pytest
@@ -8,6 +9,7 @@ from fakeredis import FakeServer
 from fakeredis.aioredis import FakeRedis
 
 from agent_server.infra.connector_rpc import (
+    LEGACY_ROUTE_CHANNEL,
     ConnectorRpcManager,
     DuplicateConnectorConnectionError,
 )
@@ -316,6 +318,80 @@ def test_disconnect_routes_to_connector_owner() -> None:
         finally:
             await owner.close()
             await requester.close()
+
+    asyncio.run(exercise())
+
+
+def test_disconnect_falls_back_to_a_worker_on_the_legacy_channel() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        coordinator = _coordinator(fake_server)
+        # A worker of the previous release: holds the socket's lease and answers only on the legacy channel.
+        legacy_owner = ConnectorRpcManager(_coordinator(fake_server), instance_id="server-old")
+        await legacy_owner.register("conn_1", FakeWebSocket())  # type: ignore[arg-type]
+        pubsub = coordinator.client.pubsub()
+        await pubsub.subscribe(coordinator.channel(LEGACY_ROUTE_CHANNEL, "server-old"))
+        requests: list[dict[str, Any]] = []
+
+        async def answer() -> None:
+            async for event in pubsub.listen():
+                if event.get("type") != "message":
+                    continue
+                request = json.loads(event["data"])
+                requests.append(request)
+                await coordinator.client.publish(
+                    coordinator.channel(LEGACY_ROUTE_CHANNEL, request["sourceInstanceId"]),
+                    json.dumps({"type": "response", "requestId": request["requestId"], "ok": True, "result": True}),
+                )
+
+        responder = asyncio.create_task(answer())
+        requester = ConnectorRpcManager(_coordinator(fake_server), instance_id="server-new")
+        await requester.start()
+        try:
+            assert await requester.disconnect("conn_1", reason="token revoked")
+            assert requests[0]["type"] == "disconnect" and requests[0]["connectorId"] == "conn_1"
+        finally:
+            responder.cancel()
+            await asyncio.gather(responder, return_exceptions=True)
+            await pubsub.aclose()
+            await requester.close()
+
+    asyncio.run(exercise())
+
+
+def test_owner_answers_a_legacy_request_on_the_legacy_channel() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        coordinator = _coordinator(fake_server)
+        owner = ConnectorRpcManager(_coordinator(fake_server), instance_id="server-new")
+        websocket = FakeWebSocket()
+        await owner.start()
+        connection = await owner.register("conn_1", websocket)  # type: ignore[arg-type]
+        # A requester of the previous release publishes and listens only on the legacy channel.
+        pubsub = coordinator.client.pubsub()
+        await pubsub.subscribe(coordinator.channel(LEGACY_ROUTE_CHANNEL, "server-old"))
+        try:
+            await coordinator.client.publish(
+                coordinator.channel(LEGACY_ROUTE_CHANNEL, "server-new"),
+                json.dumps({
+                    "type": "disconnect", "connectorId": "conn_1", "reason": "token revoked",
+                    "requestId": "route_1", "sourceInstanceId": "server-old",
+                    "connectionId": connection.connection_id,
+                }),
+            )
+
+            async def response() -> dict[str, Any]:
+                async for event in pubsub.listen():
+                    if event.get("type") == "message":
+                        return json.loads(event["data"])
+                raise AssertionError("no response")
+
+            answer = await asyncio.wait_for(response(), timeout=1)
+            assert answer == {"type": "response", "requestId": "route_1", "ok": True, "result": True}
+            await asyncio.wait_for(websocket.closed.wait(), timeout=1)
+        finally:
+            await pubsub.aclose()
+            await owner.close()
 
     asyncio.run(exercise())
 
