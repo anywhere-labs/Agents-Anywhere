@@ -432,6 +432,9 @@ class SessionRunService:
             )
         except ConnectorOfflineError as exc:
             raise SessionRunConflictError(str(exc)) from exc
+        except ConnectorOutcomeUnknownError as exc:
+            # The call reached the device and then broke: not offline, and never re-sent.
+            raise SessionRunTimeoutError({"code": exc.code, "message": exc.message}) from exc
         except ConnectorRpcError as exc:
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
         if not isinstance(result, dict):
@@ -505,6 +508,9 @@ class SessionRunService:
             )
         except ConnectorOfflineError as exc:
             raise SessionRunConflictError(str(exc)) from exc
+        except ConnectorOutcomeUnknownError as exc:
+            # The call reached the device and then broke: not offline, and never re-sent.
+            raise SessionRunTimeoutError({"code": exc.code, "message": exc.message}) from exc
         except ConnectorRpcError as exc:
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
         if isinstance(result, dict) and result.get("ok") is False:
@@ -590,6 +596,9 @@ class SessionRunService:
             )
         except ConnectorOfflineError as exc:
             raise SessionRunConflictError(str(exc)) from exc
+        except ConnectorOutcomeUnknownError as exc:
+            # The call reached the device and then broke: not offline, and never re-sent.
+            raise SessionRunTimeoutError({"code": exc.code, "message": exc.message}) from exc
         except ConnectorRpcError as exc:
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
         await self._usage.record(
@@ -980,6 +989,9 @@ class SessionRunService:
             )
         except ConnectorOfflineError as exc:
             raise SessionRunConflictError(str(exc)) from exc
+        except ConnectorOutcomeUnknownError as exc:
+            # The call reached the device and then broke: not offline, and never re-sent.
+            raise SessionRunTimeoutError({"code": exc.code, "message": exc.message}) from exc
         except ConnectorRpcError as exc:
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
         await self._store.clear_active_run(session_id)

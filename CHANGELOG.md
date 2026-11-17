@@ -31,7 +31,7 @@
 - 设备上的 Connector 在收下消息、还没交给 Agent 时重启，重启后会接着发出这条消息，不再一直停在已接收却没有发出的状态。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 连接 v3 Connector 的设备上可以新建会话并发出第一条消息，带附件也可以；网络不稳重试时不会建出重复的会话，设备拒绝或离线时不留下空会话。（[#732](https://github.com/anywhere-labs/Agents-Anywhere/pull/732)）
 - 连接 v3 Connector 的设备上，运行中排队的消息改由设备保存和按序发出，Server 不再保存消息内容；设备离线时排队区显示为空并提示设备离线。（[#718](https://github.com/anywhere-labs/Agents-Anywhere/pull/718)）
-- 连接 v3 Connector 的设备上，发送消息、审批等操作在设备没有及时确认时显示「操作结果不确定」而不是设备离线，也不会被自动重发；用同一条消息重试会拿到设备上的实际结果，不会重复执行。（[#704](https://github.com/anywhere-labs/Agents-Anywhere/pull/704)）
+- 连接 v3 Connector 的设备上，发送消息、审批、切换模型和权限、引导和中断当前任务等操作在设备没有及时确认时（包括 MeshCall Router 在操作途中重启）显示「操作结果不确定」，而不是设备离线或服务器错误，也不会被自动重发；用同一条消息重试会拿到设备上的实际结果，不会重复执行。（[#704](https://github.com/anywhere-labs/Agents-Anywhere/pull/704)、[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - Agent 运行中，Web、Desktop、Android 和 iOS 都可以继续发送消息：消息会排队，当前任务结束后按顺序自动发出，在所有设备上看到的是同一份队列；排队的消息可以编辑、删除、立即发送（打断当前任务），也可以选择「打断并发送」，Codex、Pi、Hermes 还能选择「引导当前任务」把消息直接交给正在运行的任务。上一个任务出错时队列会暂停，点「继续发送」后再发出。（[#658](https://github.com/anywhere-labs/Agents-Anywhere/pull/658)、[#659](https://github.com/anywhere-labs/Agents-Anywhere/pull/659)）
 - 在工作设备安装并配置对应 CLI 后，可以在 Web、Desktop、Android 和 iOS 选择 Command Code、OpenCode、Google Antigravity、MiniMax Code、CodeBuddy Code 和 MiMo Code 新建会话，并按 Agent 支持的能力发送消息、处理审批、中断和恢复 AA 会话。（[#629](https://github.com/anywhere-labs/Agents-Anywhere/pull/629)）
 - Pi 会话现在支持 `/plan`，可以从首条任务开始规划、审阅和修改计划，并在同意后按原有工具权限继续执行。（[#631](https://github.com/anywhere-labs/Agents-Anywhere/pull/631)）
