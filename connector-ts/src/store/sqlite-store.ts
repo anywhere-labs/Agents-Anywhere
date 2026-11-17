@@ -133,7 +133,12 @@ export function openSqliteStore(options: OpenStoreOptions): SyncStore {
     db.exec('PRAGMA journal_mode = WAL')
     db.exec('PRAGMA synchronous = FULL')
     if ((options.durability ?? 'full') === 'full' && process.platform === 'darwin') db.exec('PRAGMA fullfsync = ON; PRAGMA checkpoint_fullfsync = ON')
-    db.exec('PRAGMA foreign_keys = ON')
+    // No foreign keys: no table declares one. The store keeps a session and its rows consistent itself, by writing
+    // them in one transaction per port method (`requireSession` before child rows). Cascading deletes would not fit
+    // either: the outbox (notices still to send), operations (receipts the Server may still retry against) and
+    // seq_floors (floors of sessions not created yet) must outlive a session, and blob files and attachment folders
+    // are not rows. A future session delete belongs in one store method, with a test that walks every table that has
+    // a session_id column, so a new table cannot be missed.
     migrate(db, now())
   }
   const blobs = new BlobFiles(join(options.dataDir, 'blobs'))
