@@ -93,10 +93,10 @@ from agent_server.core.utc import utc_now
 from agent_server.deps import (
     current_user_id,
     get_catalog_service,
+    get_connector_presence,
     get_device_reads,
     get_e2ee_settings,
     get_model_channel_service,
-    get_rpc,
     get_session_run_service,
     get_session_runtime_state_cache,
     get_session_watch,
@@ -104,8 +104,8 @@ from agent_server.deps import (
     get_timeline_broker,
     get_usage_recorder,
 )
-from agent_server.infra.connector_rpc import (
-    ConnectorRpcManager,
+from agent_server.infra.connector_presence_registry import (
+    ConnectorPresenceRegistry,
 )
 from agent_server.infra.event_preparation import EventPreparationCapacityError
 from agent_server.infra.repositories.facade import Store
@@ -170,7 +170,7 @@ def _raise_session_run_error(exc: SessionRunError) -> None:
 async def _publish_session_protocol_update(
     db: Store,
     broker: TimelineBroker,
-    manager: ConnectorRpcManager,
+    manager: ConnectorPresenceRegistry,
     runtime_state_cache: SessionRuntimeStateCache,
     session_id: str,
 ) -> None:
@@ -199,7 +199,7 @@ async def _publish_session_protocol_update(
 async def _best_effort_publish_session_protocol_update(
     db: Store,
     broker: TimelineBroker,
-    manager: ConnectorRpcManager,
+    manager: ConnectorPresenceRegistry,
     runtime_state_cache: SessionRuntimeStateCache,
     session_id: str,
     *,
@@ -247,7 +247,7 @@ async def _forward_session_command(
     response_model: Any,
     db: Store,
     broker: TimelineBroker,
-    manager: ConnectorRpcManager,
+    manager: ConnectorPresenceRegistry,
     runtime_state_cache: SessionRuntimeStateCache,
     run_service: SessionRunService | None = None,
     attachments: str | None = None,
@@ -296,7 +296,7 @@ async def create_session(
     payload: SessionCreateRequest,
     user_id: str = Depends(current_user_id),
     run_service: SessionRunService = Depends(get_session_run_service),
-    manager: ConnectorRpcManager = Depends(get_rpc),
+    manager: ConnectorPresenceRegistry = Depends(get_connector_presence),
     db: Store = Depends(get_store),
     broker: TimelineBroker = Depends(get_timeline_broker),
 ) -> dict[str, Any]:
@@ -327,7 +327,7 @@ async def _forward_create_and_start(
     *,
     user_id: str,
     run_service: SessionRunService,
-    manager: ConnectorRpcManager,
+    manager: ConnectorPresenceRegistry,
 ) -> tuple[dict[str, Any] | None, Response | None]:
     """create-and-start through ``Client/call``: ``(result, None)`` when the device started the session,
     ``(None, response)`` with the device's own error otherwise."""
@@ -376,7 +376,7 @@ async def create_and_start_session(
     payload: SessionCreateAndStartRequest,
     user_id: str = Depends(current_user_id),
     run_service: SessionRunService = Depends(get_session_run_service),
-    manager: ConnectorRpcManager = Depends(get_rpc),
+    manager: ConnectorPresenceRegistry = Depends(get_connector_presence),
     db: Store = Depends(get_store),
     broker: TimelineBroker = Depends(get_timeline_broker),
     runtime_state_cache: SessionRuntimeStateCache = Depends(
@@ -423,7 +423,7 @@ async def list_sessions(
     cursor: str | None = Query(default=None, min_length=1),
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
+    manager: ConnectorPresenceRegistry = Depends(get_connector_presence),
     runtime_state_cache: SessionRuntimeStateCache = Depends(
         get_session_runtime_state_cache
     ),
@@ -453,7 +453,7 @@ async def list_sessions(
 async def list_session_inventory(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
+    manager: ConnectorPresenceRegistry = Depends(get_connector_presence),
     runtime_state_cache: SessionRuntimeStateCache = Depends(get_session_runtime_state_cache),
 ) -> dict[str, Any]:
     sessions = await db.list_session_inventory(user_id=user_id)
@@ -468,7 +468,7 @@ async def get_session_meta(
     session_id: str,
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
+    manager: ConnectorPresenceRegistry = Depends(get_connector_presence),
 ) -> SessionResponse:
     try:
         await db.get_session(session_id, user_id=user_id)
@@ -487,7 +487,7 @@ async def patch_session_meta(
     payload: SessionPatchRequest,
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
+    manager: ConnectorPresenceRegistry = Depends(get_connector_presence),
     broker: TimelineBroker = Depends(get_timeline_broker),
     e2ee: E2eeSettings = Depends(get_e2ee_settings),
 ) -> SessionResponse:
@@ -579,7 +579,7 @@ async def set_sessions_archived(
     archived: bool,
     user_id: str,
     db: Store,
-    manager: ConnectorRpcManager,
+    manager: ConnectorPresenceRegistry,
     broker: TimelineBroker,
 ) -> BulkArchiveResponse:
     """Persist archive metadata and publish dashboard invalidations."""
@@ -615,7 +615,7 @@ async def archive_sessions(
     payload: list[str] = Body(...),
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
+    manager: ConnectorPresenceRegistry = Depends(get_connector_presence),
     broker: TimelineBroker = Depends(get_timeline_broker),
 ) -> BulkArchiveResponse:
     return await set_sessions_archived(
@@ -633,7 +633,7 @@ async def unarchive_sessions(
     payload: list[str] = Body(...),
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
+    manager: ConnectorPresenceRegistry = Depends(get_connector_presence),
     broker: TimelineBroker = Depends(get_timeline_broker),
 ) -> BulkArchiveResponse:
     return await set_sessions_archived(
@@ -651,7 +651,7 @@ async def mark_sessions_read(
     session_ids: list[str] = Body(..., min_length=1, max_length=200),
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
+    manager: ConnectorPresenceRegistry = Depends(get_connector_presence),
     broker: TimelineBroker = Depends(get_timeline_broker),
 ) -> BulkArchiveResponse:
     normalized_ids = validate_session_id_array(session_ids)
@@ -720,7 +720,7 @@ async def session_runtime_capabilities(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     reads: DeviceReadService = Depends(get_device_reads),
-    manager: ConnectorRpcManager = Depends(get_rpc),
+    manager: ConnectorPresenceRegistry = Depends(get_connector_presence),
 ) -> Any:
     """A v3 device answers; an offline one and a v2 Connector get the capabilities the Server derives from the
     facts it stored."""
@@ -792,7 +792,7 @@ async def patch_session_selections(
     user_id: str = Depends(current_user_id),
     run_service: SessionRunService = Depends(get_session_run_service),
     db: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
+    manager: ConnectorPresenceRegistry = Depends(get_connector_presence),
     broker: TimelineBroker = Depends(get_timeline_broker),
     runtime_state_cache: SessionRuntimeStateCache = Depends(
         get_session_runtime_state_cache
@@ -844,7 +844,7 @@ async def session_snapshot(
     limit: int = Query(100, ge=1, le=500),
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
+    manager: ConnectorPresenceRegistry = Depends(get_connector_presence),
     catalogs: CatalogService = Depends(get_catalog_service),
     usage_recorder: UsageRecorder = Depends(get_usage_recorder),
 ) -> Any:
@@ -1092,7 +1092,7 @@ async def enable_takeover(
     conn: HTTPConnection,
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
+    manager: ConnectorPresenceRegistry = Depends(get_connector_presence),
     broker: TimelineBroker = Depends(get_timeline_broker),
     runtime_state_cache: SessionRuntimeStateCache = Depends(
         get_session_runtime_state_cache
@@ -1122,7 +1122,7 @@ async def disable_takeover(
     conn: HTTPConnection,
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
+    manager: ConnectorPresenceRegistry = Depends(get_connector_presence),
     broker: TimelineBroker = Depends(get_timeline_broker),
     runtime_state_cache: SessionRuntimeStateCache = Depends(
         get_session_runtime_state_cache
@@ -1173,7 +1173,7 @@ async def execute_session_command(
     payload: SessionCommandRequest,
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
+    manager: ConnectorPresenceRegistry = Depends(get_connector_presence),
 ) -> Any:
     return await _forward_session_command(
         request, "session.runtime.commands.execute", user_id=user_id, session_id=session_id,
@@ -1191,7 +1191,7 @@ async def send_message(
     run_service: SessionRunService = Depends(get_session_run_service),
     db: Store = Depends(get_store),
     broker: TimelineBroker = Depends(get_timeline_broker),
-    manager: ConnectorRpcManager = Depends(get_rpc),
+    manager: ConnectorPresenceRegistry = Depends(get_connector_presence),
     runtime_state_cache: SessionRuntimeStateCache = Depends(
         get_session_runtime_state_cache
     ),
@@ -1209,7 +1209,7 @@ async def interrupt_session(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     broker: TimelineBroker = Depends(get_timeline_broker),
-    manager: ConnectorRpcManager = Depends(get_rpc),
+    manager: ConnectorPresenceRegistry = Depends(get_connector_presence),
     runtime_state_cache: SessionRuntimeStateCache = Depends(
         get_session_runtime_state_cache
     ),
@@ -1228,7 +1228,7 @@ async def steer_session(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     broker: TimelineBroker = Depends(get_timeline_broker),
-    manager: ConnectorRpcManager = Depends(get_rpc),
+    manager: ConnectorPresenceRegistry = Depends(get_connector_presence),
     runtime_state_cache: SessionRuntimeStateCache = Depends(
         get_session_runtime_state_cache
     ),
@@ -1260,7 +1260,7 @@ async def respond_interaction(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     broker: TimelineBroker = Depends(get_timeline_broker),
-    manager: ConnectorRpcManager = Depends(get_rpc),
+    manager: ConnectorPresenceRegistry = Depends(get_connector_presence),
     runtime_state_cache: SessionRuntimeStateCache = Depends(
         get_session_runtime_state_cache
     ),
@@ -1277,7 +1277,7 @@ async def sync_session(
     session_id: str,
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
+    manager: ConnectorPresenceRegistry = Depends(get_connector_presence),
 ) -> Any:
     return await _forward_session_command(
         request, "session.sync", user_id=user_id, session_id=session_id, response_model=RpcResponsePayload,

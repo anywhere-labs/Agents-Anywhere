@@ -8,9 +8,9 @@ import pytest
 from fakeredis import FakeServer
 from fakeredis.aioredis import FakeRedis
 
-from agent_server.infra.connector_rpc import (
+from agent_server.infra.connector_presence_registry import (
     LEGACY_ROUTE_CHANNEL,
-    ConnectorRpcManager,
+    ConnectorPresenceRegistry,
     DuplicateConnectorConnectionError,
 )
 from agent_server.infra.redis_coordinator import RedisCoordinator
@@ -115,9 +115,9 @@ class PausingRefreshCoordinator(RedisCoordinator):
         )
 
 
-def test_connector_rpc_manager_rejects_duplicate_online_connection() -> None:
+def test_connector_presence_registry_rejects_duplicate_online_connection() -> None:
     async def exercise() -> None:
-        manager = ConnectorRpcManager(heartbeat_timeout_seconds=60, clock=lambda: 10)
+        manager = ConnectorPresenceRegistry(heartbeat_timeout_seconds=60, clock=lambda: 10)
         await manager.register("conn_1", FakeWebSocket())  # type: ignore[arg-type]
 
         with pytest.raises(DuplicateConnectorConnectionError):
@@ -126,7 +126,7 @@ def test_connector_rpc_manager_rejects_duplicate_online_connection() -> None:
     asyncio.run(exercise())
 
 
-def test_connector_rpc_manager_replaces_stale_connection() -> None:
+def test_connector_presence_registry_replaces_stale_connection() -> None:
     now = 10
 
     def clock() -> float:
@@ -134,7 +134,7 @@ def test_connector_rpc_manager_replaces_stale_connection() -> None:
 
     async def exercise() -> None:
         nonlocal now
-        manager = ConnectorRpcManager(heartbeat_timeout_seconds=5, clock=clock)
+        manager = ConnectorPresenceRegistry(heartbeat_timeout_seconds=5, clock=clock)
         old = await manager.register("conn_1", FakeWebSocket())  # type: ignore[arg-type]
         now = 20
 
@@ -149,8 +149,8 @@ def test_connector_rpc_manager_replaces_stale_connection() -> None:
 def test_distributed_lease_rejects_duplicate_connector() -> None:
     async def exercise() -> None:
         fake_server = FakeServer()
-        owner = ConnectorRpcManager(_coordinator(fake_server), instance_id="server-a")
-        other = ConnectorRpcManager(_coordinator(fake_server), instance_id="server-b")
+        owner = ConnectorPresenceRegistry(_coordinator(fake_server), instance_id="server-a")
+        other = ConnectorPresenceRegistry(_coordinator(fake_server), instance_id="server-b")
         connection = await owner.register("conn_1", FakeWebSocket())  # type: ignore[arg-type]
 
         with pytest.raises(DuplicateConnectorConnectionError):
@@ -170,8 +170,8 @@ def test_distributed_lease_rejects_duplicate_connector() -> None:
 def test_distributed_reserved_connection_is_not_online() -> None:
     async def exercise() -> None:
         fake_server = FakeServer()
-        owner = ConnectorRpcManager(_coordinator(fake_server), instance_id="server-a")
-        other = ConnectorRpcManager(_coordinator(fake_server), instance_id="server-b")
+        owner = ConnectorPresenceRegistry(_coordinator(fake_server), instance_id="server-a")
+        other = ConnectorPresenceRegistry(_coordinator(fake_server), instance_id="server-b")
         connection = await owner.register(
             "conn_1",
             FakeWebSocket(),  # type: ignore[arg-type]
@@ -198,8 +198,8 @@ def test_unregister_during_ready_promotion_cleans_promoted_lease() -> None:
     async def exercise() -> None:
         fake_server = FakeServer()
         coordinator = PausingPromotionCoordinator(fake_server)
-        owner = ConnectorRpcManager(coordinator, instance_id="server-a")
-        other = ConnectorRpcManager(_coordinator(fake_server), instance_id="server-b")
+        owner = ConnectorPresenceRegistry(coordinator, instance_id="server-a")
+        other = ConnectorPresenceRegistry(_coordinator(fake_server), instance_id="server-b")
         connection = await owner.register(
             "conn_1",
             FakeWebSocket(),  # type: ignore[arg-type]
@@ -223,8 +223,8 @@ def test_cancelling_ready_promotion_releases_promoted_lease() -> None:
     async def exercise() -> None:
         fake_server = FakeServer()
         coordinator = PausingPromotionCoordinator(fake_server)
-        owner = ConnectorRpcManager(coordinator, instance_id="server-a")
-        other = ConnectorRpcManager(_coordinator(fake_server), instance_id="server-b")
+        owner = ConnectorPresenceRegistry(coordinator, instance_id="server-a")
+        other = ConnectorPresenceRegistry(_coordinator(fake_server), instance_id="server-b")
         connection = await owner.register(
             "conn_1",
             FakeWebSocket(),  # type: ignore[arg-type]
@@ -250,7 +250,7 @@ def test_failed_ready_promotion_does_not_remove_replacement_connection() -> None
     async def exercise() -> None:
         fake_server = FakeServer()
         coordinator = PausingBeforePromotionCoordinator(fake_server)
-        manager = ConnectorRpcManager(coordinator, instance_id="server-a")
+        manager = ConnectorPresenceRegistry(coordinator, instance_id="server-a")
         original = await manager.register(
             "conn_1",
             FakeWebSocket(),  # type: ignore[arg-type]
@@ -277,7 +277,7 @@ def test_failed_heartbeat_does_not_remove_replacement_connection() -> None:
     async def exercise() -> None:
         fake_server = FakeServer()
         coordinator = PausingRefreshCoordinator(fake_server)
-        manager = ConnectorRpcManager(coordinator, instance_id="server-a")
+        manager = ConnectorPresenceRegistry(coordinator, instance_id="server-a")
         original = await manager.register(
             "conn_1",
             FakeWebSocket(),  # type: ignore[arg-type]
@@ -303,8 +303,8 @@ def test_failed_heartbeat_does_not_remove_replacement_connection() -> None:
 def test_disconnect_routes_to_connector_owner() -> None:
     async def exercise() -> None:
         fake_server = FakeServer()
-        owner = ConnectorRpcManager(_coordinator(fake_server), instance_id="server-a")
-        requester = ConnectorRpcManager(
+        owner = ConnectorPresenceRegistry(_coordinator(fake_server), instance_id="server-a")
+        requester = ConnectorPresenceRegistry(
             _coordinator(fake_server), instance_id="server-b"
         )
         websocket = FakeWebSocket()
@@ -327,7 +327,7 @@ def test_disconnect_falls_back_to_a_worker_on_the_legacy_channel() -> None:
         fake_server = FakeServer()
         coordinator = _coordinator(fake_server)
         # A worker of the previous release: holds the socket's lease and answers only on the legacy channel.
-        legacy_owner = ConnectorRpcManager(_coordinator(fake_server), instance_id="server-old")
+        legacy_owner = ConnectorPresenceRegistry(_coordinator(fake_server), instance_id="server-old")
         await legacy_owner.register("conn_1", FakeWebSocket())  # type: ignore[arg-type]
         pubsub = coordinator.client.pubsub()
         await pubsub.subscribe(coordinator.channel(LEGACY_ROUTE_CHANNEL, "server-old"))
@@ -345,7 +345,7 @@ def test_disconnect_falls_back_to_a_worker_on_the_legacy_channel() -> None:
                 )
 
         responder = asyncio.create_task(answer())
-        requester = ConnectorRpcManager(_coordinator(fake_server), instance_id="server-new")
+        requester = ConnectorPresenceRegistry(_coordinator(fake_server), instance_id="server-new")
         await requester.start()
         try:
             assert await requester.disconnect("conn_1", reason="token revoked")
@@ -363,7 +363,7 @@ def test_owner_answers_a_legacy_request_on_the_legacy_channel() -> None:
     async def exercise() -> None:
         fake_server = FakeServer()
         coordinator = _coordinator(fake_server)
-        owner = ConnectorRpcManager(_coordinator(fake_server), instance_id="server-new")
+        owner = ConnectorPresenceRegistry(_coordinator(fake_server), instance_id="server-new")
         websocket = FakeWebSocket()
         await owner.start()
         connection = await owner.register("conn_1", websocket)  # type: ignore[arg-type]
@@ -399,12 +399,12 @@ def test_owner_answers_a_legacy_request_on_the_legacy_channel() -> None:
 def test_stale_owner_cannot_delete_replacement_lease() -> None:
     async def exercise() -> None:
         fake_server = FakeServer()
-        owner = ConnectorRpcManager(
+        owner = ConnectorPresenceRegistry(
             _coordinator(fake_server),
             instance_id="server-a",
             heartbeat_timeout_seconds=0.03,
         )
-        replacement = ConnectorRpcManager(
+        replacement = ConnectorPresenceRegistry(
             _coordinator(fake_server),
             instance_id="server-b",
             heartbeat_timeout_seconds=1,
@@ -422,12 +422,12 @@ def test_stale_owner_cannot_delete_replacement_lease() -> None:
 def test_connector_heartbeat_renews_distributed_lease() -> None:
     async def exercise() -> None:
         fake_server = FakeServer()
-        owner = ConnectorRpcManager(
+        owner = ConnectorPresenceRegistry(
             _coordinator(fake_server),
             instance_id="server-a",
             heartbeat_timeout_seconds=0.05,
         )
-        other = ConnectorRpcManager(
+        other = ConnectorPresenceRegistry(
             _coordinator(fake_server),
             instance_id="server-b",
             heartbeat_timeout_seconds=0.05,

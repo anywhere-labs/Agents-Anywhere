@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import HTTPException
 
 from agent_server.core.models import ConnectorView
-from agent_server.infra.connector_rpc import ConnectorRpcManager
+from agent_server.infra.connector_presence_registry import ConnectorPresenceRegistry
 from agent_server.infra.repositories.facade import Store
 
 
@@ -25,7 +25,7 @@ async def require_owned_online_connector(
     connector_id: str,
     user_id: str,
     store: Store,
-    manager: ConnectorRpcManager,
+    manager: ConnectorPresenceRegistry,
 ) -> ConnectorView:
     connector = await require_owned_connector(connector_id, user_id, store)
     if not await manager.is_online(connector_id):

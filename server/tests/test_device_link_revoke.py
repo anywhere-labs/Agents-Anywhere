@@ -93,13 +93,15 @@ def test_v2_disconnect_leaves_a_v3_lease_to_the_device_link() -> None:
     """Deleting a v3 device in a multi-worker deployment must not fail on the v2 disconnect route."""
 
     async def scenario() -> None:
-        from agent_server.infra.connector_rpc import ConnectorRpcManager
+        from agent_server.infra.connector_presence_registry import (
+            ConnectorPresenceRegistry,
+        )
 
         coordinator = RedisCoordinator(prefix="t", client=FakeRedis(server=FakeServer()))
         hub = DeviceLinkHub(None, coordinator, worker_id="w_a")  # type: ignore[arg-type]
         held = HeldLink(device_id=DEVICE, connection_id="lc_1", lease_value=hub._lease_value("lc_1"))
         assert await hub._write_lease(held, first=True)
-        manager = ConnectorRpcManager(coordinator, instance_id="w_b")
+        manager = ConnectorPresenceRegistry(coordinator, instance_id="w_b")
         assert await manager.disconnect(DEVICE, reason="connector deleted") is False
         assert await hub.is_online(DEVICE)
 
@@ -137,12 +139,12 @@ def test_revoking_credentials_ends_the_v3_link(mesh_router: RouterProcess, monke
             headers, device_id, token = await user_and_device(app, client)
             device, welcome, access = await connect_device(client, connector_id=device_id, connector_token=token)
             try:
-                assert await app.state.rpc.is_online(device_id)
+                assert await app.state.connector_presence.is_online(device_id)
                 revoked = await client.post(f"/api/v2/connectors/{device_id}/revoke", headers=headers)
                 assert revoked.status_code == 200, revoked.text
 
                 # Offline everywhere at once, the record and the hold are gone.
-                assert not await app.state.rpc.is_online(device_id)
+                assert not await app.state.connector_presence.is_online(device_id)
                 assert await app.state.device_link.link_record(device_id) is None
                 assert device_id not in app.state.device_link_hub.held_devices()
                 assert revoked.json()["connector"]["status"] == "offline"
@@ -160,7 +162,7 @@ def test_revoking_credentials_ends_the_v3_link(mesh_router: RouterProcess, monke
                 fresh = auth.json()["accessToken"]
                 stale = await _ready(client, fresh, welcome["connectionId"])
                 assert stale.status_code == 409 and stale.json()["detail"]["code"] == "connection_replaced"
-                assert not await app.state.rpc.is_online(device_id)
+                assert not await app.state.connector_presence.is_online(device_id)
             finally:
                 await device.stop()
 
@@ -175,11 +177,11 @@ def test_deleting_a_v3_device_ends_its_link(mesh_router: RouterProcess, monkeypa
             try:
                 deleted = await client.delete(f"/api/v2/connectors/{device_id}", headers=headers)
                 assert deleted.status_code == 204, deleted.text
-                assert not await app.state.rpc.is_online(device_id)
+                assert not await app.state.connector_presence.is_online(device_id)
                 assert await app.state.device_link.link_record(device_id) is None
                 assert device_id not in app.state.device_link_hub.held_devices()
                 await eventually(lambda: _unregistered(app.state.device_mesh, device_id), timeout=20)
-                await eventually(lambda: _offline(app.state.rpc, device_id))
+                await eventually(lambda: _offline(app.state.connector_presence, device_id))
                 assert (await _hello(client, access, device_id)).status_code == 401
                 assert (await _ready(client, access, welcome["connectionId"])).status_code == 401
                 listed = await client.get("/api/v2/connectors", headers=headers)

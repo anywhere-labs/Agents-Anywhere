@@ -16,12 +16,12 @@ from agent_server.core.models import (
 from agent_server.core.utc import utc_now
 from agent_server.deps import (
     current_user_id,
-    get_rpc,
+    get_connector_presence,
     get_session_runtime_state_cache,
     get_store,
     get_timeline_broker,
 )
-from agent_server.infra.connector_rpc import ConnectorRpcManager
+from agent_server.infra.connector_presence_registry import ConnectorPresenceRegistry
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.repositories.projects import ProjectNameConflictError
 from agent_server.infra.timeline_broker import TimelineBroker
@@ -163,7 +163,7 @@ async def list_project_sessions(
     cursor: str | None = Query(default=None, min_length=1),
     user_id: str = Depends(current_user_id),
     store: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
+    manager: ConnectorPresenceRegistry = Depends(get_connector_presence),
     runtime_state_cache: SessionRuntimeStateCache = Depends(
         get_session_runtime_state_cache
     ),
@@ -201,7 +201,7 @@ async def archive_all_project_sessions(
     payload: ArchiveAllRequest,
     user_id: str = Depends(current_user_id),
     store: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
+    manager: ConnectorPresenceRegistry = Depends(get_connector_presence),
     broker: TimelineBroker = Depends(get_timeline_broker),
 ) -> ArchiveAllResponse:
     try:

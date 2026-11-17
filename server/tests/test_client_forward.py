@@ -151,7 +151,7 @@ def test_reads_are_forwarded_chunked_checked_and_errors_mapped(mesh_router: Rout
                 await device.stop()
 
             # Not delivered: routes with an offline answer synthesize it, the others answer 409.
-            await eventually(lambda: offline(app.state.rpc, device_id))
+            await eventually(lambda: offline(app.state.connector_presence, device_id))
             calls = len(device.state.client_calls)
             timeline = await client.get(f"{BASE}/timeline", headers=headers)
             assert timeline.status_code == 200
@@ -302,7 +302,7 @@ def test_command_receipts_register_settle_and_replay(mesh_router: RouterProcess,
                 await device.stop()
 
             # Not delivered: the receipt is dropped and the client gets connector_offline.
-            await eventually(lambda: offline(app.state.rpc, device_id))
+            await eventually(lambda: offline(app.state.connector_presence, device_id))
             gone = await client.post(send, json={"clientMessageId": "m_off", "content": "hi"}, headers=headers)
             assert gone.status_code == 409 and _detail(gone)["code"] == "connector_offline"
             assert await store.get_device_command(user_id, "m_off") is None

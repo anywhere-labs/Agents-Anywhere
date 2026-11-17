@@ -21,8 +21,8 @@ def test_device_link_handshake_presence_and_outbox(mesh_router: RouterProcess, m
     async def scenario() -> None:
         async with server(mesh_router, monkeypatch) as (app, client):
             _headers, device_id, token = await user_and_device(app, client)
-            rpc = app.state.rpc
-            assert not await rpc.is_online(device_id)
+            registry = app.state.connector_presence
+            assert not await registry.is_online(device_id)
 
             device, welcome, access = await connect_device(client, connector_id=device_id, connector_token=token)
             try:
@@ -31,8 +31,8 @@ def test_device_link_handshake_presence_and_outbox(mesh_router: RouterProcess, m
                 assert welcome["e2eeMode"] == "off"
                 assert welcome["connectionId"].startswith("lc_")
                 assert await app.state.store.connector_link_contract(device_id) == "device-meshcall/1.0"
-                assert await rpc.is_online(device_id)
-                assert (await rpc.online_statuses([device_id])) == {device_id: True}
+                assert await registry.is_online(device_id)
+                assert (await registry.online_statuses([device_id])) == {device_id: True}
 
                 # Outbox: a summary creates the directory row; the device sees the cumulative ack.
                 item = device.state.push_outbox("session.summary", summary("sess_v3a", 12))
@@ -75,7 +75,7 @@ def test_device_link_handshake_presence_and_outbox(mesh_router: RouterProcess, m
                 assert hello.json()["seqFloors"] == {"sess_v3a": 12}
                 # Issuing a new token revoked the old one: the Router closes the device connection
                 # (4401) and the held link drops. The Router's close handshake can take ~10 s.
-                await eventually(lambda: _offline(rpc, device_id), timeout=20)
+                await eventually(lambda: _offline(registry, device_id), timeout=20)
             finally:
                 await device.stop()
 
@@ -87,9 +87,9 @@ def test_device_goes_offline_when_its_link_dies(mesh_router: RouterProcess, monk
         async with server(mesh_router, monkeypatch) as (app, client):
             _headers, device_id, token = await user_and_device(app, client)
             device, _welcome, _access = await connect_device(client, connector_id=device_id, connector_token=token)
-            assert await app.state.rpc.is_online(device_id)
+            assert await app.state.connector_presence.is_online(device_id)
             await device.stop()
-            await eventually(lambda: _offline(app.state.rpc, device_id))
+            await eventually(lambda: _offline(app.state.connector_presence, device_id))
             assert await app.state.device_link_hub.current_connection(device_id) is None
 
     asyncio.run(scenario())

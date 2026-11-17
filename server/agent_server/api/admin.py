@@ -14,12 +14,12 @@ from agent_server.core.models import (
 )
 from agent_server.core.utc import utc_now
 from agent_server.deps import (
-    get_rpc,
+    get_connector_presence,
     get_session_runtime_state_cache,
     get_store,
     require_admin,
 )
-from agent_server.infra.connector_rpc import ConnectorRpcManager
+from agent_server.infra.connector_presence_registry import ConnectorPresenceRegistry
 from agent_server.infra.repositories.facade import Store
 from agent_server.services.device_link import DeviceLinkService
 from agent_server.services.email_delivery import (
@@ -149,7 +149,7 @@ async def delete_user(
     user_id: str,
     db: Store = Depends(get_store),
     admin: UserView = Depends(require_admin),
-    manager: ConnectorRpcManager = Depends(get_rpc),
+    manager: ConnectorPresenceRegistry = Depends(get_connector_presence),
     runtime_state_cache: SessionRuntimeStateCache = Depends(get_session_runtime_state_cache),
     links: DeviceLinkService = Depends(get_device_link_service),
 ) -> None:

@@ -9,7 +9,7 @@ from typing import Any
 from runtime_fixtures import seed_runtime_inventory
 from sqlalchemy import select, text
 from test_backend_mvp import (
-    FakeLocalRpc,
+    FakeLocalPresence,
     auth_headers,
     create_connector_and_session,
     make_client,
@@ -72,12 +72,12 @@ def _ingest(client, access_token: str, method: str, params: dict[str, Any]) -> N
     assert response.json()["rejected"] == []
 
 
-def _take_over_session(client, connector_id: str, session_id: str, headers: dict[str, str]) -> FakeLocalRpc:
-    fake_rpc = FakeLocalRpc()
-    client.app.state.rpc = fake_rpc
+def _take_over_session(client, connector_id: str, session_id: str, headers: dict[str, str]) -> FakeLocalPresence:
+    fake_presence = FakeLocalPresence()
+    client.app.state.connector_presence = fake_presence
     asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
     client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
-    return fake_rpc
+    return fake_presence
 
 
 def _user_id(client, headers: dict[str, str]) -> str:

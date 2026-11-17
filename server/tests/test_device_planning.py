@@ -186,7 +186,7 @@ def test_plans_and_goals_are_read_and_changed_on_the_device(mesh_router: RouterP
             finally:
                 await device.stop()
 
-            await eventually(lambda: offline(app.state.rpc, device_id))
+            await eventually(lambda: offline(app.state.connector_presence, device_id))
             calls = len(state.client_calls)
             # Offline, the state reads answer a stale state from the directory; documents need the device.
             stale = await client.get(f"{base}/planning", headers=headers)

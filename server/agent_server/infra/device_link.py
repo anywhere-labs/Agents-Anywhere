@@ -12,7 +12,7 @@ device's holder: it opens ``Link/attach`` and ``Link/outbox`` and keeps them ope
   ``connectionId`` takes the link over. A half-dead ``attach`` (open, but no
   item for ``ATTACH_IDLE_SECONDS``) is closed before the lease can expire, so
   the holder deletes its own lease and reports the device offline.
-  ``ConnectorRpcManager.is_online`` sees v3 devices through the same key.
+  ``ConnectorPresenceRegistry.is_online`` sees v3 devices through the same key.
 - ``outbox`` items are handed to a handler and acknowledged cumulatively after
   it returns; a handler failure closes the pump so the device resends.
 - ``attach`` events are lossy and go to a second handler.

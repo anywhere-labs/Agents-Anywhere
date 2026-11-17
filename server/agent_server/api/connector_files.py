@@ -45,11 +45,11 @@ from agent_server.core.workspace_paths import resolve_workspace_path
 from agent_server.deps import (
     authenticate_access_token,
     current_user_id,
+    get_connector_presence,
     get_fs_downloads,
-    get_rpc,
     get_store,
 )
-from agent_server.infra.connector_rpc import ConnectorRpcManager
+from agent_server.infra.connector_presence_registry import ConnectorPresenceRegistry
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.infra.repositories.facade import Store
 
@@ -282,7 +282,7 @@ async def connector_fs_transfer_download(
     previewAccessToken: str | None = Query(default=None),
     authorization: str | None = Header(None, alias="Authorization"),
     store: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
+    manager: ConnectorPresenceRegistry = Depends(get_connector_presence),
     downloads: FsDownloadRelayManager = Depends(get_fs_downloads),
 ) -> StreamingResponse:
     """The bytes of a ``fs/read`` transfer, relayed while the device ``PUT``s them (``api.device_transfers``)."""

@@ -13,13 +13,13 @@ from agent_server.api.server_push_websocket import (
 from agent_server.core.device_runtime import DeviceRuntimeView, public_runtime_view
 from agent_server.core.utc import utc_now
 from agent_server.deps import (
-    get_rpc,
+    get_connector_presence,
     get_session_runtime_state_cache,
     get_store,
     get_timeline_broker,
     get_tokens_link_service,
 )
-from agent_server.infra.connector_rpc import ConnectorRpcManager
+from agent_server.infra.connector_presence_registry import ConnectorPresenceRegistry
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.infra.ws_tickets import ClientWsTicketManager
@@ -42,7 +42,7 @@ def _get_ws_tickets(conn: HTTPConnection) -> ClientWsTicketManager:
 async def _dashboard_snapshot(
     *,
     db: Store,
-    manager: ConnectorRpcManager,
+    manager: ConnectorPresenceRegistry,
     runtime_state_cache: SessionRuntimeStateCache,
     user_id: str,
     model_config: TokensLinkService | None = None,
@@ -104,7 +104,7 @@ async def dashboard_ws(
     websocket: WebSocket,
     db: Annotated[Store, Depends(get_store)],
     broker: Annotated[TimelineBroker, Depends(get_timeline_broker)],
-    manager: Annotated[ConnectorRpcManager, Depends(get_rpc)],
+    manager: Annotated[ConnectorPresenceRegistry, Depends(get_connector_presence)],
     runtime_state_cache: Annotated[
         SessionRuntimeStateCache,
         Depends(get_session_runtime_state_cache),

@@ -104,7 +104,7 @@ def test_create_and_start_runs_on_the_device_once(mesh_router: RouterProcess, mo
             finally:
                 await device.stop()
 
-            await eventually(lambda: offline(app.state.rpc, device_id))
+            await eventually(lambda: offline(app.state.connector_presence, device_id))
             calls = len(state.client_calls)
             down = await client.post(
                 "/api/v2/sessions/create-and-start", headers=headers, json=body("later", "m_create_3")

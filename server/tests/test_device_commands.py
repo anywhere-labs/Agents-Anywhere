@@ -34,7 +34,7 @@ def test_receipts_replay_conflict_and_offline(mesh_router: RouterProcess, monkey
         async with server(mesh_router, monkeypatch) as (app, client):
             _headers, device_id, token = await user_and_device(app, client)
             device, _welcome, _access = await connect_device(client, connector_id=device_id, connector_token=token)
-            rpc, store = app.state.rpc, app.state.store
+            presence, store = app.state.connector_presence, app.state.store
             user_id = (await store.get_connector(device_id)).userId
             try:
                 device.state.command_handler = lambda method, p: {"headSeq": 3}
@@ -69,7 +69,7 @@ def test_receipts_replay_conflict_and_offline(mesh_router: RouterProcess, monkey
             finally:
                 await device.stop()
 
-            await eventually(lambda: offline(rpc, device_id))
+            await eventually(lambda: offline(presence, device_id))
             with pytest.raises(DeviceCommandOffline):
                 await _send(app, device_id, "c_3", _sync())
             # Nothing reached the device: no receipt is left to replay on its next hello.
@@ -83,7 +83,7 @@ def test_unknown_outcome_converges_without_resending(mesh_router: RouterProcess,
         async with server(mesh_router, monkeypatch) as (app, client):
             _headers, device_id, token = await user_and_device(app, client)
             device, _welcome, _access = await connect_device(client, connector_id=device_id, connector_token=token)
-            rpc, store = app.state.rpc, app.state.store
+            presence, store = app.state.connector_presence, app.state.store
             user_id = (await store.get_connector(device_id)).userId
             try:
                 device.state.ack_delay = 2
@@ -92,7 +92,7 @@ def test_unknown_outcome_converges_without_resending(mesh_router: RouterProcess,
                 assert unknown.value.code == "command_outcome_unknown"
                 assert (await store.get_device_command(user_id, "c_u"))["state"] == "unknown"
                 # Never reported as offline.
-                assert await rpc.is_online(device_id)
+                assert await presence.is_online(device_id)
 
                 # The device finishes; a replay asks Commands/status instead of sending again.
                 await eventually(lambda: _known(device, "c_u"))

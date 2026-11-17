@@ -141,7 +141,7 @@ def test_previews_open_through_the_device_and_frps(mesh_router: RouterProcess, m
             finally:
                 await device.stop()
 
-            await eventually(lambda: offline(app.state.rpc, device_id))
+            await eventually(lambda: offline(app.state.connector_presence, device_id))
             down = await client.post("/api/v3/previews", headers=headers, json={"deviceId": device_id, "port": 8080})
             assert down.status_code == 409 and down.json()["detail"]["code"] == "connector_offline"
 

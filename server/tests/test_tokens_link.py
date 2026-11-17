@@ -356,7 +356,7 @@ def test_runtimes_offline_during_rotation_get_the_new_key_when_back(tokens):
     profile = _tokens_profile(client, headers)
     _save_config(client, connector_id, headers, {})
     _set_channel(client, headers, "tokens")
-    client.app.state.rpc.online = False
+    client.app.state.connector_presence.online = False
 
     rotated = client.post(
         f"/model-profiles/{profile['id']}/rotate-key", headers=headers, json={"allowInterrupt": True},
@@ -369,7 +369,7 @@ def test_runtimes_offline_during_rotation_get_the_new_key_when_back(tokens):
     # The device coming back is the event that finishes it.
     from agent_server.deps import model_channel_service_for
 
-    client.app.state.rpc.online = True
+    client.app.state.connector_presence.online = True
     import asyncio
 
     asyncio.run(model_channel_service_for(client.app.state).connector_event(connector_id))

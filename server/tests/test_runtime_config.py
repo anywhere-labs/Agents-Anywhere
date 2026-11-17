@@ -16,7 +16,7 @@ ADMIN_PASSWORD = "secret"
 
 
 class FakeDevice:
-    """A v3 device: presence where the RPC manager sits and ``DeviceCommandService.send``."""
+    """A v3 device: presence where the connector presence registry sits and ``DeviceCommandService.send``."""
 
     def __init__(self, inventory: dict[str, Any]) -> None:
         self.inventory = inventory
@@ -112,7 +112,7 @@ def _make_client(tmp_path) -> tuple[TestClient, FakeDevice, str, dict[str, str]]
     assert created.status_code == 200, created.text
     connector_id = created.json()["connector"]["id"]
     rpc = FakeDevice(_inventory())
-    app.state.rpc = rpc
+    app.state.connector_presence = rpc
     service = DeviceRuntimeService(app.state.store, rpc)
     service.device_commands = rpc
     app.state.device_runtime_service = service
@@ -192,7 +192,7 @@ def test_pre_inventory_runtime_status_does_not_disconnect_connector(tmp_path):
         ConnectorNotificationService(app.state.store),
         app.state.timeline_broker,
         app.state.device_runtime_service,
-        app.state.rpc,
+        app.state.connector_presence,
         app.state.session_runtime_state_cache,
     )
 

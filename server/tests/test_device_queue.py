@@ -109,7 +109,7 @@ def test_queue_reads_changes_and_messages_go_to_the_device(mesh_router: RouterPr
             finally:
                 await device.stop()
 
-            await eventually(lambda: offline(app.state.rpc, device_id))
+            await eventually(lambda: offline(app.state.connector_presence, device_id))
             calls = len(state.client_calls)
             read = await client.get(f"{base}/queue", headers=headers)
             assert read.status_code == 200

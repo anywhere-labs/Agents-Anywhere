@@ -192,7 +192,7 @@ async def audit(app, connector_id, session_id, *, pooled=False):
         ConnectorNotificationService(store),
         state.timeline_broker,
         state.device_runtime_service,
-        state.rpc,
+        state.connector_presence,
         state.session_runtime_state_cache,
     )
     observation = "2026-09-11T00:00:00Z"
@@ -376,7 +376,7 @@ async def audit(app, connector_id, session_id, *, pooled=False):
             await service.handle_notification_message(**kwargs)
 
     socket = Socket()
-    connection = await state.rpc.register(connector_id, socket)
+    connection = await state.connector_presence.register(connector_id, socket)
     pump = _ConnectorNotificationPump(
         connector_id, BlockedService(), connection_id=connection.connection_id
     )
@@ -424,12 +424,12 @@ async def audit(app, connector_id, session_id, *, pooled=False):
             connector_id,
             user_id=connector.userId,
             store=store,
-            manager=state.rpc,
+            manager=state.connector_presence,
             broker=state.timeline_broker,
             runtime_state_cache=state.session_runtime_state_cache,
             links=state.device_link,
         )
-        assert socket.closed and not await state.rpc.is_online(connector_id)
+        assert socket.closed and not await state.connector_presence.is_online(connector_id)
 
     results["delete_and_cancel"] = await sample(delete_and_stop)
 

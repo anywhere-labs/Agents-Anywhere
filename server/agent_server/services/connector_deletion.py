@@ -11,7 +11,7 @@ from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.repository_ports import ConnectorDeletionRepository
 
 if TYPE_CHECKING:
-    from agent_server.infra.connector_rpc import ConnectorRpcManager
+    from agent_server.infra.connector_presence_registry import ConnectorPresenceRegistry
     from agent_server.infra.timeline_broker import TimelineBroker
     from agent_server.services.session_runtime_state_cache import (
         SessionRuntimeStateCache,
@@ -28,7 +28,7 @@ async def delete_connector_data(
     connector_id: str,
     user_id: str,
     store: ConnectorDeletionRepository,
-    manager: ConnectorRpcManager,
+    manager: ConnectorPresenceRegistry,
     runtime_state_cache: SessionRuntimeStateCache,
     device_link: DeviceLinkRevoker,
 ) -> None:
@@ -48,7 +48,7 @@ class ConnectorDeletionRecovery:
     def __init__(
         self,
         store: ConnectorDeletionRepository,
-        manager: ConnectorRpcManager,
+        manager: ConnectorPresenceRegistry,
         runtime_state_cache: SessionRuntimeStateCache,
         broker: TimelineBroker,
         device_link: DeviceLinkRevoker,

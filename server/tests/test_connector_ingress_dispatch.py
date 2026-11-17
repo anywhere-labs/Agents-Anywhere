@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from agent_server.api.connector_ingress import _ConnectorNotificationPump
-from agent_server.infra.connector_rpc import ConnectorRpcManager
+from agent_server.infra.connector_presence_registry import ConnectorPresenceRegistry
 
 
 class FakeWebSocket:
@@ -344,7 +344,7 @@ def test_invalidation_cancels_running_waiting_and_queued_notifications():
                 await asyncio.Event().wait()
 
         started = asyncio.Event()
-        manager = ConnectorRpcManager()
+        manager = ConnectorPresenceRegistry()
         connection = await manager.register("conn", Socket())
         ingest = Blocking()
         pump = _ConnectorNotificationPump(
@@ -374,10 +374,10 @@ def test_invalidation_cancels_running_waiting_and_queued_notifications():
 def test_accidental_disconnect_drains_before_replacement_can_register():
     import pytest
 
-    from agent_server.infra.connector_rpc import DuplicateConnectorConnectionError
+    from agent_server.infra.connector_presence_registry import DuplicateConnectorConnectionError
 
     async def run():
-        manager = ConnectorRpcManager()
+        manager = ConnectorPresenceRegistry()
         connection = await manager.register("conn", FakeWebSocket())
         entered, release = asyncio.Event(), asyncio.Event()
         applied = []

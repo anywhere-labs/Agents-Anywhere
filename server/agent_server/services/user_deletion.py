@@ -11,7 +11,7 @@ from agent_server.services.connector_deletion import (
 from agent_server.services.repository_ports import UserDeletionRepository
 
 if TYPE_CHECKING:
-    from agent_server.infra.connector_rpc import ConnectorRpcManager
+    from agent_server.infra.connector_presence_registry import ConnectorPresenceRegistry
     from agent_server.services.session_runtime_state_cache import (
         SessionRuntimeStateCache,
     )
@@ -24,7 +24,7 @@ class UserDeletionPending(Exception):
 async def delete_user_account(
     user_id: str,
     store: UserDeletionRepository,
-    manager: ConnectorRpcManager,
+    manager: ConnectorPresenceRegistry,
     runtime_state_cache: SessionRuntimeStateCache,
     device_link: DeviceLinkRevoker,
 ) -> None:

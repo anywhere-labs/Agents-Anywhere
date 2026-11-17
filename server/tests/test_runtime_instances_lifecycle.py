@@ -22,7 +22,7 @@ ADMIN_PASSWORD = "secret"
 
 
 class FakeDevice:
-    """A v3 device: presence where the RPC manager sits and ``DeviceCommandService.send``."""
+    """A v3 device: presence where the connector presence registry sits and ``DeviceCommandService.send``."""
 
     def __init__(self, discovery: dict[str, Any]) -> None:
         self.discovery = discovery
@@ -75,7 +75,7 @@ def _make_client(
     assert created.status_code == 200, created.text
     connector_id = created.json()["connector"]["id"]
     rpc = FakeDevice(discovery)
-    app.state.rpc = rpc
+    app.state.connector_presence = rpc
     service = DeviceRuntimeService(
         app.state.store,
         rpc,
@@ -166,7 +166,7 @@ def _discover_types(
     """What the device's ``runtime.types`` report stores, then the listing a client gets."""
 
     if discovery is None:
-        discovery = client.app.state.rpc.discovery
+        discovery = client.app.state.connector_presence.discovery
     asyncio.run(
         client.app.state.device_runtime_service.ingest_runtime_types(
             connector_id, RuntimeDiscoveryResponse.model_validate(discovery)

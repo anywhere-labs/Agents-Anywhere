@@ -43,7 +43,9 @@ class MeshLinkPort(Protocol):
     async def current_connection(self, device_id: str) -> str | None: ...
 
 
-class ConnectorRpcError(RuntimeError):
+class ConnectorRouteError(RuntimeError):
+    """A cross-worker request to the worker holding a v2 Connector's socket failed."""
+
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
@@ -64,7 +66,12 @@ class ConnectorConnection:
     drain_notifications: Callable[[], Awaitable[None]] | None = None
 
 
-class ConnectorRpcManager:
+class ConnectorPresenceRegistry:
+    """Holds v2 Connector sockets and their presence leases, and answers whether a device is online.
+
+    A v3 device is online while its ``Link/attach`` lease is held (see ``attach_mesh_link``).
+    """
+
     def __init__(
         self,
         coordinator: RedisCoordinator | None = None,
@@ -433,7 +440,7 @@ class ConnectorRpcManager:
             raise ConnectorOfflineError(message)
         if error_type == "timeout":
             raise TimeoutError(message)
-        raise ConnectorRpcError(error.get("code", "connector_error"), message)
+        raise ConnectorRouteError(error.get("code", "connector_error"), message)
 
     async def _listen(self) -> None:
         assert self._pubsub is not None
@@ -481,7 +488,7 @@ class ConnectorRpcManager:
                     expected_connection_id=connection_id,
                 )
             else:
-                raise ConnectorRpcError("invalid_route", "unsupported routed operation")
+                raise ConnectorRouteError("invalid_route", "unsupported routed operation")
             response = {
                 "type": "response",
                 "requestId": request_id,
@@ -492,7 +499,7 @@ class ConnectorRpcManager:
             response = self._route_error(
                 request_id, "offline", "connector_offline", str(exc)
             )
-        except ConnectorRpcError as exc:
+        except ConnectorRouteError as exc:
             response = self._route_error(request_id, "rpc", exc.code, exc.message)
         except Exception:  # noqa: BLE001 - isolate malformed cross-instance requests
             logger.exception(

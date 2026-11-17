@@ -93,7 +93,7 @@ def test_watches_reopen_after_the_device_reconnects(mesh_router: RouterProcess, 
             assert (await _next_of_type(queue, "session.catchup_required")).payload["reason"] == "subscription_restored"
 
             await device.stop()
-            await eventually(lambda: offline(app.state.rpc, device_id))
+            await eventually(lambda: offline(app.state.connector_presence, device_id))
             assert hub.watched(device_id) == set()
 
             device, _welcome, _access = await connect_device(client, connector_id=device_id, connector_token=token)

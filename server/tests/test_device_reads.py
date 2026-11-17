@@ -151,7 +151,7 @@ def test_offline_device_reads_return_directory_facts_only(mesh_router: RouterPro
         async with server(mesh_router, monkeypatch) as (app, client):
             headers, device_id, device = await _device_with_session(app, client, "sess_r2", 3)
             await device.stop()
-            await eventually(lambda: offline(app.state.rpc, device_id))
+            await eventually(lambda: offline(app.state.connector_presence, device_id))
 
             snapshot = await client.get("/api/v2/sessions/sess_r2/snapshot", headers=headers)
             assert snapshot.status_code == 200, snapshot.text
@@ -188,7 +188,7 @@ def test_a_device_that_does_not_answer_in_time_is_not_offline(mesh_router: Route
                 page = await client.get("/api/v2/sessions/sess_r3/timeline", headers=headers)
                 assert page.status_code == 504
                 assert page.json()["detail"]["code"] == "device_read_timeout"
-                assert await app.state.rpc.is_online(device_id)
+                assert await app.state.connector_presence.is_online(device_id)
             finally:
                 await device.stop()
 

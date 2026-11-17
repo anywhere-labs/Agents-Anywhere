@@ -102,7 +102,7 @@ def test_attachment_goes_to_the_device_and_comes_back_through_the_relay(
             finally:
                 await device.stop()
 
-            await eventually(lambda: offline(app.state.rpc, device_id))
+            await eventually(lambda: offline(app.state.connector_presence, device_id))
             offline_open = await client.get(
                 f"/api/v2/sessions/sess_t1/attachments/{file_id}/open", headers=headers
             )
@@ -147,7 +147,7 @@ def test_share_is_exported_by_the_device(mesh_router: RouterProcess, monkeypatch
             finally:
                 await device.stop()
 
-            await eventually(lambda: offline(app.state.rpc, device_id))
+            await eventually(lambda: offline(app.state.connector_presence, device_id))
             refused = await client.post("/api/v2/sessions/sess_t1/shares", headers=headers, json={"scope": "session"})
             assert refused.status_code == 409
             assert refused.json()["detail"]["code"] == "share_requires_online_device"

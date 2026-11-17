@@ -31,7 +31,7 @@ def api(tmp_path, monkeypatch):
     rpc = FakeDevice(_v2_discovery())
     # Keep the production service and its cleanup dependencies wired by create_app.
     for method in ("is_online", "is_connection_id_current"):
-        monkeypatch.setattr(app.state.rpc, method, getattr(rpc, method))
+        monkeypatch.setattr(app.state.connector_presence, method, getattr(rpc, method))
     monkeypatch.setattr(app.state.device_runtime_service, "device_commands", rpc)
     client = TestClient(app)
     try:

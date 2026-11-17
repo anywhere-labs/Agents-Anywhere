@@ -32,7 +32,7 @@ from agent_server.core.secret_fields import (
     secret_paths,
     secret_values,
 )
-from agent_server.infra.connector_rpc import ConnectorRpcManager
+from agent_server.infra.connector_presence_registry import ConnectorPresenceRegistry
 from agent_server.infra.redis_coordinator import RedisCoordinator
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.services.dashboard_events import publish_dashboard_changed
@@ -234,7 +234,7 @@ class DeviceRuntimeService:
     def __init__(
         self,
         store: DeviceRuntimeRepository,
-        manager: ConnectorRpcManager,
+        manager: ConnectorPresenceRegistry,
         timeline_broker: TimelineBroker | None = None,
         coordinator: RedisCoordinator | None = None,
         runtime_state_cache: SessionRuntimeStateCache | None = None,

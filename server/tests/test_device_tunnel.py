@@ -77,7 +77,7 @@ def test_frames_are_forwarded_both_ways_and_ends_are_reported(mesh_router: Route
                 await tunnel.close()
                 await device.stop()
 
-            await eventually(lambda: offline(app.state.rpc, device_id))
+            await eventually(lambda: offline(app.state.connector_presence, device_id))
             await tunnel.handle({"t": "tun", "route": _route(device_id), "n": 0, "ct": "x"})
             assert (await asyncio.wait_for(frames.get(), 10))["code"] == "connector_offline"
 

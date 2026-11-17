@@ -95,5 +95,5 @@ async def acked(device: Any, oid: int) -> bool:
     return device.state.acked_oid >= oid
 
 
-async def offline(rpc: Any, device_id: str) -> bool:
-    return not await rpc.is_online(device_id)
+async def offline(presence: Any, device_id: str) -> bool:
+    return not await presence.is_online(device_id)

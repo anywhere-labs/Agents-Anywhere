@@ -76,7 +76,7 @@ def test_stale_connection_status_cannot_overwrite_current_instance(
     client, connector_id, _ = _make_connector(tmp_path)
 
     async def exercise() -> None:
-        manager = client.app.state.rpc
+        manager = client.app.state.connector_presence
         service = client.app.state.device_runtime_service
         runtime_id = await _seed_named(client, connector_id)
         old = await manager.register(connector_id, FakeWebSocket())

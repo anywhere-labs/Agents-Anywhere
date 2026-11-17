@@ -74,7 +74,7 @@ def _request(name: str, payload: dict[str, Any]) -> None:
 
 
 class FakeManager:
-    """The v2 RPC manager: only presence matters for a v3 device; any v2 RPC is a bug here."""
+    """The connector presence registry: only presence matters for a v3 device; any v2 RPC is a bug here."""
 
     def __init__(self) -> None:
         self.online = True

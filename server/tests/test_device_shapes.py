@@ -94,7 +94,7 @@ def test_takeover_reaches_the_device_now_or_when_it_links_again(mesh_router: Rou
                 assert await app.state.device_link.pending_takeover(device_id) == {}
             finally:
                 await device.stop()
-            await eventually(lambda: offline(app.state.rpc, device_id))
+            await eventually(lambda: offline(app.state.connector_presence, device_id))
 
             # Offline: the Server keeps the change and sends it when the device links again.
             released = await client.delete(f"{base}/takeover", headers=headers)

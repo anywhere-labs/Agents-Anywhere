@@ -32,15 +32,15 @@ from agent_server.core.models import (
 )
 from agent_server.deps import (
     get_connector_ingest_service,
+    get_connector_presence,
     get_e2ee_settings,
-    get_rpc,
     get_store,
     get_timeline_broker,
     model_channel_service_for,
 )
-from agent_server.infra.connector_rpc import (
+from agent_server.infra.connector_presence_registry import (
     ConnectorConnection,
-    ConnectorRpcManager,
+    ConnectorPresenceRegistry,
     DuplicateConnectorConnectionError,
 )
 from agent_server.infra.repositories.facade import Store
@@ -470,7 +470,7 @@ async def connector_ingest(
 async def connector_ws(
     websocket: WebSocket,
     db: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
+    manager: ConnectorPresenceRegistry = Depends(get_connector_presence),
     timeline_broker: TimelineBroker = Depends(get_timeline_broker),
 ) -> None:
     """A v2 Connector's socket: its presence and the metadata it pushes (D4).
@@ -617,7 +617,7 @@ async def _read_connector_messages(
     websocket: WebSocket,
     connector_id: str,
     connection: ConnectorConnection,
-    manager: ConnectorRpcManager,
+    manager: ConnectorPresenceRegistry,
     notification_pump: _ConnectorNotificationPump,
 ) -> None:
     while True:

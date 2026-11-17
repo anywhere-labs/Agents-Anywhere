@@ -57,7 +57,7 @@ from agent_server.core.process_settings import ProcessSettings
 from agent_server.core.setup_token import SetupToken
 from agent_server.core.utc import utc_now
 from agent_server.deps import model_channel_service_for, tokens_link_service_for
-from agent_server.infra.connector_rpc import ConnectorRpcManager
+from agent_server.infra.connector_presence_registry import ConnectorPresenceRegistry
 from agent_server.infra.db.migrations import (
     database_schema_version,
     require_current_database,
@@ -121,7 +121,7 @@ async def _purge_v2_attachments(app: FastAPI) -> None:
 async def _connector_presence_watchdog(app: FastAPI) -> None:
     while True:
         await asyncio.sleep(CONNECTOR_PRESENCE_SWEEP_SECONDS)
-        stale_connections = await app.state.rpc.expire_stale()
+        stale_connections = await app.state.connector_presence.expire_stale()
         for connection in stale_connections:
             app.state.capability_refresh.request(connection.connector_id)
             await publish_dashboard_changed(
@@ -171,7 +171,7 @@ def create_app(
             )
             await app.state.redis.start()
             await app.state.timeline_broker.start()
-            await app.state.rpc.start()
+            await app.state.connector_presence.start()
             # Never blocks startup: a Router that is down only shows in readiness (#441 review).
             await app.state.device_mesh.start()
             await app.state.session_watch.start()
@@ -242,7 +242,7 @@ def create_app(
             except Exception:  # noqa: BLE001 - shutdown must continue
                 logger.exception("failed to close the device mesh client")
             try:
-                await app.state.rpc.close()
+                await app.state.connector_presence.close()
             finally:
                 try:
                     await app.state.timeline_broker.close()
@@ -282,17 +282,17 @@ def create_app(
         ),
         slow_lock_ms=float(os.environ.get("AGENT_SERVER_LOCK_SLOW_MS", "0")),
     )
-    app.state.rpc = ConnectorRpcManager(
+    app.state.connector_presence = ConnectorPresenceRegistry(
         app.state.redis,
         instance_id=process_settings.instance_id(),
     )
-    app.state.store.bind_connector_lifecycle(app.state.rpc.lifecycle_guard)
+    app.state.store.bind_connector_lifecycle(app.state.connector_presence.lifecycle_guard)
     app.state.device_mesh = DeviceMesh(MeshSettings.from_environment())
     app.state.device_link_hub = DeviceLinkHub(
-        app.state.device_mesh, app.state.redis, worker_id=app.state.rpc.instance_id
+        app.state.device_mesh, app.state.redis, worker_id=app.state.connector_presence.instance_id
     )
     # v3 devices are online through their ``Link/attach`` lease (the same presence key as v2 sockets).
-    app.state.rpc.attach_mesh_link(app.state.device_link_hub)
+    app.state.connector_presence.attach_mesh_link(app.state.device_link_hub)
     app.state.fs_downloads = FsDownloadRelayManager(app.state.redis)
     app.state.tokens_access_cache = TokensAccessCache(app.state.redis)
     app.state.tokens_client_factory = TokensClient
@@ -308,12 +308,12 @@ def create_app(
         event_queue_bytes=int(os.getenv("AGENT_SERVER_EVENT_QUEUE_BYTES", str(32 * 1024 * 1024))),
     )
     app.state.capability_refresh = ConnectorCapabilityRefresh(
-        app.state.store, app.state.rpc, app.state.timeline_broker,
+        app.state.store, app.state.connector_presence, app.state.timeline_broker,
     )
     app.state.session_runtime_state_cache = SessionRuntimeStateCache(app.state.redis)
     app.state.device_runtime_service = DeviceRuntimeService(
         app.state.store,
-        app.state.rpc,
+        app.state.connector_presence,
         app.state.timeline_broker,
         app.state.redis,
         app.state.session_runtime_state_cache,
@@ -338,7 +338,7 @@ def create_app(
         e2ee_settings=_e2ee_settings,
     )
     app.state.connector_deletion_recovery = ConnectorDeletionRecovery(
-        app.state.store, app.state.rpc,
+        app.state.store, app.state.connector_presence,
         app.state.session_runtime_state_cache, app.state.timeline_broker,
         app.state.device_link,
     )
@@ -351,7 +351,7 @@ def create_app(
         app.state.redis,
         app.state.store,
         app.state.timeline_broker.publish,
-        worker_id=app.state.rpc.instance_id,
+        worker_id=app.state.connector_presence.instance_id,
         # Encrypted mode: content never passes through the Server, the device registers no Sessions.
         enabled=lambda: not _e2ee_settings().required,
     )
@@ -462,7 +462,7 @@ def create_app(
             content={
                 "status": "ready" if ready else "not_ready",
                 "checks": checks,
-                "instanceId": app.state.rpc.instance_id,
+                "instanceId": app.state.connector_presence.instance_id,
                 "serverTime": utc_now(),
             },
         )

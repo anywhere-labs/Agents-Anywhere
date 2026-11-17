@@ -427,12 +427,12 @@ def test_fenced_scripts_reject_a_replaced_lock_owner() -> None:
 
 def test_remote_disconnect_waits_for_the_notification_owner_to_abort():
     from agent_server.api.connector_ingress import _ConnectorNotificationPump
-    from agent_server.infra.connector_rpc import ConnectorRpcManager
+    from agent_server.infra.connector_presence_registry import ConnectorPresenceRegistry
 
     async def run():
         fake_server = FakeServer()
-        owner = ConnectorRpcManager(_coordinator(fake_server), instance_id="owner")
-        caller = ConnectorRpcManager(_coordinator(fake_server), instance_id="caller")
+        owner = ConnectorPresenceRegistry(_coordinator(fake_server), instance_id="owner")
+        caller = ConnectorPresenceRegistry(_coordinator(fake_server), instance_id="caller")
         await owner.start()
         await caller.start()
         entered = asyncio.Event()

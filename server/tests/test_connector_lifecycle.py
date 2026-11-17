@@ -65,8 +65,8 @@ def test_transport_disconnect_preserves_connector_authentication(tmp_path):
                 pass
 
         for _ in range(2):
-            connection = await client.app.state.rpc.register(connector_id, Socket())
-            await client.app.state.rpc.unregister(connector_id, connection)
+            connection = await client.app.state.connector_presence.register(connector_id, Socket())
+            await client.app.state.connector_presence.unregister(connector_id, connection)
             assert await client.app.state.store.authenticate_connector_access(token) == connector_id
 
     asyncio.run(run())
@@ -101,7 +101,7 @@ def test_failed_delete_keeps_revoked_tombstone_and_can_finish_on_retry(tmp_path)
 
     async def run():
         owner = (await state.store.get_connector(connector_id)).userId
-        original_disconnect = state.rpc.disconnect
+        original_disconnect = state.connector_presence.disconnect
 
         async def fail(*args, **kwargs):
             raise TimeoutError("owner did not acknowledge disconnect")
@@ -109,12 +109,12 @@ def test_failed_delete_keeps_revoked_tombstone_and_can_finish_on_retry(tmp_path)
         kwargs = {
             "user_id": owner,
             "store": state.store,
-            "manager": state.rpc,
+            "manager": state.connector_presence,
             "broker": state.timeline_broker,
             "runtime_state_cache": state.session_runtime_state_cache,
             "links": state.device_link,
         }
-        state.rpc.disconnect = fail
+        state.connector_presence.disconnect = fail
         with pytest.raises(TimeoutError):
             await delete_connector(connector_id, **kwargs)
         with pytest.raises(KeyError):
@@ -123,7 +123,7 @@ def test_failed_delete_keeps_revoked_tombstone_and_can_finish_on_retry(tmp_path)
         assert await state.store.begin_connector_deletion(
             connector_id, user_id=owner
         ) == [session_id]
-        state.rpc.disconnect = original_disconnect
+        state.connector_presence.disconnect = original_disconnect
         await delete_connector(connector_id, **kwargs)
         with pytest.raises(KeyError):
             await state.store.get_session(session_id)

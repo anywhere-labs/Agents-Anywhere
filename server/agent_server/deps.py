@@ -10,7 +10,7 @@ from starlette.requests import HTTPConnection
 from agent_server.core.auth import verify_user_access_claims
 from agent_server.core.e2ee_settings import E2eeSettings
 from agent_server.core.models import UserView
-from agent_server.infra.connector_rpc import ConnectorRpcManager
+from agent_server.infra.connector_presence_registry import ConnectorPresenceRegistry
 from agent_server.infra.device_mesh import DeviceMesh
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.infra.repositories.facade import Store
@@ -62,7 +62,7 @@ def get_connector_ingest_service(conn: HTTPConnection) -> ConnectorIngestService
         ),
         conn.app.state.timeline_broker,
         conn.app.state.device_runtime_service,
-        conn.app.state.rpc,
+        conn.app.state.connector_presence,
         conn.app.state.session_runtime_state_cache,
         conn.app.state.capability_refresh,
         runtime_event=model_channel_service_for(conn.app.state).runtime_event,
@@ -168,8 +168,8 @@ def get_model_config_service(conn: HTTPConnection) -> ModelConfigService:
     return get_tokens_link_service(conn).model_config
 
 
-def get_rpc(conn: HTTPConnection) -> ConnectorRpcManager:
-    return conn.app.state.rpc
+def get_connector_presence(conn: HTTPConnection) -> ConnectorPresenceRegistry:
+    return conn.app.state.connector_presence
 
 
 def get_device_mesh(conn: HTTPConnection) -> DeviceMesh:

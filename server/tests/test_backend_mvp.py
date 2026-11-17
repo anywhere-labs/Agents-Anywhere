@@ -15,8 +15,8 @@ from starlette.websockets import WebSocketDisconnect
 from agent_server.app import create_app
 from agent_server.core.models import SessionRuntimeState
 from agent_server.core.protocol import protocol_selection_id
-from agent_server.infra.connector_rpc import (
-    ConnectorRpcManager,
+from agent_server.infra.connector_presence_registry import (
+    ConnectorPresenceRegistry,
     DuplicateConnectorConnectionError,
 )
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
@@ -356,7 +356,7 @@ def test_revoke_connector_rotates_token_and_disconnects(tmp_path):
     connector_id = created.json()["connector"]["id"]
     old_token = created.json()["connectorToken"]
 
-    class FakeRpc:
+    class FakePresence:
         def __init__(self) -> None:
             self.disconnected: list[tuple[str, str]] = []
             self.online = True
@@ -369,8 +369,8 @@ def test_revoke_connector_rotates_token_and_disconnects(tmp_path):
             self.online = False
             return True
 
-    fake_rpc = FakeRpc()
-    app.state.rpc = fake_rpc
+    fake_presence = FakePresence()
+    app.state.connector_presence = fake_presence
 
     response = client.post(f"/connectors/{connector_id}/revoke", headers=headers)
     assert response.status_code == 200
@@ -379,7 +379,7 @@ def test_revoke_connector_rotates_token_and_disconnects(tmp_path):
     assert new_token != old_token
     assert body["connector"]["id"] == connector_id
     assert body["connector"]["status"] == "offline"
-    assert fake_rpc.disconnected == [(connector_id, "connector token revoked")]
+    assert fake_presence.disconnected == [(connector_id, "connector token revoked")]
 
     old_auth = client.post(
         "/connector/auth",
@@ -438,8 +438,8 @@ def test_platform_session_create_without_external_session_is_rejected(tmp_path):
     connector_body = connector_response.json()
     connector_id = connector_body["connector"]["id"]
 
-    fake_rpc = FakeLocalRpc()
-    app.state.rpc = fake_rpc
+    fake_presence = FakeLocalPresence()
+    app.state.connector_presence = fake_presence
 
     response = client.post(
         "/sessions",
@@ -448,7 +448,7 @@ def test_platform_session_create_without_external_session_is_rejected(tmp_path):
     )
     assert response.status_code == 422
     assert response.json()["detail"] == "new sessions must use /sessions/create-and-start"
-    assert fake_rpc.requests == []
+    assert fake_presence.requests == []
 
 
 def test_session_create_does_not_persist_external_session_model_selection(tmp_path):
@@ -458,8 +458,8 @@ def test_session_create_does_not_persist_external_session_model_selection(tmp_pa
     connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
     connector_id = connector_response.json()["connector"]["id"]
     model_selection_id = seed_codex_model_catalog(app, connector_id)
-    fake_rpc = FakeLocalRpc()
-    app.state.rpc = fake_rpc
+    fake_presence = FakeLocalPresence()
+    app.state.connector_presence = fake_presence
 
     response = client.post(
         "/sessions",
@@ -476,7 +476,7 @@ def test_session_create_does_not_persist_external_session_model_selection(tmp_pa
     )
 
     assert response.status_code == 200, response.text
-    assert fake_rpc.requests == []
+    assert fake_presence.requests == []
     session_id = response.json()["session"]["id"]
     state = client.get(f"/sessions/{session_id}/runtime/state", headers=headers)
     assert state.status_code == 200
@@ -490,8 +490,8 @@ def test_session_create_does_not_persist_external_session_permission_selection(t
     connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
     connector_id = connector_response.json()["connector"]["id"]
     permission_selection_id = seed_codex_permission_catalog(app, connector_id)
-    fake_rpc = FakeLocalRpc()
-    app.state.rpc = fake_rpc
+    fake_presence = FakeLocalPresence()
+    app.state.connector_presence = fake_presence
 
     response = client.post(
         "/sessions",
@@ -508,7 +508,7 @@ def test_session_create_does_not_persist_external_session_permission_selection(t
     )
 
     assert response.status_code == 200, response.text
-    assert fake_rpc.requests == []
+    assert fake_presence.requests == []
     session_id = response.json()["session"]["id"]
     state = client.get(f"/sessions/{session_id}/runtime/state", headers=headers)
     assert state.status_code == 200
@@ -521,7 +521,7 @@ def test_session_create_rejects_legacy_runtime_settings_model_fields(tmp_path):
     headers = auth_headers(client)
     connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
     connector_id = connector_response.json()["connector"]["id"]
-    app.state.rpc = FakeLocalRpc()
+    app.state.connector_presence = FakeLocalPresence()
 
     response = client.post(
         "/sessions",
@@ -568,8 +568,8 @@ def test_claude_session_create_without_external_session_uses_create_and_start(tm
             assert requested_connector_id == connector_id
             return {"sessionId": "sess_claude_created", "externalSessionId": None}
 
-    fake_rpc = FakeClaudeCreateRpc()
-    app.state.rpc = fake_rpc
+    fake_presence = FakeClaudeCreateRpc()
+    app.state.connector_presence = fake_presence
 
     response = client.post(
         "/sessions",
@@ -579,7 +579,7 @@ def test_claude_session_create_without_external_session_uses_create_and_start(tm
 
     assert response.status_code == 422, response.text
     assert response.json()["detail"] == "new sessions must use /sessions/create-and-start"
-    assert fake_rpc.requests == []
+    assert fake_presence.requests == []
 
 
 def test_session_state_updated_pushes_ephemeral_runtime_state(tmp_path):
@@ -840,8 +840,8 @@ def test_session_updated_rejects_legacy_selection_fields(tmp_path):
     assert response.json()["detail"]["code"] == "unsupported_legacy_selection_fields"
 
 
-class FakeLocalRpc:
-    """Stands in for the v2 Connector RPC manager: every Connector is online and any request is recorded.
+class FakeLocalPresence:
+    """Stands in for the connector presence registry: every Connector is online and any request is recorded.
 
     The Server sends v2 Connectors no requests, so tests assert ``requests`` stays empty.
     """
@@ -867,10 +867,10 @@ class FakeLocalRpc:
         return {"method": method, "params": params}
 
 
-def wait_for_rpc_method(fake_rpc: FakeLocalRpc, method: str) -> tuple[str, str, dict[str, Any], float]:
+def wait_for_rpc_method(fake_presence: FakeLocalPresence, method: str) -> tuple[str, str, dict[str, Any], float]:
     deadline = time.monotonic() + 1
     while time.monotonic() < deadline:
-        for request in reversed(fake_rpc.requests):
+        for request in reversed(fake_presence.requests):
             if request[1] == method:
                 return request
         time.sleep(0.01)
@@ -1453,34 +1453,34 @@ def test_ws_ticket_scope_must_select_exactly_one_target(tmp_path):
 def test_v2_session_runtime_state_comes_from_server_facts(tmp_path):
     client = make_client(tmp_path)
     _connector_id, _access_token, session_id, headers = create_connector_and_session(client)
-    fake_rpc = FakeLocalRpc()
-    client.app.state.rpc = fake_rpc
+    fake_presence = FakeLocalPresence()
+    client.app.state.connector_presence = fake_presence
 
     response = client.get(f"/sessions/{session_id}/runtime/state", headers=headers)
 
     assert response.status_code == 200, response.text
     assert response.json()["state"]["status"] == "idle"
-    assert fake_rpc.requests == []
+    assert fake_presence.requests == []
 
 
 def test_v2_session_runtime_capabilities_come_from_server_facts(tmp_path):
     client = make_client(tmp_path)
     connector_id, _access_token, session_id, headers = create_connector_and_session(client)
-    fake_rpc = FakeLocalRpc()
-    client.app.state.rpc = fake_rpc
+    fake_presence = FakeLocalPresence()
+    client.app.state.connector_presence = fake_presence
 
     response = client.get(f"/sessions/{session_id}/runtime/capabilities", headers=headers)
 
     assert response.status_code == 200, response.text
     assert response.json()["connectorId"] == connector_id
-    assert fake_rpc.requests == []
+    assert fake_presence.requests == []
 
 
 def test_v2_device_content_routes_require_upgrade_and_hide_other_users(tmp_path):
     client = make_client(tmp_path)
     connector_id, _access_token, session_id, headers = create_connector_and_session(client)
-    fake_rpc = FakeLocalRpc()
-    client.app.state.rpc = fake_rpc
+    fake_presence = FakeLocalPresence()
+    client.app.state.connector_presence = fake_presence
 
     session_reads = [
         ("get", f"/sessions/{session_id}/snapshot", None),
@@ -1511,7 +1511,7 @@ def test_v2_device_content_routes_require_upgrade_and_hide_other_users(tmp_path)
     ]:
         response = getattr(client, method)(path, headers=other_headers)
         assert response.status_code == 404, (path, response.text)
-    assert fake_rpc.requests == []
+    assert fake_presence.requests == []
 
 
 def test_connector_connection_records_metadata_without_persisting_presence(tmp_path):
@@ -1540,7 +1540,7 @@ def test_rpc_manager_expires_stale_connector_heartbeats():
 
     async def exercise() -> None:
         nonlocal now
-        manager = ConnectorRpcManager(heartbeat_timeout_seconds=60, clock=clock)
+        manager = ConnectorPresenceRegistry(heartbeat_timeout_seconds=60, clock=clock)
         websocket = FakeWebSocket()
         connection = await manager.register("conn_1", websocket)  # type: ignore[arg-type]
         assert await manager.is_online("conn_1")
@@ -1558,7 +1558,7 @@ def test_rpc_manager_expires_stale_connector_heartbeats():
 
 def test_active_duplicate_connector_connection_is_rejected():
     async def exercise() -> None:
-        manager = ConnectorRpcManager()
+        manager = ConnectorPresenceRegistry()
         old = await manager.register("conn_1", FakeWebSocket())  # type: ignore[arg-type]
 
         with pytest.raises(DuplicateConnectorConnectionError):
@@ -1579,7 +1579,7 @@ def test_stale_connector_connection_can_be_replaced():
 
     async def exercise() -> None:
         nonlocal now
-        manager = ConnectorRpcManager(heartbeat_timeout_seconds=60, clock=clock)
+        manager = ConnectorPresenceRegistry(heartbeat_timeout_seconds=60, clock=clock)
         old = await manager.register("conn_1", FakeWebSocket())  # type: ignore[arg-type]
         now = 61.0
         current = await manager.register("conn_1", FakeWebSocket())  # type: ignore[arg-type]
@@ -1599,7 +1599,7 @@ def test_connector_crud_updates_and_revokes_devices(tmp_path):
     connector_id = created["connector"]["id"]
     connector_token = created["connectorToken"]
 
-    class FakeRpc:
+    class FakePresence:
         def __init__(self) -> None:
             self.disconnected: list[tuple[str, str]] = []
 
@@ -1610,8 +1610,8 @@ def test_connector_crud_updates_and_revokes_devices(tmp_path):
             self.disconnected.append((requested_connector_id, reason))
             return True
 
-    fake_rpc = FakeRpc()
-    app.state.rpc = fake_rpc
+    fake_presence = FakePresence()
+    app.state.connector_presence = fake_presence
 
     fetched = client.get(f"/connectors/{connector_id}", headers=headers)
     assert fetched.status_code == 200
@@ -1624,7 +1624,7 @@ def test_connector_crud_updates_and_revokes_devices(tmp_path):
 
     deleted = client.delete(f"/connectors/{connector_id}", headers=headers)
     assert deleted.status_code == 204
-    assert fake_rpc.disconnected == [(connector_id, "connector deleted")]
+    assert fake_presence.disconnected == [(connector_id, "connector deleted")]
     assert client.get("/connectors", headers=headers).json()["connectors"] == []
 
     auth = client.post(
@@ -2072,8 +2072,8 @@ def test_dsh_attachment_without_capability_never_calls_connector(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, session_id, headers = create_connector_and_session(client, runtime="dsh")
     session = asyncio.run(client.app.state.store.get_session(session_id))
-    fake_rpc = FakeLocalRpc()
-    client.app.state.rpc = fake_rpc
+    fake_presence = FakeLocalPresence()
+    client.app.state.connector_presence = fake_presence
 
     response = client.post(
         "/sessions/create-and-start",
@@ -2097,7 +2097,7 @@ def test_dsh_attachment_without_capability_never_calls_connector(tmp_path):
     )
 
     assert response.status_code == 409
-    assert fake_rpc.requests == []
+    assert fake_presence.requests == []
 
 
 def test_legacy_approval_api_is_removed(tmp_path):
@@ -2617,7 +2617,7 @@ def test_session_ws_preserves_rpc_presence_disconnect_and_reconnect_at_same_sequ
         subscribed = ws.receive_json()
         assert subscribed["type"] == "session.subscribed"
         observed_sequences: list[int] = []
-        manager = client.app.state.rpc
+        manager = client.app.state.connector_presence
 
         first_connection = ws.portal.call(
             manager.register,

@@ -24,13 +24,13 @@ from agent_server.core.protocol import ProtocolCapabilitiesResponse
 from agent_server.core.utc import utc_now
 from agent_server.deps import (
     current_user_id,
+    get_connector_presence,
     get_device_commands,
-    get_rpc,
     get_session_runtime_state_cache,
     get_store,
     get_timeline_broker,
 )
-from agent_server.infra.connector_rpc import ConnectorRpcManager
+from agent_server.infra.connector_presence_registry import ConnectorPresenceRegistry
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.services.connector_deletion import delete_connector_data
@@ -55,7 +55,7 @@ router = APIRouter(prefix="/connectors", tags=["connectors"])
 async def list_connectors(
     user_id: str = Depends(current_user_id),
     store: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
+    manager: ConnectorPresenceRegistry = Depends(get_connector_presence),
 ) -> ConnectorListResponse:
     connectors = await store.list_connectors(user_id=user_id)
     return ConnectorListResponse(
@@ -103,7 +103,7 @@ async def get_connector(
     connector_id: str,
     user_id: str = Depends(current_user_id),
     store: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
+    manager: ConnectorPresenceRegistry = Depends(get_connector_presence),
 ) -> ConnectorResponse:
     try:
         connector = await store.get_connector(connector_id)
@@ -154,7 +154,7 @@ async def update_connector(
     payload: ConnectorUpdateRequest,
     user_id: str = Depends(current_user_id),
     store: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
+    manager: ConnectorPresenceRegistry = Depends(get_connector_presence),
     broker: TimelineBroker = Depends(get_timeline_broker),
 ) -> ConnectorResponse:
     try:
@@ -181,7 +181,7 @@ async def delete_connector(
     connector_id: str,
     user_id: str = Depends(current_user_id),
     store: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
+    manager: ConnectorPresenceRegistry = Depends(get_connector_presence),
     broker: TimelineBroker = Depends(get_timeline_broker),
     runtime_state_cache: SessionRuntimeStateCache = Depends(get_session_runtime_state_cache),
     links: DeviceLinkService = Depends(get_device_link_service),
@@ -204,7 +204,7 @@ async def revoke_connector_token(
     connector_id: str,
     user_id: str = Depends(current_user_id),
     store: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
+    manager: ConnectorPresenceRegistry = Depends(get_connector_presence),
     broker: TimelineBroker = Depends(get_timeline_broker),
     links: DeviceLinkService = Depends(get_device_link_service),
 ) -> ConnectorRevokeResponse:
@@ -307,7 +307,7 @@ async def archive_all_device_sessions(
     connector_id: str,
     payload: ArchiveAllRequest,
     store: Store = Depends(get_store),
-    manager: ConnectorRpcManager = Depends(get_rpc),
+    manager: ConnectorPresenceRegistry = Depends(get_connector_presence),
     user_id: str = Depends(current_user_id),
 ) -> ArchiveAllResponse:
     await require_owned_connector(connector_id, user_id, store)
@@ -328,6 +328,6 @@ async def archive_all_device_sessions(
 
 
 async def _connector_for_response(
-    manager: ConnectorRpcManager, connector: ConnectorView
+    manager: ConnectorPresenceRegistry, connector: ConnectorView
 ) -> ConnectorView:
     return await with_effective_connector_status(manager, connector)
