@@ -425,10 +425,10 @@ def test_queue_runs_after_the_turn(secure: Secure) -> None:
 def test_slash_commands(secure: Secure) -> None:
     sid = secure.ensure_session()
     client = secure.client
-    # The catalog route (`GET runtime/commands`) is not served through the channel yet: the client gets a 404 and
-    # sends the command as a message, which is what the normal-mode route does on the Server.
-    status, catalog = client.request("GET", f"/api/v2/sessions/{sid}/runtime/commands")
-    assert status == 404, (status, catalog)
+    # The device serves the catalog through the channel, as it does through ``Client/call`` in normal mode.
+    catalog = wait_for(lambda: (c := client.ok("GET", f"/api/v2/sessions/{sid}/runtime/commands"))["commands"] and c,
+                       15, 0.2, "the command catalog")
+    assert "review" in [item.get("id") for item in catalog["commands"]], catalog
     argument = secure.canary("command")
     secure.send(sid, f"/review {argument}")
     secure.wait_reply(sid, f"echo: /review {argument}")

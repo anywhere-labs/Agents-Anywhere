@@ -27,18 +27,16 @@ from typing import Any
 
 import httpx
 import pytest
-from test_v3_e2e import (  # noqa: F401  (``e2e`` is the module fixture)
-    E2E,
-    _new_session,
-    _send,
-    _skip_reason,
-    _wait,
-    _wait_session,
-    _wait_text,
-    e2e,
-)
+from test_v3_e2e import e2e  # noqa: F401  (the module fixture)
 from test_v3_e2e import test_agent_types_and_enabling_an_instance as _enable_instance
 from test_v3_e2e import test_device_pairs_and_comes_online as _come_online
+from v3_e2e_harness import E2E
+from v3_e2e_harness import new_session as _new_session
+from v3_e2e_harness import send_message as _send
+from v3_e2e_harness import skip_reason as _skip_reason
+from v3_e2e_harness import wait_for as _wait
+from v3_e2e_harness import wait_session as _wait_session
+from v3_e2e_harness import wait_text as _wait_text
 
 pytestmark = pytest.mark.skipif(_skip_reason() is not None, reason=_skip_reason() or "")
 
