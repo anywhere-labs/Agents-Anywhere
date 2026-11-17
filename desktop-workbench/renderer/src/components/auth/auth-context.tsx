@@ -12,6 +12,9 @@ import { normalizeAuthMe, normalizeDesktopOAuthMe } from "@/features/auth/normal
 import { getDesktopWorkbenchBridge } from "@/features/desktop/bridge"
 import { getDesktopServerConnection, setDesktopServerConnection } from "@/features/desktop/server-connection"
 import { useTranslations } from "next-intl"
+import { forgetSessionDiskCache } from "@/components/session/session-disk-store"
+import { sessionCacheScope } from "@/components/session/session-state-cache"
+import { e2eeRuntime, startE2ee } from "@/features/e2ee/runtime"
 
 export type AuthScreen = "login" | "signed-out" | "preview" | "onboarding" | "app"
 
@@ -268,7 +271,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return currentUser
   }, [session])
 
+  // End-to-end encryption: the trust layer runs while signed in; this client's identity stays on the computer.
+  React.useEffect(() => {
+    if (session?.accessToken) startE2ee("desktop")
+  }, [session?.accessToken])
+
+  const signOutSessionRef = React.useRef<StoredSession | null>(null)
+  signOutSessionRef.current = session
   const signOut = React.useCallback(() => {
+    // Signing out forgets this account's cached session content on this computer.
+    const signedIn = signOutSessionRef.current
+    if (signedIn?.userId) void forgetSessionDiskCache(sessionCacheScope(signedIn.serverUrl ?? "", signedIn.userId))
+    void e2eeRuntime()?.dispose()
     clearStoredSession()
     setSession(null)
     setMe(null)

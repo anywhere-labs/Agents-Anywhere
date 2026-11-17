@@ -6,21 +6,68 @@
 
 ### 升级须知
 
+- Server 需要执行 `v2_62` 数据库迁移，删除记录终端工作目录的表，改为保存在 Redis（未配置 Redis 时保存在 Server 进程内）；删除设备或运行环境时一并清理。升级时已打开的终端仍在设备上运行，但 Server 重新接入它时可能提示找不到终端，重新打开一个即可。（[#739](https://github.com/anywhere-labs/Agents-Anywhere/pull/739)）
+- 端口预览需要 Server 执行 `v2_61` 数据库迁移（只新增预览表），并配置单独注册的预览域名 `AGENT_SERVER_PREVIEW_DOMAIN`（不能是 AA 站点的子域名）和至少 32 个字符的随机 `AGENT_SERVER_PREVIEW_INTERNAL_TOKEN`；预览域名要有通配符 DNS 记录和通配符证书（需要 DNS-01 验证，在网关前终止 TLS）。自托管 Compose 默认带上 frps 和 preview-auth，网关同时承载预览域名，填好这两项即开启；没有配置时端口预览在各端隐藏，其他功能不受影响。加密模式下预览流量不在端到端加密范围内，可用 `AGENT_SERVER_E2EE_PREVIEW=deny` 关闭。（[#734](https://github.com/anywhere-labs/Agents-Anywhere/pull/734)、[#735](https://github.com/anywhere-labs/Agents-Anywhere/pull/735)）
+- Server 需要执行 `v2_60` 数据库迁移，迁移会删除 Server 上保存的会话内容（对话记录、计划、目标和排队消息）且不能降级，升级前请备份数据库：会话列表、标题、归档、置顶和分享都会保留，v3 设备连上后会从电脑上的原始记录重新生成内容；以前上传的附件在 Server 启动后于后台删除，分享里用到的文件保留；升级前已读的会话保持已读，未读的保持未读，直到设备升级到 v3 后随新的回合更新。（[#733](https://github.com/anywhere-labs/Agents-Anywhere/pull/733)）
+- Server 不再使用 `AGENT_SERVER_TIMELINE_SINGLE_INSTANCE`，可以从部署配置里删除；保留也不会影响启动。（[#741](https://github.com/anywhere-labs/Agents-Anywhere/pull/741)）
+- 升级 Server 后，还在用旧版 Agents Anywhere（2.x 的 Connector、Desktop 或 DSH 插件）的设备只显示会话列表和实时状态：打开会话、发消息、规划、目标、排队、上传附件和创建分享都会提示「请在设备上升级 Agents Anywhere」，这些设备推送的会话内容不再保存；改名、置顶、归档和终端不受影响。（[#731](https://github.com/anywhere-labs/Agents-Anywhere/pull/731)）
+- Server 需要执行 `v2_59` 数据库迁移，新增登录记录表：此后退出登录、修改密码或停用账号，对应的登录令牌几秒内在所有 Server 实例上失效（修改密码只保留当前这次登录）；升级前签发的令牌在到期前继续可用，账号停用后立即失效。（[#728](https://github.com/anywhere-labs/Agents-Anywhere/pull/728)）
+- Server 必须设置至少 32 个字符的随机 `AGENT_SERVER_SECRET`：未设置、过短或仍是文档里的示例值时拒绝启动（只有设了 `AGENT_SERVER_DEV_MODE=1` 的开发环境例外），Compose 也不再提供默认值；同时需要执行 `v2_58` 数据库迁移删除旧的配对码表，升级时正在进行的设备配对要重新开始。（[#723](https://github.com/anywhere-labs/Agents-Anywhere/pull/723)）
+- Server 需要执行 `v2_57` 数据库迁移：只新增 v3 设备连接用到的会话目录字段和命令回执表，不改写已有数据。（[#685](https://github.com/anywhere-labs/Agents-Anywhere/pull/685)）
+- 自托管 Compose 新增 MeshCall Router 和前置网关（Caddy）：对外端口改由网关提供，v3 设备经 `/api/v3/device/mesh` 连接 Router；Router 账号密码默认自动生成并保存在数据卷里，也可以用 `AGENT_SERVER_MESH_PASSWORD` 指定。（[#675](https://github.com/anywhere-labs/Agents-Anywhere/pull/675)）
+- Desktop 改用内置的新版 Connector，不再需要 Python 和 uv：升级后第一次启动会删除旧 Connector 留下的 Python 环境和下载缓存，设备凭据和绑定保留，不用重新连接；「uv 路径」「Python 路径」和两个镜像设置不再使用。（[#748](https://github.com/anywhere-labs/Agents-Anywhere/pull/748)）
 - 运行中排队消息需要 Server 执行 `v2_56` 数据库迁移（只新增两张表，不改写已有数据）；排队在 Web、Desktop、Android 和 iOS 上可用，旧版客户端的行为不变。（[#658](https://github.com/anywhere-labs/Agents-Anywhere/pull/658)、[#659](https://github.com/anywhere-labs/Agents-Anywhere/pull/659)）
+- 加密模式（`AGENT_SERVER_E2EE=required`）下，旧版 Connector 上报的会话标题和工作目录不再保存在 Server 上，这些设备上新出现的会话也不会加入列表；要在加密模式下使用，请把设备升级到 v3。（[#745](https://github.com/anywhere-labs/Agents-Anywhere/pull/745)）
+
+- 端到端加密模式需要 Server 执行 `v2_63` 数据库迁移（只新增一张表）。部署者设置 `AGENT_SERVER_E2EE=required` 后，Server 拒绝所有明文的会话内容、文件、终端以及准备工作区和新建向导的请求，第一次以该模式启动时会清空已存的会话标题和工作目录，设备上线后重新以密文写入；`AGENT_SERVER_E2EE_WEB`、`AGENT_SERVER_E2EE_PREVIEW` 控制是否允许 Web 客户端和端口预览。默认 `off`，行为不变。（[#698](https://github.com/anywhere-labs/Agents-Anywhere/pull/698)）
 
 ### 会话创建与消息交付
 
+- 连接 v3 Connector 的设备上可以新建会话并发出第一条消息，带附件也可以；网络不稳重试时不会建出重复的会话，设备拒绝或离线时不留下空会话。（[#732](https://github.com/anywhere-labs/Agents-Anywhere/pull/732)）
+- 连接 v3 Connector 的设备上，运行中排队的消息改由设备保存和按序发出，Server 不再保存消息内容；设备离线时排队区显示为空并提示设备离线。（[#718](https://github.com/anywhere-labs/Agents-Anywhere/pull/718)）
+- 连接 v3 Connector 的设备上，发送消息、审批等操作在设备没有及时确认时显示「操作结果不确定」而不是设备离线，也不会被自动重发；用同一条消息重试会拿到设备上的实际结果，不会重复执行。（[#704](https://github.com/anywhere-labs/Agents-Anywhere/pull/704)）
 - Agent 运行中，Web、Desktop、Android 和 iOS 都可以继续发送消息：消息会排队，当前任务结束后按顺序自动发出，在所有设备上看到的是同一份队列；排队的消息可以编辑、删除、立即发送（打断当前任务），也可以选择「打断并发送」，Codex、Pi、Hermes 还能选择「引导当前任务」把消息直接交给正在运行的任务。上一个任务出错时队列会暂停，点「继续发送」后再发出。（[#658](https://github.com/anywhere-labs/Agents-Anywhere/pull/658)、[#659](https://github.com/anywhere-labs/Agents-Anywhere/pull/659)）
 - 在工作设备安装并配置对应 CLI 后，可以在 Web、Desktop、Android 和 iOS 选择 Command Code、OpenCode、Google Antigravity、MiniMax Code、CodeBuddy Code 和 MiMo Code 新建会话，并按 Agent 支持的能力发送消息、处理审批、中断和恢复 AA 会话。（[#629](https://github.com/anywhere-labs/Agents-Anywhere/pull/629)）
 - Pi 会话现在支持 `/plan`，可以从首条任务开始规划、审阅和修改计划，并在同意后按原有工具权限继续执行。（[#631](https://github.com/anywhere-labs/Agents-Anywhere/pull/631)）
 
+### DSH 同步
+
+- DSH 插件可以直接连接新版 Connector：DSH 里打开的会话实时同步到 AA，在 AA 里可以发送图片和文件、回答 DSH 的提问、审阅计划，在 DSH 和 AA 之间切换时不会出现重复的消息；本机只有旧版 Connector 时，插件仍按原来的方式同步。（[#747](https://github.com/anywhere-labs/Agents-Anywhere/pull/747)）
+- 打开装有插件的 DSH Desktop 或 `dsh web` 后，AA 里的 DSH 会话会自动交给它继续：空闲的会话马上切换，正在运行的等这一轮结束再切换；DSH 退出后会话自动回到本机 DSH 继续，退出时正在进行的那一轮显示为结果未知，不会自动重发。会话在 DSH Desktop 里打开而没有安装插件时，AA 会提示关闭它或安装插件。（[#752](https://github.com/anywhere-labs/Agents-Anywhere/pull/752)、[#755](https://github.com/anywhere-labs/Agents-Anywhere/pull/755)）
+
 ### Desktop
 
+- 第一次启动不再下载 Python 和依赖，也不会再停在「正在准备运行环境」；设置页的「运行环境」改为只设置「Connector 网络」。（[#748](https://github.com/anywhere-labs/Agents-Anywhere/pull/748)）
+- Desktop 安装包自带端口预览需要的 frp 客户端：会话里启动的本机服务可以直接从其他设备预览，端口停止监听后对应的预览会自动关闭。（[#749](https://github.com/anywhere-labs/Agents-Anywhere/pull/749)）
+- 这台电脑上已有更新版本的 Connector（命令行或 DSH 插件）在运行时，Desktop 会让它继续连接服务器并说明原因，不再报「已有其他 Connector 在运行」；更新版本的 Connector 启动时，Desktop 内置的 Connector 会自动交接给它。（[#748](https://github.com/anywhere-labs/Agents-Anywhere/pull/748)）
 - Desktop 安装包自带 Pi 运行环境，第一次启动只需在本地复制，不再下载 Node 和 npm 依赖；准备失败时也不再停在启动页、点「重试」也进不去，Pi 会在第一次使用时再次准备并在会话里提示错误。（[#657](https://github.com/anywhere-labs/Agents-Anywhere/pull/657)）
 
 ### 本机连接
 
+- 设备配对码和配对时下发的连接凭据不再写入数据库，只在 Redis 里以哈希和加密形式保存到配对过期，凭据被领取一次后立即删除。（[#723](https://github.com/anywhere-labs/Agents-Anywhere/pull/723)）
+- 连接 v3 Connector 的设备上，会话内容改为打开时从设备读取、有人在看时由设备实时推送，Server 不再保存；设备离线时仍能看到会话标题和状态，并提示设备离线、历史暂不可用，设备没有及时响应时提示超时而不是离线；设备重新连上后，打开着的会话会自动补齐断线期间的内容；发出的附件被设备取走后由设备保存，之后查看时从设备读取；分享改由设备导出，设备离线时提示「设备上线后才能创建分享」；计划和目标同样由设备保存和修改，设备离线时只显示是否在规划、目标是否进行中，不能查看或修改。（[#696](https://github.com/anywhere-labs/Agents-Anywhere/pull/696)、[#702](https://github.com/anywhere-labs/Agents-Anywhere/pull/702)、[#707](https://github.com/anywhere-labs/Agents-Anywhere/pull/707)、[#730](https://github.com/anywhere-labs/Agents-Anywhere/pull/730)）
 - 准备 Pi 时会复用本机 Node 22.19 及以上版本（包括 Node 24），不再强制下载；需要下载时，官方源连不上会自动改用 npmmirror，Python 安装源选了镜像的设备会优先使用 npmmirror；Windows 上多个进程同时准备不再报 `Resource deadlock avoided`，而是排队等待；数据目录通过 Junction 挂到其他盘时，不再误报「Node 安装包路径无效」；Node 下载失败时会提示检查网络。（[#657](https://github.com/anywhere-labs/Agents-Anywhere/pull/657)）
+
+### Web 与 Desktop 界面
+
+- 会话所在的设备离线时，已经看过的消息仍然保留，输入框上方提示「设备离线」并说明显示的是本机缓存；从没打开过的会话显示「设备离线，上线后查看」；设备重新上线后自动补齐离线期间的新消息。（[#667](https://github.com/anywhere-labs/Agents-Anywhere/pull/667)）
+- 看过的会话会保存在本机，刷新页面或重新打开 Desktop 后能立即显示，设备离线时也能看；退出登录时清除本机保存的内容，切换账号时清除其他账号的内容。在共享电脑上可以在 Web 登录页勾选「不在此设备保存会话内容」。（[#677](https://github.com/anywhere-labs/Agents-Anywhere/pull/677)）
+- 会话里的 Agent 或终端启动了本地网页服务时，输入框上方会显示「检测到 http://localhost:端口」，点「在手机上预览」后可以扫码或复制链接在手机上打开，也能在浏览器中打开或随时停止预览；服务器没有开启端口预览时不显示。（[#700](https://github.com/anywhere-labs/Agents-Anywhere/pull/700)）
+- 会话列表会标出「计划待审阅」「目标进行中」「目标已暂停」，设备离线时也能看到。（[#703](https://github.com/anywhere-labs/Agents-Anywhere/pull/703)）
+- 会话里发送、接管、中断、回复审批等操作失败时，设备离线、设备响应超时、结果不确定、需要加密连接等情况显示对应的中英文说明，不再直接显示服务器原文；发送结果不确定时不会自动重发，并会自动补读一次，消息其实已送达时会正常显示。（[#708](https://github.com/anywhere-labs/Agents-Anywhere/pull/708)）
+- 连接到开启端到端加密的服务器时，Web 和 Desktop 不再以明文读取会话内容或发送消息：与已配对设备之间的会话内容经加密通道传输，服务器只转发看不懂的密文；尚未配对的设备会提示先配对，服务器之后改回不加密也不会让已开启的客户端退回明文。（[#705](https://github.com/anywhere-labs/Agents-Anywhere/pull/705)）
+- Web 和 Desktop 的「设置 → 安全连接」可以粘贴设备上的配对链接、核对设备指纹后完成端到端加密配对，查看本客户端指纹和已配对的设备，并可以忘记某台设备；打开未配对设备的加密会话时会直接弹出配对窗口。（[#710](https://github.com/anywhere-labs/Agents-Anywhere/pull/710)）
+- 服务器开启端到端加密并关闭 Web 客户端时，Web 登录页和工作台改为提示「这个服务器要求端到端加密」，引导使用 Desktop 或手机 App；已登录的用户可以在这里退出登录。（[#714](https://github.com/anywhere-labs/Agents-Anywhere/pull/714)）
+- Web 和 Desktop 的「设置 → 安全连接」可以粘贴设备上的配对链接、核对设备指纹后完成端到端加密配对，查看本客户端指纹和已配对的设备，并可以忘记某台设备；打开未配对设备的加密会话时会直接弹出配对窗口，关掉后会话里仍会显示「配对这台设备」，配对完成后自动重新加载。（[#710](https://github.com/anywhere-labs/Agents-Anywhere/pull/710)、[#727](https://github.com/anywhere-labs/Agents-Anywhere/pull/727)）
+- 端到端加密模式下，Web 和 Desktop 的更多内容只经加密通道传输：
+  - 附件先在本机加密再上传，服务器看不到文件名、类型和内容；
+  - 浏览、下载和预览设备上的文件，以及使用设备终端，都经加密通道进行；
+  - 新建会话时，标题和首条消息只发给所选设备；设备 75 秒内没有确认时会提示结果未确认，并在服务器的会话列表里找到新会话供核对，不会重复创建；
+  - 首条消息暂不能带附件，也暂时不能修改会话标题（提示「加密模式下暂不能改标题」）。
+- 端到端加密模式下，Web 和 Desktop 的会话列表和会话详情会在本机解密并显示标题和工作目录；暂时解不开的会话显示「加密中，设备上线后显示」，设备发来新密钥或完成配对后自动显示；设备自己发现的会话会按工作目录自动归入同一设备上的对应项目，匹配不到时仍显示在「未分组会话」。（[#762](https://github.com/anywhere-labs/Agents-Anywhere/pull/762)）
+  - 首条消息暂不能带附件：选中加密设备新建会话时，附件按钮直接置灰，鼠标移上去会说明原因；也暂时不能修改会话标题（提示「加密模式下暂不能改标题」）。
+
+  [#729](https://github.com/anywhere-labs/Agents-Anywhere/pull/729)、[#751](https://github.com/anywhere-labs/Agents-Anywhere/pull/751)
 
 ### Android
 
@@ -28,10 +75,38 @@
 - 打开过文件后再进入会话，会直接显示对话，不再先停在「文件」页。（[#661](https://github.com/anywhere-labs/Agents-Anywhere/pull/661)）
 - 在小米 15、小米 17 等已升级 HyperOS 4 的手机上，展开推理内容不再闪退；推理正文改用与其他文字相同的常规字重。（[#662](https://github.com/anywhere-labs/Agents-Anywhere/pull/662)）
 - Agent 运行中输入框不再禁用：输入内容后点发送即排队，长按发送键可选「打断并发送」或「引导当前任务」，输入框为空时发送键仍是停止；输入框上方显示排队消息，点一条可以立即发送、编辑、删除或重试。（[#659](https://github.com/anywhere-labs/Agents-Anywhere/pull/659)）
+- 看过的会话会保存在手机上，重新打开 App 也能立即显示；工作设备离线时保留已显示的内容，在输入框上方提示「设备离线」，设备上线后自动补齐离线期间的消息；退出登录会删除手机上保存的会话内容。（[#694](https://github.com/anywhere-labs/Agents-Anywhere/pull/694)）
+- 会话里的 Agent 或终端在电脑上启动网页服务后，输入框上方会显示「检测到 http://localhost:5173」，点「预览」即可在 App 内置浏览器里打开这个页面，也可以「停止预览」或「复制链接」；服务器没有开启端口预览时不显示。（[#711](https://github.com/anywhere-labs/Agents-Anywhere/pull/711)）
+- 在设备详情里可以扫描设备上的配对二维码（或粘贴 `aa-pair://` 链接），核对设备指纹后与设备完成端到端加密配对，并查看已配对状态、设备指纹和本机指纹。（[#712](https://github.com/anywhere-labs/Agents-Anywhere/pull/712)）
+- 与设备配对后，这台设备的内容都经端到端加密连接收发，要求加密但还没配对的设备不会改用明文，而是弹出配对面板：
+  - 会话的快照、时间线、实时事件、发消息、审批、计划、目标和排队消息；
+  - 文件浏览与下载、终端；
+  - 附件先在手机上加密再上传，图片附件也经加密连接取回后显示；
+  - 新建会话时，标题、第一条消息以及 `/goal`、`/plan` 都经加密连接交给设备，由设备创建会话；新建时带附件或使用配置向导会提示原因，附件需要在会话建好后再发送；
+  - 加密设备上的会话暂不支持改名，会提示原因；
+  - 会话列表和会话详情在手机上解密并显示标题和工作目录，暂时解不开的显示「加密中，设备上线后显示」，完成配对或设备发来新密钥后自动重试；设备自己发现的会话会按工作目录自动归入同一设备上的对应项目。
+
+  （[#719](https://github.com/anywhere-labs/Agents-Anywhere/pull/719)、[#726](https://github.com/anywhere-labs/Agents-Anywhere/pull/726)、[#767](https://github.com/anywhere-labs/Agents-Anywhere/pull/767)）
 
 ### iOS
 
+- 会话所在设备离线时（v3 Server）：
+  - 本机缓存过的消息继续显示，输入框上方提示「设备离线」；没有缓存时对话区显示「设备离线，上线后查看。」，设备上线后自动补上离线期间的新消息。
+  - 会话列表仍能看到「计划待审阅」「目标进行中」「目标已暂停」。
+  - 操作结果不确定时不再显示为发送失败，而是提示刷新确认后再决定是否重试。
+  - 切换账号时会删除上一个账号缓存在本机的会话内容，退出登录时删除全部。
+
+  （[#693](https://github.com/anywhere-labs/Agents-Anywhere/pull/693)）
+- 会话里的 Agent 或终端在电脑上启动网页服务时（v3 Server 开启端口预览），输入框上方显示「检测到 http://localhost:5173」，点「预览」在 App 内置浏览器里打开这个网页，也可以「停止预览」或「复制链接」；服务器转发预览流量时会先提示预览不是端到端加密的。（[#709](https://github.com/anywhere-labs/Agents-Anywhere/pull/709)）
 - Agent 运行中输入框不再禁用：输入内容后点发送即排队，长按发送键可选「打断并发送」或「引导当前任务」，输入框为空时发送键仍是停止；输入框上方显示排队消息，可以立即发送、编辑、删除或重试。（[#659](https://github.com/anywhere-labs/Agents-Anywhere/pull/659)）
+- 新增端到端加密：
+  - 设备详情里总会显示「端到端加密」一节，可以扫描设备上的配对二维码（或粘贴 `aa-pair://` 链接），核对设备指纹后完成配对，服务器没有开启加密时也可以先配对；配对后显示「已配对」和设备指纹。
+  - 与要求加密的设备配对后，会话内容、发消息、审批、计划、目标、排队、设备文件和附件都经加密通道直接与设备往来，服务器只转发密文；还没配对时不会发出明文，会话页会给出配对入口。
+  - 记下要求加密的设备，即使服务器之后关闭加密也不会改用明文。
+  - 加密模式下会话列表和会话页照常显示标题与工作目录，暂时解不开时显示「加密中，设备上线后显示」；设备自己发现、还没归属项目的会话会按工作目录自动归到同一设备上对应的项目。
+  - 加密模式下暂时不能重命名会话、打开附件或预览文件。
+
+  [#717](https://github.com/anywhere-labs/Agents-Anywhere/pull/717)、[#724](https://github.com/anywhere-labs/Agents-Anywhere/pull/724)、[#766](https://github.com/anywhere-labs/Agents-Anywhere/pull/766)
 
 ## 2.2.0（2026-11-14）
 

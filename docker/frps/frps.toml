@@ -1,0 +1,21 @@
+# frps for port preview (data plane only; Agents Anywhere decides who may open what).
+#
+# - Devices' frpc connect through the gateway: wss://frp.<preview domain>/~!frp -> bindPort.
+# - Visitors reach previews through the gateway: https://<slug>.<preview domain> -> vhostHTTPPort,
+#   after preview-auth has checked them. Neither port is published outside the Compose network.
+# - Every frpc login and proxy registration is checked by the Server (httpPlugins). Without
+#   AGENT_SERVER_PREVIEW_INTERNAL_TOKEN the plugin path is wrong and every login is refused.
+bindAddr = "0.0.0.0"
+bindPort = 7000
+vhostHTTPPort = 8081
+subDomainHost = "{{ .Envs.AGENT_SERVER_PREVIEW_DOMAIN }}"
+vhostHTTPTimeout = 60
+transport.maxPoolCount = 5
+log.to = "console"
+log.level = "warn"
+
+[[httpPlugins]]
+name = "agents-anywhere"
+addr = "server-next:8000"
+path = "/api/v3/internal/preview/frps/{{ .Envs.AGENT_SERVER_PREVIEW_INTERNAL_TOKEN }}"
+ops = ["Login", "NewProxy", "CloseProxy"]

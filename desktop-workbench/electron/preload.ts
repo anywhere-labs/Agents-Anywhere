@@ -1,4 +1,3 @@
-import type { ConnectorEnvironmentState } from "../shared/connector-environment";
 import { windowMaterial } from "./window-material";
 import type { OwnershipState } from "./local-runtime";
 import { contextBridge, ipcRenderer, webUtils } from "electron";
@@ -171,19 +170,9 @@ contextBridge.exposeInMainWorld("desktopWorkbench", {
     setTitleBarColors: (colors: { color: string; symbolColor: string }): Promise<void> =>
       ipcRenderer.invoke("workbench:window:setTitleBarColors", colors),
   },
-  environment: {
-    getState: (): Promise<ConnectorEnvironmentState> => api("/environment"),
-    prepare: (): Promise<ConnectorEnvironmentState> => api("/environment/prepare", { method: "POST", body: "{}" }),
-    cancel: (): Promise<ConnectorEnvironmentState> => api("/environment/cancel", { method: "POST", body: "{}" }),
-    reset: (): Promise<unknown> => api("/environment/reset", { method: "POST", body: "{}" }),
-    onState: (callback: (state: ConnectorEnvironmentState) => void) => onEvent("environment", state => callback(state as ConnectorEnvironmentState)),
-  },
   ownership: {
     getState: (): Promise<OwnershipState> => ipcRenderer.invoke("workbench:ownership:getState"),
     recheck: (): Promise<OwnershipState> => ipcRenderer.invoke("workbench:ownership:recheck"),
-    /** Deletes the downloaded Connector environment; the next recheck downloads it again. */
-    resetEnvironment: (): Promise<void> =>
-      api<unknown>("/environment/reset", { method: "POST", body: "{}" }).then(() => undefined),
     quit: (): Promise<void> => ipcRenderer.invoke("workbench:ownership:quit"),
     onState: (callback: (state: OwnershipState) => void): (() => void) => subscribe("workbench:ownership:state", callback),
   },

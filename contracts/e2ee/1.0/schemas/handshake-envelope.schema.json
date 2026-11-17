@@ -1,0 +1,51 @@
+{
+  "$id": "urn:agents-anywhere:e2ee:1.0:handshake-envelope",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A Noise handshake message. While a channel handshakes, ``ct`` of its frames is\n``base64url(utf8(json(HandshakeEnvelope)))`` and ``n`` is ``step``; afterwards ``ct`` is a\nNoise transport message and ``n`` its nonce.",
+  "properties": {
+    "message": {
+      "description": "base64url without padding",
+      "minLength": 1,
+      "title": "Message",
+      "type": "string"
+    },
+    "pairingId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "present only for XXpsk0 pairing",
+      "title": "Pairingid"
+    },
+    "pattern": {
+      "enum": [
+        "XXpsk0",
+        "KK"
+      ],
+      "title": "Pattern",
+      "type": "string"
+    },
+    "step": {
+      "maximum": 2,
+      "minimum": 0,
+      "title": "Step",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "pattern",
+    "step",
+    "message"
+  ],
+  "title": "HandshakeEnvelope",
+  "type": "object",
+  "x-contract": "e2ee",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

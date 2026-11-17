@@ -11,6 +11,10 @@ struct SessionChatView: View, Equatable {
     @State private var expandedNoticeID: String?
     private let fileService: V2WorkspaceFilesService
     private let detailService: V2SessionDetailService
+    private let portPreviews: PortPreviewStore
+    private let e2ee: V2E2EEService
+    private let serverURL: URL
+    @State private var pairingDevice = false
     private enum SessionSheet: Identifiable {
         case notices, details, files, preview(SessionFileReference, root: String? = nil)
         var id: String { switch self { case .notices: "notices"; case .details: "details"; case .files: "files"; case .preview(let reference, let root): "file:\(root ?? ""):\(reference.id)" } }
@@ -40,6 +44,8 @@ struct SessionChatView: View, Equatable {
         sessionIdentity = session
         self.deviceName = deviceName
         fileService = services.workspaceFiles; detailService = services.sessionDetail
+        portPreviews = services.portPreviews
+        e2ee = services.e2ee; serverURL = services.scope.serverURL
         self.onMenu = onMenu
     }
     private var controls: ChatControlMetrics { .init(bodyLineHeight: bodyLineHeight) }
@@ -63,13 +69,19 @@ struct SessionChatView: View, Equatable {
                 .overlay {
                     if model.isOpeningReady && model.timeline.rows.isEmpty && model.timeline.pendingMessages.isEmpty && session.planning?.draft == nil && session.planning?.proposal == nil {
                         VStack(spacing: 12) {
-                            Text(String(localized: "在这里继续你的任务")).foregroundStyle(.secondary)
+                            // Protocol 1.2: an offline device's history is not on the Server.
+                            Text(session.historyUnavailable ? String(localized: "设备离线，上线后查看。")
+                                : String(localized: "在这里继续你的任务")).foregroundStyle(.secondary)
                         }.allowsHitTesting(false)
                     }
                 }
                 .overlay { if !model.isOpeningReady { openingMask } }
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     VStack(spacing: 0) {
+                        if let failure = session.failure, let code = failure.code, E2EEError.pairingCodes.contains(code),
+                           session.metadata?.connectorId != nil {
+                            SessionEncryptionPairingCard(message: failure.message) { pairingDevice = true }
+                        }
                         SessionInteractionDock(chat: model,
                             onShowAll: { expandedNoticeID = $0; sheet = .notices })
                             .traceChatLayout("interaction-dock")
@@ -88,6 +100,10 @@ struct SessionChatView: View, Equatable {
                         }
                         SessionGoalPanel(chat:model)
                         SessionMessageQueuePanel(chat: model)
+                        if session.historyUnavailable && !session.timeline.isEmpty {
+                            deviceOfflineNotice
+                        }
+                        SessionPortPreviewCard(session: session, store: portPreviews)
                         ChatComposerDock(draft: session.composer, settings: model.settings,
                             maximumEditorHeight: min(160, max(72, geometry.size.height * 0.30)), controls: controls,
                             canSend: session.canSend || session.queueMode || ((model.goalMode || session.composer.text.hasPrefix("/goal")) && session.runtime.allows("session.goal")) || (V2PlanningCommand.parse(session.composer.text) != nil && session.runtime.allows("session.planning")), canAttach: model.canAttach,
@@ -179,6 +195,13 @@ struct SessionChatView: View, Equatable {
             guard !Task.isCancelled else { return }
             await model.timeline.run(sessionID: session.id, repository: model.repository)
         }
+        .sheet(isPresented: $pairingDevice) {
+            if let connectorId = session.metadata?.connectorId {
+                E2EEPairSheet(deviceId: connectorId, deviceName: deviceName, serverURL: serverURL, service: e2ee) {
+                    Task { await session.refresh() }
+                }
+            }
+        }
         .sheet(item: $sheet) { destination in
             switch destination {
             case .notices: SessionNoticesSheet(model: model, initialNoticeID: expandedNoticeID)
@@ -245,6 +268,17 @@ struct SessionChatView: View, Equatable {
                 }
             }.buttonStyle(.bordered)
         }.padding(.horizontal, 16).padding(.vertical, 8).frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Retained content is shown while the device cannot serve its history.
+    private var deviceOfflineNotice: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(String(localized: "设备离线")).font(.subheadline.weight(.medium))
+            Text(String(localized: "显示的是本机缓存。更早的消息和新的进展要等设备上线后才能看到。"))
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 16).padding(.vertical, 8).frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
     }
 
     private var agentRecoveryControls: some View {

@@ -13,6 +13,7 @@ import {
   session,
   shell,
   Tray,
+  utilityProcess,
   type IpcMainInvokeEvent,
 } from "electron";
 import fs from "node:fs";
@@ -565,38 +566,43 @@ function desktopSettingsPath(): string {
   return path.join(app.getPath("userData"), "desktop-settings.json");
 }
 
-function resolveConnectorDir(): string {
-  if (process.env.WORKBENCH_CONNECTOR_DIR?.trim()) {
-    return path.resolve(process.env.WORKBENCH_CONNECTOR_DIR.trim());
-  }
-  if (app.isPackaged) return path.join(process.resourcesPath, "connector");
-  return path.resolve(app.getAppPath(), "..", "connector");
+/**
+ * The bundled TS Connector (`yarn bundle:connector` writes `dist/connector/`),
+ * forked as an Electron utility process (v3 design 04-connector.md §9.4).
+ */
+function resolveConnectorEntry(): string {
+  if (process.env.WORKBENCH_CONNECTOR_ENTRY?.trim()) return path.resolve(process.env.WORKBENCH_CONNECTOR_ENTRY.trim());
+  // The bundle is unpacked from the asar: its store loads a worker thread from a file next to it.
+  const appPath = app.isPackaged ? app.getAppPath().replace(/app\.asar$/, "app.asar.unpacked") : app.getAppPath();
+  return path.join(appPath, "dist", "connector", "desktop-main.js");
 }
 
 /**
- * The uv that packaging bundles. Development uses the same build output, so a
- * dev launch runs the exact uv the installer ships instead of whatever `uv`
- * happens to be on the developer's PATH. Run `yarn bundle:uv` to create it.
+ * The local MeshCall Router the Connector hosts for its control channel. Packaging
+ * bundles it (`yarn bundle:router`); development uses the same build output, then
+ * `MESHCALL_ROUTER_BINARY`, then meshcall's own lookup.
  */
-function resolveUvBundleDir(): string {
-  if (process.env.WORKBENCH_UV_BUNDLE_DIR?.trim()) {
-    return path.resolve(process.env.WORKBENCH_UV_BUNDLE_DIR.trim());
-  }
-  if (app.isPackaged) return path.join(process.resourcesPath, "uv");
-  return path.join(app.getAppPath(), "build", "uv");
+function resolveRouterBinary(): string {
+  const name = process.platform === "win32" ? "meshcall-router.exe" : "meshcall-router";
+  const base = app.isPackaged ? path.join(process.resourcesPath, "meshcall-router") : path.join(app.getAppPath(), "build", "meshcall-router");
+  const bundled = path.join(base, `${process.platform}-${process.arch}`, name);
+  if (fs.existsSync(bundled)) return bundled;
+  return process.env.MESHCALL_ROUTER_BINARY?.trim() ?? "";
 }
 
-/**
- * The CPython that packaging bundles, so the Connector never waits on uv
- * downloading an interpreter. Development uses the same build output once
- * `yarn bundle:python` has created it; until then uv picks an interpreter.
- */
-function resolvePythonBundleDir(): string {
-  if (process.env.WORKBENCH_PYTHON_BUNDLE_DIR?.trim()) {
-    return path.resolve(process.env.WORKBENCH_PYTHON_BUNDLE_DIR.trim());
-  }
-  if (app.isPackaged) return path.join(process.resourcesPath, "python");
-  return path.join(app.getAppPath(), "build", "python");
+/** The frp client port preview runs (`yarn bundle:frpc`); empty when it is not bundled. */
+function resolveFrpcBinary(): string {
+  const name = process.platform === "win32" ? "frpc.exe" : "frpc";
+  const base = app.isPackaged ? path.join(process.resourcesPath, "frpc") : path.join(app.getAppPath(), "build", "frpc");
+  const bundled = path.join(base, `${process.platform}-${process.arch}`, name);
+  if (fs.existsSync(bundled)) return bundled;
+  return process.env.AA_FRPC_BINARY?.trim() ?? "";
+}
+
+function forkConnector(entry: string, env: Record<string, string>) {
+  // `stdio: pipe` keeps the Connector's own output in Desktop's log; its
+  // service name is what Activity Monitor and Task Manager show.
+  return utilityProcess.fork(entry, [], { env, stdio: "pipe", serviceName: "Agents Anywhere Connector" });
 }
 
 function appWindowIcon(): string {
@@ -903,10 +909,10 @@ function backendInit(): BackendInit {
     settingsPath: desktopSettingsPath(),
     bindingPath: path.join(dataPath, "desktop-binding.json"),
     configPath: path.join(dataPath, "connector.json"),
-    connectorDir: resolveConnectorDir(),
     resourcesPath: process.resourcesPath,
-    uvBundleDir: resolveUvBundleDir(),
-    pythonBundleDir: resolvePythonBundleDir(),
+    connectorEntry: resolveConnectorEntry(),
+    routerBinary: resolveRouterBinary(),
+    frpcBinary: resolveFrpcBinary(),
     homePath: app.getPath("home"),
     documentsPath: app.getPath("documents"),
     packaged: app.isPackaged,
@@ -934,6 +940,7 @@ async function initializeDesktopServices(): Promise<void> {
 async function startDesktopBackend(): Promise<void> {
   const client = new DesktopBackendClient({
     fetcher: (input, init) => net.fetch(String(input), init),
+    forkConnector,
     onEvent: (event) => {
       if (backend !== client) return;
       if (event.event === "ownership") {

@@ -1,16 +1,14 @@
-import type { ConnectorEnvironmentState } from "../../../../shared/connector-environment"
-export type { ConnectorEnvironmentState } from "../../../../shared/connector-environment"
 /**
- * `checking` is the value before the first probe answers; `preparing` means the
- * first Connector environment install is still running. An `error` carries the
- * underlying failure in `message`.
+ * `checking` is the value before the first probe answers. An `error` carries
+ * the underlying failure in `message`.
  */
 /** Mirrors `OwnershipRecovery` in electron/local-runtime.ts. */
 export type LocalOwnershipRecovery =
-  | { kind: "provisioning"; pypiIndexUrl: string; pythonInstallMirror: string; downloadsPython: boolean }
   | { kind: "backendStopped" }
+  /** A newer Connector (CLI or DSH plugin) serves this computer; Desktop stepped aside. */
+  | { kind: "newerConnector" }
 export type LocalOwnershipState = {
-  status: "owned" | "conflict" | "preparing" | "checking" | "error"
+  status: "owned" | "conflict" | "checking" | "error"
   message?: string
   recovery?: LocalOwnershipRecovery
 }
@@ -49,18 +47,9 @@ export type DesktopConnectorState = {
   runtimePath?: string
   dataPath?: string
   logsPath?: string
-  connectorDir?: string
-  resolvedUvPath?: string
-  uvMissing?: boolean
-  uvPath?: string
-  /** The interpreter uv runs the Connector with; empty when uv picks or downloads one. */
-  resolvedPythonPath?: string
-  pythonPath?: string
   logChunkSizeKb?: number
   logRetainChunks?: number
   logRetentionDays?: number
-  uvPypiIndexUrl?: string
-  uvPythonInstallMirror?: string
   connectorProxy?: string
 }
 
@@ -118,13 +107,9 @@ export type DesktopConnectorSettings = Partial<Pick<
   | "startConnectorOnLaunch"
   | "silentLaunch"
   | "notificationsEnabled"
-  | "uvPath"
-  | "pythonPath"
   | "logChunkSizeKb"
   | "logRetainChunks"
   | "logRetentionDays"
-  | "uvPypiIndexUrl"
-  | "uvPythonInstallMirror"
   | "connectorProxy"
 >>
 
@@ -155,17 +140,9 @@ export type DesktopWorkbenchBridge = {
     droppedFolderPath: (file: File) => Promise<string | null>
   }
   windowMaterial?: "transparent" | "mica" | "opaque"
-  environment?: {
-    getState: () => Promise<ConnectorEnvironmentState>
-    prepare: () => Promise<ConnectorEnvironmentState>
-    cancel: () => Promise<ConnectorEnvironmentState>
-    reset: () => Promise<unknown>
-    onState: (listener: (state: ConnectorEnvironmentState) => void) => () => void
-  }
   ownership?: {
     getState: () => Promise<LocalOwnershipState>
     recheck: () => Promise<LocalOwnershipState>
-    resetEnvironment?: () => Promise<void>
     quit: () => Promise<void>
     onState: (listener: (state: LocalOwnershipState) => void) => () => void
   }

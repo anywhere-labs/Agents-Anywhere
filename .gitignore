@@ -38,7 +38,10 @@ agent-server/*-review.html
 *.db
 agent-server/agent-server.files/
 
-# Downloaded uv binaries and CPython builds bundled into the packaged Desktop apps.
+# Build outputs bundled into the packaged Desktop apps (build/uv and build/python
+# are what older checkouts downloaded for the retired Python Connector).
+desktop-workbench/build/meshcall-router/
+desktop-workbench/build/frpc/
 desktop-workbench/build/uv/
 desktop-workbench/build/python/
 desktop-workbench/build/pi-runtime/

@@ -96,6 +96,14 @@ final class V2SessionModel: Identifiable {
         planning = next
     }
     let runtime = V2SessionRuntimeModel()
+    /// Ports this session's processes listen on, from `port.listening` /
+    /// `port.closed` (preview 1.0). Device facts only: never cached or persisted.
+    private(set) var listeningPorts: [Int: V3ListeningPort] = [:]
+    func observePorts(_ event: V2SessionEvent) {
+        guard event.sessionId == id else { return }
+        let next = V3SessionPorts.apply(listeningPorts, type: event.type, payload: event.payload, sessionId: id)
+        if next != listeningPorts { listeningPorts = next }
+    }
     /// The server-owned message queue, from the snapshot and `runtime.queue.updated`.
     private(set) var queue: V2SessionQueueState?
     let notices = SessionNoticeStore()
@@ -106,6 +114,9 @@ final class V2SessionModel: Identifiable {
     private(set) var failure: V2ClientFailure?
     private(set) var hasOlderItems = false
     private(set) var hasNewerItems = false
+    /// Protocol 1.2: the device is offline and the Server cannot read its history.
+    /// Retained content stays readable; older pages and new progress wait for it.
+    private(set) var historyUnavailable = false
     private(set) var isLoading = false
     private(set) var isLoadingHistory = false
     private(set) var isValid = true
@@ -284,6 +295,11 @@ final class V2SessionModel: Identifiable {
     func update(_ observation: V2SessionObservation, network: V2NetworkStatus) {
         guard isValid else { return }
         let data = observation.data
+        // An offline device serves nothing; its ports return with its next report.
+        // Only the transition clears them: a port report can overtake the
+        // dashboard's online push and must survive the stale status until then.
+        if metadata?.connectorStatus == .online, let status = data?.session.connectorStatus, status != .online,
+           !listeningPorts.isEmpty { listeningPorts = [:] }
         if metadata != data?.session { metadata = data?.session }
         if connection != observation.connection { connection = observation.connection }
         if self.network != network { self.network = network }
@@ -292,6 +308,7 @@ final class V2SessionModel: Identifiable {
         if queue != data?.queue { queue = data?.queue }
         if hasOlderItems != (data?.hasOlderItems ?? false) { hasOlderItems = data?.hasOlderItems ?? false }
         if hasNewerItems != (data?.hasNewerItems ?? false) { hasNewerItems = data?.hasNewerItems ?? false }
+        if historyUnavailable != (data?.historyUnavailable ?? false) { historyUnavailable = data?.historyUnavailable ?? false }
         // A streamed token updates one existing row. Keep the id index across
         // ticks and only republish the array when membership or order changed.
         let items = data?.items ?? []

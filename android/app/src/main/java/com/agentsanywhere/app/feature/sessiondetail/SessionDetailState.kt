@@ -23,6 +23,11 @@ data class SessionDetailState(
     val selectionUpdating: Boolean = false,
     val commandExecuting: Boolean = false,
     val respondingNoticeIds: Set<String> = emptySet(),
+    /**
+     * Ports this session's processes listen on (preview 1.0 `port.listening`).
+     * Live device facts only: never cached, and cleared while the device is offline.
+     */
+    val listeningPorts: Map<Int, com.agentsanywhere.app.api.RemoteListeningPort> = emptyMap(),
 ) {
     val session: AgentSession?
         get() = meta.session
@@ -36,8 +41,24 @@ data class SessionDetailState(
     val hasMore: Boolean
         get() = timeline.hasMore
 
-    fun withSession(session: AgentSession?): SessionDetailState = copy(meta = meta.copy(session = session))
+    fun withSession(session: AgentSession?): SessionDetailState =
+        copy(meta = meta.copy(session = session)).forgettingPortsWhenOffline()
+
+    /** Protocol 1.2: the device is offline and this history is the locally loaded part only. */
+    val historyUnavailable: Boolean
+        get() = timeline.historyUnavailable
 }
+
+internal fun SessionDetailState.markHistoryUnavailable(): SessionDetailState =
+    if (timeline.historyUnavailable) this else copy(timeline = timeline.copy(historyUnavailable = true))
+
+/** An offline device serves nothing; its ports return with its next report. */
+internal fun SessionDetailState.forgettingPortsWhenOffline(): SessionDetailState =
+    if (listeningPorts.isEmpty() || session?.connectorOnline != false) this else copy(listeningPorts = emptyMap())
+
+/** The device answered a read; a missing base still needs its snapshot. */
+internal fun SessionDetailState.markHistoryLive(): SessionDetailState =
+    if (!timeline.historyUnavailable) this else copy(timeline = timeline.copy(historyUnavailable = false))
 
 data class SessionRealtimeState(
     val connected: Boolean = false,
@@ -68,6 +89,8 @@ internal fun laterEventCursor(current: String, incoming: String): String {
 
 data class SessionMeta(
     val session: AgentSession? = null,
+    /** The protocol document behind [session], kept for the disk cache. */
+    val remote: com.agentsanywhere.app.api.RemoteSession? = null,
     val serverTime: String? = null,
     val isLoading: Boolean = false,
     val errorMessage: String? = null,

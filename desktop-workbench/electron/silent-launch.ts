@@ -18,7 +18,7 @@ export function ownershipNeedsWindow(status: OwnershipState["status"]): boolean 
 /**
  * Ownership is resolved asynchronously by the backend, and on a cold boot the
  * Connector can take minutes to start, so the launch has to wait for a result
- * instead of a fixed timeout. `checking` and `preparing` are transient and keep
+ * instead of a fixed timeout. `checking` is transient and keeps
  * the window hidden. Once the lease is held, Connector authentication can
  * still fail asynchronously, even after the runtime first reports running.
  */

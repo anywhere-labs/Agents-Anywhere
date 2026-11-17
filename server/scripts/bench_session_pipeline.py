@@ -15,7 +15,6 @@ import platform
 import statistics
 import sys
 import time
-from contextlib import asynccontextmanager
 from pathlib import Path
 
 parser = argparse.ArgumentParser(description=__doc__)
@@ -173,10 +172,6 @@ class CapabilityStore:
     async def get_protocol_capabilities_stamp(self, _connector):
         self.stamp_reads += 1
         return (1, "unchanged")
-
-    @asynccontextmanager
-    async def session_revision_fence(self, _session):
-        yield
 
 
 class Presence:

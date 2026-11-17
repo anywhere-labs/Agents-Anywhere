@@ -1,0 +1,51 @@
+{
+  "$id": "urn:agents-anywhere:preview:1.0:preview-open-command",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Server -> device ``cmd`` ``preview.open``.",
+  "properties": {
+    "frpToken": {
+      "minLength": 1,
+      "title": "Frptoken",
+      "type": "string"
+    },
+    "frpsAddr": {
+      "minLength": 1,
+      "title": "Frpsaddr",
+      "type": "string"
+    },
+    "port": {
+      "maximum": 65535,
+      "minimum": 1,
+      "title": "Port",
+      "type": "integer"
+    },
+    "previewId": {
+      "minLength": 1,
+      "title": "Previewid",
+      "type": "string"
+    },
+    "slug": {
+      "minLength": 1,
+      "title": "Slug",
+      "type": "string"
+    },
+    "tokenExpiresAt": {
+      "title": "Tokenexpiresat",
+      "type": "string"
+    }
+  },
+  "required": [
+    "previewId",
+    "slug",
+    "port",
+    "frpsAddr",
+    "frpToken",
+    "tokenExpiresAt"
+  ],
+  "title": "PreviewOpenCommand",
+  "type": "object",
+  "x-contract": "preview",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

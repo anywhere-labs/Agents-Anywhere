@@ -32,7 +32,11 @@ nonisolated struct V2WebSocketTicket: Decodable, Hashable {
     let serverTime: String
 }
 
+/// Envelopes are unchanged across protocol 1.0, 1.1 and 1.2; 1.2 only adds event
+/// types such as `session.catchup_required`. The version never drops a frame.
 nonisolated struct V2SessionEvent: Decodable, Identifiable, Hashable {
+    /// Protocol 1.2: the device link was rebuilt; recover from this client's own cursor.
+    static let catchupRequired = "session.catchup_required"
     let protocolVersion: String
     let eventId: String
     let sequence: Int
@@ -60,6 +64,8 @@ nonisolated struct V2EventRecoveryResponse: Decodable, Hashable {
     let nextCursor: String
     let snapshotRequired: Bool
     let serverTime: String
+    /// Protocol 1.2: nothing is readable until the device returns; keep the cursor.
+    var deviceOffline: Bool? = nil
 }
 
 nonisolated struct V2DashboardSnapshot: Decodable, Hashable {

@@ -1,0 +1,392 @@
+{
+  "contract": "acp-runtime",
+  "version": "2.0",
+  "source": "connector-ts/src/runtime/acp + connector-ts/src/runtime/profiles",
+  "initialize": {
+    "clientInfo": {
+      "name": "agents-anywhere",
+      "version": "3.0.0"
+    },
+    "protocolVersion": {
+      "declared": {
+        "generic": 1,
+        "hermes": 1,
+        "codex": 1,
+        "claude": 1
+      },
+      "accepted": "1 <= agent <= declared"
+    },
+    "clientCapabilities": {
+      "common": {
+        "auth": {},
+        "elicitation": {
+          "form": {}
+        },
+        "session": {
+          "configOptions": {
+            "boolean": {}
+          }
+        }
+      },
+      "codex": {
+        "_meta": {
+          "codexItemContext": true
+        }
+      },
+      "claude": {
+        "_meta": {
+          "jetbrains": {
+            "air": {
+              "version": 1,
+              "capabilities": [
+                "sessionFailure"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "meta": {
+      "codex": {
+        "codexIpc": {
+          "approvals": true,
+          "settings": true,
+          "historyReplacement": true
+        }
+      }
+    }
+  },
+  "extensions": [
+    {
+      "name": "_session/steering",
+      "kind": "request",
+      "direction": "client_to_agent",
+      "runtimes": [
+        "codex",
+        "claude"
+      ],
+      "required": false,
+      "negotiation": "initialize response _meta.steering.supported",
+      "fallback": "session.steer supported=false; -32601 -> rejected runtime_unsupported"
+    },
+    {
+      "name": "_session/goal",
+      "kind": "request",
+      "direction": "client_to_agent",
+      "runtimes": [
+        "codex",
+        "claude"
+      ],
+      "required": false,
+      "negotiation": "codex: always; claude: initialize response _meta.jetbrains.air.goal.controlMethod",
+      "fallback": "session.goal supported=false"
+    },
+    {
+      "name": "_codex/session/read",
+      "kind": "request",
+      "direction": "client_to_agent",
+      "runtimes": [
+        "codex"
+      ],
+      "required": true,
+      "negotiation": "none",
+      "fallback": "native history read fails"
+    },
+    {
+      "name": "_codex/session/history_reset",
+      "kind": "request",
+      "phase": "begin",
+      "direction": "agent_to_client",
+      "runtimes": [
+        "codex"
+      ],
+      "required": true,
+      "negotiation": "initialize _meta.codexIpc.historyReplacement",
+      "fallback": "-32601"
+    },
+    {
+      "name": "_codex/session/history_reset",
+      "kind": "notification",
+      "phase": "commit|abort",
+      "direction": "agent_to_client",
+      "runtimes": [
+        "codex"
+      ],
+      "required": true,
+      "negotiation": "initialize _meta.codexIpc.historyReplacement",
+      "fallback": "ignored"
+    },
+    {
+      "name": "_meta.codexIpc",
+      "kind": "field",
+      "on": "initialize",
+      "direction": "client_to_agent",
+      "runtimes": [
+        "codex"
+      ],
+      "required": true
+    },
+    {
+      "name": "_meta.codexIpc.mode",
+      "kind": "field",
+      "on": "session/load, session/resume",
+      "value": "auto",
+      "direction": "client_to_agent",
+      "runtimes": [
+        "codex"
+      ],
+      "required": true
+    },
+    {
+      "name": "_meta.codexIpc.clientMessageId",
+      "kind": "field",
+      "on": "session/prompt, _session/steering",
+      "direction": "client_to_agent",
+      "runtimes": [
+        "codex"
+      ],
+      "required": true
+    },
+    {
+      "name": "clientCapabilities._meta.codexItemContext",
+      "kind": "field",
+      "on": "initialize",
+      "direction": "client_to_agent",
+      "runtimes": [
+        "codex"
+      ],
+      "required": true
+    },
+    {
+      "name": "_meta.codex",
+      "kind": "field",
+      "on": "session/update",
+      "direction": "agent_to_client",
+      "runtimes": [
+        "codex"
+      ],
+      "required": true,
+      "fallback": "generic ACP item identity"
+    },
+    {
+      "name": "clientCapabilities._meta.jetbrains.air",
+      "kind": "field",
+      "on": "initialize",
+      "direction": "client_to_agent",
+      "runtimes": [
+        "claude"
+      ],
+      "required": false
+    },
+    {
+      "name": "_meta.jetbrains.air.sessionFailure",
+      "kind": "field",
+      "on": "session_info_update",
+      "direction": "agent_to_client",
+      "runtimes": [
+        "claude"
+      ],
+      "required": false
+    },
+    {
+      "name": "_meta.aa.selectionCategory",
+      "kind": "field",
+      "on": "configOptions[]",
+      "direction": "agent_to_client",
+      "runtimes": [
+        "*"
+      ],
+      "required": false,
+      "fallback": "ACP category and option id"
+    },
+    {
+      "name": "_meta.aa.timelineItem",
+      "kind": "field",
+      "on": "session/update",
+      "direction": "agent_to_client",
+      "runtimes": [
+        "*"
+      ],
+      "required": false,
+      "negotiation": "initialize response _meta.aa.guarantees contains stable_native_identity"
+    },
+    {
+      "name": "_meta.aa.guarantees",
+      "kind": "field",
+      "on": "initialize response",
+      "direction": "agent_to_client",
+      "runtimes": [
+        "*"
+      ],
+      "required": false,
+      "values": [
+        "stable_native_identity"
+      ]
+    }
+  ],
+  "capabilities": {
+    "session.send_message": {
+      "source": "session/prompt",
+      "generic": true,
+      "hermes": true,
+      "codex": true,
+      "claude": true
+    },
+    "session.interrupt": {
+      "source": "session/cancel",
+      "generic": true,
+      "hermes": true,
+      "codex": true,
+      "claude": true
+    },
+    "session.steer": {
+      "source": "_session/steering | text command",
+      "generic": false,
+      "hermes": "text-command /steer",
+      "codex": "_meta.steering.supported",
+      "claude": "_meta.steering.supported"
+    },
+    "session.interaction.approval": {
+      "source": "session/request_permission",
+      "generic": true,
+      "hermes": true,
+      "codex": true,
+      "claude": true
+    },
+    "session.interaction.form": {
+      "source": "elicitation/create",
+      "generic": true,
+      "hermes": true,
+      "codex": true,
+      "claude": true
+    },
+    "session.commands": {
+      "source": "available_commands_update",
+      "generic": true,
+      "hermes": true,
+      "codex": true,
+      "claude": true
+    },
+    "session.configuration.read": {
+      "source": "configOptions | modes | models",
+      "generic": true,
+      "hermes": true,
+      "codex": true,
+      "claude": true
+    },
+    "session.configuration.update": {
+      "source": "session/set_config_option | session/set_mode | session/set_model",
+      "generic": true,
+      "hermes": true,
+      "codex": true,
+      "claude": true
+    },
+    "session.list": {
+      "source": "agentCapabilities.sessionCapabilities.list",
+      "generic": "negotiated",
+      "hermes": "negotiated",
+      "codex": "negotiated",
+      "claude": "negotiated"
+    },
+    "session.fork": {
+      "source": "agentCapabilities.sessionCapabilities.fork",
+      "generic": "negotiated",
+      "hermes": "negotiated",
+      "codex": "negotiated",
+      "claude": "negotiated"
+    },
+    "session.history.native": {
+      "source": "agentCapabilities.loadSession",
+      "generic": "negotiated",
+      "hermes": "negotiated",
+      "codex": "negotiated",
+      "claude": "negotiated"
+    },
+    "runtime.attachment": {
+      "source": "agentCapabilities.promptCapabilities.image",
+      "parameters": [
+        "image",
+        "audio",
+        "embeddedContext"
+      ],
+      "generic": "negotiated",
+      "hermes": "negotiated",
+      "codex": "negotiated",
+      "claude": "negotiated"
+    },
+    "catalog.permission": {
+      "source": "definition permission catalog or options",
+      "generic": false,
+      "hermes": true,
+      "codex": true,
+      "claude": true
+    },
+    "catalog.model": {
+      "source": "config option category model",
+      "codex": true,
+      "claude": true
+    },
+    "session.planning": {
+      "source": "codex: collaboration_mode; claude: mode=plan",
+      "codex": true,
+      "claude": true
+    },
+    "session.plan_document": {
+      "source": "plan_update markdown; claude: ExitPlanMode rawInput.plan",
+      "codex": true,
+      "claude": true
+    },
+    "session.plan_review": {
+      "source": "session/request_permission (codex plan-review:, claude ExitPlanMode)",
+      "codex": true,
+      "claude": true
+    },
+    "session.goal": {
+      "source": "_session/goal",
+      "codex": {
+        "actions": [
+          "set",
+          "pause",
+          "resume",
+          "clear"
+        ]
+      },
+      "claude": "_meta.jetbrains.air.goal.controlMethod; actions from air.goal.actions, default [set, clear]"
+    }
+  },
+  "forbiddenInstanceConfigKeys": [
+    "command",
+    "commands",
+    "args",
+    "arguments",
+    "argv",
+    "env",
+    "environment",
+    "launch",
+    "shell"
+  ],
+  "acceptance": {
+    "accepted": [
+      "agent_message_chunk",
+      "agent_thought_chunk",
+      "tool_call",
+      "tool_call_update",
+      "plan",
+      "plan_update",
+      "session/request_permission",
+      "elicitation/create",
+      "session/prompt result"
+    ],
+    "rejected": [
+      "JSON-RPC error before acceptance",
+      "session_closed",
+      "session_busy"
+    ],
+    "unknown": [
+      "request timeout",
+      "connection closed",
+      "agent process exited or failed to start"
+    ],
+    "resendUnknown": false
+  }
+}

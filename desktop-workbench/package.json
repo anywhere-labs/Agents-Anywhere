@@ -14,19 +14,19 @@
   },
   "scripts": {
     "build:info": "node scripts/write-build-info.mjs",
-    "build:main": "yarn build:info && node scripts/build-connector-guard.mjs && tsc -p tsconfig.json",
+    "build:main": "yarn build:info && tsc -p tsconfig.json",
     "renderer:typecheck": "yarn workspace agents-anywhere-desktop-renderer typecheck",
     "typecheck": "yarn build:info && tsc -p tsconfig.json --noEmit",
     "test:main": "yarn build:main && node --test dist/electron/*.test.js dist/electron/backend/*.test.js",
     "dev": "yarn build:main && node scripts/dev.mjs",
-    "start": "yarn ensure:uv && yarn build:main && electron .",
+    "start": "yarn bundle:router && yarn bundle:frpc && yarn bundle:connector && yarn build:main && electron .",
     "build:web": "node scripts/build-web.mjs",
-    "build": "yarn build:main && yarn build:web",
-    "ensure:uv": "node scripts/ensure-uv.mjs",
-    "bundle:uv": "node scripts/prepare-uv.mjs",
-    "bundle:python": "node scripts/prepare-python.mjs",
+    "build": "yarn bundle:connector && yarn build:main && yarn build:web",
+    "bundle:connector": "node scripts/bundle-connector.mjs",
+    "bundle:router": "node scripts/prepare-router.mjs",
+    "bundle:frpc": "node scripts/prepare-frpc.mjs",
     "bundle:pi": "node scripts/prepare-pi-runtime.mjs",
-    "pack": "yarn bundle:uv && yarn bundle:python && yarn bundle:pi && yarn build && electron-builder --dir",
+    "pack": "yarn bundle:router && yarn bundle:frpc && yarn bundle:pi && yarn build && electron-builder --dir",
     "dist": "node scripts/dist-desktop.mjs",
     "dist:mac": "node scripts/dist-desktop.mjs mac",
     "dist:win": "node scripts/dist-desktop.mjs win"
@@ -46,6 +46,8 @@
     "files": [
       "dist/electron/**",
       "dist/shared/**",
+      "dist/connector/**",
+      "!dist/connector/*.map",
       "dist/config.json",
       "dist/build-info.json",
       "!dist/electron/development-login.js",
@@ -56,20 +58,10 @@
       "renderer/out/**",
       "package.json"
     ],
+    "asarUnpack": [
+      "dist/connector/**"
+    ],
     "extraResources": [
-      {
-        "from": "../connector",
-        "to": "connector",
-        "filter": [
-          "pyproject.toml",
-          "README.md",
-          "connector/**",
-          "!**/__pycache__/**",
-          "!**/_reference/**",
-          "!**/_deprecated/**",
-          "!**/*.pyc"
-        ]
-      },
       {
         "from": "../logo",
         "to": "logo",
@@ -86,17 +78,20 @@
         "to": "build/icon.ico"
       },
       {
-        "from": "build/uv",
-        "to": "uv",
+        "from": "build/meshcall-router",
+        "to": "meshcall-router",
         "filter": [
-          "**/*"
+          "**/meshcall-router",
+          "**/meshcall-router.exe"
         ]
       },
       {
-        "from": "build/python",
-        "to": "python",
+        "from": "build/frpc",
+        "to": "frpc",
         "filter": [
-          "**/*"
+          "**/frpc",
+          "**/frpc.exe",
+          "**/LICENSE"
         ]
       }
     ],
@@ -120,12 +115,6 @@
       "allowToChangeInstallationDirectory": true
     },
     "mac": {
-      "extraResources": [
-        {
-          "from": "dist/connector-guard",
-          "to": "connector-guard"
-        }
-      ],
       "icon": "build/icon.icns",
       "hardenedRuntime": true,
       "entitlements": "build/entitlements.mac.plist",
@@ -140,9 +129,9 @@
           ]
         }
       ],
-      "x64ArchFiles": "{Contents/Resources/uv/darwin-*/uv,Contents/Resources/python/darwin-*/**,Contents/Resources/app.asar.unpacked/node_modules/{@img/sharp-darwin-*,@img/sharp-libvips-darwin-*,@next/swc-darwin-*,@swc/core-darwin-*,@parcel/watcher-darwin-*,@tailwindcss/oxide-darwin-*,lightningcss-darwin-*}/**}",
+      "x64ArchFiles": "{Contents/Resources/meshcall-router/darwin-*/meshcall-router,Contents/Resources/frpc/darwin-*/frpc,Contents/Resources/app.asar.unpacked/node_modules/{@img/sharp-darwin-*,@img/sharp-libvips-darwin-*,@next/swc-darwin-*,@swc/core-darwin-*,@parcel/watcher-darwin-*,@tailwindcss/oxide-darwin-*,lightningcss-darwin-*}/**}",
       "signIgnore": [
-        "\\.(?:pak|dat|wasm|pyc|pickle|whl)$"
+        "\\.(?:pak|dat|wasm)$"
       ]
     },
     "linux": {
@@ -151,6 +140,6 @@
     }
   },
   "dependencies": {
-    "meshcall": "0.3.0"
+    "meshcall": "file:../vendor/meshcall/meshcall-0.4.0-dev.9334405.tgz"
   }
 }

@@ -244,13 +244,15 @@ function formatSessionTime(session: DeviceSession, locale: string) {
 }
 
 function mergeRealSession(prev: DeviceSession | undefined, session: RealSessionView): DeviceSession {
+  // E2EE: the response's title and cwd are null; keep what the workspace decrypted until its refresh lands.
+  const sealed = session.displayDevice?.mode === "sealed" || session.displayUser?.mode === "sealed"
   return {
     id: session.id,
     connectorId: session.connectorId,
     connectorStatus: session.connectorStatus,
     runtime: prev?.runtime ?? session.runtime,
-    title: session.title,
-    cwd: session.cwd,
+    title: sealed ? prev?.title ?? null : session.title,
+    cwd: sealed ? prev?.cwd ?? null : session.cwd,
     status: session.status,
     takeover: session.takeover,
     pinned: session.pinned,

@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(UIKit)
+import UIKit
+#endif
 
 @MainActor
 final class V2ClientServices {
@@ -27,14 +30,28 @@ final class V2ClientServices {
     let runtimeWorkflows: V2RuntimeWorkflowAPI
     let modelConfigAPI: V2ModelConfigAPI
     let newSession: NewSessionModel
+    /// Port preview actions; the instance's availability lasts for this app run.
+    let portPreviews: PortPreviewStore
+    /// Optional end-to-end encryption: client trust, secure channels and per-device transport choice.
+    let e2ee: V2E2EEService
+    /// Opens session display envelopes with the directory keys in `e2ee.trust`.
+    let sessionDisplay: V2SessionDisplayResolver
+    private var trustObserver: UUID?
 
-    init(api: V2APIClient, accountID: String) {
+    /// Parent of every account's offline directory (one per server + account).
+    nonisolated static let defaultOfflineRoot = URL.applicationSupportDirectory.appendingPathComponent("AgentsAnywhere/Offline/v1")
+    let offlineRoot: URL
+    /// This account's directory name below `offlineRoot`.
+    var offlineScopeKey: String { V2RestorationStore.scopeKey(scope) }
+
+    init(api: V2APIClient, accountID: String, offlineRoot: URL = V2ClientServices.defaultOfflineRoot) {
         self.api = api
+        self.offlineRoot = offlineRoot
         runtimeWorkflows = V2RuntimeWorkflowAPI(transport: api.sessions.transport)
         modelConfigAPI = api.modelConfig
+        portPreviews = PortPreviewStore(api: api.previews)
         scope = V2ClientScope(serverURL: api.serverURL, accountID: accountID)
-        let cacheDirectory = URL.applicationSupportDirectory.appendingPathComponent("AgentsAnywhere/Offline/v1")
-            .appendingPathComponent(V2RestorationStore.scopeKey(scope))
+        let cacheDirectory = offlineRoot.appendingPathComponent(V2RestorationStore.scopeKey(scope))
         localStore = V2LocalStore(directory: cacheDirectory)
         sessionPreparation = V2SessionPreparationService(connectorAPI: api.connectors)
         account = V2AccountService(accountAPI: api.account)
@@ -53,7 +70,7 @@ final class V2ClientServices {
         sessionDetail = V2SessionDetailService(
             sessionAPI: api.sessions,
             runtimeAPI: api.runtime,
-            realtimeAPI: api.realtime
+            realtimeAPI: api.sessionRealtime
         )
         sessionCreation = V2SessionCreationService(sessionAPI: api.sessions)
         attachments = V2AttachmentService(attachmentAPI: api.attachments)
@@ -66,6 +83,30 @@ final class V2ClientServices {
             connectorAPI: api.connectors,
             serverURL: api.serverURL
         )
+        let trust = ClientTrustStore(storage: E2EEKeychainStorage(), scope: "e2ee." + V2RestorationStore.scopeKey(scope))
+        let e2eeAPI = api.e2ee
+        e2ee = V2E2EEService(
+            trust: trust,
+            tunnel: URLSessionE2EETunnel(serverURL: api.serverURL, urlSession: api.urlSession) {
+                try await e2eeAPI.tunnelTicket(clientId: try trust.clientId()).ticket
+            },
+            api: e2eeAPI,
+            clientLabel: Self.clientLabel
+        )
+        sessionDisplay = V2SessionDisplayResolver(trust: trust)
+        dashboardRepository.displayResolver = sessionDisplay
+        sessionRepository.displayResolver = sessionDisplay
+        // Session content follows its device: the dashboard knows most sessions' devices,
+        // otherwise the (always plaintext) directory entry is read once.
+        let sessionsAPI = api.sessions
+        let dashboard = dashboardRepository
+        api.routing.attach(service: e2ee) { sessionId in
+            if sessionId.hasPrefix("local:") { return nil }
+            if let known = await MainActor.run(body: { dashboard.sessions.first { $0.id == sessionId }?.connectorId }) {
+                return known
+            }
+            return try await sessionsAPI.sessionMeta(sessionId: sessionId).session.connectorId
+        }
         newSession = NewSessionModel(scope: scope, devices: deviceManagement,
             preparation: sessionPreparation, creation: sessionCreation, projectAPI: api.projects, workflowAPI: V2RuntimeWorkflowAPI(transport: api.sessions.transport))
         newSession.onProjectResolved = { [weak self] in self?.dashboardRepository.upsertProject($0) }
@@ -88,6 +129,11 @@ final class V2ClientServices {
             dashboardRepository.upsert([response.session])
             onCreationBound?(submission.session.id, response.session.id)
         }
+        Task { [account, e2ee] in
+            // Older servers have no `e2ee` field (off); a failed read keeps the mode unchanged,
+            // and each device's own "requires encryption" record applies regardless.
+            await e2ee.loadServerConfig { try await account.authConfig().e2ee }
+        }
         sessionReads.updateConnectivity(.init(availability: .offline))
         connectivity.onChange = { [weak self] status in
             self?.sessionRepository.updateConnectivity(status)
@@ -99,6 +145,15 @@ final class V2ClientServices {
             self?.onConnectivityChange?(status)
         }
         connectivity.start()
+        // `e2ee.directory_key`, pairing again or forgetting a device: retry the envelopes.
+        trustObserver = trust.observeDevices { [weak self] in
+            Task { @MainActor in self?.redisplaySessions() }
+        }
+    }
+
+    private func redisplaySessions() {
+        dashboardRepository.redisplay()
+        sessionRepository.redisplay()
     }
 
     func agents(on connectorID: String) -> DeviceAgentModel {
@@ -137,9 +192,13 @@ final class V2ClientServices {
         await sessionRepository.flushCache()
     }
 
+    /// Signing out or switching accounts passes `removingCache`: the account's
+    /// offline directory is deleted and nothing from a closing page can write it back.
     func shutdown(removingCache: Bool = false) {
         onSelectPage = nil; onCreationBound = nil
         newSession.onStaged = nil; newSession.onBound = nil; newSession.onFailed = nil; newSession.onProjectResolved = nil
+        // Refuse writes now; the actor deletes the directory after any write in progress.
+        if removingCache { localStore.invalidate() }
         Task { await localStore.close(removing: removingCache) }
         agentSetup.invalidate()
         agentModels.values.forEach { $0.invalidate() }; agentModels = [:]
@@ -149,6 +208,17 @@ final class V2ClientServices {
         connectivity.stop()
         onConnectivityChange = nil
         sessionRepository.reset()
+        api.routing.detach()
+        if let trustObserver { e2ee.trust.removeObserver(trustObserver); self.trustObserver = nil }
+        Task { [e2ee] in await e2ee.shutdown() }
         api.cancelOutstandingRequests()
+    }
+
+    private static var clientLabel: String {
+        #if canImport(UIKit)
+        UIDevice.current.model
+        #else
+        "iOS"
+        #endif
     }
 }

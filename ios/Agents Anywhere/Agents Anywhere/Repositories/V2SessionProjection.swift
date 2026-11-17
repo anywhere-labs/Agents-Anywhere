@@ -24,11 +24,49 @@ struct V2SessionProjection {
         data.hasNewerItems = hasNewerItems
     }
 
+    /// A local creation has no authoritative history yet; the next read replaces it.
     static func placeholder(_ session: V2SessionMeta, maximumItems: Int) -> Self {
         let empty = V2RuntimeCapabilitySnapshot(revision: 0, capabilities: [])
-        return Self(snapshot: .init(session: session, state: nil, timeline: .init(items: [], nextSeq: 0, hasMore: false),
+        var projection = Self(snapshot: .init(session: session, state: nil, timeline: .init(items: [], nextSeq: 0, hasMore: false),
             approvals: [], notices: [], effectiveCapabilities: empty, runtimeCapabilities: empty, catalogs: [:],
             eventCursor: "seq:0", serverTime: ""), maximumItems: maximumItems)
+        projection.data.hasBaseline = false
+        return projection
+    }
+
+    /// Protocol 1.2: an offline snapshot with no retained content is not an
+    /// authoritative base. Its cursor stays at `seq:0` and it is never archived,
+    /// so the device's return reads a snapshot instead of recovering from it.
+    static func offlineBase(_ snapshot: V2SessionSnapshot, maximumItems: Int) -> Self {
+        var projection = Self(snapshot: snapshot, maximumItems: maximumItems)
+        projection.data.items = []
+        projection.data.hasOlderItems = false
+        projection.data.hasNewerItems = false
+        projection.data.cursor = "seq:0"
+        projection.data.hasBaseline = false
+        projection.data.historyUnavailable = true
+        return projection
+    }
+
+    /// Protocol 1.2: the Server keeps no history while the device is offline, so an
+    /// offline snapshot updates metadata and runtime facts only. Retained items,
+    /// the paging position and the recovery cursor stay as they were.
+    mutating func applyOffline(_ snapshot: V2SessionSnapshot) {
+        guard snapshot.session.id == data.session.id else { return }
+        applyMeta(snapshot.session)
+        if let state = snapshot.state { applyState(state) }
+        data.capabilities = snapshot.effectiveCapabilities
+        if let queue = snapshot.queue { applyQueue(queue) }
+        data.historyUnavailable = true
+    }
+
+    mutating func markWithoutBaseline() { data.hasBaseline = false }
+
+    /// Returns whether the flag changed.
+    @discardableResult mutating func setHistoryUnavailable(_ unavailable: Bool) -> Bool {
+        guard data.historyUnavailable != unavailable else { return false }
+        data.historyUnavailable = unavailable
+        return true
     }
 
     var sequence: Int { Self.sequence(data.cursor) }
@@ -110,8 +148,9 @@ struct V2SessionProjection {
             }
         case "runtime.catalog.updated":
             break // Catalog reads are independently cached and invalidated by the repository.
-        case "session.subscribed", "session.refetch_required":
-            return // These are recovery signals, never cursor acknowledgements.
+        case "session.subscribed", "session.refetch_required", V2SessionEvent.catchupRequired,
+             V3SessionPorts.listening, V3SessionPorts.closed:
+            return // Recovery signals and device port facts never acknowledge the cursor.
         default:
             data.lastExtensionEvent = event
         }
@@ -130,6 +169,8 @@ struct V2SessionProjection {
 
     mutating func applyHistory(_ page: V2SessionTimelinePage) {
         guard page.sessionId == data.session.id else { return }
+        // An offline device's empty page is not the start of the history.
+        if page.historyUnavailable { data.historyUnavailable = true; return }
         merge(page.items, history: true)
         data.hasOlderItems = page.hasMore
         // nextSeq is the server high watermark, not proof that intervening events were read.
@@ -147,6 +188,7 @@ struct V2SessionProjection {
 
     mutating func applyLatest(_ page: V2SessionTimelinePage) {
         guard page.sessionId == data.session.id else { return }
+        if page.historyUnavailable { data.historyUnavailable = true; return }
         // A GET can finish after newer socket frames. Its high watermark bounds
         // the window it may replace, but never acknowledges the event cursor.
         let newer = data.items.filter { $0.updatedSeq > page.nextSeq }

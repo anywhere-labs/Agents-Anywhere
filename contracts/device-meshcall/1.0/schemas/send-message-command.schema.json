@@ -1,0 +1,104 @@
+{
+  "$defs": {
+    "AttachmentRef": {
+      "properties": {
+        "encrypted": {
+          "default": false,
+          "title": "Encrypted",
+          "type": "boolean"
+        },
+        "fileId": {
+          "minLength": 1,
+          "title": "Fileid",
+          "type": "string"
+        },
+        "mediaType": {
+          "title": "Mediatype",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sha256"
+        },
+        "size": {
+          "minimum": 0,
+          "title": "Size",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "fileId",
+        "name",
+        "mediaType",
+        "size"
+      ],
+      "title": "AttachmentRef",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:send-message-command",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "attachments": {
+      "items": {
+        "$ref": "#/$defs/AttachmentRef"
+      },
+      "title": "Attachments",
+      "type": "array"
+    },
+    "clientMessageId": {
+      "minLength": 1,
+      "title": "Clientmessageid",
+      "type": "string"
+    },
+    "content": {
+      "title": "Content",
+      "type": "string"
+    },
+    "queue": {
+      "anyOf": [
+        {
+          "enum": [
+            "auto",
+            "interrupt",
+            "never"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Queue"
+    },
+    "sessionId": {
+      "minLength": 1,
+      "title": "Sessionid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "sessionId",
+    "clientMessageId",
+    "content"
+  ],
+  "title": "SendMessageCommand",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

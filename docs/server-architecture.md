@@ -22,50 +22,29 @@ modules, or the concrete `Store` facade. These rules are enforced by
 
 | State | Owner | Persistence |
 | --- | --- | --- |
-| Users, connectors, sessions, timeline, catalogs, runtime config | PostgreSQL | Durable, Alembic-versioned |
+| Users, connectors, the session directory (titles, status, read marks), catalogs, runtime config, command receipts | PostgreSQL | Durable, Alembic-versioned |
+| Session content: timeline, plans, goals, queued messages | The device (v3 Connector) | Read through the device link; the Server stores none of it (from `v2_60`) |
 | Current runtime notices and interaction/approval status | Runtime | Read live via Connector RPC and relayed as events; not persisted as current state in Server PostgreSQL |
-| Connector ownership lease, cross-instance RPC routing, invalidation Pub/Sub, distributed locks, short-lived tickets and transfer coordination | Redis | Reconstructible coordination state, finite TTL where retained |
-| Accepted-but-unflushed Timeline upserts and live Timeline sequence head | Redis | Operationally persistent with AOF `everysec`, persistent `/data`, and no eviction; no TTL |
+| Connector ownership lease, cross-instance RPC routing, invalidation Pub/Sub, distributed locks, short-lived tickets and transfer coordination, pairing codes, the workspace root each Connector terminal was opened with (from `v2_62`) | Redis | Reconstructible coordination state, finite TTL where retained; held in the process when Redis is not configured |
 | Local WebSockets, pending RPC futures, send locks, listener tasks | Server process | Process lifetime only |
-| Attachments and uploaded files | Configured file backend | Durable according to backend policy |
+| Attachments staged until the device fetches them, and files a share exposes | Configured file backend | Durable according to backend policy |
 
 Approval operations can still produce logs. The Codex adapter logs approval
 response attempts, failures, and completion; log retention depends on how the
-Connector is launched. These operational logs and historical Timeline entries
-are distinct from the Runtime's authoritative current approval state.
+Connector is launched. These operational logs are distinct from the Runtime's authoritative current approval state.
 
 Connector online status is derived from the live presence port. SQL records
 durable connector metadata such as `last_seen_at` and `device_os`, but it is not
 the source of truth for current instance ownership. Coordination state remains
 reconstructible from active connections after restart.
 
-PostgreSQL becomes the durable source of truth for a Timeline upsert when the
-write buffer flushes it. Until then, distributed Server instances retain the
-accepted upsert and live sequence head in Redis. Redis sequence values come from
-revision ranges leased durably from PostgreSQL; Redis loss can therefore abandon
-unused values but cannot cause sequence reuse. Compose enables AOF with
-`appendfsync everysec`, persists `/data`, and sets `noeviction` because these
-pending/sequencer keys have no TTL. This is an operational durability window,
-not a second authoritative Timeline database: failure before the latest AOF sync
-can lose an unflushed upsert, while consistency-sensitive/manual reads fence and
-flush pending writes to PostgreSQL first. The lease size defaults to `4096` and
-is configurable with `AGENT_SERVER_TIMELINE_REVISION_LEASE_SIZE`.
-
-This design has two distinct loss windows. In a distributed deployment, AOF
-`everysec` can lose the newest commands that Redis has acknowledged but has not
-yet fsynced. In the no-Redis single-process fallback, accepted-but-unflushed
-Timeline payloads exist only in process memory, so a process crash loses all
-payloads since the last flush (normally up to the configured flush interval).
-The PostgreSQL allocation high watermark prevents either failure from reusing a
-revision, but it cannot reconstruct payloads lost before their database flush;
-the local fallback is therefore a development mode, not a durable HA design.
-
-The Redis security and capacity boundary includes `INFO server`: the Server ACL
-must allow that command so the sequencer can read `run_id` and detect a Redis
-restart or failover. In the current implementation every Timeline upsert reads
-`run_id`, and an accepted change rechecks it after revision allocation. Redis
-ACL validation and expected `INFO` command throughput are consequently rollout
-requirements for high-frequency ingestion.
+Session content lives on the device. A v3 Connector answers reads through the
+device link and streams changes while someone watches; the Server forwards them
+without storing them. The Server keeps only directory facts the device reports
+(status, the newest item's type and time, `headSeq`, `latestTurnEndSeq`) and
+`seq_ceiling`, the highest sequence it forwarded, so a device that lost its
+database restarts its clock above anything a client has seen. The upgrade to
+`v2_60` deletes the content v2 stored (see below).
 
 ## Connector Flow
 
@@ -111,3 +90,14 @@ session has an allocated range ahead of its durable sequence
 Because an ordinary `v2.24` allocation lease can make the first condition true
 before the whole range is consumed, downgrade will commonly be unavailable once
 new writers have handled Timeline traffic.
+
+### v2.60: the Server stops holding session content
+
+`v2_60` drops the timeline, planning, goal and message queue tables and clears
+the run parameters that could hold message text. It cannot be downgraded; back
+up the database first. Read marks become positions on the device's turn clock:
+the migration leaves `-1` ("read") or `-2` ("unread") on each session, and the
+device's first `latestTurnEndSeq` turns the sentinel into a real position.
+Stored attachments are deleted by the Server in the background after it starts
+(the migration sets `instance_settings.v3_attachment_purge = pending`); files
+that a share exposes are kept.

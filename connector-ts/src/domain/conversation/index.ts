@@ -1,0 +1,16 @@
+// 会话领域模型：Conversation、TimelineItem、Delivery、Interaction 与逻辑时钟；纯领域，无 I/O，不依赖 domain/trust。
+
+export * from './budget.js'
+export * from './clock.js'
+export * as delivery from './delivery.js'
+export type { Delivery, DeliveryState, ReceiveDecision } from './delivery.js'
+export { TERMINAL_DELIVERY_STATES } from './delivery.js'
+export * from './errors.js'
+export * as interaction from './interaction.js'
+export type { Interaction, InteractionKind, InteractionState, RespondDecision } from './interaction.js'
+export * as queue from './queue.js'
+export type { QueueAttachment, QueueItem, QueueItemStatus, SessionQueue, SessionQueueState, DispatchDecision, EnqueueResult } from './queue.js'
+export { BUSY_STATUSES, QUEUE_MAX_ITEMS } from './queue.js'
+export * from './session.js'
+export * from './timeline.js'
+export * from './turn.js'

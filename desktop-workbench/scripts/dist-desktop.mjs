@@ -4,7 +4,7 @@
  * Order of operations, mirroring the DSH desktop release scripts:
  *
  * 1. read and validate the signing/notarization environment (all-or-nothing)
- * 2. run the uv, Python and Pi bundles and the app build with every secret stripped
+ * 2. run the Router, frpc and Pi bundles and the app build with every secret stripped
  * 3. hand the secrets to electron-builder only, which is the step that signs
  * 4. verify the produced artifact
  *
@@ -27,7 +27,7 @@ import {
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const OUTPUT_DIR = join(PROJECT_ROOT, "release");
-// uv and CPython bundles share the `<platform>-<arch>` target keys.
+// Router and Pi bundles share the `<platform>-<arch>` target keys.
 const BUNDLE_TARGETS = {
   "darwin-arm64": "darwin-arm64",
   "darwin-x64": "darwin-x64",
@@ -98,12 +98,12 @@ function resolveTargets({ platform, archFlag }) {
   return { builderFlags: [`--${arch}`], bundleTargets: [BUNDLE_TARGETS[`darwin-${arch}`]] };
 }
 
-/** The uv and CPython executables `bundle:uv` and `bundle:python` leave for a target. */
+/** The Router and frpc executables `bundle:router` and `bundle:frpc` leave for a target. */
 function bundledExecutables(target) {
   const windows = target.startsWith("win32");
   return [
-    `build/uv/${target}/${windows ? "uv.exe" : "uv"}`,
-    `build/python/${target}/${windows ? "python.exe" : "bin/python3"}`,
+    `build/meshcall-router/${target}/${windows ? "meshcall-router.exe" : "meshcall-router"}`,
+    `build/frpc/${target}/${windows ? "frpc.exe" : "frpc"}`,
   ];
 }
 
@@ -135,13 +135,10 @@ function verifyMac({ signed, notarized, artifact }) {
     .map((entry) => join(OUTPUT_DIR, entry.name, "Agents Anywhere.app"))
     .find((candidate) => existsSync(candidate));
   if (!app) fail("The packaged application was not found under release/, so it could not be verified.");
-  const guard = join(app, "Contents", "Resources", "connector-guard");
-  run("lipo", ["-verify_arch", "arm64", "x86_64", guard], process.env);
   if (!signed) {
     log("Artifact is unsigned; Gatekeeper will ask the user to confirm the first launch.");
     return;
   }
-  run("codesign", ["--verify", "--all-architectures", "--strict", guard], process.env);
   log(`Verifying the code signature of ${app}`);
   run("codesign", ["--verify", "--deep", "--strict", "--verbose=2", app], process.env);
   const described = spawnSync("codesign", ["-dvv", app], { encoding: "utf8" });
@@ -180,18 +177,17 @@ async function main() {
   } else {
     log(`Signing: ${describeSigning(credentials, "no signing certificate")}`);
   }
-  log(`uv and Python targets: ${bundleTargets.join(", ")}`);
+  log(`Router and frpc targets: ${bundleTargets.join(", ")}`);
 
   if (skipBuild) {
-    const required = ["dist/electron/main.js", "renderer/out/index.html", "build/pi-runtime/package.json", ...bundleTargets.flatMap(bundledExecutables)];
-    if (platform === "mac") required.push("dist/connector-guard");
+    const required = ["dist/electron/main.js", "dist/connector/desktop-main.js", "renderer/out/index.html", "build/pi-runtime/package.json", ...bundleTargets.flatMap(bundledExecutables)];
     for (const relative of required) {
       if (!existsSync(join(PROJECT_ROOT, relative))) fail(`--skip-build requires ${relative}; run a full dist first.`);
     }
-    log("Reusing compiled app, uv, Python and Pi bundles (--skip-build)");
+    log("Reusing compiled app, Connector, Router, frpc and Pi bundles (--skip-build)");
   } else {
-    yarn(["bundle:uv"], { ...cleanEnvironment, UV_BUNDLE_TARGETS: bundleTargets.join(",") });
-    yarn(["bundle:python"], { ...cleanEnvironment, PYTHON_BUNDLE_TARGETS: bundleTargets.join(",") });
+    yarn(["bundle:router"], { ...cleanEnvironment, ROUTER_BUNDLE_TARGETS: bundleTargets.join(",") });
+    yarn(["bundle:frpc"], { ...cleanEnvironment, FRPC_BUNDLE_TARGETS: bundleTargets.join(",") });
     // Pi's prebuilt native modules use the same `<platform>-<arch>` keys.
     yarn(["bundle:pi"], { ...cleanEnvironment, PI_BUNDLE_TARGETS: bundleTargets.join(",") });
     yarn(["build"], cleanEnvironment);

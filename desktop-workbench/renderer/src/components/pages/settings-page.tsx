@@ -65,6 +65,7 @@ import { Switch } from "@/components/ui/switch"
 import { AccountProfileCard } from "@/components/pages/account-profile-card"
 import { MobileConnectionDialog } from "@/components/pages/mobile-signin-panel"
 import { ArchivedSessionsTab } from "@/components/settings/archived-sessions-tab"
+import { SecureConnectionsTab } from "@/components/settings/secure-connections-tab"
 import { ModelConfigsTab } from "@/components/settings/model-configs-tab"
 import { parseSettingsTab, settingsNavigation } from "@/components/settings/settings-navigation"
 import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
@@ -78,7 +79,6 @@ import { normalizeAuthMe } from "@/features/auth/normalize-me"
 import type { AuthMe } from "@/features/auth/types"
 import { useDeviceSettings } from "@/features/dashboard/device-settings"
 import { useDesktopConnector } from "@/features/desktop/desktop-connector-context"
-import { PYPI_MIRROR_OPTIONS, PYTHON_MIRROR_OPTIONS } from "@/features/desktop/package-mirrors"
 import {
   getDesktopWorkbenchBridge,
   type DesktopConnectorLog,
@@ -273,12 +273,6 @@ function DesktopTab() {
     syncIntervalSeconds: 30,
     syncExistingOnConnect: true,
   })
-  const [advancedDraft, setAdvancedDraft] = React.useState({
-    uvPath: "",
-    pythonPath: "",
-    uvPypiIndexUrl: "",
-    uvPythonInstallMirror: "",
-  })
   const [proxyMode, setProxyMode] = React.useState<ConnectorProxyMode>("system")
   const [proxyUrl, setProxyUrl] = React.useState("")
   const proxyUrlInvalid = proxyMode === "custom" && proxyUrl.trim() !== "" && !isConnectorProxyUrl(proxyUrl)
@@ -290,10 +284,6 @@ function DesktopTab() {
     connectorId && (state?.authFailed || state?.manualDisconnected),
   )
   const connectorIsRunning = Boolean(!needsReconnect && (state?.running || state?.status === "running"))
-  const selectedPypiMirror = PYPI_MIRROR_OPTIONS.find((option) => option.url === advancedDraft.uvPypiIndexUrl)
-    ?? PYPI_MIRROR_OPTIONS[0]
-  const selectedPythonMirror = PYTHON_MIRROR_OPTIONS.find((option) => option.url === advancedDraft.uvPythonInstallMirror)
-    ?? PYTHON_MIRROR_OPTIONS[0]
   const statusKey = needsReconnect
     ? "desktopDisconnected"
     : provisionError || connectionStatus === "error"
@@ -307,15 +297,6 @@ function DesktopTab() {
         : connectorId
           ? "desktopStopped"
           : "desktopNotConfigured"
-
-  React.useEffect(() => {
-    setAdvancedDraft({
-      uvPath: state?.uvPath ?? "",
-      pythonPath: state?.pythonPath ?? "",
-      uvPypiIndexUrl: state?.uvPypiIndexUrl ?? "",
-      uvPythonInstallMirror: state?.uvPythonInstallMirror ?? "",
-    })
-  }, [state?.uvPath, state?.pythonPath, state?.uvPypiIndexUrl, state?.uvPythonInstallMirror])
 
   React.useEffect(() => {
     const saved = state?.connectorProxy ?? ""
@@ -474,35 +455,7 @@ function DesktopTab() {
         </div>
         <Separator />
         <FieldGroup className="gap-0 px-6 py-5">
-          <Field className="pb-4">
-            <span className="text-sm font-medium">{t("desktopUvPath")}</span>
-            <Input
-              value={advancedDraft.uvPath}
-              placeholder={state?.resolvedUvPath || t("desktopUvPathAuto")}
-              onChange={(event) => setAdvancedDraft((current) => ({ ...current, uvPath: event.currentTarget.value }))}
-              onBlur={(event) => void saveSettings({ uvPath: event.currentTarget.value })}
-            />
-            <span className="text-xs text-muted-foreground">{t("desktopUvPathDescription")}</span>
-          </Field>
-          <div className="flex min-w-0 items-center gap-4 border-t border-border py-4">
-            <span className="w-36 shrink-0 text-sm text-muted-foreground">{t("desktopResolvedUvPath")}</span>
-            <span className="code-mono min-w-0 truncate text-sm">{state?.resolvedUvPath || t("desktopUvNotFound")}</span>
-          </div>
-          <Field className="border-t border-border py-4">
-            <span className="text-sm font-medium">{t("desktopPythonPath")}</span>
-            <Input
-              value={advancedDraft.pythonPath}
-              placeholder={state?.resolvedPythonPath || t("desktopPythonPathAuto")}
-              onChange={(event) => setAdvancedDraft((current) => ({ ...current, pythonPath: event.currentTarget.value }))}
-              onBlur={(event) => void saveSettings({ pythonPath: event.currentTarget.value })}
-            />
-            <span className="text-xs text-muted-foreground">{t("desktopPythonPathDescription")}</span>
-          </Field>
-          <div className="flex min-w-0 items-center gap-4 border-t border-border py-4">
-            <span className="w-36 shrink-0 text-sm text-muted-foreground">{t("desktopResolvedPythonPath")}</span>
-            <span className="code-mono min-w-0 truncate text-sm">{state?.resolvedPythonPath || t("desktopPythonChosenByUv")}</span>
-          </div>
-          <Field orientation="horizontal" className="border-t border-border py-4">
+          <Field orientation="horizontal" className="pb-4">
             <FieldContent>
               <span className="text-sm font-medium">{t("desktopConnectorProxy")}</span>
               <span className="text-xs text-muted-foreground">{t("desktopConnectorProxyDescription")}</span>
@@ -548,65 +501,6 @@ function DesktopTab() {
               </span>
             </Field>
           ) : null}
-          <Field orientation="horizontal" className="border-t border-border py-4">
-            <FieldContent>
-              <span className="text-sm font-medium">{t("desktopUvPypiIndexUrl")}</span>
-              <span className="text-xs text-muted-foreground">{t("desktopUvPypiIndexUrlDescription")}</span>
-            </FieldContent>
-            <Select
-              value={selectedPypiMirror.url || "default"}
-              onValueChange={(value) => {
-                const uvPypiIndexUrl = value === "default" ? "" : value
-                setAdvancedDraft((current) => ({ ...current, uvPypiIndexUrl }))
-                void saveSettings({ uvPypiIndexUrl })
-              }}
-              disabled={busy}
-            >
-              <SelectTrigger className="min-w-44">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent align="end">
-                <SelectGroup>
-                  {PYPI_MIRROR_OPTIONS.map((option) => (
-                    <SelectItem key={option.id} value={option.url || "default"}>
-                      {t(option.labelKey)}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-          </Field>
-          {/* uv only downloads Python when no bundled or saved interpreter is available. */}
-          {state?.resolvedPythonPath ? null : (
-            <Field orientation="horizontal" className="border-t border-border py-4">
-              <FieldContent>
-                <span className="text-sm font-medium">{t("desktopUvPythonInstallMirror")}</span>
-                <span className="text-xs text-muted-foreground">{t("desktopUvPythonInstallMirrorDescription")}</span>
-              </FieldContent>
-              <Select
-                value={selectedPythonMirror.url || "default"}
-                onValueChange={(value) => {
-                  const uvPythonInstallMirror = value === "default" ? "" : value
-                  setAdvancedDraft((current) => ({ ...current, uvPythonInstallMirror }))
-                  void saveSettings({ uvPythonInstallMirror })
-                }}
-                disabled={busy}
-              >
-                <SelectTrigger className="min-w-44">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent align="end">
-                  <SelectGroup>
-                    {PYTHON_MIRROR_OPTIONS.map((option) => (
-                      <SelectItem key={option.id} value={option.url || "default"}>
-                        {t(option.labelKey)}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            </Field>
-          )}
         </FieldGroup>
       </section>
 
@@ -1749,6 +1643,7 @@ export function SettingsPage() {
           {tab === "startup" && <StartupTab />}
           {tab === "logs" && <LogsTab />}
           {tab === "appearance" && <AppearanceTab />}
+          {tab === "secure-connections" && <SecureConnectionsTab />}
           {tab === "archived-sessions" && (
             <ArchivedSessionsTab
               sessions={sessions}

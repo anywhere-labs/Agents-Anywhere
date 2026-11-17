@@ -608,51 +608,6 @@ def test_connector_runtime_scoped_reads_start_active_runtime_before_rpc(tmp_path
     }
 
 
-def test_session_sync_starts_active_runtime_before_sync_rpc(tmp_path):
-    client, rpc, connector_id, headers = _make_client(tmp_path)
-    project_id = _create_project(client, connector_id, headers)
-    config_url = f"{_runtime_url(connector_id)}/config"
-    active_url = f"{_runtime_url(connector_id)}/active"
-    assert (
-        client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
-    )
-    assert (
-        client.put(active_url, headers=headers, json={"active": True}).status_code
-        == 200
-    )
-    session_response = client.post(
-        "/sessions",
-        headers=headers,
-        json={
-            "connectorId": connector_id,
-            "projectId": project_id,
-            "runtime": "codex",
-            "externalSessionId": "thr_existing",
-            "title": "Existing",
-            "cwd": "/repo",
-        },
-    )
-    assert session_response.status_code == 200, session_response.text
-    session_id = session_response.json()["session"]["id"]
-    asyncio.run(
-        client.app.state.store.set_device_runtime_status(
-            connector_id,
-            "codex",
-            "stopped",
-        )
-    )
-    rpc.requests.clear()
-
-    response = client.post(f"/sessions/{session_id}/sync", headers=headers)
-
-    assert response.status_code == 200, response.text
-    assert [request[1] for request in rpc.requests] == [
-        "runtime.start",
-        "session.sync",
-    ]
-    assert rpc.requests[-1][2]["externalSessionId"] == "thr_existing"
-
-
 def test_session_runtime_catalog_reads_start_active_runtime_before_rpc(tmp_path):
     client, rpc, connector_id, headers = _make_client(tmp_path)
     project_id = _create_project(client, connector_id, headers)

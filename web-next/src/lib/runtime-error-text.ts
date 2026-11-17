@@ -1,5 +1,6 @@
 "use client"
 
+import * as React from "react"
 import { useTranslations } from "next-intl"
 import { isApiError } from "@/lib/api/errors"
 
@@ -26,9 +27,10 @@ export function runtimeFailureOf(error: unknown): RuntimeFailure {
  */
 export function useRuntimeErrorText() {
   const t = useTranslations("runtimeErrors")
-  return (failure: RuntimeFailure | null | undefined, fallback?: string): string | undefined => {
+  // Stable per language, so callers can list it as a hook dependency.
+  return React.useCallback((failure: RuntimeFailure | null | undefined, fallback?: string): string | undefined => {
     if (!failure) return fallback
     if (failure.code && t.has(failure.code)) return t(failure.code)
     return failure.message || fallback
-  }
+  }, [t])
 }

@@ -15,11 +15,14 @@ nonisolated struct HTTPUploadRequest<Response: Decodable> {
     let path: String
     let files: [HTTPUploadFile]
     let requiresAuth: Bool
+    /// Extra request headers, e.g. `x-aa-sealed` for encrypted uploads.
+    let headers: [String: String]
 
-    init(path: String, files: [HTTPUploadFile], requiresAuth: Bool = true) {
+    init(path: String, files: [HTTPUploadFile], requiresAuth: Bool = true, headers: [String: String] = [:]) {
         self.path = path
         self.files = files
         self.requiresAuth = requiresAuth
+        self.headers = headers
     }
 }
 

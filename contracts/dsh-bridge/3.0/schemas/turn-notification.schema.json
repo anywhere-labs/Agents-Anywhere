@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "turn-notification.schema.json",
+  "title": "DshTurnNotification",
+  "description": "update._meta.dsh.turnEvent of a session_info_update (§7).",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sessionId",
+        "phase",
+        "turn",
+        "seq"
+      ],
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "phase": {
+          "const": "started"
+        },
+        "turn": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "requestIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sessionId",
+        "phase",
+        "turn",
+        "seq",
+        "requestIds",
+        "stopReason",
+        "reason",
+        "continuable"
+      ],
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "phase": {
+          "const": "ended"
+        },
+        "turn": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "stopReason": {
+          "type": "string",
+          "enum": [
+            "end_turn",
+            "max_tokens",
+            "max_turn_requests",
+            "refusal",
+            "cancelled"
+          ]
+        },
+        "reason": {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        },
+        "continuable": {
+          "type": "boolean"
+        },
+        "requestIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "rpcIds of the user inputs this turn consumed"
+        }
+      }
+    }
+  ]
+}

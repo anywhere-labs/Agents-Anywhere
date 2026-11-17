@@ -1,6 +1,9 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { createSessionStateCache } from "../src/components/session/session-state-cache.ts"
+import { registerSource } from "./helpers/onboarding-source.mjs"
+
+registerSource()
+const { createSessionStateCache } = await import("../src/components/session/session-state-cache.ts")
 
 function entry(id, text = "message") {
   return {

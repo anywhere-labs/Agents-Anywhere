@@ -24,6 +24,8 @@ final class V2SessionRepository {
     private var accessCounter = 0
     private var suspended = false
     private(set) var network = V2NetworkStatus()
+    /// Opens display envelopes (encrypted mode) for the session page's title and `cwd`.
+    var displayResolver: V2SessionDisplayResolver?
 
     init(
         scope: V2ClientScope,
@@ -119,7 +121,8 @@ final class V2SessionRepository {
         entry.historyTask = nil
         // Trim before a possible latest-page request so an offline fallback
         // also stays bounded and cannot remount the entire cached history.
-        if entry.projection?.limitToLatest(100) == true { emit(entry) }
+        // While the device is offline the Server cannot page it back, so keep it.
+        if entry.projection?.data.historyUnavailable != true, entry.projection?.limitToLatest(100) == true { emit(entry) }
         if entry.projection?.data.hasNewerItems == true {
             return try await loadLatest(sessionId: sessionId, limit: 100)
         }
@@ -172,8 +175,12 @@ final class V2SessionRepository {
         let dirty = entries.values.filter { $0.isDirty && (sessionID == nil || $0.id == sessionID) }
             .sorted { $0.lastAccess < $1.lastAccess }
         for entry in dirty {
-            guard let projection = entry.projection else { continue }
+            // A signed-out or evicted entry must not be written back by a late flush.
+            guard isCurrent(entry), let projection = entry.projection else { continue }
             entry.isDirty = false
+            // An offline snapshot without retained content is not an authoritative
+            // base; only local work (draft, unconfirmed sends) is kept for it.
+            guard projection.data.hasBaseline || entry.model.hasLocalWork else { continue }
             await localStore.saveSession(V2SessionArchive(data: projection.data, model: entry.model))
         }
     }
@@ -228,7 +235,8 @@ final class V2SessionRepository {
         _ = try await load(sessionId: sessionId)
         let entry = entry(for: sessionId)
         if let task = entry.historyTask { return try await task.value }
-        guard let data = entry.projection?.data,
+        // The Server cannot read older pages while the device is offline (protocol 1.2).
+        guard let data = entry.projection?.data, !data.historyUnavailable,
               data.hasOlderItems, let before = data.items.first?.orderSeq else {
             return entry.projection!.data
         }
@@ -506,7 +514,17 @@ final class V2SessionRepository {
             try requireCurrent(entry, version: version)
             guard snapshot.session.id == entry.id else { throw CacheError.invalidated }
             let observedQueue = entry.projection?.data.queue
-            entry.projection = V2SessionProjection(snapshot: snapshot, maximumItems: policy.maximumTimelineItems)
+            if snapshot.historyUnavailable, var retained = entry.projection,
+               retained.data.hasBaseline || !retained.data.items.isEmpty {
+                // Protocol 1.2: an offline snapshot never replaces retained content
+                // or moves its recovery cursor.
+                retained.applyOffline(snapshot)
+                entry.projection = retained
+            } else if snapshot.historyUnavailable {
+                entry.projection = .offlineBase(snapshot, maximumItems: policy.maximumTimelineItems)
+            } else {
+                entry.projection = V2SessionProjection(snapshot: snapshot, maximumItems: policy.maximumTimelineItems)
+            }
             // A queue event may have overtaken this snapshot; the newer revision wins.
             if let observedQueue { entry.projection?.applyQueue(observedQueue) }
             invalidateCatalogs(entry)
@@ -579,6 +597,12 @@ final class V2SessionRepository {
 
     private func receive(_ event: V2SessionEvent, entry: Entry) async throws {
         guard event.sessionId == entry.id else { return }
+        if V3SessionPorts.isPortEvent(event.type) {
+            // Preview 1.0 device facts ride the session socket but are not
+            // timeline data: they never recover, acknowledge or move the cursor.
+            entry.model.observePorts(event)
+            return
+        }
         if event.type == "goal.state.updated", let raw = event.payload["state"] {
             entry.model.observeGoal(try JSONDecoder().decode(V2GoalState.self, from: JSONEncoder().encode(raw)))
             return
@@ -588,6 +612,12 @@ final class V2SessionRepository {
             return
         }
         if let pending = entry.loadTask { _ = try await pending.value }
+        if event.type == V2SessionEvent.catchupRequired {
+            // Protocol 1.2: the device link was rebuilt and resumed from its head.
+            // Each client recovers its own gap from its own cursor.
+            try await catchUp(entry)
+            return
+        }
         if event.type == "runtime.queue.updated" {
             // Its sequence is the session's watermark, not a gap to recover.
             try requireCurrent(entry)
@@ -596,6 +626,14 @@ final class V2SessionRepository {
             return
         }
         if let pending = entry.recoveryTask { try await pending.value }
+        if event.type.hasPrefix("timeline."), let data = entry.projection?.data, data.historyUnavailable || !data.hasBaseline {
+            // The cursor is not proven to cover the gap before a live item that
+            // arrives while history was unavailable. Recover first; if history is
+            // still unavailable, the next recovery reads this item again.
+            try await catchUp(entry)
+            try requireCurrent(entry)
+            if entry.projection?.data.historyUnavailable != false { return }
+        }
         if event.type == "session.refetch_required" || event.sequence > (entry.projection?.sequence ?? 0) + 1 {
             try await reconcile(entry)
         }
@@ -625,42 +663,61 @@ final class V2SessionRepository {
         let version = entry.connectionID
         let task = Task { [self] in
             defer { if entry.connectionID == version { entry.recoveryTask = nil } }
-            if entry.projection == nil { _ = try await hydrate(entry) }
-            let cursor = entry.projection!.data.cursor
-            let recovery = try await detail.recover(sessionId: entry.id, after: cursor)
-            try requireCurrent(entry)
-            guard entry.connectionID == version else { throw CacheError.invalidated }
-            if recovery.snapshotRequired {
-                _ = try await hydrate(entry)
-            } else {
-                for event in recovery.events.sorted(by: { $0.sequence < $1.sequence }) {
-                    try entry.projection?.apply(event)
+            // A catch-up request answered by a read that started before the device
+            // link was rebuilt runs once more after this pass.
+            repeat {
+                entry.catchUpPending = false
+                if entry.projection == nil { _ = try await hydrate(entry) }
+                let cursor = entry.projection!.data.cursor
+                let recovery = try await detail.recover(sessionId: entry.id, after: cursor)
+                try requireCurrent(entry)
+                guard entry.connectionID == version else { throw CacheError.invalidated }
+                if recovery.deviceOffline == true {
+                    // Nothing is readable until the device returns: keep the cursor.
+                    entry.projection?.setHistoryUnavailable(true)
+                } else if recovery.snapshotRequired || entry.projection?.data.hasBaseline == false {
+                    // Without an authoritative base (an offline first read), read one now.
+                    _ = try await hydrate(entry)
+                } else {
+                    entry.projection?.setHistoryUnavailable(false)
+                    for event in recovery.events.sorted(by: { $0.sequence < $1.sequence }) {
+                        try entry.projection?.apply(event)
+                    }
+                    entry.projection?.advanceCursor(recovery.nextCursor)
                 }
-                entry.projection?.advanceCursor(recovery.nextCursor)
-            }
-            entry.projection?.markStale()
-            invalidateCatalogs(entry)
-            if entry.projection?.data.session.connectorStatus == .online {
-                // Frames received before this read must not overwrite its newer live projection.
-                let barrier = now()
-                do {
-                    let live = try await detail.liveState(sessionId: entry.id)
-                    try requireCurrent(entry)
-                    guard entry.connectionID == version else { throw CacheError.invalidated }
-                    entry.projection?.applyLive(live)
-                    entry.projectionBarrier = barrier
-                    entry.error = nil
-                } catch {
-                    try requireCurrent(entry)
-                    guard entry.connectionID == version else { throw CacheError.invalidated }
-                    entry.error = V2ClientFailure(error)
-                    throw error
+                entry.projection?.markStale()
+                invalidateCatalogs(entry)
+                if entry.projection?.data.session.connectorStatus == .online {
+                    // Frames received before this read must not overwrite its newer live projection.
+                    let barrier = now()
+                    do {
+                        let live = try await detail.liveState(sessionId: entry.id)
+                        try requireCurrent(entry)
+                        guard entry.connectionID == version else { throw CacheError.invalidated }
+                        entry.projection?.applyLive(live)
+                        entry.projectionBarrier = barrier
+                        entry.error = nil
+                    } catch {
+                        try requireCurrent(entry)
+                        guard entry.connectionID == version else { throw CacheError.invalidated }
+                        entry.error = V2ClientFailure(error)
+                        throw error
+                    }
                 }
-            }
-            emit(entry)
+                emit(entry)
+            } while entry.catchUpPending && isCurrent(entry) && entry.connectionID == version
         }
         entry.recoveryTask = task
         return try await task.value
+    }
+
+    /// Joins a recovery already reading, asking it to read once more, or starts one.
+    private func catchUp(_ entry: Entry) async throws {
+        if let task = entry.recoveryTask {
+            entry.catchUpPending = true
+            return try await task.value
+        }
+        try await reconcile(entry)
     }
 
     private func entry(for id: V2SessionID) -> Entry {
@@ -685,7 +742,14 @@ final class V2SessionRepository {
     }
 
     private func observation(_ entry: Entry) -> V2SessionObservation {
-        V2SessionObservation(sessionId: entry.id, data: entry.projection?.data, connection: entry.connection, error: entry.error)
+        var data = entry.projection?.data
+        if let displayResolver, let session = data?.session { data?.session = displayResolver.resolve(session) }
+        return V2SessionObservation(sessionId: entry.id, data: data, connection: entry.connection, error: entry.error)
+    }
+
+    /// A directory key arrived or changed: republish open sessions with their envelopes opened again.
+    func redisplay() {
+        for entry in entries.values { emit(entry, persist: false) }
     }
 
     /// Frames buffered during a reconnect or a long reconcile are delivered
@@ -762,6 +826,7 @@ private final class Entry {
     let id: V2SessionID
     let model: V2SessionModel
     var needsSnapshot = false
+    var catchUpPending = false
     var hasReadLocal = false
     var isDirty = false
     var emitScheduled = false

@@ -15,7 +15,6 @@ from agent_server.core.api_namespace import api_v2_path
 from agent_server.core.auth import (
     DEFAULT_USER_EXPIRES_IN,
     create_signed_token,
-    create_user_access_token,
     verify_signed_token,
 )
 from agent_server.core.models import (
@@ -180,6 +179,7 @@ async def _create_authorization_redirect(
 @router.post("/oauth/token", response_model=OAuthTokenResponse)
 async def oauth_token(
     response: Response,
+    request: Request,
     db: Annotated[Store, Depends(get_store)],
     grant_type: str = Form(...),
     code: str = Form(...),
@@ -257,8 +257,10 @@ async def oauth_token(
         return OAuthTokenResponse(
             access_token=token, expires_in=PROFILE_TOKEN_TTL, scope=scope
         )
+    # A login of its own, so a password change or disabling the account ends it.
+    tokens = await request.app.state.user_tokens.issue(user.userId, client=f"oauth-client · {client.client_id}")
     return OAuthTokenResponse(
-        access_token=create_user_access_token(user.userId),
+        access_token=tokens.access_token,
         expires_in=DEFAULT_USER_EXPIRES_IN,
         scope=scope,
     )

@@ -1,5 +1,6 @@
 "use client"
 
+import { SecurePairingHost } from "@/components/e2ee/secure-pairing-host"
 import * as React from "react"
 import type { PanelImperativeHandle } from "react-resizable-panels"
 
@@ -55,6 +56,7 @@ export function Demo() {
   const { session } = useAuth()
   return (
     <WorkspaceProvider>
+      <SecurePairingHost />
       <AgentSetupProvider>
         <SessionToolSidebarStateProvider key={session?.userId ?? "signed-out"}>
           <SidebarProvider>

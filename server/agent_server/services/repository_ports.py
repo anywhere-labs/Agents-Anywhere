@@ -13,11 +13,6 @@ from agent_server.core.models import (
     SessionStatus,
     SessionView,
     TimelineItem,
-    TimelineItemIn,
-)
-from agent_server.core.timeline import (
-    TimelineBatchWriteResult,
-    TimelineItemWriteResult,
 )
 from agent_server.core.usage import (
     InventoryRow,
@@ -164,74 +159,8 @@ class TimelineReader(Protocol):
     async def read(self, session_id: str) -> list[TimelineItem]: ...
 
 
-class TimelineBufferReader(Protocol):
-    async def read(self, session_id: str) -> list[TimelineItem]: ...
-
-    async def read_one(
-        self,
-        session_id: str,
-        item_id: str,
-    ) -> TimelineItem | None: ...
-
-
-class TimelineBufferRepository(DashboardEventRepository, Protocol):
-    timeline: TimelineBufferReader
-
-    async def get_session_seq(self, session_id: str) -> int: ...
-
-    async def get_max_timeline_order_seq(self, session_id: str) -> int: ...
-
-    async def reserve_timeline_sequence(
-        self,
-        *,
-        session_id: str,
-        mark_read_on_change: bool = False,
-    ) -> int: ...
-
-    async def lease_session_revision_range(
-        self,
-        *,
-        session_id: str,
-        count: int,
-    ) -> tuple[int, int]: ...
-
-    async def persist_buffered_timeline_items(
-        self,
-        *,
-        session_id: str,
-        items: list[TimelineItem],
-        source_observed_at: str | None = None,
-        mark_read_on_change: bool = False,
-    ) -> TimelineBatchWriteResult: ...
-
-
-class TimelineEffectRepository(Protocol):
-    timeline: TimelineReader
-
-    async def upsert_timeline_item(
-        self,
-        *,
-        session_id: str,
-        item: TimelineItemIn,
-        source_observed_at: str | None = None,
-        mark_read_on_change: bool = False,
-    ) -> TimelineItemWriteResult: ...
-
-class InteractionResolutionRepository(
-    SessionLookupRepository,
-    TimelineEffectRepository,
-    Protocol,
-):
-    pass
-
-
 class ConnectorIngestRepository(DashboardEventRepository, Protocol):
     async def get_unconfigured_runtime_ids(self, connector_id: str) -> set[str]: ...
-
-    def session_revision_fence(
-        self,
-        session_id: str,
-    ) -> AbstractAsyncContextManager[None]: ...
 
     async def record_connector_activity(self, connector_id: str) -> None: ...
 
@@ -258,14 +187,9 @@ class ConnectorIngestRepository(DashboardEventRepository, Protocol):
         connector_id: str,
     ) -> list[SessionView]: ...
 
-from agent_server.services.planning.ports import PlanningRepository
-
-
 class ConnectorNotificationRepository(
-    PlanningRepository,
     CatalogRepository,
     SessionStateRepository,
-    TimelineEffectRepository,
     Protocol,
 ):
     async def refresh_unchanged_session_source(
@@ -328,34 +252,8 @@ class ConnectorNotificationRepository(
         user_id: str | None = None,
     ) -> dict[str, Any]: ...
 
-    async def replace_timeline_snapshot(
-        self,
-        *,
-        session_id: str,
-        items: list[TimelineItemIn],
-        source_observed_at: str | None = None,
-        mark_read_on_change: bool = False,
-    ) -> TimelineBatchWriteResult: ...
 
-    async def replace_timeline_range(
-        self,
-        *,
-        session_id: str,
-        items: list[TimelineItemIn],
-        after_order_seq: int | None,
-        through_order_seq: int | None,
-        source_observed_at: str | None = None,
-        mark_read_on_change: bool = False,
-    ) -> TimelineBatchWriteResult: ...
 
-    async def sync_timeline_items(
-        self,
-        *,
-        session_id: str,
-        items: list[TimelineItemIn],
-        source_observed_at: str | None = None,
-        mark_read_on_change: bool = False,
-    ) -> TimelineBatchWriteResult: ...
 
     async def resolve_connector_session_id(
         self,
@@ -373,16 +271,6 @@ class ConnectorNotificationRepository(
         archived: bool,
         *,
         user_id: str | None = None,
-    ) -> SessionView: ...
-
-    async def record_session_turn_end(
-        self,
-        *,
-        session_id: str,
-        source_observed_at: str | None = None,
-        mark_read_on_change: bool = False,
-        source_event_id: str | None = None,
-        source_event_digest: str | None = None,
     ) -> SessionView: ...
 
     async def update_connector_preferences(
@@ -414,11 +302,6 @@ class DeviceRuntimeRepository(
     async def runtime_session_ids(self, connector_id: str, runtime_id: str) -> list[str]: ...
 
     async def delete_runtime_session_files(self, session_ids: list[str]) -> None: ...
-
-    def session_revision_fence(
-        self,
-        session_id: str,
-    ) -> AbstractAsyncContextManager[None]: ...
 
     async def clear_active_run(self, session_id: str) -> None: ...
 
@@ -535,12 +418,13 @@ class SessionRunRepository(
     CatalogRepository,
     DashboardEventRepository,
     SessionStateRepository,
-    TimelineEffectRepository,
     ProjectLookupRepository,
     Protocol,
 ):
-    async def reserve_planning_creation(self, connector_id: str, runtime_id: str, operation_id: str, fingerprint: str) -> dict | None: ...
-    async def save_planning_creation(self, connector_id: str, runtime_id: str, operation_id: str, payload: dict) -> None: ...
+    async def connector_link_contract(self, connector_id: str) -> str | None: ...
+
+    async def get_device_command(self, user_id: str, command_id: str) -> dict[str, Any] | None: ...
+
 
     async def get_protocol_capabilities(
         self,

@@ -1,6 +1,6 @@
 "use client"
 
-import { useRuntimeErrorText } from "@/lib/runtime-error-text"
+import { runtimeFailureOf, useRuntimeErrorText } from "@/lib/runtime-error-text"
 import { useSessionGoal } from "@/features/goals/use-session-goal"
 import { GoalPanel } from "@/components/session/goal-panel"
 import { useSessionPlanning } from "@/features/planning/use-session-planning"
@@ -48,6 +48,8 @@ import {
   ToolMarkerRowContent,
 } from "@/components/session/session-tool-cards"
 import { timelineRunCounts } from "@/components/session/timeline-summary"
+import { PortPreviewCard } from "@/components/session/port-preview-card"
+import { SessionPairingNotice } from "@/components/session/session-pairing-notice"
 import { RuntimeCreationStatus } from "@/components/session/runtime-creation-status"
 import { AgentRecoveryNotice } from "@/components/session/agent-recovery-notice"
 import { NativeSessionHandoff } from "@/components/session/native-session-handoff"
@@ -77,8 +79,8 @@ import { isVisibleTimelineItem, messageText, runtimeLabel, textOf } from "@/comp
 import { stripInjectedAttachmentMentions } from "@/features/dashboard/attachments"
 import { sessionRuntimeId, sessionRuntimeType } from "@/features/dashboard/runtime-instances"
 import { useWorkspace } from "@/components/workspace-context"
-import { INITIAL_TIMELINE_LIMIT, loadInitialSessionState, effectiveRuntimeStatus } from "@/components/session/session-remote-state"
-import type { SessionRemoteState, SessionStateCache } from "@/components/session/session-state-cache"
+import { INITIAL_TIMELINE_LIMIT, loadInitialSessionState, effectiveRuntimeStatus, sessionHistoryUnavailable } from "@/components/session/session-remote-state"
+import type { CachedSessionState, SessionRemoteState, SessionStateCache } from "@/components/session/session-state-cache"
 
 type SessionDetailProps = {
   token: string
@@ -233,13 +235,35 @@ function writeComposerDraft(sessionId: string, value: string) {
   }
 }
 
+const SESSION_DISK_SAVE_INTERVAL_MS = 8000
+
 export function SessionDetail(props: SessionDetailProps) {
-  const { sessionStateCache } = useWorkspace()
+  const { sessionStateCache, sessionControllers } = useWorkspace()
+  const visitKey = JSON.stringify([sessionStateCache.scope, props.sessionId])
+  // A session cached on disk is read before the visit starts, so it renders
+  // at once and recovers from its own cursor instead of a fresh snapshot.
+  const [loadedKey, setLoadedKey] = React.useState<string | null>(null)
+  const ready = loadedKey === visitKey || !sessionStateCache.persistent ||
+    sessionStateCache.has(props.sessionId) || sessionControllers.has(props.sessionId)
+  React.useEffect(() => {
+    if (ready) return
+    let current = true
+    void sessionStateCache.load(props.sessionId).finally(() => { if (current) setLoadedKey(visitKey) })
+    return () => { current = false }
+  }, [ready, sessionStateCache, props.sessionId, visitKey])
+  if (!ready) return <SessionSkeleton />
   return <SessionDetailVisit
-    key={JSON.stringify([sessionStateCache.scope, props.sessionId])}
+    key={visitKey}
     {...props}
     cache={sessionStateCache}
   />
+}
+
+/** A cached visit with the list's newer view of the session (status, presence, title). */
+function withFreshSession(cached: CachedSessionState | null, session: SessionView | null): CachedSessionState | null {
+  if (!cached || !session || session.id !== cached.state.session.id ||
+      session.updatedSeq <= cached.state.session.updatedSeq) return cached
+  return { ...cached, state: { ...cached.state, session } }
 }
 
 function SessionDetailVisit({
@@ -275,7 +299,7 @@ function SessionDetailVisit({
     sessionControllers,
   } = useWorkspace()
   const initialOptimisticState = getOptimisticSessionState(sessionId)
-  const [cached] = React.useState(() => cache.get(sessionId))
+  const [cached] = React.useState(() => withFreshSession(cache.get(sessionId), fallbackSession))
   const previousControllerRef = React.useRef<SessionController | null>(null)
   const controller = React.useMemo(() => sessionControllers.get(sessionId, () => {
     const previous = previousControllerRef.current?.getSnapshot()
@@ -299,6 +323,11 @@ function SessionDetailVisit({
   const [switchTrace] = React.useState(() => traceSessionSwitch(sessionId, Boolean(cached || state && remote.initialLoadComplete)))
   const planning = useSessionPlanning(token, sessionId)
   const runtimeErrorText = useRuntimeErrorText()
+  // Known codes (device offline, outcome unknown, encryption required…) read in the UI language.
+  const failureText = React.useCallback(
+    (error: unknown, fallback: string) => runtimeErrorText(runtimeFailureOf(error), fallback) ?? fallback,
+    [runtimeErrorText],
+  )
   const planReader = usePlanReader(sessionId)
   const [sending, setSending] = React.useState(false)
   const [interrupting, setInterrupting] = React.useState(false)
@@ -360,10 +389,43 @@ function SessionDetailVisit({
       following: timelineFollowRef.current?.isFollowing() ?? true,
     })
   }, [cache, controller, sessionId])
+  // Disk copies follow a long visit too, so a reload or crash keeps recent
+  // content. Writes are throttled; leaving the page writes immediately.
+  React.useEffect(() => {
+    if (!cache.persistent) return
+    let timer: number | null = null
+    const save = () => {
+      if (timer !== null) window.clearTimeout(timer)
+      timer = null
+      const retained = controller.getSnapshot()
+      if (!retained.state || retained.invalidated || !retained.hasSnapshot) return
+      void cache.save(sessionId, {
+        ...latestCacheStateRef.current,
+        state: retained.state,
+        hasSnapshot: retained.hasSnapshot,
+        scrollTop: timelineRef.current?.scrollTop ?? 0,
+        following: timelineFollowRef.current?.isFollowing() ?? true,
+      })
+    }
+    const unsubscribe = controller.subscribe(() => {
+      if (timer === null) timer = window.setTimeout(save, SESSION_DISK_SAVE_INTERVAL_MS)
+    })
+    const saveWhenHidden = () => { if (document.visibilityState === "hidden") save() }
+    window.addEventListener("pagehide", save)
+    document.addEventListener("visibilitychange", saveWhenHidden)
+    return () => {
+      unsubscribe()
+      if (timer !== null) window.clearTimeout(timer)
+      window.removeEventListener("pagehide", save)
+      document.removeEventListener("visibilitychange", saveWhenHidden)
+    }
+  }, [cache, controller, sessionId])
 
   const session = state?.session ?? fallbackSession
   const runtimeState = state?.state ?? null
   const runtimeStatus = effectiveRuntimeStatus(runtimeState, session)
+  // Protocol 1.2: the Server has no history while the device is offline (D1).
+  const historyUnavailable = sessionHistoryUnavailable(state)
   const turnInProgress = runtimeStatus === "waiting"
     || runtimeStatus === "pending"
     || runtimeStatus === "running"
@@ -518,7 +580,7 @@ function SessionDetailVisit({
         )
       }
       if (selectionChanges.revision === selectionUpdateSeq) {
-        toast.error(err instanceof Error ? err.message : tSession("updateSelectionsFailed"))
+        toast.error(failureText(err, tSession("updateSelectionsFailed")))
       }
       return selectionChanges.revision !== selectionUpdateSeq
     }
@@ -666,7 +728,7 @@ function SessionDetailVisit({
   }, [])
 
   const loadOlderTimeline = React.useCallback(async () => {
-    if (loadingOlderRef.current || loadingOlder || !state?.hasMore) return
+    if (loadingOlderRef.current || loadingOlder || !state?.hasMore || sessionHistoryUnavailable(state)) return
     const oldestItem = state.items[0]
     if (!oldestItem) return
 
@@ -687,6 +749,8 @@ function SessionDetailVisit({
       if (!activeVisitRef.current) return
       setState((current) => {
         if (!current || current.session.id !== sessionId || current.timelineResetVersion !== resetVersion) return current
+        // An offline device's empty page is not the start of the history.
+        if (older.deviceOffline) return { ...current, deviceOffline: true, historySource: "unavailable", serverTime: older.serverTime }
         if (older.items.length === 0) return { ...current, hasMore: older.hasMore, serverTime: older.serverTime }
         const items = mergeTimelineItems(older.items, current.items)
         pendingPrependScrollRestoreRef.current = {
@@ -703,12 +767,12 @@ function SessionDetailVisit({
         }
       })
     } catch (err) {
-      if (activeVisitRef.current) toast.error(err instanceof Error ? err.message : tSession("loadFailed"))
+      if (activeVisitRef.current) toast.error(failureText(err, tSession("loadFailed")))
     } finally {
       loadingOlderRef.current = false
       if (activeVisitRef.current) setLoadingOlder(false)
     }
-  }, [loadingOlder, sessionId, setState, state?.hasMore, state?.items, state?.timelineResetVersion, tSession, token])
+  }, [loadingOlder, sessionId, setState, state?.hasMore, state?.items, state?.timelineResetVersion, tSession, token, failureText])
 
   const handleTimelineScroll = React.useCallback(() => {
     const viewport = timelineRef.current
@@ -720,7 +784,7 @@ function SessionDetailVisit({
   // A first page that does not fill the viewport cannot be scrolled, so the
   // scroll handler above never fires. Pull older pages until it can scroll.
   React.useEffect(() => {
-    if (loading || loadingOlder || !state?.hasMore) return
+    if (loading || loadingOlder || !state?.hasMore || sessionHistoryUnavailable(state)) return
     if (!needsOlderTimelinePage(timelineRef.current, state.hasMore)) return
     void loadOlderTimeline()
   }, [loadOlderTimeline, loading, loadingOlder, state])
@@ -752,7 +816,7 @@ function SessionDetailVisit({
         // Selections are written when changed; only wait for a pending write.
         await selectionChanges.writes.get(session.id)
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : tSession("updateSelectionsFailed")); return false
+        toast.error(failureText(error, tSession("updateSelectionsFailed"))); return false
       }
       if (planIntent.command === "submit_task") timelineFollowRef.current?.resume()
       return planning.execute({ ...planIntent, attachments: uploaded })
@@ -779,7 +843,7 @@ function SessionDetailVisit({
         else timelineFollowRef.current?.resume()
         return true
       } catch (err) {
-        toast.error(err instanceof Error && err.message ? err.message : tSession("sendFailed"))
+        toast.error(failureText(err, tSession("sendFailed")))
         return false
       } finally {
         setSending(false)
@@ -838,9 +902,10 @@ function SessionDetailVisit({
       const nextSourceErrorCode = sessionSourceErrorCode(err)
       const message = nextSourceErrorCode
         ? sourceErrorMessage(nextSourceErrorCode, tSession, runtimeLabel(sessionRuntimeType(session)))
-        : err instanceof Error
-          ? err.message
-          : tSession("sendFailed")
+        : failureText(err, tSession("sendFailed"))
+      // The message may have arrived after all: read the gap once so a delivered
+      // message replaces its failed placeholder; never resend automatically.
+      if (isApiError(err) && err.code === "command_outcome_unknown") controller.catchUp()
       markOptimisticMessageFailed(clientMessageId, message)
       setState((current) => {
         if (!current) return current
@@ -870,7 +935,7 @@ function SessionDetailVisit({
         onSessionUpdated?.(nextSession)
         setSourceErrorCode(nextSourceErrorCode)
       } else {
-        toast.error(err instanceof Error ? err.message : tSession("sendFailed"))
+        toast.error(failureText(err, tSession("sendFailed")))
       }
       return false
     } finally {
@@ -902,7 +967,7 @@ function SessionDetailVisit({
         interactionTakeover.resolve(result.session.takeover)
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : tSession("updateTakeoverFailed"))
+      toast.error(failureText(err, tSession("updateTakeoverFailed")))
     } finally {
       setTakeoverBusy(false)
     }
@@ -914,7 +979,7 @@ function SessionDetailVisit({
     try {
       await dashboardApi.interruptSession(token, session.id)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : tSession("interruptFailed"))
+      toast.error(failureText(err, tSession("interruptFailed")))
     } finally {
       setInterrupting(false)
     }
@@ -982,12 +1047,12 @@ function SessionDetailVisit({
       }
       toast.error(response.error?.message || tSession("resolveInteractionFailed"))
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : tSession("resolveInteractionFailed"))
+      toast.error(failureText(err, tSession("resolveInteractionFailed")))
     } finally {
       setResolvingNoticeId(null)
       setResolvingActionId(null)
     }
-  }, [removeNoticeFromState, resolvingNoticeId, session, tSession, token])
+  }, [removeNoticeFromState, resolvingNoticeId, session, tSession, token, failureText])
 
   React.useLayoutEffect(() => {
     const pendingPrependScrollRestore = pendingPrependScrollRestoreRef.current
@@ -1232,12 +1297,13 @@ function SessionDetailVisit({
 
   if (error && !session) {
     return (
-      <div className="mx-auto flex h-full max-w-3xl items-center justify-center px-6">
+      <div className="mx-auto flex h-full max-w-3xl flex-col items-center justify-center gap-3 px-6">
         <Alert variant="destructive">
           <CircleAlert />
           <AlertTitle>{tSession("unavailable")}</AlertTitle>
           <AlertDescription>{error}</AlertDescription>
         </Alert>
+        <SessionPairingNotice sessionId={sessionId} deviceId={fallbackSession?.connectorId ?? null} onPaired={() => controller.catchUp()} className="w-full" />
       </div>
     )
   }
@@ -1298,7 +1364,9 @@ function SessionDetailVisit({
             detachedInteractions.length === 0 &&
             detachedNotifications.length === 0 &&
             blockingInteractionList.length === 0 ? (
-              <p className="py-12 text-center text-sm text-muted-foreground">{tSession("noActivity")}</p>
+              <p className="py-12 text-center text-sm text-muted-foreground">
+                {tSession(historyUnavailable ? "historyOfflineEmpty" : "noActivity")}
+              </p>
             ) : null}
             {timelineGroups.map((group) => {
               const groupKey = timelineGroupKey(group)
@@ -1394,6 +1462,22 @@ function SessionDetailVisit({
         <div ref={composerContainerRef} className="pointer-events-auto relative">
           {onOpenReview && turnReviewDisplay.activeReview ? (
             <SessionReviewTag files={turnReviewDisplay.activeReview.files} onReview={() => onOpenReview()} />
+          ) : null}
+          {historyUnavailable && state && state.items.length > 0 ? (
+            <div className="mx-auto w-full max-w-3xl px-4 pt-2">
+              <Alert data-testid="session-history-offline">
+                <WifiOff />
+                <AlertTitle>{tSession("historyOfflineTitle")}</AlertTitle>
+                <AlertDescription>{tSession("historyOfflineCached")}</AlertDescription>
+              </Alert>
+            </div>
+          ) : null}
+          {session && !session.archived ? (
+            <PortPreviewCard token={token} sessionId={session.id} deviceId={session.connectorId}
+              ports={remote.listeningPorts} canPreview={session.connectorStatus === "online"} />
+          ) : null}
+          {session ? (
+            <SessionPairingNotice sessionId={session.id} deviceId={session.connectorId} onPaired={() => controller.catchUp()} />
           ) : null}
           <RuntimeCreationStatus sessionId={sessionId} />
           <NativeSessionHandoff key={sessionId} token={token} session={session} state={runtimeState}

@@ -1,0 +1,67 @@
+{
+  "$id": "urn:agents-anywhere:e2ee:1.0:pairing-payload",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Encoded in the QR code shown by the device: ``aa-pair://<base64url(json)>``.",
+  "properties": {
+    "deviceId": {
+      "minLength": 1,
+      "title": "Deviceid",
+      "type": "string"
+    },
+    "deviceIdentityPub": {
+      "description": "32 bytes, base64url without padding",
+      "pattern": "^[A-Za-z0-9_-]{43}$",
+      "title": "Deviceidentitypub",
+      "type": "string"
+    },
+    "e2eeMode": {
+      "enum": [
+        "off",
+        "required"
+      ],
+      "title": "E2Eemode",
+      "type": "string"
+    },
+    "expiresAt": {
+      "title": "Expiresat",
+      "type": "string"
+    },
+    "pairingId": {
+      "minLength": 1,
+      "title": "Pairingid",
+      "type": "string"
+    },
+    "psk": {
+      "description": "32 random bytes, single use, expires after 10 minutes",
+      "pattern": "^[A-Za-z0-9_-]{43}$",
+      "title": "Psk",
+      "type": "string"
+    },
+    "serverUrl": {
+      "minLength": 1,
+      "title": "Serverurl",
+      "type": "string"
+    },
+    "v": {
+      "const": 1,
+      "default": 1,
+      "title": "V",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "deviceId",
+    "deviceIdentityPub",
+    "pairingId",
+    "psk",
+    "serverUrl",
+    "e2eeMode",
+    "expiresAt"
+  ],
+  "title": "PairingPayload",
+  "type": "object",
+  "x-contract": "e2ee",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

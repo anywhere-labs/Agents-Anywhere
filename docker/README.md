@@ -32,7 +32,7 @@ PostgreSQL-backed compose:
 
 ```bash
 POSTGRES_PASSWORD=change-me \
-AGENT_SERVER_SECRET=change-me-too \
+AGENT_SERVER_SECRET="$(openssl rand -hex 32)" \
 docker compose -f docker/docker-compose.postgres.yml up --build
 ```
 
@@ -75,7 +75,7 @@ docker run -d \
   --name agents-anywhere-server \
   -p 5174:8000 \
   -v agents-anywhere-data:/data \
-  -e AGENT_SERVER_SECRET=change-me-before-production \
+  -e AGENT_SERVER_SECRET="$(openssl rand -hex 32)" \
   -e AGENT_SERVER_DB_URL=postgresql+asyncpg://agents:password@host.docker.internal:5432/agents_anywhere \
   -e AGENT_SERVER_REDIS_URL=redis://host.docker.internal:6379/0 \
   agents-anywhere-server:latest
@@ -106,7 +106,7 @@ statically exported Web console.
 
 ```bash
 POSTGRES_PASSWORD=change-me \
-AGENT_SERVER_SECRET=change-me-too \
+AGENT_SERVER_SECRET="$(openssl rand -hex 32)" \
 docker compose -f docker/docker-compose.postgres.yml up --build
 ```
 
@@ -116,6 +116,9 @@ The compose file uses:
 - `redis-next` service for cross-instance coordination, Pub/Sub, and the live Timeline sequencer/write buffer
 - `migrate-next` one-shot service that upgrades the database before server startup
 - `server-next` service for the FastAPI backend and statically exported Web UI
+- `mesh-auth-next` one-shot service that writes the MeshCall Router auth file (see below)
+- `meshcall-router` service: the MeshCall Router that v3 devices register on (internal only)
+- `gateway-next` service (Caddy) that publishes the Web port: `/api/v3/device/mesh` goes to the Router, everything else to `server-next`
 - `agents-anywhere-pg-next` volume for PostgreSQL data
 - `agents-anywhere-redis-next` volume mounted at `/data` for Redis AOF data
 - `agents-anywhere-files-next` volume mounted at `/data` for uploads / attachments
@@ -125,14 +128,103 @@ The compose file uses:
 - PostgreSQL migration serialization through a session advisory lock
 - Redis memory capped by `REDIS_MAXMEMORY` (default `256mb`) with `noeviction`
 - Redis AOF persistence with `appendfsync everysec`; RDB snapshots remain disabled
-- Timeline revision leases configurable through `AGENT_SERVER_TIMELINE_REVISION_LEASE_SIZE` (default `4096`)
+
+### MeshCall Router (v3 devices)
+
+v3 devices connect to the Server over [MeshCall](https://github.com/t4wefan/meshcall)
+(`contracts/device-meshcall/1.0`). The Router is a separate Go process built
+from the pinned commit `9334405` (`docker/meshcall-router/Dockerfile`); it keeps no
+state, so a restart only makes devices reconnect.
+
+- Devices reach it only through the gateway at `wss://<server>/api/v3/device/mesh`;
+  the gateway passes WebSocket upgrades and drops cookies. Do not publish port 8765.
+- Every Server worker is a Router client with the account `aa-server`. Without
+  `AGENT_SERVER_MESH_PASSWORD`, `mesh-auth-next` generates a password once and keeps
+  it in the `agents-anywhere-mesh-next` volume; the Server reads it from there.
+- The Server starts even if the Router is down; `/api/v2/health/ready` then shows
+  `checks.mesh.status = "error"` and v3 devices appear offline.
+- Capacity: `MESHCALL_MAX_TOKENS` (default `20000`, at least one per online device)
+  and `MESHCALL_MAX_CONNECTIONS` (default `20000`). Calls per connection are not
+  limited, because one worker connection carries two streams per device.
+- `AGENT_SERVER_MESH_PUBLIC_URL` overrides the address handed to devices; by
+  default it is `wss://<host of the request>/api/v3/device/mesh`.
+
+Behind your own reverse proxy (nginx), forward the device path to the gateway
+port like any other path, keeping WebSocket upgrades:
+
+```nginx
+location /api/v3/device/mesh {
+    proxy_pass http://127.0.0.1:5174;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 1h;
+}
+```
+
+Development (`local-up.sh` or a bare `uvicorn`): set
+`AGENT_SERVER_MESH_LOCAL_ROUTER=1` to let the Server start a local Router
+(`meshcall` SDK `LocalRouter`; `MESHCALL_ROUTER_BINARY` selects the binary).
+
+### Port preview
+
+Port preview lets a phone open a web page that is running on the user's computer
+(`http://127.0.0.1:5173`). It is off until you configure a preview domain; without
+one, every client hides the feature and nothing else changes.
+
+**Requirements**
+
+- A **separately registered domain** for previews, for example `example-preview.net`
+  when the site is `aa.example.com`. Never use a subdomain of the AA site (such as
+  `*.preview.example.com`): a preview page would then share a site with AA, and
+  SameSite protection and cookie scoping would no longer separate them.
+- DNS: a wildcard record `*.example-preview.net` pointing at the gateway (it also
+  covers `frp.example-preview.net`, where devices connect).
+- TLS: a wildcard certificate for `*.example-preview.net`. Wildcards need an ACME
+  DNS-01 challenge, so terminate TLS in front of the gateway (as for the main site)
+  with a proxy that can answer it, for example Caddy built with your DNS provider's
+  module, Traefik, or a cloud load balancer. Forward plain HTTP to the gateway port
+  with the original `Host` header and WebSocket upgrades.
+- Two settings, for the Server, preview-auth and frps alike:
+
+```bash
+AGENT_SERVER_PREVIEW_DOMAIN=example-preview.net \
+AGENT_SERVER_PREVIEW_INTERNAL_TOKEN="$(openssl rand -hex 32)" \
+docker compose -f docker/docker-compose.postgres.yml up -d
+```
+
+Keep the token as stable as `AGENT_SERVER_SECRET`: changing it signs devices' frp
+tokens and visitors' preview cookies anew, so open previews must be reopened.
+
+**How the pieces fit**
+
+| Service | Role |
+| --- | --- |
+| `gateway-next` | `https://<slug>.<preview domain>`: asks `preview-auth-next` about every request (`forward_auth`), then proxies to frps's vhost port; `/__aa/ticket` goes to preview-auth. `frp.<preview domain>/~!frp`: devices' frpc WebSocket to frps. Strips the preview cookie and `Authorization` before the page sees the request. `/api/v3/internal/*` is never routed from outside. |
+| `preview-auth-next` | Checks the preview cookie's signature and the slug's state in Redis (cached a few seconds); it never calls the Server per request. Redeems one-time tickets through the Server and sets the `__Host-aa_preview` cookie (8 hours at most). Runs from the Server image. |
+| `frps` | Data plane. Its HTTP plugin asks the Server about every frpc login and proxy (`/api/v3/internal/preview/frps/<token>`). Neither of its ports is published. |
+| `server-next` | Decides who may preview which device port, signs the frp tokens, issues tickets and closes previews (stopped, expired, port closed, device offline for 10 minutes). |
+
+Notes:
+
+- `AGENT_SERVER_PREVIEW_FRPS_ADDR` overrides where frpc connects (default
+  `wss://frp.<preview domain>`, which crosses corporate proxies on 443).
+- Preview traffic is decrypted at your TLS terminator and passes through the
+  gateway and frps in plaintext; it is not stored, and nothing logs request
+  contents. With `AGENT_SERVER_E2EE=required` clients warn about this before
+  opening a preview; `AGENT_SERVER_E2EE_PREVIEW=deny` turns preview off instead.
+- `FRPS_VERSION` selects the `fatedier/frps` image tag (default `v0.72.0`). Devices
+  bring their own frpc (bundled with Desktop).
+- Behind nginx, `auth_request` can take the place of Caddy's `forward_auth`: send
+  `/verify` to preview-auth with `X-Forwarded-Host`, without the WebSocket upgrade
+  headers, and replace the `Cookie` header with the `X-Aa-Cookie` it returns.
 
 Publish the Web console on a different host port:
 
 ```bash
 AGENTS_ANYWHERE_WEB_PORT=18000 \
 POSTGRES_PASSWORD=change-me \
-AGENT_SERVER_SECRET=change-me-too \
+AGENT_SERVER_SECRET="$(openssl rand -hex 32)" \
 docker compose -f docker/docker-compose.postgres.yml up --build
 ```
 
@@ -164,8 +256,13 @@ Per-worker RPC identities remain unique even if an instance-name prefix is set.
 The profile's measured scaling and its single-connection limit are documented
 in [the session performance report](../docs/performance/session-pipeline.md).
 
-Use a non-default `AGENT_SERVER_SECRET` and database password outside local
-development. Put HTTPS in front of the Web service for production.
+`AGENT_SERVER_SECRET` is required: the server refuses to start when it is
+unset, shorter than 32 characters, or one of the example values from older
+docs (`change-me-before-production`, `change-me-too`, `agent-server-dev-secret`).
+Generate it once and keep it; changing it signs everyone out and makes saved
+model keys unreadable. Only `AGENT_SERVER_DEV_MODE=1` allows the development
+default, and never outside local development. Use a non-default database
+password too, and put HTTPS in front of the Web service for production.
 
 PostgreSQL remains the durable source of truth after Timeline writes flush. Redis
 also carries accepted-but-unflushed Timeline upserts and the live sequence head,

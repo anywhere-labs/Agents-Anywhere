@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "load-result-meta.schema.json",
+  "title": "DshLoadResultMeta",
+  "description": "session/load and session/resume result _meta.dsh (§5).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "lastSeq",
+    "running",
+    "continuable",
+    "writer"
+  ],
+  "properties": {
+    "lastSeq": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "running": {
+      "type": "boolean"
+    },
+    "continuable": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "description": "turn/end seq that _dsh/session/continue may continue, or null"
+    },
+    "replayTruncated": {
+      "type": "boolean"
+    },
+    "writer": {
+      "type": "string",
+      "enum": [
+        "host",
+        "external",
+        "none"
+      ],
+      "description": "Who holds the DSH session write lock (§9)."
+    }
+  }
+}

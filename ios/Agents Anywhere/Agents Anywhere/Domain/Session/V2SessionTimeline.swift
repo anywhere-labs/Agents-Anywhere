@@ -12,6 +12,11 @@ nonisolated struct V2SessionTimelinePage: Decodable, Hashable {
     let nextSeq: Int
     let hasMore: Bool
     let serverTime: String?
+    /// Protocol 1.2: an offline device's empty page is not the start of the history.
+    var historySource: String? = nil
+    var deviceOffline: Bool? = nil
+
+    var historyUnavailable: Bool { deviceOffline == true || historySource == "unavailable" }
 }
 
 nonisolated struct V2SessionSnapshot: Decodable, Hashable {
@@ -27,6 +32,12 @@ nonisolated struct V2SessionSnapshot: Decodable, Hashable {
     let serverTime: String
     /// Absent from Servers that predate the message queue.
     var queue: V2SessionQueueState? = nil
+    /// Protocol 1.2 (`live` / `unavailable`) and `deviceOffline`. The Server keeps no
+    /// history while the session's device is offline; the timeline is then empty.
+    var historySource: String? = nil
+    var deviceOffline: Bool? = nil
+
+    var historyUnavailable: Bool { deviceOffline == true || historySource == "unavailable" }
 }
 
 nonisolated struct V2TimelineSnapshot: Decodable, Hashable {

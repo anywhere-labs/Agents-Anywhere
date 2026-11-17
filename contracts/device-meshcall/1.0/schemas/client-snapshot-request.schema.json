@@ -1,0 +1,33 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:client-snapshot-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "byteBudget": {
+      "default": 1048576,
+      "minimum": 4096,
+      "title": "Bytebudget",
+      "type": "integer"
+    },
+    "limit": {
+      "default": 100,
+      "maximum": 500,
+      "minimum": 1,
+      "title": "Limit",
+      "type": "integer"
+    },
+    "sessionId": {
+      "minLength": 1,
+      "title": "Sessionid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "sessionId"
+  ],
+  "title": "ClientSnapshotRequest",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

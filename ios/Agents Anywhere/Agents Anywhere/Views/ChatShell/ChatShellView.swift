@@ -239,7 +239,8 @@ struct ChatShellView: View {
                 onConnectorUpdated: appState.updateConnector,
                 onConnectorDeleted: removeConnector,
                 onSessionsUpdated: appState.updateSessions,
-                onSetSessionsArchived: appState.setSessionsArchived
+                onSetSessionsArchived: appState.setSessionsArchived,
+                e2ee: clients.e2ee
             )
             .id(connectorId)
         } else if let services = appState.nativeChatServices {

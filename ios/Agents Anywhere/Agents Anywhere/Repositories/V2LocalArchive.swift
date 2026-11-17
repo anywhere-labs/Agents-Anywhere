@@ -30,10 +30,15 @@ nonisolated struct V2SessionArchive: Codable {
     let draftAttachments: [ChatAttachment]
     let pending: [Pending]
     var previews: ChatAttachmentStore.Archive? = nil
+    /// False when only local work (draft, unconfirmed sends) is kept for a session
+    /// without an authoritative snapshot; nil in archives that predate it.
+    var baseline: Bool? = nil
 
     @MainActor init(data: V2SessionData, model: V2SessionModel) {
-        session = data.session; items = data.items.map(\.raw); cursor = data.cursor
-        hasOlderItems = data.hasOlderItems; hasNewerItems = data.hasNewerItems
+        session = data.session; cursor = data.hasBaseline ? data.cursor : "seq:0"
+        items = data.hasBaseline ? data.items.map(\.raw) : []
+        hasOlderItems = data.hasBaseline && data.hasOlderItems; hasNewerItems = data.hasBaseline && data.hasNewerItems
+        baseline = data.hasBaseline ? nil : false
         previews = model.attachmentPreviews.archived()
         draft = model.draft; draftAttachments = model.composer.attachments.map { $0.archived() }
         pending = model.pendingMessages.filter { $0.delivery != .confirmed }.map { value in
@@ -58,7 +63,9 @@ nonisolated struct V2SessionArchive: Codable {
             timeline: .init(items: decoded, nextSeq: V2SessionProjection.sequence(cursor), hasMore: hasOlderItems),
             approvals: [], notices: [], effectiveCapabilities: empty, runtimeCapabilities: empty,
             catalogs: [:], eventCursor: cursor, serverTime: "")
-        return V2SessionProjection(archive: snapshot, hasNewerItems: hasNewerItems, maximumItems: maximumItems)
+        var projection = V2SessionProjection(archive: snapshot, hasNewerItems: hasNewerItems, maximumItems: maximumItems)
+        if baseline == false { projection.markWithoutBaseline() }
+        return projection
     }
 }
 

@@ -1,0 +1,89 @@
+# Front gateway of the Compose deployment.
+#
+# - /api/v3/device/mesh: devices' MeshCall WebSocket, proxied to the Router. Only WebSocket
+#   upgrades pass; cookies are dropped. Nothing else of the Router is reachable from outside
+#   (no HTTP gateway, no metrics).
+# - /api/v3/internal/*: never from outside (frps and preview-auth call the Server directly).
+# - everything else: the Agents Anywhere Server.
+#
+# Port preview (only when AGENT_SERVER_PREVIEW_DOMAIN is set; the placeholder domain never matches):
+# - <slug>.<preview domain>: every request is checked by preview-auth (forward_auth), then goes to
+#   frps's vhost port. /__aa/ticket goes to preview-auth, which turns a one-time ticket into the
+#   preview cookie. The preview cookie and Authorization never reach the previewed page.
+# - frp.<preview domain>: devices' frpc WebSocket (/~!frp) to frps.
+#
+# TLS is terminated in front of this gateway (or set AGENT_SERVER_GATEWAY_ADDRESS to a host name
+# to let Caddy obtain a certificate). Previews need a wildcard certificate for *.<preview domain>,
+# which needs an ACME DNS-01 challenge: see docker/README.md.
+{
+	auto_https {$AGENT_SERVER_GATEWAY_AUTO_HTTPS:off}
+	admin off
+}
+
+{$AGENT_SERVER_GATEWAY_ADDRESS::8080} {
+	@device_mesh {
+		path /api/v3/device/mesh
+		header Connection *Upgrade*
+		header Upgrade websocket
+	}
+	handle @device_mesh {
+		request_header -Cookie
+		# The Router accepts the WebSocket upgrade on any path.
+		reverse_proxy {$AGENT_SERVER_MESH_ROUTER_ADDRESS:meshcall-router:8765}
+	}
+	handle /api/v3/device/mesh {
+		respond "WebSocket upgrade required" 426
+	}
+	handle /api/v3/internal/* {
+		respond 404
+	}
+	handle {
+		reverse_proxy {$AGENT_SERVER_UPSTREAM:server-next:8000}
+	}
+}
+
+# Devices' frpc (port preview data plane).
+http://frp.{$AGENT_SERVER_PREVIEW_DOMAIN:preview.invalid}:8080 {
+	@frp {
+		path /~!frp
+		header Connection *Upgrade*
+		header Upgrade websocket
+	}
+	handle @frp {
+		request_header -Cookie
+		reverse_proxy {$AGENT_SERVER_FRPS_ADDRESS:frps:7000}
+	}
+	handle {
+		respond 404
+	}
+}
+
+# Previews: https://<slug>.<preview domain>.
+http://*.{$AGENT_SERVER_PREVIEW_DOMAIN:preview.invalid}:8080 {
+	handle /__aa/ticket {
+		reverse_proxy {$AGENT_SERVER_PREVIEW_AUTH_ADDRESS:preview-auth-next:8090} {
+			header_up X-Forwarded-Host {host}
+		}
+	}
+	handle {
+		route {
+			forward_auth {$AGENT_SERVER_PREVIEW_AUTH_ADDRESS:preview-auth-next:8090} {
+				uri /verify
+				header_up X-Forwarded-Host {host}
+				# The check is a plain request even when the page opens a WebSocket (hot reload).
+				header_up -Connection
+				header_up -Upgrade
+				header_up -Sec-WebSocket-Key
+				header_up -Sec-WebSocket-Version
+				header_up -Sec-WebSocket-Extensions
+				header_up -Sec-WebSocket-Protocol
+				# The browser's cookies minus the preview cookie (always set, possibly empty).
+				copy_headers X-Aa-Cookie
+			}
+			request_header Cookie {http.request.header.X-Aa-Cookie}
+			request_header -X-Aa-Cookie
+			request_header -Authorization
+			reverse_proxy {$AGENT_SERVER_FRPS_VHOST_ADDRESS:frps:8081}
+		}
+	}
+}

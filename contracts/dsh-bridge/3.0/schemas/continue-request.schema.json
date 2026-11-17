@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "continue-request.schema.json",
+  "title": "DshContinueRequest",
+  "description": "_dsh/session/continue params (§7).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "sessionId",
+    "turnEndSeq"
+  ],
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "turnEndSeq": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

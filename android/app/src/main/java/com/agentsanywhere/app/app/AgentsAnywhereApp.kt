@@ -30,7 +30,12 @@ import com.agentsanywhere.app.api.FilesApi
 import com.agentsanywhere.app.api.RealtimeApi
 import com.agentsanywhere.app.api.SessionsApi
 import com.agentsanywhere.app.api.TerminalApi
+import com.agentsanywhere.app.api.e2ee.E2eeContentGate
 import com.agentsanywhere.app.config.AppConfig
+import com.agentsanywhere.app.feature.e2ee.E2eeClient
+import com.agentsanywhere.app.feature.e2ee.E2eeContentRouter
+import com.agentsanywhere.app.ui.screens.devices.DeviceE2eePairingSheet
+import com.agentsanywhere.app.ui.screens.devices.e2eeErrorMessageRes
 import com.agentsanywhere.app.feature.auth.AuthController
 import com.agentsanywhere.app.feature.auth.AuthSessionStore
 import com.agentsanywhere.app.feature.auth.MobileAuthSessionRefresher
@@ -81,6 +86,7 @@ import com.agentsanywhere.app.ui.screens.announcements.AnnouncementPage
 import com.agentsanywhere.app.ui.screens.update.AppUpdatePromptDialog
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -132,6 +138,31 @@ fun AgentsAnywhereApp(
         )
     }
     val realtimeApi = remember(apiClient) { RealtimeApi(client = apiClient) }
+    // E2EE: session and device content goes through the device's secure channel (or is refused) for
+    // every ApiClient in the process; the tunnel's tickets use this client so tokens refresh as usual.
+    val e2eeClient = remember(context, apiClient) { E2eeClient.install(context, apiClient) }
+    // E2EE: session titles and working directories in the list come from sealed display envelopes.
+    remember(context, e2eeClient) {
+        com.agentsanywhere.app.feature.sessions.SessionDisplayEnvironment.lockedLabel =
+            context.getString(com.agentsanywhere.app.R.string.session_display_locked)
+        com.agentsanywhere.app.feature.sessions.SessionDisplayEnvironment.decryptor =
+            com.agentsanywhere.app.feature.e2ee.SessionDisplayDecryptor(
+                keyFor = e2eeClient::directoryKey,
+                revision = { e2eeClient.directoryKeyRevision.value },
+            )
+    }
+    val e2eeRouter = remember(context, e2eeClient, apiClient) {
+        E2eeContentRouter(
+            client = e2eeClient,
+            resolveSessionDevice = { serverUrl, token, sessionId ->
+                SessionsApi(apiClient).getSessionMeta(serverUrl, token.orEmpty(), sessionId).session.connectorId
+            },
+            messages = { code -> context.getString(e2eeErrorMessageRes(code)) },
+            sealedUploader = { serverUrl, token, path, files, headers ->
+                apiClient.postMultipart(serverUrl, path, files, token, headers)
+            },
+        ).also { E2eeContentGate.installed = it }
+    }
     val announcementsApi = remember(apiClient) { AnnouncementsApi(apiClient) }
     val realtimeClientId = remember(context) { RealtimeClientIdStore(context).readOrCreate() }
     val authController = remember(context, sessionStore, apiClient) {
@@ -166,6 +197,8 @@ fun AgentsAnywhereApp(
         SessionDetailController(
             sessionsApi = SessionsApi(apiClient),
             sessionStore = sessionStore,
+            diskStore = com.agentsanywhere.app.feature.sessiondetail.SessionDiskStore.shared(context),
+            previewsApi = com.agentsanywhere.app.api.PreviewsApi(apiClient),
         )
     }
     DisposableEffect(sessionDetailController) {
@@ -191,11 +224,12 @@ fun AgentsAnywhereApp(
         DashboardRealtimeController(realtimeApi, sessionStore, realtimeClientId)
     }
     val sessionRealtimeController = remember(realtimeApi, sessionStore, realtimeClientId) {
-        SessionRealtimeController(realtimeApi, sessionStore, realtimeClientId)
+        SessionRealtimeController(realtimeApi, sessionStore, realtimeClientId, streamRouter = { e2eeRouter })
     }
     val currentDestination = AppDestination.valueOf(destinationName)
     val hasAuthSession = sessionStore.hasAuthSession()
     LaunchedEffect(hasAuthSession, sessionStore.readServerUrl(), sessionStore.readUserId()) { if (hasAuthSession) sessionsController.workflows.restore() else sessionsController.workflows.clear() }
+    LaunchedEffect(e2eeClient, hasAuthSession, sessionStore.readServerUrl()) { if (hasAuthSession) e2eeClient.refreshServerConfig() }
     val updateServerUrl = sessionStore.readServerUrl()
     val updatesAllowed = hasAuthSession && updateServerUrl.isNotBlank() && currentDestination !in setOf(
         AppDestination.LoginMethods, AppDestination.ServerSetup, AppDestination.QrLogin, AppDestination.QrWaiting,
@@ -231,6 +265,18 @@ fun AgentsAnywhereApp(
     val projectLoadSlots = remember { Semaphore(3) }
     var projectsRequestVersion by remember { mutableStateOf(0L) }
     val scope = rememberCoroutineScope()
+    // E2EE: a session the device found itself has no project; match it by the decrypted working directory.
+    val projectAutoAssigner = remember(sessionsController) {
+        com.agentsanywhere.app.feature.sessions.SessionProjectAutoAssigner(
+            assign = { sessionId, projectId ->
+                val request = sessionsState.beginSessionRequest(listOf(sessionId))
+                sessionsState = request.state
+                sessionsController.assignSessionProject(sessionId, projectId, sessionsState.devices)
+                    .onSuccess { updated -> sessionsState = sessionsState.withPatchedSession(updated, request.generation) }
+            },
+            log = { message -> android.util.Log.d("AgentsAnywhere", message) },
+        )
+    }
     val lifecycleOwner = LocalLifecycleOwner.current
     var appVisible by remember(lifecycleOwner) {
         mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
@@ -266,6 +312,8 @@ fun AgentsAnywhereApp(
         onDispose { connectivity.unregisterNetworkCallback(callback) }
     }
     fun clearSessionAndReturnToLogin(expectedToken: String? = null) {
+        val signedOutServer = sessionStore.readServerUrl()
+        val signedOutUser = sessionStore.readUserId()
         val didClearSession = if (expectedToken == null) {
             authController.signOut()
             true
@@ -274,6 +322,17 @@ fun AgentsAnywhereApp(
         }
         if (!didClearSession) return
 
+        // Signing out forgets this account's session content on this device; pages
+        // still closing cannot write it back.
+        if (signedOutServer.isNotBlank() && signedOutUser.isNotBlank()) {
+            com.agentsanywhere.app.feature.sessiondetail.SessionDiskStore.shared(context).forget(
+                com.agentsanywhere.app.feature.sessiondetail.SessionDiskStore.scopeFor(signedOutServer, signedOutUser),
+            )
+        }
+        // E2EE: forget which session belongs to which device and the attachment keys; close every channel.
+        e2eeRouter.resetForLogout()
+        com.agentsanywhere.app.feature.sessions.SessionDisplayEnvironment.decryptor.invalidate()
+        projectAutoAssigner.reset()
         appUpdateViewModel.syncSession(false)
         remoteTerminalPool.disposeLocal()
         sessionsState = SessionsState()
@@ -425,6 +484,27 @@ fun AgentsAnywhereApp(
                     }
                 }
             }
+        }
+    }
+
+    // E2EE: assign unplaced sessions once their working directory is decrypted (once per session per run;
+    // failures stay silent). Runs on the app scope so a list update does not cancel a PATCH halfway.
+    LaunchedEffect(projectAutoAssigner, sessionsState.sessions, sessionsState.archivedSessions, sessionsState.projects) {
+        val sessions = sessionsState.sessions + sessionsState.archivedSessions
+        if (!hasAuthSession || projectAutoAssigner.pending(sessions, sessionsState.projects).isEmpty()) return@LaunchedEffect
+        val authSessionId = sessionStore.readAuthSessionId()
+        scope.launch {
+            if (sessionStore.readAuthSessionId() != authSessionId) return@launch
+            projectAutoAssigner.run(sessions, sessionsState.projects)
+        }
+    }
+    // E2EE: the directory key changed (pairing, rotation, revocation): reload so the list is decrypted again
+    // with the new key (placeholders get another try; a revoked device's rows go back to the placeholder).
+    LaunchedEffect(e2eeClient, hasAuthSession) {
+        if (!hasAuthSession) return@LaunchedEffect
+        e2eeClient.directoryKeyRevision.drop(1).collect {
+            val encrypted = (sessionsState.sessions + sessionsState.archivedSessions).any { it.encryptedDisplay }
+            if (encrypted && sessionStore.hasAuthSession()) refreshSessions(showInitialLoading = false, showRefreshIndicator = false)
         }
     }
 
@@ -929,6 +1009,16 @@ fun AgentsAnywhereApp(
     }
     LaunchedEffect(updatesAllowed, appUpdateViewModel.state.installFile) {
         if (updatesAllowed) appUpdateViewModel.state.installFile?.let(onInstallUpdate)
+    }
+    // A content request was refused because its device requires encryption and is not paired here.
+    val pairingPromptDeviceId by e2eeClient.pairingPrompt.collectAsState()
+    pairingPromptDeviceId?.takeIf { hasAuthSession }?.let { deviceId ->
+        DeviceE2eePairingSheet(
+            deviceId = deviceId,
+            client = e2eeClient,
+            onDismiss = { e2eeClient.dismissPairingPrompt(deviceId) },
+            onPaired = { sessionRealtimeController.requestImmediateReconnect() },
+        )
     }
 }
 

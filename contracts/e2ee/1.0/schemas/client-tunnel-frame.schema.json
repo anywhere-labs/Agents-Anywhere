@@ -1,0 +1,67 @@
+{
+  "$defs": {
+    "TunnelRoute": {
+      "properties": {
+        "ch": {
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "title": "Ch",
+          "type": "string"
+        },
+        "clientId": {
+          "description": "client_id_for(identity public key)",
+          "pattern": "^cli_[a-z2-7]{26}$",
+          "title": "Clientid",
+          "type": "string"
+        },
+        "deviceId": {
+          "minLength": 1,
+          "title": "Deviceid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "deviceId",
+        "clientId",
+        "ch"
+      ],
+      "title": "TunnelRoute",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:e2ee:1.0:client-tunnel-frame",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Client <-> Server frame on ``WS /api/v3/tunnel``; ``ct`` is opaque to the Server.",
+  "properties": {
+    "ct": {
+      "description": "base64url Noise message (see HandshakeEnvelope for the handshake phase)",
+      "title": "Ct",
+      "type": "string"
+    },
+    "n": {
+      "minimum": 0,
+      "title": "N",
+      "type": "integer"
+    },
+    "route": {
+      "$ref": "#/$defs/TunnelRoute"
+    },
+    "t": {
+      "const": "tun",
+      "title": "T",
+      "type": "string"
+    }
+  },
+  "required": [
+    "t",
+    "route",
+    "n",
+    "ct"
+  ],
+  "title": "ClientTunnelFrame",
+  "type": "object",
+  "x-contract": "e2ee",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

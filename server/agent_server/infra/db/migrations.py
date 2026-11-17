@@ -21,8 +21,8 @@ from sqlalchemy.pool import NullPool
 from agent_server.infra.db.engine import resolve_db_url
 
 BASELINE_V2_REVISION = "v2_0"
-CURRENT_SCHEMA_REVISION = "v2_56"
-CURRENT_SCHEMA_VERSION = "2.56"
+CURRENT_SCHEMA_REVISION = "v2_63"
+CURRENT_SCHEMA_VERSION = "2.63"
 POSTGRES_MIGRATION_LOCK_ID = 0x414147454E545332
 DEFAULT_MIGRATION_LOCK_TIMEOUT_SECONDS = 120.0
 
@@ -234,6 +234,22 @@ def _classify_sync(connection) -> UnversionedDatabase:
         return UnversionedDatabase("empty")
 
     session_columns = _column_names(inspector, "sessions")
+    # v2_60 drops the session content tables the older layouts below are recognised by.
+    if (
+        {"sessions", "connectors", "device_commands", "user_token_families"}.issubset(tables)
+        and "timeline_items" not in tables
+        and "read_seq" in session_columns
+    ):
+        # v2_61 adds port previews; v2_62 moves terminal roots to Redis; v2_63 registers
+        # commands sent through an E2EE secure channel.
+        e2ee_commands = "e2ee_command_registrations" in tables
+        if "previews" not in tables:
+            if "connector_terminal_roots" not in tables or e2ee_commands:
+                return UnversionedDatabase("unknown")
+            return UnversionedDatabase("v2", "v2_60")
+        if "connector_terminal_roots" in tables:
+            return UnversionedDatabase("unknown") if e2ee_commands else UnversionedDatabase("v2", "v2_61")
+        return UnversionedDatabase("v2", "v2_63" if e2ee_commands else "v2_62")
     connector_columns = _column_names(inspector, "connectors")
     active_run_columns = _column_names(inspector, "session_active_runs")
     timeline_columns = _column_names(inspector, "timeline_items")
@@ -589,6 +605,19 @@ def _classify_sync(connection) -> UnversionedDatabase:
                 }.issubset(tables):
                     return UnversionedDatabase("unknown")
                 revision = "v2_56"
+            # v2_57 adds the v3 device link: reported directory fields and command receipts.
+            if "device_commands" in tables:
+                if revision != "v2_56" or "link_contract" not in connector_columns:
+                    return UnversionedDatabase("unknown")
+                revision = "v2_57"
+            # v2_58 moves pairing codes to Redis.
+            if revision == "v2_57" and "pairing_codes" not in tables:
+                revision = "v2_58"
+            # v2_59 adds revocable login token families.
+            if "user_token_families" in tables:
+                if revision != "v2_58":
+                    return UnversionedDatabase("unknown")
+                revision = "v2_59"
             return UnversionedDatabase("v2", revision)
         if "approvals" in tables:
             if {"presence_instance_id", "presence_connection_id"}.issubset(

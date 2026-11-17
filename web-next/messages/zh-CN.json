@@ -419,6 +419,9 @@
       "sendTask": "发送任务",
       "agent": "Agent",
       "createFailed": "无法创建会话。",
+      "encryptedAttachmentsUnsupported": "加密模式下首条消息暂不能带附件。请先移除附件，会话开始后再发送。",
+      "encryptedAttachmentsHint": "这台设备开启了端到端加密，新建会话时暂不能添加附件；会话开始后可以在对话里发送附件。",
+      "encryptedWorkflowUnsupported": "加密模式下暂不能用这个执行者新建会话。",
       "selectModel": "请选择模型",
       "modelCatalogUnavailable": "模型目录尚未就绪",
       "modelCatalogStarting": "正在启动 {agent}…",
@@ -908,6 +911,7 @@
       "runtime": "运行时",
       "runtimeType": "Runtime 类型",
       "renameFailed": "无法重命名会话。",
+      "renameEncrypted": "加密模式下暂不能改标题。",
       "renameTitle": "重命名会话",
       "unread": "未读更新",
       "untitled": "未命名会话",
@@ -962,6 +966,9 @@
       "resolveInteractionFailed": "无法处理交互请求。",
       "updateRuntimeSettingsFailed": "无法更新运行时设置。",
       "noActivity": "暂无活动。",
+      "historyOfflineTitle": "设备离线",
+      "historyOfflineCached": "显示的是本机缓存。更早的消息和新的进展要等设备上线后才能看到。",
+      "historyOfflineEmpty": "设备离线，上线后查看。",
       "runtimePending": "等待 {runtime} 接收任务...",
       "runtimeWorking": "{runtime} 正在工作...",
       "approvalRequested": "请求确认",
@@ -1199,7 +1206,9 @@
       "queueWaiting": "排队中",
       "queueRetry": "重试",
       "queueSendNow": "立即发送（打断当前任务）",
-      "queueDelete": "删除"
+      "queueDelete": "删除",
+      "pairingRequiredTitle": "需要先配对这台设备",
+      "pairDevice": "配对这台设备"
     },
     "sessionStatus": {
       "idle": "空闲",
@@ -1210,7 +1219,10 @@
       "waitingApproval": "等待批准",
       "error": "出错",
       "unread": "未读",
-      "blocked": "阻塞"
+      "blocked": "阻塞",
+      "planReview": "计划待审阅",
+      "goalActive": "目标进行中",
+      "goalPaused": "目标已暂停"
     },
     "signOut": {
       "confirm": "退出登录",
@@ -1432,6 +1444,7 @@
       "submit": "登录",
       "titlePrefix": "登录",
       "invalidEmail": "请输入邮箱",
+      "keepOffDevice": "不在此设备保存会话内容（共享电脑）",
       "userPlaceholder": "name@example.com",
       "signingIn": "正在登录...",
       "submitWithEnter": "登录 ↵",
@@ -1441,6 +1454,12 @@
       "description": "你的本地登录凭据已经清除。可以安全关闭这个页面，或重新打开登录页面继续使用。",
       "login": "打开登录页面",
       "title": "已退出登录"
+    },
+    "e2eeWebUnavailable": {
+      "title": "这个服务器要求端到端加密",
+      "description": "管理员已关闭 Web 客户端：浏览器无法对会话内容做端到端加密。",
+      "useApps": "请使用 Agents Anywhere Desktop 或手机 App 登录。",
+      "signOut": "退出登录"
     },
     "mobileOAuth": {
       "cancel": "取消",
@@ -1962,7 +1981,8 @@
       },
       "modelConfigsTitle": "模型网关",
       "modelsGroup": "模型",
-      "channelSwitchTitle": "网关切换"
+      "channelSwitchTitle": "网关切换",
+      "secureConnections": "安全连接"
     },
     "team": {
       "title": "团队",
@@ -2346,6 +2366,27 @@
     "keepEditing": "继续编辑",
     "discardChanges": "放弃修改"
   },
+  "portPreview": {
+    "detected": "检测到",
+    "previewOnPhone": "在手机上预览",
+    "showPreview": "查看预览",
+    "dialogTitle": "端口 {port} 的预览",
+    "dialogDescription": "用手机扫码或复制链接打开。预览只有你登录后能看到，关掉端口或点「停止预览」就会失效。",
+    "opening": "正在建立预览…",
+    "qrAlt": "预览链接二维码",
+    "copy": "复制链接",
+    "copied": "已复制预览链接",
+    "openHere": "在浏览器中打开",
+    "stop": "停止预览",
+    "plaintextTitle": "预览不是端到端加密的",
+    "plaintextDescription": "会话内容已端到端加密，但预览页面的流量会经过服务器转发，服务器能看到页面内容。",
+    "limitations": "页面里写死的 localhost 地址（例如接口地址）在手机上打不开，需要改成相对路径。",
+    "errors": {
+      "failed": "无法建立预览，请稍后重试。",
+      "preview_unavailable": "设备上的预览通道暂时不可用，请稍后重试。",
+      "connector_offline": "设备离线，上线后才能预览。"
+    }
+  },
   "announcement": {
     "title": "公告",
     "publishedAt": "发布于 {time}",
@@ -2463,10 +2504,21 @@
     "attachments_unsupported": "当前执行者不支持首条附件。",
     "capability_unavailable": "该会话当前不能执行此操作。",
     "claude_resume_no_response": "Claude 恢复会话后没有回复这条消息。",
+    "codex_owner_unavailable": "Codex App 正在使用这个会话且没有响应，请在 Codex App 里处理或关闭它后重试。",
+    "command_outcome_unknown": "操作结果不确定，请刷新后确认，再决定是否重试。",
     "command_unavailable": "命令目录已变化，请刷新。",
     "configuration_changed": "配置选项已不可用。",
     "configuration_conflict": "选择之间不一致，请重新选择模型和推理强度。",
     "configuration_mapping_unavailable": "该旧选择没有唯一且无损的 Agent 配置映射。",
+    "device_pin_mismatch": "设备身份与配对时不一致，请在设备上重新生成配对链接（手机上扫二维码）后再配对。",
+    "device_read_timeout": "设备响应较慢，请稍后重试。",
+    "device_upgrade_required": "这台设备上的 Agents Anywhere 版本过旧，Server 已不再保存会话内容。请在设备上升级 Agents Anywhere 后再打开会话。",
+    "dsh_home_mismatch": "这个 DSH 使用的是另一个数据目录，不服务此设备上的 DSH Runtime。",
+    "e2ee_downgrade_refused": "这台设备要求端到端加密，已拒绝未加密的连接。",
+    "e2ee_handshake_failed": "加密连接没有建立：设备可能重装过或身份已变化，请重新配对。",
+    "e2ee_not_paired": "这台设备还没有授权当前客户端，请在设备上生成配对链接（手机上扫二维码）后配对。",
+    "e2ee_protocol_error": "加密通道出现错误，已断开，请重试。",
+    "e2ee_required": "这个服务器启用了端到端加密，需要先和设备配对。",
     "image_input_unsupported": "当前模型声明不支持图片输入，请移除图片或切换支持图片的模型。",
     "initialization_interrupted": "初始化执行者已退出，首条消息尚未提交，请重新准备。",
     "interaction_capacity": "待回答请求已达到上限。",
@@ -2505,6 +2557,7 @@
     "operation_outcome_unknown": "结果尚不确定，请先查询原操作，不要重复提交。",
     "outcome_unknown": "结果尚不确定，请先查询原操作，不要重复提交。",
     "owner_changed": "会话执行者已变化，请刷新。",
+    "pairing_expired": "配对链接已过期或已经用过，请在设备上重新生成（手机上重新扫二维码）。",
     "permission_denied": "当前权限或用户审批未允许此命令。",
     "pi_adapter_cache_corrupt": "Pi ACP 缓存依赖来源已变化。",
     "pi_adapter_dependencies_missing": "Pi ACP 依赖目录不存在。",
@@ -2552,6 +2605,11 @@
     "preparation_consumed": "工作区准备已绑定其他创建操作。",
     "preparation_not_reserved": "工作区准备尚未为当前创建操作预留。",
     "preparation_stale": "工作区准备已失效，请重新准备。",
+    "preview_disabled": "这个服务器关闭了端口预览。",
+    "preview_domain_not_configured": "这个服务器没有配置预览域名，无法使用端口预览。",
+    "preview_limit_reached": "这台设备打开的预览已达上限，请先关闭一些。",
+    "preview_port_not_allowed": "只能预览本机（127.0.0.1）上已确认的端口。",
+    "preview_unavailable": "设备上的预览通道暂时不可用，请稍后重试。",
     "project_workspace_mismatch": "项目不属于所选设备。",
     "recovery_required": "会话需要恢复后才能继续。",
     "response_input_conflict": "回答身份已用于其他内容。",
@@ -2559,12 +2617,14 @@
     "runtime_not_running": "请先启动 Runtime。",
     "runtime_stopping": "Runtime 正在关闭。",
     "session_not_ready": "会话尚未空闲或需要恢复。",
+    "share_requires_online_device": "设备上线后才能创建分享。",
     "sync_backpressure": "同步积压已达到上限，请恢复连接。",
     "takeover_required": "请先授权工作台控制此会话。",
     "unsupported_acp_version": "该入口只启用了 ACP v1。",
     "unsupported_operation": "Agent 尚未提供此操作。",
     "worker_capacity": "Agent 执行进程已达到上限。",
-    "workflow_unsupported": "该 Runtime 不支持工作区准备。"
+    "workflow_unsupported": "该 Runtime 不支持工作区准备。",
+    "writer_held": "这个 DSH 会话正在 DSH Desktop 或 dsh web 中打开。关闭它，或在 DSH 中安装 Agents Anywhere 插件后即可在这里继续。"
   },
   "runtimeMaturity": {
     "beta": "Beta",
@@ -2624,5 +2684,52 @@
     "achievedUnknownTime": "目标已完成",
     "secondsUnit": " 秒",
     "resumeTitle": "恢复此目标？"
+  },
+  "e2ee": {
+    "display": {
+      "locked": "加密中，设备上线后显示"
+    },
+    "pairing": {
+      "title": "配对端到端加密",
+      "description": "在设备上生成配对链接（Desktop：设置 → 安全连接；命令行设备：运行 Connector 的配对命令），粘贴到这里。链接 10 分钟内有效。",
+      "descriptionForDevice": "{device} 上的内容是端到端加密的。在这台设备上生成配对链接（Desktop：设置 → 安全连接；命令行设备：运行 Connector 的配对命令），粘贴到这里。",
+      "linkLabel": "配对链接",
+      "invalidLink": "这不是配对链接，配对链接以 aa-pair:// 开头。",
+      "device": "设备",
+      "fingerprint": "设备指纹",
+      "compareHint": "配对前，请确认设备上显示的指纹与这里一致。",
+      "pair": "配对",
+      "cancel": "取消",
+      "paired": "已与 {device} 配对，它的内容现在端到端加密传输。",
+      "errorExpired": "配对链接已过期或已经用过，请在设备上重新生成。",
+      "errorGeneric": "配对失败，请在设备上重新生成配对链接后重试。",
+      "unsupported": "这个浏览器无法建立端到端加密连接。请使用新版 Chrome、Edge、Firefox、Safari，或使用 Desktop。"
+    },
+    "settings": {
+      "title": "安全连接",
+      "statusRequired": "端到端加密已开启：会话内容只经加密连接与已配对的设备传输。",
+      "statusOptional": "这台服务器没有开启端到端加密。与某台设备配对后，该设备的内容会加密传输。",
+      "pairDevice": "配对设备",
+      "thisClient": "本客户端指纹",
+      "thisClientHint": "设备批准新客户端时，会请你核对这个指纹。",
+      "devicesTitle": "已配对的设备",
+      "devicesDescription": "这些设备的内容只经端到端加密传输。",
+      "noDevices": "还没有配对的设备。",
+      "pairedAt": "配对于 {time}",
+      "forget": "忘记",
+      "forgetTitle": "忘记 {device}？",
+      "forgetDescription": "本客户端将不再信任这台设备的密钥，需要在设备上重新生成配对链接才能再打开它的会话。",
+      "forgotten": "已忘记这台设备。",
+      "policyTitle": "本客户端要求加密",
+      "policyDescription": "即使服务器不再要求加密，本客户端仍拒绝明文的会话内容。",
+      "relax": "允许明文",
+      "relaxTitle": "允许本客户端使用明文？",
+      "relaxDescription": "只影响本客户端：服务器将能读到未配对设备的会话内容，已配对的设备仍然加密。服务器以后重新要求加密时，本客户端也会重新要求。",
+      "cancel": "取消",
+      "unsupported": "这个浏览器无法建立端到端加密连接。",
+      "copy": "复制",
+      "copied": "已复制指纹。",
+      "copyFailed": "无法复制指纹。"
+    }
   }
 }

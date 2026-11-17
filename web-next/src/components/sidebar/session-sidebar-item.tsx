@@ -36,6 +36,7 @@ import { copyText } from "@/lib/clipboard"
 import { cn } from "@/lib/utils"
 import { useTranslations } from "next-intl"
 import { useWorkspace } from "@/components/workspace-context"
+import { sessionWorkState, type SessionWorkState } from "@/components/sidebar/session-work-state"
 
 
 export function SessionSidebarItem({
@@ -49,7 +50,7 @@ export function SessionSidebarItem({
   onToggleArchive,
   onRename,
 }: {
-  item: { runtime: string; runtimeType?: string; id: string; connectorId: string; projectId?: string | null; cwd?: string | null; title?: string | null; status: string; unread: boolean; pinned: boolean; archived: boolean }
+  item: { runtime: string; runtimeType?: string; id: string; connectorId: string; projectId?: string | null; cwd?: string | null; title?: string | null; status: string; unread: boolean; pinned: boolean; archived: boolean; planState?: string; goalState?: string }
   /** Optional `device · agent` identity line for sessions shown outside projects. */
   meta?: string | null
   inset?: boolean
@@ -78,7 +79,8 @@ export function SessionSidebarItem({
   const isBusy = item.status === "running" || item.status === "waiting" || item.status === "pending"
   const isWaitingApproval = item.status === "waiting_approval"
   const isUnreadIdle = item.unread && item.status === "idle"
-  const hasStatusIndicator = isBusy || isWaitingApproval || isUnreadIdle
+  const workState = sessionWorkState(item)
+  const hasStatusIndicator = isBusy || isWaitingApproval || isUnreadIdle || workState !== null
 
   React.useEffect(() => {
     if (!renameOpen) setTitleDraft(item.title ?? "")
@@ -149,6 +151,7 @@ export function SessionSidebarItem({
                     busy={isBusy}
                     unreadIdle={isUnreadIdle}
                     waitingApproval={isWaitingApproval}
+                    workState={workState}
                   />
                 </span>
                 {showContext ? (
@@ -315,10 +318,12 @@ function SessionSidebarIndicator({
   busy,
   unreadIdle,
   waitingApproval,
+  workState,
 }: {
   busy: boolean
   unreadIdle: boolean
   waitingApproval: boolean
+  workState: SessionWorkState | null
 }) {
   const t = useTranslations("dashboard")
 
@@ -326,6 +331,13 @@ function SessionSidebarIndicator({
     return (
       <span className="ml-2 shrink-0 rounded-full bg-emerald-500/20 px-2 py-0.5 text-[11px] font-medium leading-4 text-emerald-400 ring-1 ring-emerald-500/20">
         {t("sessionStatus.waitingApproval")}
+      </span>
+    )
+  }
+  if (workState === "planReview") {
+    return (
+      <span className="ml-2 shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium leading-4 text-amber-500 ring-1 ring-amber-500/20">
+        {t("sessionStatus.planReview")}
       </span>
     )
   }
@@ -343,6 +355,13 @@ function SessionSidebarIndicator({
         aria-label={t("sessionStatus.unread")}
         className="ml-2 size-2 shrink-0 rounded-full bg-emerald-500"
       />
+    )
+  }
+  if (workState === "goalPaused" || workState === "goalActive") {
+    return (
+      <span className="ml-2 shrink-0 rounded-full bg-sidebar-accent px-2 py-0.5 text-[11px] font-medium leading-4 text-muted-foreground ring-1 ring-sidebar-border">
+        {t(`sessionStatus.${workState}`)}
+      </span>
     )
   }
   return null

@@ -49,6 +49,8 @@ type AttachmentButtonProps = {
   isDragging: boolean
   className?: string
   disabled?: boolean
+  /** Why the button is disabled, shown as its tooltip. */
+  disabledReason?: string
   allowedMimeTypes?: readonly string[]
 }
 
@@ -328,6 +330,7 @@ export function AttachmentButton({
   isDragging,
   className,
   disabled = false,
+  disabledReason,
   allowedMimeTypes,
 }: AttachmentButtonProps) {
   const t = useTranslations("dashboard.new")
@@ -355,6 +358,7 @@ export function AttachmentButton({
         variant="ghost"
         size="icon"
         aria-label={t("attach")}
+        title={disabled && disabledReason ? disabledReason : undefined}
         className={cn("text-muted-foreground", isDragging && "text-primary", className)}
         disabled={disabled || allowedMimeTypes?.length === 0 || attachments.length >= MAX_ATTACHMENT_FILES}
         onClick={() => fileInputRef.current?.click()}

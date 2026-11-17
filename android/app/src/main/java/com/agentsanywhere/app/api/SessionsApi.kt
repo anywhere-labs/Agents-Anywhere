@@ -1,5 +1,7 @@
 package com.agentsanywhere.app.api
 
+import com.agentsanywhere.app.api.e2ee.SessionDeviceDirectory
+
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.MessageDigest
@@ -202,11 +204,13 @@ class SessionsApi(
         title: String? = null,
         pinned: Boolean? = null,
         archived: Boolean? = null,
+        projectId: String? = null,
     ): RemoteSessionResponse {
         val body = JSONObject().apply {
             title?.let { put("title", it) }
             pinned?.let { put("pinned", it) }
             archived?.let { put("archived", it) }
+            projectId?.let { put("projectId", it) }
         }
         return client.patchJson(
             serverUrl = serverUrl,
@@ -578,6 +582,17 @@ class SessionsApi(
         ).optJSONArray("attachments").toObjectList { toRemoteUploadedAttachment() }
     }
 
+    /** E2EE: this device's content goes through its secure channel; throws when it must be paired first. */
+    fun isEncryptedDevice(serverUrl: String, authorizationToken: String, deviceId: String): Boolean =
+        client.gate?.isEncryptedDevice(serverUrl, authorizationToken, deviceId) ?: false
+
+    /** E2EE: a localized refusal for [code]. */
+    fun e2eeRefusal(code: String): ApiException = client.gate?.refusal(code) ?: ApiException(code, 409, errorCode = code)
+
+    /** E2EE: this session's content goes through its device's channel (its attachments cannot be opened by URL). */
+    fun isEncryptedSession(serverUrl: String, authorizationToken: String, sessionId: String): Boolean =
+        client.gate?.isEncryptedSession(serverUrl, authorizationToken, sessionId) ?: false
+
     fun attachmentOpenUrl(
         serverUrl: String,
         sessionId: String,
@@ -699,16 +714,36 @@ class SessionsApi(
 
     internal fun parseProject(value: JSONObject): RemoteProject = value.toRemoteProject()
 
+    internal fun parseTimelineItem(value: JSONObject): RemoteTimelineItem = value.toRemoteTimelineItem()
+
     internal fun parseSessionEvent(value: JSONObject): RemoteSessionEventEnvelope {
         val payload = value.optJSONObject("payload") ?: JSONObject()
         val catalogType = payload.optNullableString("catalogType")
         val catalog = payload.optJSONObject("catalog")
+        val type = value.getString("type")
+        if (isPortEventType(type)) {
+            // Live device facts with no position in the history: the envelope's
+            // sequence and cursor are not required, and never applied.
+            return RemoteSessionEventEnvelope(
+                protocolVersion = value.optString("protocolVersion", ""),
+                eventId = value.optString("eventId", ""),
+                sequence = value.optLong("sequence", 0L),
+                cursor = value.optString("cursor", ""),
+                type = type,
+                sessionId = value.optString("sessionId", ""),
+                emittedAt = value.optNullableString("emittedAt"),
+                payload = RemoteSessionEventPayload(
+                    ports = payload.optJSONArray("ports").toListeningPorts(),
+                    closedPort = payload.optPortNumber("port"),
+                ),
+            )
+        }
         return RemoteSessionEventEnvelope(
             protocolVersion = value.optString("protocolVersion", ""),
             eventId = value.getString("eventId"),
             sequence = value.getLong("sequence"),
             cursor = value.getString("cursor"),
-            type = value.getString("type"),
+            type = type,
             sessionId = value.getString("sessionId"),
             emittedAt = value.optNullableString("emittedAt"),
             payload = RemoteSessionEventPayload(
@@ -744,6 +779,7 @@ class SessionsApi(
             ?: optNullableString("displayName")
             ?: optNullableString("name")
             ?: runtimeId
+        SessionDeviceDirectory.remember(getString("id"), getString("connectorId"))
         return RemoteSession(
             id = getString("id"),
             connectorId = getString("connectorId"),
@@ -771,7 +807,23 @@ class SessionsApi(
             runtimeId = runtimeId,
             runtimeType = runtimeType,
             runtimeName = runtimeName,
+            planState = optNullableString("planState") ?: "none",
+            goalState = optNullableString("goalState") ?: "none",
+            displayDevice = optDisplayEnvelope("displayDevice"),
+            displayUser = optDisplayEnvelope("displayUser"),
         )
+    }
+
+    /** `DisplayEnvelope`; a missing, null or malformed value reads as absent. */
+    private fun JSONObject.optDisplayEnvelope(name: String): RemoteDisplayEnvelope? {
+        val value = optJSONObject(name) ?: return null
+        val mode = value.optNullableString("mode") ?: return null
+        val payload = when (val raw = value.opt("payload")) {
+            is JSONObject -> raw.toString()
+            is String -> raw
+            else -> return null
+        }
+        return RemoteDisplayEnvelope(mode = mode, keyId = value.optNullableString("keyId"), payload = payload)
     }
 
     private fun JSONObject.toRemoteProject(): RemoteProject {
@@ -832,6 +884,8 @@ class SessionsApi(
             nextSeq = optInt("nextSeq", 0),
             hasMore = optBoolean("hasMore", false),
             serverTime = optNullableString("serverTime"),
+            historySource = optNullableString("historySource") ?: HISTORY_SOURCE_LIVE,
+            deviceOffline = optBoolean("deviceOffline", false),
         )
     }
 
@@ -858,6 +912,8 @@ class SessionsApi(
             eventCursor = optString("eventCursor", "seq:0"),
             serverTime = optNullableString("serverTime"),
             queue = optJSONObject("queue")?.toSessionQueueState(),
+            historySource = optNullableString("historySource") ?: HISTORY_SOURCE_LIVE,
+            deviceOffline = optBoolean("deviceOffline", false),
         )
     }
 

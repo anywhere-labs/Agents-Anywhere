@@ -297,9 +297,8 @@ function useDeviceAttachmentFile({
 
     async function load() {
       try {
-        const response = await dashboardApi.connectorFsRead(token, connectorId, root, devicePath)
-        const file = response.result
-        const blob = await dashboardApi.downloadBlob(token, file.downloadUrl)
+        const file = await dashboardApi.connectorFsReadBlob(token, connectorId, root, devicePath)
+        const blob = file.blob
         if (cancelled) return
         const mediaType = concreteMediaType(file.mediaType || blob.type, file.name || fallbackName)
         const objectUrl = URL.createObjectURL(new Blob([blob], { type: mediaType || "application/octet-stream" }))

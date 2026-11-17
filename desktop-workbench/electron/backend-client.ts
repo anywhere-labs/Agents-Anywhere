@@ -1,6 +1,7 @@
 import { fork, type ChildProcess } from "node:child_process";
 import path from "node:path";
 import readline from "node:readline";
+import { ConnectorUtilityHost, type ForkUtility } from "./connector-host";
 import type { ConnectorState, DesktopSettings } from "./connector-types";
 import type { OwnershipState } from "./local-runtime";
 import {
@@ -27,6 +28,8 @@ export type BackendClientOptions = {
   /** Describes an unexpected exit, quoting the backend's last error and output. */
   onExit?: (message: string) => void;
   entryPath?: string;
+  /** Forks the Connector utility process the backend asks for (Main only: `utilityProcess.fork`). */
+  forkConnector?: ForkUtility;
 };
 
 /**
@@ -52,6 +55,7 @@ export class DesktopBackendClient {
   private lastError = "";
   private readonly recentOutput: string[] = [];
   private outputClosed: Promise<void> = Promise.resolve();
+  private connectors: ConnectorUtilityHost | null = null;
 
   constructor(private readonly options: BackendClientOptions) {}
 
@@ -99,6 +103,9 @@ export class DesktopBackendClient {
       stdio: ["ignore", "pipe", "pipe", "ipc"],
     });
     this.child = child;
+    const forkConnector = this.options.forkConnector;
+    this.connectors = forkConnector ? new ConnectorUtilityHost(init.connectorEntry, forkConnector, event => this.sendToChild(event)) : null;
+    const connectors = this.connectors;
     const exited = new Promise<BackendExit>((resolve) => {
       child.once("exit", (code, signal) => resolve({ code, signal }));
       // Every send passes a callback, so what still lands here is a failed
@@ -117,11 +124,18 @@ export class DesktopBackendClient {
     // fails once its own request timeout expires.
     child.on("message", (message: BackendControlMessage) => {
       if (message.type === "netFetch") void this.handleNetFetch(message);
+      else if (message.type === "connectorFork") {
+        if (connectors) connectors.start(message.id, message.env);
+        else this.sendToChild({ type: "connectorExit", id: message.id, code: null, error: "This Desktop process cannot start the Connector." });
+      } else if (message.type === "connectorPost") connectors?.post(message.id, message.message);
+      else if (message.type === "connectorKill") connectors?.kill(message.id);
       // A crash after `ready` reports itself here just before the process exits.
       else if (message.type === "error") this.lastError = message.message;
     });
     this.exitPromise = exited.then(({ code, signal }) => {
       this.child = null;
+      // Nobody is left to stop the Connector; it would also notice its parent port closing.
+      connectors?.killAll();
       this.stream?.abort();
       this.stream = null;
       // Before `ready`, the startup handshake reports the exit instead.

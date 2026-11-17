@@ -1,0 +1,64 @@
+{
+  "$defs": {
+    "DisplayEnvelope": {
+      "description": "Human-facing content the Server stores but never reads.\n\n``plain``: ``payload`` is a JSON object (normal mode).\n``sealed``: ``payload`` is base64 ciphertext encrypted with the device's\ndirectory key identified by ``keyId`` (E2EE mode).",
+      "properties": {
+        "keyId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Keyid"
+        },
+        "mode": {
+          "enum": [
+            "plain",
+            "sealed"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "payload": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Payload"
+        }
+      },
+      "required": [
+        "mode",
+        "payload"
+      ],
+      "title": "DisplayEnvelope",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:protocol:1.2:display-user-update-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "``PATCH /sessions/{id}`` body for renaming: the client writes ``displayUser``.",
+  "properties": {
+    "displayUser": {
+      "$ref": "#/$defs/DisplayEnvelope"
+    }
+  },
+  "required": [
+    "displayUser"
+  ],
+  "title": "DisplayUserUpdateRequest",
+  "type": "object",
+  "x-contract": "protocol",
+  "x-direction": "ingress",
+  "x-protocol-version": "1.2",
+  "x-pydantic-mode": "validation"
+}

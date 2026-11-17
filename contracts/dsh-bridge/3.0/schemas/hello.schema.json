@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "hello.schema.json",
+  "title": "DshBridgeHello",
+  "description": "First line the plugin sends after dialing (§1.3).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "t",
+    "bridgeProtocol",
+    "key",
+    "hostInstance",
+    "hostKind",
+    "dshVersion",
+    "pluginVersion"
+  ],
+  "properties": {
+    "t": {
+      "const": "hello"
+    },
+    "bridgeProtocol": {
+      "type": "string",
+      "pattern": "^3\\.[0-9]+$"
+    },
+    "key": {
+      "type": "string",
+      "minLength": 1
+    },
+    "hostInstance": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{8,128}$"
+    },
+    "hostKind": {
+      "type": "string",
+      "enum": [
+        "desktop",
+        "web",
+        "headless",
+        "unknown"
+      ]
+    },
+    "dshVersion": {
+      "type": "string",
+      "minLength": 1
+    },
+    "pluginVersion": {
+      "type": "string",
+      "minLength": 1
+    },
+    "dshHome": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

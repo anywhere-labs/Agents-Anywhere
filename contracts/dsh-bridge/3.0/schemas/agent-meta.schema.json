@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agent-meta.schema.json",
+  "title": "DshAgentMeta",
+  "description": "initialize result _meta.dsh, also the params of _dsh/host/features (§2).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "bridgeProtocol",
+    "hostInstance",
+    "dshVersion",
+    "features"
+  ],
+  "properties": {
+    "bridgeProtocol": {
+      "type": "string"
+    },
+    "hostInstance": {
+      "type": "string",
+      "minLength": 1
+    },
+    "dshVersion": {
+      "type": "string",
+      "minLength": 1
+    },
+    "features": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "queue",
+        "steer",
+        "continue",
+        "planning",
+        "questions",
+        "attachments",
+        "fileUploads",
+        "agentPresets",
+        "permissionPresets"
+      ],
+      "properties": {
+        "queue": {
+          "type": "boolean"
+        },
+        "steer": {
+          "type": "boolean"
+        },
+        "continue": {
+          "type": "boolean"
+        },
+        "planning": {
+          "type": "boolean"
+        },
+        "questions": {
+          "type": "boolean"
+        },
+        "attachments": {
+          "type": "boolean"
+        },
+        "fileUploads": {
+          "type": "boolean"
+        },
+        "agentPresets": {
+          "type": "boolean"
+        },
+        "permissionPresets": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

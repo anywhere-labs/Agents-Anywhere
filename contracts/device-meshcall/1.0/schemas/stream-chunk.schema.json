@@ -1,0 +1,40 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:stream-chunk",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "One item of a large read (``Sessions/snapshot``, ``Store/readBlob``...).",
+  "properties": {
+    "chunk": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "string"
+        }
+      ],
+      "title": "Chunk"
+    },
+    "end": {
+      "default": false,
+      "title": "End",
+      "type": "boolean"
+    },
+    "seq": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "title": "Seq",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "seq",
+    "chunk"
+  ],
+  "title": "StreamChunk",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

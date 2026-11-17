@@ -1,5 +1,6 @@
 package com.agentsanywhere.app.api
 
+import com.agentsanywhere.app.api.e2ee.TunnelFileChunk
 import org.json.JSONObject
 import java.io.File
 import java.net.URI
@@ -11,6 +12,9 @@ class FilesApi(
 ) {
     companion object {
         const val MAX_DOWNLOAD_BYTES = 64L * 1024 * 1024
+
+        /** `downloadUrl` of a transfer read through an encrypted device's channel (never sent anywhere). */
+        private const val SECURE_FILE_SCHEME = "aa-e2ee-file://device"
 
         /** Upper bound for files the preview page downloads to share or save. */
         const val MAX_SAVE_BYTES = 512L * 1024 * 1024
@@ -70,6 +74,19 @@ class FilesApi(
         root: String,
         path: String,
     ): RemoteFileTransfer {
+        // An encrypted device: read through the channel in chunks; nothing passes the Server in plaintext.
+        client.gate?.secureFiles(serverUrl, authorizationToken, deviceId)?.let { reader ->
+            val probe = reader.read(root, path, offset = 0, length = 1)
+            return RemoteFileTransfer(
+                path = path,
+                name = path.trimEnd('/').substringAfterLast('/').ifBlank { "download" },
+                size = probe.size,
+                sha256 = "",
+                mediaType = java.net.URLConnection.guessContentTypeFromName(path) ?: "application/octet-stream",
+                transferId = "e2ee:${UUID.randomUUID()}",
+                downloadUrl = secureFileUrl(deviceId, root, path),
+            )
+        }
         val body = JSONObject().apply { put("path", path) }
         val response = client.postJson(
             serverUrl = serverUrl,
@@ -100,6 +117,9 @@ class FilesApi(
         val limit = minOf(maxBytes, MAX_SAVE_BYTES)
         if (transfer.size > limit) {
             throw ApiException("The file is too large to preview.", 413)
+        }
+        if (transfer.downloadUrl.startsWith(SECURE_FILE_SCHEME)) {
+            return downloadSecureFile(serverUrl, authorizationToken, transfer, destination, limit, onProgress)
         }
         val url = absoluteDownloadUrl(serverUrl, transfer.downloadUrl)
         destination.parentFile?.mkdirs()
@@ -147,6 +167,51 @@ class FilesApi(
             temporary.delete()
         }
     }
+
+    /** Reads an encrypted device's file chunk by chunk until `eof` and saves it like a normal download. */
+    private fun downloadSecureFile(
+        serverUrl: String,
+        authorizationToken: String,
+        transfer: RemoteFileTransfer,
+        destination: File,
+        limit: Long,
+        onProgress: (downloadedBytes: Long, totalBytes: Long) -> Unit,
+    ): File {
+        val uri = URI(transfer.downloadUrl)
+        val query = uri.rawQuery.orEmpty().split('&').filter { '=' in it }.associate {
+            it.substringBefore('=') to java.net.URLDecoder.decode(it.substringAfter('='), "UTF-8")
+        }
+        val deviceId = query["device"].orEmpty()
+        val reader = client.gate?.secureFiles(serverUrl, authorizationToken, deviceId)
+            ?: throw ApiException("The device no longer uses an encrypted connection; prepare the download again.")
+        destination.parentFile?.mkdirs()
+        val temporary = File(destination.parentFile, ".${destination.name}.${UUID.randomUUID()}.part")
+        try {
+            var offset = 0L
+            var size = transfer.size
+            temporary.outputStream().use { output ->
+                while (true) {
+                    val chunk = reader.read(query["root"].orEmpty(), query["path"].orEmpty(), offset, TunnelFileChunk.MAX_BYTES)
+                    if (chunk.offset != offset) throw ApiException("The device returned a file chunk out of order.", 502)
+                    size = chunk.size
+                    if (offset + chunk.data.size > limit) throw ApiException("The file is too large to preview.", 413)
+                    output.write(chunk.data)
+                    offset += chunk.data.size
+                    onProgress(offset, size)
+                    if (chunk.eof) break
+                    if (chunk.data.isEmpty()) throw ApiException("The file download was incomplete.", 502)
+                }
+            }
+            if (offset != size) throw ApiException("The file download was incomplete.", 502)
+            if (!temporary.renameTo(destination)) temporary.copyTo(destination, overwrite = true)
+            return destination
+        } finally {
+            temporary.delete()
+        }
+    }
+
+    private fun secureFileUrl(deviceId: String, root: String, path: String): String =
+        "$SECURE_FILE_SCHEME?device=${deviceId.urlEncode()}&root=${root.urlEncode()}&path=${path.urlEncode()}"
 
     private fun isSameOrigin(first: String, second: String): Boolean {
         return runCatching {

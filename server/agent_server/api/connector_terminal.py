@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import secrets
-import urllib.parse
 from typing import Any
 
 from fastapi import (
@@ -18,9 +17,7 @@ from agent_server.api.connector_common import (
     require_owned_connector,
     require_owned_online_connector,
 )
-from agent_server.core.auth import (
-    verify_user_access_token,
-)
+from agent_server.api.ws_auth import websocket_user_id
 from agent_server.core.models import (
     RpcResponsePayload,
     TerminalCreateRequest,
@@ -37,11 +34,13 @@ from agent_server.deps import (
     get_store,
     get_terminal_broker,
     get_terminal_relay_service,
+    get_terminal_roots,
     get_terminal_service,
 )
 from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.terminal_broker import TerminalBroker, TerminalRelayError
+from agent_server.infra.terminal_roots import TerminalRootStore
 from agent_server.services.connector_rpc import ConnectorUpstreamError
 from agent_server.services.terminal import (
     TerminalService,
@@ -124,6 +123,7 @@ async def connector_terminal_create_v2(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
+    terminal_roots: TerminalRootStore = Depends(get_terminal_roots),
 ) -> RpcResponsePayload:
     await require_owned_online_connector(connector_id, user_id, db, manager)
     terminal_id = f"trm_{secrets.token_urlsafe(18)}"
@@ -151,7 +151,7 @@ async def connector_terminal_create_v2(
         },
         timeout=15,
     )
-    await db.record_connector_terminal_root(
+    await terminal_roots.record_connector_terminal_root(
         connector_id=connector_id,
         terminal_id=terminal_id,
         session_id=scope_id,
@@ -192,6 +192,7 @@ async def connector_terminal_list_v2(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
+    terminal_roots: TerminalRootStore = Depends(get_terminal_roots),
 ) -> RpcResponsePayload:
     await require_owned_online_connector(connector_id, user_id, db, manager)
     scope_id = terminal_connector_scope_id(connector_id)
@@ -203,7 +204,7 @@ async def connector_terminal_list_v2(
         timeout=10,
     )
     if isinstance(result, dict) and isinstance(result.get("terminals"), list):
-        root_by_id = await db.list_connector_terminal_roots(
+        root_by_id = await terminal_roots.list_connector_terminal_roots(
             connector_id=connector_id,
             session_id=scope_id,
         )
@@ -222,7 +223,7 @@ async def connector_terminal_list_v2(
                     cwd=meta["cwd"] if meta is not None else None,
                 )
             )
-        await db.prune_connector_terminal_roots(
+        await terminal_roots.prune_connector_terminal_roots(
             connector_id=connector_id,
             session_id=scope_id,
             terminal_ids=live_ids,
@@ -264,6 +265,7 @@ async def connector_terminal_rename_v2(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
+    terminal_roots: TerminalRootStore = Depends(get_terminal_roots),
 ) -> RpcResponsePayload:
     await require_owned_online_connector(connector_id, user_id, db, manager)
     scope_id = terminal_connector_scope_id(connector_id)
@@ -279,7 +281,7 @@ async def connector_terminal_rename_v2(
         timeout=10,
     )
     if isinstance(result, dict):
-        meta = await db.get_connector_terminal_root(
+        meta = await terminal_roots.get_connector_terminal_root(
             connector_id=connector_id,
             terminal_id=terminal_id,
         )
@@ -304,6 +306,7 @@ async def connector_terminal_set_persistence_v2(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
+    terminal_roots: TerminalRootStore = Depends(get_terminal_roots),
 ) -> RpcResponsePayload:
     await require_owned_online_connector(connector_id, user_id, db, manager)
     scope_id = terminal_connector_scope_id(connector_id)
@@ -321,14 +324,14 @@ async def connector_terminal_set_persistence_v2(
         )
     except ConnectorUpstreamError as exc:
         if getattr(exc.__cause__, "code", None) == "terminal_not_found":
-            await db.forget_connector_terminal_root(
+            await terminal_roots.forget_connector_terminal_root(
                 connector_id=connector_id,
                 terminal_id=terminal_id,
             )
             raise HTTPException(status_code=404, detail="terminal not found") from exc
         raise
     if isinstance(result, dict):
-        meta = await db.get_connector_terminal_root(
+        meta = await terminal_roots.get_connector_terminal_root(
             connector_id=connector_id,
             terminal_id=terminal_id,
         )
@@ -369,6 +372,7 @@ async def connector_terminal_close_v2(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
+    terminal_roots: TerminalRootStore = Depends(get_terminal_roots),
     broker: TerminalBroker = Depends(get_terminal_broker),
 ) -> RpcResponsePayload:
     await require_owned_online_connector(connector_id, user_id, db, manager)
@@ -385,7 +389,7 @@ async def connector_terminal_close_v2(
     term = await broker.get(terminal_id)
     if term is not None and term.connector_id == connector_id:
         await broker.remove(terminal_id)
-    await db.forget_connector_terminal_root(
+    await terminal_roots.forget_connector_terminal_root(
         connector_id=connector_id, terminal_id=terminal_id
     )
     return RpcResponsePayload(ok=True, result=result)
@@ -474,6 +478,7 @@ async def connector_terminal_snapshot_v2(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
+    terminal_roots: TerminalRootStore = Depends(get_terminal_roots),
     relay: TerminalRelayService = Depends(get_terminal_relay_service),
 ) -> RpcResponsePayload:
     await require_owned_online_connector(connector_id, user_id, db, manager)
@@ -484,7 +489,7 @@ async def connector_terminal_snapshot_v2(
     except TerminalRelayError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     if isinstance(result, dict) and isinstance(result.get("terminal"), dict):
-        meta = await db.get_connector_terminal_root(
+        meta = await terminal_roots.get_connector_terminal_root(
             connector_id=connector_id,
             terminal_id=terminal_id,
         )
@@ -508,14 +513,8 @@ async def connector_terminal_stream_v2(
     terminal_id: str,
     fromSeq: int = Query(default=0, ge=0),
 ) -> None:
-    token = websocket.query_params.get("token")
-    auth_header = websocket.headers.get("authorization")
-    if not token and auth_header and auth_header.startswith("Bearer "):
-        token = auth_header[len("Bearer ") :]
-    if not token:
-        await websocket.close(code=4401)
-        return
-    user_id = verify_user_access_token(urllib.parse.unquote(token))
+    # The user's one-time dashboard ticket (``?ticket=``); the access token in the URL is deprecated.
+    user_id = await websocket_user_id(websocket, ticket_scope="dashboard")
     if user_id is None:
         await websocket.close(code=4401)
         return
@@ -530,7 +529,7 @@ async def connector_terminal_stream_v2(
     manager: ConnectorRpcManager = websocket.app.state.rpc
     hub = websocket.app.state.terminal_stream_hub
     broker = websocket.app.state.terminal_broker
-    relay = TerminalRelayService(db, manager, broker)
+    relay = TerminalRelayService(websocket.app.state.terminal_roots, manager, broker)
 
     await websocket.accept()
     await hub.attach(connector_id, terminal_id, websocket)
@@ -634,14 +633,8 @@ async def connector_terminal_stream(
     terminal_id: str,
     fromSeq: int = Query(default=0, ge=0),
 ) -> None:
-    token = websocket.query_params.get("token")
-    auth_header = websocket.headers.get("authorization")
-    if not token and auth_header and auth_header.startswith("Bearer "):
-        token = auth_header[len("Bearer ") :]
-    if not token:
-        await websocket.close(code=4401)
-        return
-    user_id = verify_user_access_token(urllib.parse.unquote(token))
+    # The user's one-time dashboard ticket (``?ticket=``); the access token in the URL is deprecated.
+    user_id = await websocket_user_id(websocket, ticket_scope="dashboard")
     if user_id is None:
         await websocket.close(code=4401)
         return

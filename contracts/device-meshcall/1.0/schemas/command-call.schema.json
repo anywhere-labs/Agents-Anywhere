@@ -1,0 +1,45 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:command-call",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Request of every ``Commands/*`` call: a state-changing intent with a durable receipt.",
+  "properties": {
+    "commandId": {
+      "description": "equals clientMessageId/operationId when the client supplied one",
+      "minLength": 1,
+      "title": "Commandid",
+      "type": "string"
+    },
+    "deadline": {
+      "title": "Deadline",
+      "type": "string"
+    },
+    "inputDigest": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Client-computed digest of the plaintext input; the Server only compares it",
+      "title": "Inputdigest"
+    },
+    "p": {
+      "additionalProperties": true,
+      "title": "P",
+      "type": "object"
+    }
+  },
+  "required": [
+    "commandId",
+    "deadline"
+  ],
+  "title": "CommandCall",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

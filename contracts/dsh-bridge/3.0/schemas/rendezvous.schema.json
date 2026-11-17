@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rendezvous.schema.json",
+  "title": "DshBridgeRendezvous",
+  "description": "~/.agents-anywhere/dsh-bridge/connector-acp.json (§1).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "protocol",
+    "instanceId",
+    "pid",
+    "endpoint",
+    "key"
+  ],
+  "properties": {
+    "version": {
+      "const": 3
+    },
+    "protocol": {
+      "const": "acp"
+    },
+    "instanceId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "pid": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "endpoint": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "unixPath"
+          ],
+          "properties": {
+            "unixPath": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "pipe"
+          ],
+          "properties": {
+            "pipe": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      ]
+    },
+    "key": {
+      "type": "string",
+      "pattern": "^ak_[0-9a-f]{64,}$"
+    }
+  }
+}

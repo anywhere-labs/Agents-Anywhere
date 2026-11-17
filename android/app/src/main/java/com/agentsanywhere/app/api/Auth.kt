@@ -205,6 +205,7 @@ class AuthApi(
             oauthProviderLabel = optNullableString("oauthProviderLabel"),
             setupTokenExpiresAt = optNullableString("setupTokenExpiresAt"),
             serverTime = getString("serverTime"),
+            e2ee = optJSONObject("e2ee").toE2eeServerConfig(),
         )
     }
 
@@ -269,5 +270,13 @@ class AuthApi(
         if (!has(name) || isNull(name)) return null
         return optString(name).takeIf { it.isNotBlank() }
     }
+}
 
+internal fun JSONObject?.toE2eeServerConfig(): E2eeServerConfig {
+    if (this == null) return E2eeServerConfig()
+    return E2eeServerConfig(
+        mode = if (optString("mode") == E2eeServerConfig.MODE_REQUIRED) E2eeServerConfig.MODE_REQUIRED else E2eeServerConfig.MODE_OFF,
+        web = if (optString("web") == E2eeServerConfig.DENY) E2eeServerConfig.DENY else E2eeServerConfig.ALLOW,
+        preview = if (optString("preview") == E2eeServerConfig.DENY) E2eeServerConfig.DENY else E2eeServerConfig.ALLOW,
+    )
 }

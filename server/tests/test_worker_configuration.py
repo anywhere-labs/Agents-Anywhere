@@ -5,6 +5,12 @@ from agent_server import app
 from agent_server.core.process_settings import ProcessSettings
 
 
+@pytest.fixture(autouse=True)
+def _server_secret(monkeypatch):
+    # ``main()`` refuses to start without a real secret.
+    monkeypatch.setenv("AGENT_SERVER_SECRET", "w" * 40)
+
+
 def test_multi_worker_launcher_and_unique_rpc_identity(monkeypatch):
     monkeypatch.setenv("AGENT_SERVER_WORKERS", "4")
     monkeypatch.setenv("AGENT_SERVER_EVENT_WORKERS", "2")
@@ -26,20 +32,14 @@ def test_multi_worker_launcher_and_unique_rpc_identity(monkeypatch):
     assert settings.instance_id() == "production-456"
 
 
-@pytest.mark.parametrize("single_instance", [False, True])
-def test_multi_worker_rejects_process_local_coordination(monkeypatch, single_instance):
+def test_multi_worker_rejects_process_local_coordination(monkeypatch):
     monkeypatch.setenv("AGENT_SERVER_WORKERS", "4")
-    if single_instance:
-        monkeypatch.setenv(
-            "AGENT_SERVER_REDIS_URL", "redis://unused-in-headless-test/0"
-        )
-        monkeypatch.setenv("AGENT_SERVER_TIMELINE_SINGLE_INSTANCE", "true")
     monkeypatch.setattr(
         app.uvicorn,
         "run",
         lambda *args, **kwargs: pytest.fail("must reject before starting"),
     )
-    with pytest.raises(ValueError, match="requires|cannot be used"):
+    with pytest.raises(ValueError, match="requires"):
         app.main()
 
 

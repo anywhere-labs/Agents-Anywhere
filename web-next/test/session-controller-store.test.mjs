@@ -1,7 +1,10 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { createSessionControllerStore } from "../src/components/session/session-controller-store.ts"
-import { createSessionStateCache } from "../src/components/session/session-state-cache.ts"
+import { registerSource } from "./helpers/onboarding-source.mjs"
+
+registerSource()
+const { createSessionControllerStore } = await import("../src/components/session/session-controller-store.ts")
+const { createSessionStateCache } = await import("../src/components/session/session-state-cache.ts")
 
 function controller(id) {
   const value = { state: { session: { id }, items: [], eventCursor: "seq:10" }, hasSnapshot: true, invalidated: false }

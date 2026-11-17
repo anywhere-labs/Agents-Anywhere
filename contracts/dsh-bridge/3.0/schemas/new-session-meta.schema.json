@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "new-session-meta.schema.json",
+  "title": "DshNewSessionMeta",
+  "description": "session/new request _meta.dsh (§3).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "sessionId"
+  ],
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,200}$"
+    },
+    "agentPreset": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

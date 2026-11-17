@@ -9,6 +9,7 @@ All Server HTTP, SSE, and WebSocket API documentation should live under this dir
 ## Documents
 
 - [运行中排队消息](session-message-queue.md)：会话运行中继续发送、Server 排队与派发、打断并发送、队列管理接口。
+- [端到端加密模式](e2ee.md)：`AGENT_SERVER_E2EE*` 配置、加密模式下被拒绝的明文路由、命令登记 `/api/v3/e2ee/commands` 与模式切换。
 - [统一目标模式](goals.md)：Codex、Claude Code 的目标栏、操作回执、原生续跑和数据库恢复。
 
 - [统一原生 Plan](planning.md)：规划命令、流式卡片、不可变版本、审阅和回执 API；[完整设计](../runtime-protocol/unified-plan-implementation-plan.md)保留原生研究与分层依据。
@@ -21,6 +22,7 @@ All Server HTTP, SSE, and WebSocket API documentation should live under this dir
 - [Effective capability API](./capabilities.md): global and session-scoped effective capability semantics, paths, and realtime events.
 - [Capability event deduplication](./capability-event-deduplication.md): why repeated session capability events occurred and how live projection delivery is deduplicated safely.
 - [模型配置](model-config.md)：模型配置、预览、应用与恢复，Tokens Anywhere 链接，以及 Runtime 的成熟度和模型连接状态。
+- [登录令牌与刷新](auth-tokens.md)：登录响应里的刷新令牌、`/auth/refresh` 轮换、`/auth/logout`，以及令牌什么时候失效。
 - [Realtime API](./realtime.md): session, dashboard, connector, and terminal realtime channel semantics.
 - [Admin Usage API](./admin-usage.md): event-driven usage statistics for administrators (`/admin/usage/*`), how events are collected and what each metric means.
 - [Frontend migration checklist](./frontend-migration-checklist.md): frontend API call-site replacements and behavior changes to apply after backend cleanup.

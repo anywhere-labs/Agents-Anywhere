@@ -32,20 +32,6 @@ from connector.server.runtime_rpc_payloads import (
 )
 
 
-@pytest.mark.parametrize("event_workers, overload", [(0, False), (1, False), (1, True)])
-def test_connector_coalescing_server_persistence_and_web_recovery(
-    tmp_path, monkeypatch, event_workers, overload
-):
-    monkeypatch.setenv("AGENT_SERVER_EVENT_WORKERS", str(event_workers))
-    if overload:
-        monkeypatch.setenv("AGENT_SERVER_EVENT_QUEUE_BYTES", "1")
-    with make_client(tmp_path) as client:
-        # The worker-enabled replay exceeds the default offload threshold.
-        _replay_connector_notifications(
-            client, text_repeats=2048 if event_workers else 1, overload=overload
-        )
-
-
 def _replay_connector_notifications(client, *, text_repeats, overload):
     _, access_token, session_id, headers = create_connector_and_session(client)
     ticket = ws_ticket(client, session_id, headers)

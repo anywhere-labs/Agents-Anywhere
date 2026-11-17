@@ -1,0 +1,14 @@
+{
+  "repository": "https://github.com/t4wefan/meshcall.git",
+  "commit": "93344059ada65735c6cc08fdf3247ea9fb808d6b",
+  "version": "0.4.0-dev.9334405",
+  "go": "go1.26.0",
+  "targets": {
+    "darwin-arm64": "69851eeb10006c0905a9d4df3658a5991236f10a781ce1de10c7f8580d1bbbc8",
+    "darwin-x64": "2acdfe7fa21e5b8684f8b3ae11e3eef5f9147a7a6b925e33b48114b13ce0c546",
+    "linux-arm64": "21cbd0e0a9a402a1d78cdc2e106c7e94871c0eee76473ea1ae693cb96d2e6691",
+    "linux-x64": "419d4195e8abf7eacbcee8b5000c8d5cd6a8880cbc316a88bc31532a1b2d9cac",
+    "win32-arm64": "eef2d0b9ecf79cb32b23f0801f9bb1055a0b95c0aac30829839787427d8d77d3",
+    "win32-x64": "3266aa6ef9fba04633e6c0eb59202c7313289c0b1be7a3ebef36be73fbcd7679"
+  }
+}

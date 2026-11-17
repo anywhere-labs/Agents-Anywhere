@@ -1,0 +1,33 @@
+{
+  "name": "@agents-anywhere/connector",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Agents Anywhere v3 Connector (TypeScript rewrite of connector/)",
+  "type": "module",
+  "packageManager": "yarn@4.6.0",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check:layers": "node scripts/check-layers.mjs",
+    "contracts:generate": "node scripts/generate-contract-types.mjs",
+    "contracts:check": "node scripts/generate-contract-types.mjs --check",
+    "bundle": "node scripts/bundle.mjs"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "1.4.0",
+    "meshcall": "file:../vendor/meshcall/meshcall-0.4.0-dev.9334405.tgz",
+    "node-pty": "^1.1.0",
+    "qrcode-generator": "^2.0.4",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "esbuild": "^0.28.2",
+    "json-schema-to-typescript": "^15.0.4",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

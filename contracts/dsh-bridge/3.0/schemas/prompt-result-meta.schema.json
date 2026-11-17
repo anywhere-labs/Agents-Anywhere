@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "prompt-result-meta.schema.json",
+  "title": "DshPromptResultMeta",
+  "description": "session/prompt result _meta.dsh (§8).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "admitted"
+  ],
+  "properties": {
+    "admitted": {
+      "type": "boolean"
+    },
+    "duplicate": {
+      "type": "boolean",
+      "description": "requestId was already admitted earlier"
+    }
+  }
+}

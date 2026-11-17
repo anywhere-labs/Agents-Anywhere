@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager
 
 import pytest
 
@@ -224,11 +223,6 @@ def test_presence_change_publishes_reprojected_session_capabilities() -> None:
     session = _session(takeover=True)
 
     class Repository:
-        @asynccontextmanager
-        async def session_revision_fence(self, session_id: str):
-            assert session_id == session.id
-            yield
-
         async def list_sessions_for_connector(
             self, connector_id: str
         ) -> list[SessionView]:
@@ -333,14 +327,10 @@ def test_batch_refreshes_equal_revision_replacement_from_another_publisher():
                 ]
 
             async def get_session(self, session_id):
-                return _session(takeover=True).model_copy(update={"id": session_id})
-
-            @asynccontextmanager
-            async def session_revision_fence(self, session_id):
                 if asyncio.current_task().get_name() == "old" and session_id == "session-1":
                     paused.set()
                     await release.wait()
-                yield
+                return _session(takeover=True).model_copy(update={"id": session_id})
 
             async def get_protocol_capabilities_stamp(self, connector_id):
                 return (7, "first-write" if self.allowed else "replacement-write")
@@ -432,10 +422,6 @@ def test_capability_batch_reads_once_and_newer_batch_supersedes_old_work():
             async def get_protocol_capabilities_stamp(self, connector_id):
                 return (1, "allowed" if self.allowed else "denied")
 
-            @asynccontextmanager
-            async def session_revision_fence(self, session_id):
-                yield
-
             async def get_session_seq(self, session_id):
                 if self.pause:
                     self.pause = False
@@ -473,7 +459,7 @@ def test_capability_batch_reads_once_and_newer_batch_supersedes_old_work():
 
 
 class _BatchRepository:
-    """Stored rows change between the batch listing and each session fence."""
+    """Stored rows change between the batch listing and each session read."""
 
     def __init__(self, sessions: list[SessionView]) -> None:
         self.rows = {session.id: session for session in sessions}
@@ -491,10 +477,6 @@ class _BatchRepository:
 
     async def get_session_seq(self, session_id):
         return (await self.get_session(session_id)).updatedSeq
-
-    @asynccontextmanager
-    async def session_revision_fence(self, session_id):
-        yield
 
     async def get_protocol_capabilities_stamp(self, connector_id):
         return (1, "stored")
@@ -531,17 +513,17 @@ def test_batch_projects_takeover_enabled_after_the_listing():
         repository = _BatchRepository([_session(takeover=False).model_copy(update={"updatedSeq": 5})])
         publisher = _RecordingPublisher()
 
-        class Fence:
-            @asynccontextmanager
-            async def __call__(self, session_id):
-                # The user enabled takeover after the batch listed sessions;
-                # that write committed before the batch reached this fence.
-                repository.rows[session_id] = repository.rows[session_id].model_copy(
-                    update={"takeover": True, "updatedSeq": 6},
-                )
-                yield
+        original_get_session = repository.get_session
 
-        repository.session_revision_fence = Fence()
+        async def write_then_read(session_id):
+            # The user enabled takeover after the batch listed sessions;
+            # that write committed before the batch read this session.
+            repository.rows[session_id] = repository.rows[session_id].model_copy(
+                update={"takeover": True, "updatedSeq": 6},
+            )
+            return await original_get_session(session_id)
+
+        repository.get_session = write_then_read
         await publish_connector_session_capabilities(
             repository, _OnlinePresence(), publisher, "connector-1",
         )

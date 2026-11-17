@@ -1,0 +1,37 @@
+{
+  "$id": "urn:agents-anywhere:e2ee:1.0:tunnel-response",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "body": {
+      "default": null,
+      "title": "Body"
+    },
+    "id": {
+      "minLength": 1,
+      "title": "Id",
+      "type": "string"
+    },
+    "kind": {
+      "const": "response",
+      "default": "response",
+      "title": "Kind",
+      "type": "string"
+    },
+    "status": {
+      "maximum": 599,
+      "minimum": 100,
+      "title": "Status",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "status"
+  ],
+  "title": "TunnelResponse",
+  "type": "object",
+  "x-contract": "e2ee",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

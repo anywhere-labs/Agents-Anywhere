@@ -313,6 +313,25 @@ export function FilePreviewSurface({
         setState({ kind: "text", file: text })
         return
       }
+      if (!scopedSession && token && dashboardApi.connectorFsReadsThroughChannel(connectorId)) {
+        // Encrypted: there is no download URL; the bytes come through the channel and stay in an object URL.
+        const file = await dashboardApi.connectorFsReadBlob(token, connectorId, root, path)
+        if (!requestIsCurrent()) return
+        const fileName = file.name || name
+        const mediaType = file.mediaType || mediaTypeForFile(fileName)
+        const objectUrl = URL.createObjectURL(new Blob([file.blob], { type: mediaType || "application/octet-stream" }))
+        if (!requestIsCurrent()) {
+          URL.revokeObjectURL(objectUrl)
+          return
+        }
+        objectUrlRef.current = objectUrl
+        setState({
+          kind: "binary",
+          file: { path, name: fileName, size: file.size, sha256: "", mediaType, downloadUrl: "" },
+          objectUrl,
+        })
+        return
+      }
       const response = scopedSession
         ? await dashboardApi.connectorFsPreviewRead(scopedSession.previewAccessToken)
         : token

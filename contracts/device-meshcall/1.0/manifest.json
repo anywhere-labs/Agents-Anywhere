@@ -1,0 +1,271 @@
+{
+  "artifacts": [
+    {
+      "direction": "bidirectional",
+      "model": "LinkHello",
+      "path": "schemas/link-hello.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "d82df604a2d17d183e081181464d8bdd85a6c921fa0c96742f78c71fbed9a75c",
+      "slug": "link-hello"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "LinkWelcome",
+      "path": "schemas/link-welcome.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "98d41ee70ce08364d1776063efb993fd3a10792929450afb98cdbc1d337979c2",
+      "slug": "link-welcome"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "LinkReady",
+      "path": "schemas/link-ready.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "f635372b15ca2f55348ae8d9d6171f00079fe36358c3168071aa127def424936",
+      "slug": "link-ready"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "DisplayEnvelope",
+      "path": "schemas/display-envelope.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "9628368fd88797279a147d11dd77f565948d745a8e4db91e32f8a2a7528ab9ec",
+      "slug": "display-envelope"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "SessionSummary",
+      "path": "schemas/session-summary.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "9a0b97c490a9a12f717f5fef4890584fa208967ac20a8babfd70ed55bef0a514",
+      "slug": "session-summary"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "CommandCall",
+      "path": "schemas/command-call.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "24bbc5622ea78bf3412d5ef78bb24c452846e2122b47edf7573035b91e2e0ace",
+      "slug": "command-call"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "CommandAck",
+      "path": "schemas/command-ack.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "f5b5cb2a6a29d505e54a7a90539e20f8dd64f90997dc1ff11c33063bde02f2bd",
+      "slug": "command-ack"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "StreamChunk",
+      "path": "schemas/stream-chunk.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "50a26a6c2a3d4a884fb70dd647b357419a6a3486d860651ba64c61755f5db7e4",
+      "slug": "stream-chunk"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "LinkAttachRequest",
+      "path": "schemas/link-attach-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "084d8fb47b6e10fac974407033d110bd4c4b6365aa5cb1ea05fd65ba1cd09782",
+      "slug": "link-attach-request"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "LinkAttachItem",
+      "path": "schemas/link-attach-item.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "a06804145627f0f3080a1fc17e026fde863e037866028645dae44656ef9f1cb1",
+      "slug": "link-attach-item"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "OutboxOpenRequest",
+      "path": "schemas/outbox-open-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "64a81f2f7a3641c859e3590c55664fc21bde850718750c7dc7f89503d91e3a76",
+      "slug": "outbox-open-request"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "OutboxItem",
+      "path": "schemas/outbox-item.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "0ad5ceb117e5a10ebf1d2ba4452375b1b90c749386fe940f5a7bd1f6de83f107",
+      "slug": "outbox-item"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "OutboxAck",
+      "path": "schemas/outbox-ack.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "714a10327b275d92c98359624c7b434556bcecf2fc0dde172307c4a0ec8b1d22",
+      "slug": "outbox-ack"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "SessionWatchRequest",
+      "path": "schemas/session-watch-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "b674a0c0174eccdbdb2569544d7923188a64faeaacafb56697bde090fe921ee1",
+      "slug": "session-watch-request"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "SecureChannelOpen",
+      "path": "schemas/secure-channel-open.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "12a9bd332bc2feee1dfdfeaa5a95530af3d6a7bf31498bda01073796fc56dceb",
+      "slug": "secure-channel-open"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "SecureChannelItem",
+      "path": "schemas/secure-channel-item.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "a93364dd8eeacabed31a49cf44078f7be7f6b283d37f2a3c89e683a6b136a6e5",
+      "slug": "secure-channel-item"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "ChangesEvent",
+      "path": "schemas/changes-event.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "4faa55cbc0bb854157fa1a89dbba88b6d4e2b434c21e14ac00c5409a18f16eb4",
+      "slug": "changes-event"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "RuntimeStatusEvent",
+      "path": "schemas/runtime-status-event.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "fcc8df65cb742b7fc70a8b4cb927b976ac11c0068f9d72a5cc6a73d1a1d66a76",
+      "slug": "runtime-status-event"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "SessionSummaryOut",
+      "path": "schemas/session-summary-out.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "bac25eeb675e1e40652b42a7550d794bdca1a34b6b31ae1c4b0004702a261404",
+      "slug": "session-summary-out"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "SessionInventoryOut",
+      "path": "schemas/session-inventory-out.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "e7f32f26167e9d38c9984af41d06cd348291e493f3685257575cfd7265e1d4dd",
+      "slug": "session-inventory-out"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "CommandResultOut",
+      "path": "schemas/command-result-out.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "864b836cb4e02a6fdcbe459bc3aee635241aa5d509993c19b7a02ff5a45bce80",
+      "slug": "command-result-out"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "AttachmentConsumedOut",
+      "path": "schemas/attachment-consumed-out.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "b803c35e2d785519767e499fc0a07ea9c8643cdcc783c62471d1c4487eb16d81",
+      "slug": "attachment-consumed-out"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "UsageReportOut",
+      "path": "schemas/usage-report-out.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "e5fc7fff20523bfbed04190ca36d8369ca775867b1201c0b941d9cbfa009587b",
+      "slug": "usage-report-out"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "ClientSnapshotRequest",
+      "path": "schemas/client-snapshot-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "f59afa624abe301a7624084ee65b0f8464396da232141298dd87c30359325407",
+      "slug": "client-snapshot-request"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "StoreReadRequest",
+      "path": "schemas/store-read-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "22f5520bbe3f39399b19143430617b2af3f7ad237e45f91d616b38c075b18764",
+      "slug": "store-read-request"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "StoreReadResponse",
+      "path": "schemas/store-read-response.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "bb4041be5c60758ca5df931018268e7958f1f1fbecd48e74b7de61f3aa5a95c0",
+      "slug": "store-read-response"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "ChangesSinceRequest",
+      "path": "schemas/changes-since-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "7081c50a635faf5cbf4c68a3696476abc6a5d9c515ddb18f5ce679aee8f1fa2f",
+      "slug": "changes-since-request"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "ChangesSinceResponse",
+      "path": "schemas/changes-since-response.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "63c21be1a03567171429d8f6ba1c7ff365bced4a82dff48473a763aacf29a69d",
+      "slug": "changes-since-response"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "CommandStatusRequest",
+      "path": "schemas/command-status-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "3ef51efcbd403648b51754e9fe0b2bd17fcf0cd7081da00f9990c491afdca974",
+      "slug": "command-status-request"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "CommandStatusResponse",
+      "path": "schemas/command-status-response.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "612164802d267c8fef49eb0e969ecfeab0c185a8fcab619d803c5522b5048846",
+      "slug": "command-status-response"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "SendMessageCommand",
+      "path": "schemas/send-message-command.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "e7438ee659961434709a97ffbd7096696d4523022506a670470de6eb20656c71",
+      "slug": "send-message-command"
+    }
+  ],
+  "carriage": "meshcall/1",
+  "contract": "device-meshcall",
+  "extras": [
+    {
+      "path": "device.meshcall.json",
+      "sha256": "d8aa3797de3301909f2870be3485bd08787d1ac627a0145b399bd36f52b101e9"
+    },
+    {
+      "path": "mesh-errors.json",
+      "sha256": "5bb8ebbf8523543774df089202b382b0e12dfa0f7273c28d47d140cd337b9b5d"
+    },
+    {
+      "path": "e2ee-registration.json",
+      "sha256": "3d7d489c30843f530317dbcf5ef40eec4e33223f2537be47fbfba2b66b7f026a"
+    }
+  ],
+  "jsonSchemaDraft": "https://json-schema.org/draft/2020-12/schema",
+  "protocolVersion": "1.0",
+  "source": "server/agent_server/core/device_meshcall.py"
+}

@@ -1,8 +1,12 @@
 import Foundation
+import os
 
 /// Serial, bounded disk I/O off the main actor. Account invalidation closes this
 /// handle before deleting it, so an in-flight save cannot recreate signed-out data.
 actor V2LocalStore {
+    /// Set synchronously when the account scope ends, before the actor-hopping
+    /// `close(removing:)` runs, so a save queued by a closing page is refused.
+    private nonisolated let invalidated = OSAllocatedUnfairLock(initialState: false)
     private struct Envelope<Value: Codable>: Codable { let version: Int; let value: Value }
     private let directory: URL
     private var valid = true
@@ -32,11 +36,23 @@ actor V2LocalStore {
     }
     func removeSession(_ id: String) { removedSessions.insert(id); try? FileManager.default.removeItem(at: url(sessionKey(id))) }
     func close(removing: Bool) {
+        invalidate()
         valid = false
         if removing { try? FileManager.default.removeItem(at: directory) }
     }
+    /// Refuses every later read and write at once; `close(removing:)` deletes the files.
+    nonisolated func invalidate() { invalidated.withLock { $0 = true } }
+    private var isOpen: Bool { valid && !invalidated.withLock { $0 } }
+    /// Deletes every account directory below `root` except `kept` (nil deletes all).
+    /// Signing out removes all of them; signing in removes other accounts' content.
+    nonisolated static func removeScopes(in root: URL, keeping kept: String?) {
+        guard let directories = try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) else { return }
+        for directory in directories where directory.lastPathComponent != kept {
+            try? FileManager.default.removeItem(at: directory)
+        }
+    }
     private func read<Value: Codable>(_ key: String, as: Value.Type) -> Value? {
-        guard valid else { return nil }
+        guard isOpen else { return nil }
         let location = url(key)
         guard let size = try? location.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 64 * 1024 * 1024,
               let bytes = try? Data(contentsOf: location),
@@ -44,7 +60,7 @@ actor V2LocalStore {
         return envelope.value
     }
     private func write<Value: Codable>(_ value: Value, key: String) {
-        guard valid, let bytes = try? JSONEncoder().encode(Envelope(version: 1, value: value)), bytes.count <= 64 * 1024 * 1024 else { return }
+        guard isOpen, let bytes = try? JSONEncoder().encode(Envelope(version: 1, value: value)), bytes.count <= 64 * 1024 * 1024 else { return }
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             var folder = directory; var values = URLResourceValues(); values.isExcludedFromBackup = true

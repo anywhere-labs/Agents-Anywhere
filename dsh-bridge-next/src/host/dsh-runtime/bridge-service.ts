@@ -26,8 +26,8 @@ function packageVersion(specifier: string): string {
 }
 
 /** DSH packages share one release version and the Host resolves this peer to its own copy. */
-const RUNTIME_VERSION = packageVersion('@deepseek-ai/dsh-typert-protocol/package.json')
-const BRIDGE_VERSION = packageVersion('@agents-anywhere/dsh-bridge-next/package.json')
+export const RUNTIME_VERSION = packageVersion('@deepseek-ai/dsh-typert-protocol/package.json')
+export const BRIDGE_VERSION = packageVersion('@agents-anywhere/dsh-bridge-next/package.json')
 
 type Payload = Record<string, unknown>
 // 2.0 keeps the 1.0 payload shapes (contracts/dsh-bridge/1.0); per-field schemas are a later revision.

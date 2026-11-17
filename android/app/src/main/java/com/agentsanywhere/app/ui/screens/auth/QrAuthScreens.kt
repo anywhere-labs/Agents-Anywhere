@@ -292,7 +292,7 @@ fun QrWaitingScreen(
 }
 
 @Composable
-private fun QrScannerFrame(
+internal fun QrScannerFrame(
     hasCameraPermission: Boolean,
     isScanning: Boolean,
     onQrValue: (String) -> Unit,

@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "prompt-meta.schema.json",
+  "title": "DshPromptMeta",
+  "description": "session/prompt and _session/steering request _meta.dsh (§8).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "requestId"
+  ],
+  "properties": {
+    "requestId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "delivery": {
+      "type": "string",
+      "enum": [
+        "turn",
+        "queue"
+      ]
+    },
+    "selections": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reasoningEffort": {
+          "type": "string",
+          "minLength": 1
+        },
+        "permission": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agentPreset": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

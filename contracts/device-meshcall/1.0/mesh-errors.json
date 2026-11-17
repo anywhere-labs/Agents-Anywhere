@@ -1,0 +1,69 @@
+{
+  "beforeOpen": "not_delivered",
+  "rules": [
+    {
+      "code": "unavailable",
+      "commandError": "connector_offline",
+      "failure": "not_delivered",
+      "readError": "deviceOffline",
+      "reason": "no_instances"
+    },
+    {
+      "code": "unavailable",
+      "commandError": "connector_offline",
+      "failure": "not_delivered",
+      "readError": "deviceOffline",
+      "reason": "instance_unknown"
+    },
+    {
+      "code": "unavailable",
+      "commandError": "connector_offline",
+      "failure": "not_delivered",
+      "readError": "deviceOffline",
+      "reason": "instance_draining"
+    },
+    {
+      "code": "resource_exhausted",
+      "commandError": "connector_offline",
+      "failure": "not_delivered",
+      "readError": "device_read_timeout",
+      "reason": "overloaded"
+    },
+    {
+      "code": "unavailable",
+      "commandError": "command_outcome_unknown",
+      "failure": "outcome_unknown",
+      "readError": "device_read_timeout",
+      "reason": "instance_lost"
+    },
+    {
+      "code": "deadline_exceeded",
+      "commandError": "command_outcome_unknown",
+      "failure": "outcome_unknown",
+      "readError": "device_read_timeout",
+      "reason": null
+    },
+    {
+      "code": "cancelled",
+      "commandError": "command_outcome_unknown",
+      "failure": "outcome_unknown",
+      "readError": "device_read_timeout",
+      "reason": null
+    },
+    {
+      "code": "unavailable",
+      "commandError": "command_outcome_unknown",
+      "failure": "outcome_unknown",
+      "readError": "device_read_timeout",
+      "reason": null
+    },
+    {
+      "code": "internal",
+      "commandError": "internal",
+      "failure": "application",
+      "readError": "internal",
+      "reason": null
+    }
+  ],
+  "unmatched": "application"
+}

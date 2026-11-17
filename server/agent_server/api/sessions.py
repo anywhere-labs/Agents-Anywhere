@@ -2,15 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import os
-import time
 from collections import deque
 from collections.abc import Mapping
-from contextlib import AsyncExitStack
 from typing import Any
 
 from fastapi import (
     APIRouter,
-    BackgroundTasks,
     Body,
     Depends,
     HTTPException,
@@ -24,17 +21,27 @@ from agent_server.api.connector_runtimes import (
     parse_runtime_model_catalog_response,
     parse_runtime_permission_catalog_response,
 )
+from agent_server.api.device_session_reads import (
+    device_events,
+    device_snapshot,
+    device_timeline,
+)
 from agent_server.api.server_push_websocket import (
     run_server_push_until_disconnect,
 )
+from agent_server.api.v2_compat import V3_SESSION_ONLY, require_v3_owned_connector
 from agent_server.core.capabilities import (
     SESSION_COMMANDS,
     SESSION_INTERACTION_APPROVAL,
     capability_is_usable,
 )
+from agent_server.core.device_meshcall import DisplayEnvelope
+from agent_server.core.e2ee_settings import E2eeSettings, e2ee_required_error
 from agent_server.core.events import (
+    PORT_EVENT_TYPES,
     EventCursorError,
     event_cursor,
+    parse_event_cursor,
     protocol_event,
 )
 from agent_server.core.models import (
@@ -63,12 +70,14 @@ from agent_server.core.models import (
 from agent_server.core.protocol import (
     ProtocolCapabilitiesResponse,
     ProtocolCapabilitySet,
-    ProtocolEventRecoveryResponse,
     ProtocolModelCatalogResponse,
     ProtocolPermissionCatalogResponse,
-    ProtocolSessionSnapshotResponse,
-    ProtocolTimelineResponse,
-    ProtocolTimelineSnapshot,
+)
+from agent_server.core.protocol_v1_2 import (
+    CATCHUP_REQUIRED_EVENT,
+    ProtocolEventRecoveryResponseV12,
+    ProtocolSessionSnapshotResponseV12,
+    ProtocolTimelineResponseV12,
 )
 from agent_server.core.runtime_identity import (
     SessionRuntimeBindingError,
@@ -78,16 +87,17 @@ from agent_server.core.utc import utc_now
 from agent_server.deps import (
     current_user_id,
     get_catalog_service,
+    get_device_planning,
+    get_device_reads,
     get_device_runtime_service,
-    get_event_recovery_service,
-    get_message_queue_wake,
+    get_e2ee_settings,
     get_model_channel_service,
     get_rpc,
     get_session_run_service,
     get_session_runtime_state_cache,
+    get_session_watch,
     get_store,
     get_timeline_broker,
-    get_timeline_write_buffer,
     get_usage_recorder,
 )
 from agent_server.infra.connector_rpc import (
@@ -97,6 +107,7 @@ from agent_server.infra.connector_rpc import (
 )
 from agent_server.infra.event_preparation import EventPreparationCapacityError
 from agent_server.infra.repositories.facade import Store
+from agent_server.infra.session_watch import SessionWatchHub
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.infra.ws_tickets import ClientWsTicketManager
 from agent_server.services.catalogs import CatalogService
@@ -105,6 +116,7 @@ from agent_server.services.connector_presence import (
     with_effective_session_connector_statuses,
 )
 from agent_server.services.dashboard_events import publish_dashboard_changed
+from agent_server.services.device_reads import DeviceReadService
 from agent_server.services.device_runtimes import (
     DeviceRuntimeError,
     DeviceRuntimeService,
@@ -113,14 +125,12 @@ from agent_server.services.effective_capabilities import (
     derive_session_effective_capabilities,
     read_session_capability_facts,
 )
-from agent_server.services.event_recovery import EventRecoveryService
 from agent_server.services.model_channels import ModelChannelService
 from agent_server.services.session_meta_projection import (
     project_session_meta_for_dashboard,
 )
 from agent_server.services.session_run import SessionRunError, SessionRunService
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
-from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 from agent_server.services.usage_events import UsageRecorder
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
@@ -131,6 +141,8 @@ _SESSION_WS_LIVE_PROJECTION_EVENT_TYPES = {
     "runtime.queue.updated",
     "runtime.state.updated",
     "session.meta.updated",
+    "port.listening",
+    "port.closed",
 }
 
 
@@ -164,8 +176,6 @@ async def _publish_session_protocol_update(
     runtime_state_cache: SessionRuntimeStateCache,
     session_id: str,
 ) -> None:
-    # DSH state reads synchronously ingest source observations back into AA.
-    # Keep runtime RPC outside the revision fence so that callback can acquire it.
     session = await db.get_session(session_id)
     runtime_state = await read_runtime_state_live(
         db,
@@ -180,26 +190,25 @@ async def _publish_session_protocol_update(
         session,
         None,
     )
-    async with db.session_revision_fence(session_id):
-        next_seq = await db.get_session_seq(session_id)
-        session = await db.get_session(session_id)
-        # An event may have arrived while the RPC was in flight. Publish the
-        # latest cached state together with the current session revision.
-        runtime_state = await runtime_state_cache.get(session_id) or runtime_state
-        session = session_with_runtime_state(session, runtime_state)
-        session = await with_effective_session_connector_status(manager, session)
-        effective_capabilities = derive_session_effective_capabilities(
-            session=session,
-            runtime_capabilities=runtime_capabilities,
-        )
-        envelope: dict[str, Any] = {
-            "sessionId": session_id,
-            "nextSeq": next_seq,
-            "session": session.model_dump(mode="json"),
-            "runtimeState": runtime_state.model_dump(mode="json"),
-            "capabilitySet": effective_capabilities.model_dump(mode="json"),
-        }
-        await broker.publish(session_id, envelope)
+    next_seq = await db.get_session_seq(session_id)
+    session = await db.get_session(session_id)
+    # An event may have arrived while the RPC was in flight. Publish the
+    # latest cached state together with the current session revision.
+    runtime_state = await runtime_state_cache.get(session_id) or runtime_state
+    session = session_with_runtime_state(session, runtime_state)
+    session = await with_effective_session_connector_status(manager, session)
+    effective_capabilities = derive_session_effective_capabilities(
+        session=session,
+        runtime_capabilities=runtime_capabilities,
+    )
+    envelope: dict[str, Any] = {
+        "sessionId": session_id,
+        "nextSeq": next_seq,
+        "session": session.model_dump(mode="json"),
+        "runtimeState": runtime_state.model_dump(mode="json"),
+        "capabilitySet": effective_capabilities.model_dump(mode="json"),
+    }
+    await broker.publish(session_id, envelope)
 
 
 async def _best_effort_publish_session_protocol_update(
@@ -256,23 +265,22 @@ async def _publish_session_runtime_state_update(
 ) -> None:
     """Publish one already-read runtime state to session subscribers."""
 
-    async with db.session_revision_fence(session_id):
-        next_seq = await db.get_session_seq(session_id)
-        session = await db.get_session(session_id)
-        # A live event may have arrived while the RPC was in flight. Publish the
-        # newest cached state together with the current session revision.
-        latest_state = await runtime_state_cache.get(session_id) or runtime_state
-        session = session_with_runtime_state(session, latest_state)
-        session = await with_effective_session_connector_status(manager, session)
-        await broker.publish(
-            session_id,
-            {
-                "sessionId": session_id,
-                "nextSeq": next_seq,
-                "session": session.model_dump(mode="json"),
-                "runtimeState": latest_state.model_dump(mode="json"),
-            },
-        )
+    next_seq = await db.get_session_seq(session_id)
+    session = await db.get_session(session_id)
+    # A live event may have arrived while the RPC was in flight. Publish the
+    # newest cached state together with the current session revision.
+    latest_state = await runtime_state_cache.get(session_id) or runtime_state
+    session = session_with_runtime_state(session, latest_state)
+    session = await with_effective_session_connector_status(manager, session)
+    await broker.publish(
+        session_id,
+        {
+            "sessionId": session_id,
+            "nextSeq": next_seq,
+            "session": session.model_dump(mode="json"),
+            "runtimeState": latest_state.model_dump(mode="json"),
+        },
+    )
 
 
 async def read_runtime_state_snapshot(
@@ -383,6 +391,7 @@ async def create_session(
 async def create_and_start_session(
     payload: SessionCreateAndStartRequest,
     user_id: str = Depends(current_user_id),
+    reads: DeviceReadService = Depends(get_device_reads),
     run_service: SessionRunService = Depends(get_session_run_service),
     manager: ConnectorRpcManager = Depends(get_rpc),
     db: Store = Depends(get_store),
@@ -391,6 +400,9 @@ async def create_and_start_session(
         get_session_runtime_state_cache
     ),
 ) -> dict[str, Any]:
+    # Starting a conversation on a v2 Connector would keep it on the Server (D4, D8). Adding a
+    # directory entry for an existing session (``POST /sessions``) stays allowed.
+    await require_v3_owned_connector(db, reads, payload.connectorId, user_id)
     try:
         result = await run_service.create_and_start_session(payload, user_id=user_id)
     except SessionRunError as exc:
@@ -430,17 +442,7 @@ async def list_sessions(
     runtime_state_cache: SessionRuntimeStateCache = Depends(
         get_session_runtime_state_cache
     ),
-    timeline_write_buffer: TimelineWriteBuffer = Depends(
-        get_timeline_write_buffer
-    ),
 ) -> dict[str, Any]:
-    dirty_session_ids = await timeline_write_buffer.dirty_session_ids()
-    owned_dirty_ids = await db.list_owned_session_ids(
-        dirty_session_ids,
-        user_id=user_id,
-    )
-    for session_id in owned_dirty_ids:
-        await timeline_write_buffer.flush_through(session_id)
     try:
         sessions, has_more, next_cursor = await db.list_sessions_page(
             archived=archived,
@@ -468,11 +470,7 @@ async def list_session_inventory(
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
     runtime_state_cache: SessionRuntimeStateCache = Depends(get_session_runtime_state_cache),
-    timeline_write_buffer: TimelineWriteBuffer = Depends(get_timeline_write_buffer),
 ) -> dict[str, Any]:
-    dirty_ids = await timeline_write_buffer.dirty_session_ids()
-    for session_id in await db.list_owned_session_ids(dirty_ids, user_id=user_id):
-        await timeline_write_buffer.flush_through(session_id)
     sessions = await db.list_session_inventory(user_id=user_id)
     return {
         "sessions": await project_session_meta_for_dashboard(manager, runtime_state_cache, sessions),
@@ -486,14 +484,10 @@ async def get_session_meta(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
-    timeline_write_buffer: TimelineWriteBuffer = Depends(
-        get_timeline_write_buffer
-    ),
 ) -> SessionResponse:
     try:
         await db.get_session(session_id, user_id=user_id)
-        async with timeline_write_buffer.session_fence(session_id):
-            session = await db.get_session(session_id, user_id=user_id)
+        session = await db.get_session(session_id, user_id=user_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
     return SessionResponse(
@@ -510,37 +504,70 @@ async def patch_session_meta(
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
     broker: TimelineBroker = Depends(get_timeline_broker),
-    timeline_write_buffer: TimelineWriteBuffer = Depends(
-        get_timeline_write_buffer
-    ),
+    e2ee: E2eeSettings = Depends(get_e2ee_settings),
 ) -> SessionResponse:
+    # A title is content: in E2EE required mode it is only accepted sealed (display envelope), never in plaintext.
+    if e2ee.required and payload.title is not None:
+        raise HTTPException(status_code=409, detail=e2ee_required_error())
     try:
         session = await db.get_session(session_id, user_id=user_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
 
-    async with timeline_write_buffer.session_fence(session_id):
-        if payload.title is not None:
-            try:
-                session = await db.rename_session(
-                    session_id,
-                    payload.title,
-                    user_id=user_id,
+    if payload.displayUser is not None:
+        try:
+            envelope = DisplayEnvelope.model_validate(payload.displayUser)
+        except ValueError:
+            envelope = None
+        if envelope is not None and envelope.mode == "sealed" and isinstance(envelope.payload, str):
+            await db.set_session_display_user(session_id, envelope)
+            session = await db.get_session(session_id, user_id=user_id)
+        elif e2ee.required or envelope is None or envelope.mode != "plain":
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "display_envelope_not_sealed", "message": "displayUser must be a sealed envelope"},
+            )
+        else:
+            # Normal mode: a plain ``{title}`` is a rename (title column and plain displayUser).
+            title = envelope.payload.get("title") if isinstance(envelope.payload, dict) else None
+            if not isinstance(title, str) or not title.strip() or len(title) > 255:
+                raise HTTPException(
+                    status_code=422,
+                    detail={"code": "invalid_display_user", "message": "a plain displayUser needs a title"},
                 )
-            except ValueError as exc:
-                raise HTTPException(status_code=422, detail=str(exc)) from exc
-        if payload.pinned is not None:
-            session = await db.set_session_pinned(
+            session = await db.rename_session(session_id, title, user_id=user_id)
+    if payload.projectId is not None:
+        try:
+            session = await db.set_session_project(session_id, payload.projectId, user_id=user_id)
+        except KeyError:
+            raise HTTPException(
+                status_code=404, detail={"code": "project_not_found", "message": "project not found"}
+            ) from None
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422, detail={"code": "project_workspace_mismatch", "message": str(exc)}
+            ) from exc
+    if payload.title is not None:
+        try:
+            session = await db.rename_session(
                 session_id,
-                payload.pinned,
+                payload.title,
                 user_id=user_id,
             )
-        if payload.archived is not None:
-            session = await db.set_session_archived(
-                session_id,
-                payload.archived,
-                user_id=user_id,
-            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if payload.pinned is not None:
+        session = await db.set_session_pinned(
+            session_id,
+            payload.pinned,
+            user_id=user_id,
+        )
+    if payload.archived is not None:
+        session = await db.set_session_archived(
+            session_id,
+            payload.archived,
+            user_id=user_id,
+        )
 
     await publish_dashboard_changed(
         db,
@@ -641,19 +668,12 @@ async def mark_sessions_read(
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
     broker: TimelineBroker = Depends(get_timeline_broker),
-    timeline_write_buffer: TimelineWriteBuffer = Depends(get_timeline_write_buffer),
 ) -> BulkArchiveResponse:
     normalized_ids = validate_session_id_array(session_ids)
-    owned_ids = await db.list_owned_session_ids(normalized_ids, user_id=user_id)
-    async with AsyncExitStack() as stack:
-        for session_id in sorted(owned_ids):
-            await stack.enter_async_context(
-                timeline_write_buffer.session_fence(session_id)
-            )
-        sessions, not_found = await db.bulk_mark_sessions_read(
-            normalized_ids,
-            user_id=user_id,
-        )
+    sessions, not_found = await db.bulk_mark_sessions_read(
+        normalized_ids,
+        user_id=user_id,
+    )
     for session in sessions:
         await publish_dashboard_changed(
             db,
@@ -795,7 +815,7 @@ async def session_runtime_permission_catalog(
     )
 
 
-@router.patch("/{session_id}/runtime/selections", response_model=SessionSelectionPatchResponse)
+@router.patch("/{session_id}/runtime/selections", response_model=SessionSelectionPatchResponse, dependencies=V3_SESSION_ONLY)
 async def patch_session_selections(
     session_id: str,
     payload: SessionSelectionPatchRequest,
@@ -833,7 +853,7 @@ async def patch_session_selections(
     )
 
 
-@router.get("/{session_id}/timeline", response_model=ProtocolTimelineResponse)
+@router.get("/{session_id}/timeline", response_model=ProtocolTimelineResponseV12, dependencies=V3_SESSION_ONLY)
 async def session_timeline(
     session_id: str,
     after_seq: int = Query(0, alias="afterSeq", ge=0),
@@ -842,44 +862,22 @@ async def session_timeline(
     limit: int = Query(100, ge=1, le=500),
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
-    timeline_write_buffer: TimelineWriteBuffer = Depends(
-        get_timeline_write_buffer
-    ),
-) -> ProtocolTimelineResponse:
+    reads: DeviceReadService = Depends(get_device_reads),
+) -> ProtocolTimelineResponseV12:
+    """The device holds the timeline (D1); v2 sessions never get here (``V3_SESSION_ONLY``)."""
+
     try:
-        await db.get_session(session_id, user_id=user_id)
-        async with timeline_write_buffer.session_fence(session_id):
-            if mode == "latest":
-                items, has_more = await db.list_timeline_latest(
-                    session_id=session_id,
-                    limit=limit,
-                )
-            elif mode == "history":
-                if before_order_seq is None:
-                    raise HTTPException(
-                        status_code=422,
-                        detail="beforeOrderSeq is required for history mode",
-                    )
-                items, has_more = await db.list_timeline_before_order_seq(
-                    session_id=session_id,
-                    before_order_seq=before_order_seq,
-                    limit=limit,
-                )
-            else:
-                items, has_more = await db.list_timeline_since(
-                    session_id=session_id,
-                    after_seq=after_seq,
-                    limit=limit,
-                )
-            next_seq = await db.get_session_seq(session_id)
+        session = await db.get_session(session_id, user_id=user_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
-    return ProtocolTimelineResponse(
-        sessionId=session_id,
-        items=items,
-        nextSeq=next_seq,
-        hasMore=has_more,
-        serverTime=utc_now(),
+    return await device_timeline(
+        db=db,
+        reads=reads,
+        session=session,
+        mode=mode,
+        after_seq=after_seq,
+        before_order_seq=before_order_seq,
+        limit=limit,
     )
 
 
@@ -890,136 +888,69 @@ async def session_timeline(
 # - new: GET /sessions/{session_id}/runtime/state for live runtime state
 
 
-@router.get("/{session_id}/snapshot", response_model=ProtocolSessionSnapshotResponse)
+async def _device_session_snapshot(
+    *,
+    db: Store,
+    manager: ConnectorRpcManager,
+    catalogs: CatalogService,
+    reads: DeviceReadService,
+    session: SessionView,
+    user_id: str,
+    limit: int,
+) -> ProtocolSessionSnapshotResponseV12:
+    """Snapshot of a session on a v3 device: directory facts here, content from the device."""
+
+    session = await with_effective_session_connector_status(manager, session)
+    # Stored facts only: the device body carries live capabilities when it has them, so
+    # first paint makes one device call, not two.
+    runtime_capabilities = ProtocolCapabilitySet.model_validate(
+        await db.get_protocol_capabilities(session.connectorId, user_id=user_id)
+    )
+    runtime_id = _session_runtime_id(session)
+    model_catalog = await catalogs.model_catalog(session.connectorId, runtime_id=runtime_id, user_id=user_id)
+    permission_catalog = await catalogs.permission_catalog(session.connectorId, runtime_id=runtime_id, user_id=user_id)
+    return await device_snapshot(
+        db=db,
+        reads=reads,
+        session=session,
+        limit=limit,
+        runtime_capabilities=runtime_capabilities,
+        effective_capabilities=derive_session_effective_capabilities(
+            session=session, runtime_capabilities=runtime_capabilities
+        ),
+        catalogs={
+            key: catalog.model_dump(mode="json")
+            for key, catalog in (("model", model_catalog), ("permission", permission_catalog))
+            if catalog is not None
+        },
+    )
+
+
+@router.get("/{session_id}/snapshot", response_model=ProtocolSessionSnapshotResponseV12, dependencies=V3_SESSION_ONLY)
 async def session_snapshot(
     session_id: str,
-    background_tasks: BackgroundTasks,
     limit: int = Query(100, ge=1, le=500),
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
-    broker: TimelineBroker = Depends(get_timeline_broker),
-    runtime_state_cache: SessionRuntimeStateCache = Depends(
-        get_session_runtime_state_cache
-    ),
     catalogs: CatalogService = Depends(get_catalog_service),
-    timeline_write_buffer: TimelineWriteBuffer = Depends(
-        get_timeline_write_buffer
-    ),
     usage_recorder: UsageRecorder = Depends(get_usage_recorder),
-) -> ProtocolSessionSnapshotResponse:
-    snapshot_started_at = time.monotonic()
-
-    def log_snapshot_stage(stage: str, stage_started_at: float) -> None:
-        logger.info(
-            "session snapshot stage completed session_id={} stage={} "
-            "stage_elapsed_ms={:.1f} total_elapsed_ms={:.1f}",
-            session_id,
-            stage,
-            (time.monotonic() - stage_started_at) * 1000,
-            (time.monotonic() - snapshot_started_at) * 1000,
-        )
-
+    reads: DeviceReadService = Depends(get_device_reads),
+) -> ProtocolSessionSnapshotResponseV12:
     try:
-        stage_started_at = time.monotonic()
         session = await db.get_session(session_id, user_id=user_id)
-        log_snapshot_stage("authorization", stage_started_at)
-        # Opening a session is platform usage; the recorder folds quick repeats.
-        await usage_recorder.touch_session_view(session, user_id=user_id)
-
-        stage_started_at = time.monotonic()
-        notices = await read_session_notices_for_snapshot(manager, session)
-        log_snapshot_stage("notices", stage_started_at)
-
-        stage_started_at = time.monotonic()
-        # First paint must not wait on a runtime-owned history read.
-        runtime_state = await read_runtime_state_snapshot(
-            db,
-            runtime_state_cache,
-            session,
-            user_id,
-        )
-        log_snapshot_stage("runtime_state", stage_started_at)
-        session = session_with_runtime_state(session, runtime_state)
-
-        stage_started_at = time.monotonic()
-        session = await with_effective_session_connector_status(manager, session)
-        log_snapshot_stage("connector_status", stage_started_at)
-
-        stage_started_at = time.monotonic()
-        runtime_capabilities = await read_session_capabilities_with_fallback(
-            db,
-            manager,
-            session,
-            user_id,
-        )
-        log_snapshot_stage("capabilities", stage_started_at)
-
-        stage_started_at = time.monotonic()
-        model_catalog = await catalogs.model_catalog(
-            session.connectorId,
-            runtime_id=_session_runtime_id(session),
-            user_id=user_id,
-        )
-        permission_catalog = await catalogs.permission_catalog(
-            session.connectorId,
-            runtime_id=_session_runtime_id(session),
-            user_id=user_id,
-        )
-        log_snapshot_stage("catalogs", stage_started_at)
-
-        stage_started_at = time.monotonic()
-        async with timeline_write_buffer.session_fence(session_id):
-            session = await db.get_session(session_id, user_id=user_id)
-            items, has_more = await db.list_timeline_latest(
-                session_id=session_id,
-                limit=limit,
-            )
-            next_seq = await db.get_session_seq(session_id)
-        session = session_with_runtime_state(session, runtime_state)
-        session = await with_effective_session_connector_status(manager, session)
-        effective_capabilities = derive_session_effective_capabilities(
-            session=session,
-            runtime_capabilities=runtime_capabilities,
-        )
-        log_snapshot_stage("database", stage_started_at)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
-    # Refresh the live runtime state after the response so a slow runtime read
-    # never delays first paint. A real change is pushed to the session stream.
-    background_tasks.add_task(
-        refresh_runtime_state_in_background,
+    # Opening a session is platform usage; the recorder folds quick repeats.
+    await usage_recorder.touch_session_view(session, user_id=user_id)
+    return await _device_session_snapshot(
         db=db,
-        broker=broker,
         manager=manager,
-        runtime_state_cache=runtime_state_cache,
-        session_id=session_id,
-        previous_state=runtime_state,
-    )
-    return ProtocolSessionSnapshotResponse(
-        goalState=await db.read_goal(session_id),
-        session=session.model_dump(mode="json"),
-        state=(
-            runtime_state.model_dump(mode="json")
-            if runtime_state is not None
-            else None
-        ),
-        timeline=ProtocolTimelineSnapshot(items=items, nextSeq=next_seq, hasMore=has_more),
-        approvals=[],
-        notices=notices,
-        effectiveCapabilities=effective_capabilities,
-        runtimeCapabilities=runtime_capabilities,
-        catalogs={
-            key: catalog.model_dump(mode="json")
-            for key, catalog in (
-                ("model", model_catalog),
-                ("permission", permission_catalog),
-            )
-            if catalog is not None
-        },
-        queue=await db.get_session_queue(session_id),
-        eventCursor=event_cursor(next_seq),
-        serverTime=utc_now(),
+        catalogs=catalogs,
+        reads=reads,
+        session=session,
+        user_id=user_id,
+        limit=limit,
     )
 
 
@@ -1028,19 +959,17 @@ async def session_snapshot(
 # - new: WS /dashboard/ws
 
 
-@router.get("/{session_id}/events")
+@router.get("/{session_id}/events", response_model=ProtocolEventRecoveryResponseV12, dependencies=V3_SESSION_ONLY)
 async def session_events(
     session_id: str,
     after: str = Query("seq:0"),
     user_id: str = Depends(current_user_id),
-    recovery: EventRecoveryService = Depends(get_event_recovery_service),
-) -> ProtocolEventRecoveryResponse:
+    db: Store = Depends(get_store),
+    reads: DeviceReadService = Depends(get_device_reads),
+) -> ProtocolEventRecoveryResponseV12:
     try:
-        return await recovery.recover(
-            session_id,
-            after=after,
-            user_id=user_id,
-        )
+        session = await db.get_session(session_id, user_id=user_id)
+        return await device_events(reads=reads, session=session, after_seq=parse_event_cursor(after))
     except EventCursorError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except KeyError:
@@ -1053,10 +982,9 @@ async def session_ws(
     session_id: str,
     db: Store = Depends(get_store),
     broker: TimelineBroker = Depends(get_timeline_broker),
-    timeline_write_buffer: TimelineWriteBuffer = Depends(
-        get_timeline_write_buffer
-    ),
     tickets: ClientWsTicketManager = Depends(_get_ws_tickets),
+    reads: DeviceReadService = Depends(get_device_reads),
+    session_watch: SessionWatchHub = Depends(get_session_watch),
 ) -> None:
     ticket_value = websocket.query_params.get("ticket")
     if not isinstance(ticket_value, str) or not ticket_value:
@@ -1067,14 +995,20 @@ async def session_ws(
         await websocket.close(code=1008, reason="invalid ticket")
         return
     try:
-        await db.get_session(session_id, user_id=ticket.user_id)
+        session = await db.get_session(session_id, user_id=ticket.user_id)
     except KeyError:
         await websocket.close(code=1008, reason="session not found")
         return
+    device_session = await reads.is_v3_device(session.connectorId)
+    # Clients that speak protocol 1.2 handle ``session.catchup_required``; older ones are
+    # disconnected instead and recover through their existing reconnect-and-replay path.
+    knows_catchup = _client_protocol_at_least(websocket.query_params.get("protocol"), (1, 2))
 
     await websocket.accept()
     queue = await broker.register(session_id)
     recovery_signal = broker.recovery_signal
+    if device_session:
+        await session_watch.add_subscriber(session_id, session.connectorId)
 
     async def send_session_updates() -> None:
         # Durable-writer and aggregate invalidations can overlap. Their
@@ -1084,7 +1018,10 @@ async def session_ws(
         sent_event_order: deque[str] = deque()
         last_live_projection_event_ids: dict[str, str] = {}
         last_capability_fingerprint: str | None = None
-        async with timeline_write_buffer.session_fence(session_id):
+        if device_session:
+            fields = await db.session_directory_fields(session_id) or {}
+            next_seq = int(fields.get("headSeq") or 0)
+        else:
             next_seq = await db.get_session_seq(session_id)
         await websocket.send_json(
             protocol_event(
@@ -1097,10 +1034,23 @@ async def session_ws(
                 },
             ).model_dump(mode="json")
         )
+        if device_session:
+            # Clients keep no port list: tell a new subscriber what is listening now.
+            previews = getattr(websocket.app.state, "previews", None)
+            ports = await previews.session_ports(session.connectorId, session_id) if previews else []
+            if ports:
+                listening = protocol_event(
+                    session_id,
+                    sequence=0,
+                    event_type="port.listening",
+                    payload={"deviceId": session.connectorId, "ports": ports},
+                )
+                await websocket.send_json(listening.model_dump(mode="json"))
+                last_live_projection_event_ids["port"] = listening.eventId
         while True:
             try:
                 message = await asyncio.wait_for(queue.get(), timeout=15.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 await websocket.send_json(
                     {"type": "keepalive", "serverTime": utc_now()}
                 )
@@ -1111,6 +1061,11 @@ async def session_ws(
                 await websocket.close(code=1013, reason="server busy; reconnect to recover")
                 return
             for event in prepared_events:
+                if event.event_type == CATCHUP_REQUIRED_EVENT and not knows_catchup:
+                    if '"device_reconnected"' in event.encoded_json:
+                        await websocket.close(code=1013, reason="device reconnected; reconnect to recover")
+                        return
+                    continue
                 capability_fingerprint = event.capability_fingerprint
                 if capability_fingerprint is not None:
                     if capability_fingerprint == last_capability_fingerprint:
@@ -1124,6 +1079,9 @@ async def session_ws(
                     continue
                 if event.event_type in _SESSION_WS_LIVE_PROJECTION_EVENT_TYPES:
                     projection_key = event.event_type
+                    if event.event_type in PORT_EVENT_TYPES:
+                        # One projection: listening, closed, listening again are all real.
+                        projection_key = "port"
                     if event.event_type == "runtime.catalog.updated":
                         projection_key = (
                             f"{event.event_type}:{event.catalog_type}"
@@ -1155,6 +1113,18 @@ async def session_ws(
         )
     finally:
         await broker.unregister(session_id, queue)
+        if device_session:
+            await session_watch.remove_subscriber(session_id)
+
+
+def _client_protocol_at_least(value: str | None, minimum: tuple[int, int]) -> bool:
+    if not value:
+        return False
+    try:
+        major, minor = (int(part) for part in value.split(".", 1))
+    except ValueError:
+        return False
+    return (major, minor) >= minimum
 
 
 @router.post("/{session_id}/takeover", response_model=TakeoverResponse)
@@ -1167,15 +1137,10 @@ async def enable_takeover(
     runtime_state_cache: SessionRuntimeStateCache = Depends(
         get_session_runtime_state_cache
     ),
-    timeline_write_buffer: TimelineWriteBuffer = Depends(
-        get_timeline_write_buffer
-    ),
-    wake_queue=Depends(get_message_queue_wake),
 ) -> TakeoverResponse:
     try:
         await db.get_session(session_id, user_id=user_id)
-        async with timeline_write_buffer.session_fence(session_id):
-            session = await db.set_takeover(session_id, True)
+        session = await db.set_takeover(session_id, True)
         await _publish_session_protocol_update(
             db,
             broker,
@@ -1183,10 +1148,6 @@ async def enable_takeover(
             runtime_state_cache,
             session_id,
         )
-        # Messages that waited while the session was read-only may go now.
-        # (Direct calls without dependency injection leave the default unset.)
-        if callable(wake_queue):
-            wake_queue(session_id)
         return TakeoverResponse(
             session=await with_effective_session_connector_status(manager, session)
         )
@@ -1204,14 +1165,10 @@ async def disable_takeover(
     runtime_state_cache: SessionRuntimeStateCache = Depends(
         get_session_runtime_state_cache
     ),
-    timeline_write_buffer: TimelineWriteBuffer = Depends(
-        get_timeline_write_buffer
-    ),
 ) -> TakeoverResponse:
     try:
         await db.get_session(session_id, user_id=user_id)
-        async with timeline_write_buffer.session_fence(session_id):
-            session = await db.set_takeover(session_id, False)
+        session = await db.set_takeover(session_id, False)
         await _publish_session_protocol_update(
             db,
             broker,
@@ -1253,7 +1210,7 @@ async def _require_session_action_capability(
         )
 
 
-@router.get("/{session_id}/runtime/commands", response_model=SessionCommandListResponse)
+@router.get("/{session_id}/runtime/commands", response_model=SessionCommandListResponse, dependencies=V3_SESSION_ONLY)
 async def list_session_runtime_commands(
     session_id: str,
     query: str | None = Query(default=None, max_length=4096),
@@ -1309,13 +1266,14 @@ async def list_session_runtime_commands(
     return SessionCommandListResponse(commands=commands, serverTime=utc_now())
 
 
-@router.post("/{session_id}/runtime/commands", response_model=SessionCommandResponse)
+@router.post("/{session_id}/runtime/commands", response_model=SessionCommandResponse, dependencies=V3_SESSION_ONLY)
 async def execute_session_command(
     session_id: str,
     payload: SessionCommandRequest,
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
+    device_planning: Any = Depends(get_device_planning),
 ) -> SessionCommandResponse:
     try:
         session = await db.get_session(session_id, user_id=user_id)
@@ -1323,15 +1281,22 @@ async def execute_session_command(
         raise HTTPException(status_code=404, detail="session not found") from None
     if payload.command == "plan":
         from uuid import uuid4
+
         from agent_server.core.capabilities import SESSION_PLANNING
         from agent_server.core.planning.commands import parse_plan_command
         from agent_server.core.planning.models import PlanningRequest
-        from agent_server.services.planning.service import PlanningService
+        from agent_server.services.device_planning import DevicePlanningUnavailable
         await _require_session_action_capability(db, manager, session, SESSION_PLANNING, user_id=user_id)
         intent = parse_plan_command(payload.raw if payload.raw is not None else "/plan" + (" " + " ".join(payload.args) if payload.args else ""))
         if intent is None:
             raise HTTPException(422, "raw must invoke /plan")
-        result = await PlanningService(db, manager).execute(session, PlanningRequest(**intent, operationId=payload.operationId or str(uuid4())), user_id=user_id)
+        request = PlanningRequest(**intent, operationId=payload.operationId or str(uuid4()))
+        try:
+            result = await device_planning.execute(
+                session, "session.planning", request.model_dump(mode="json", exclude_none=True), user_id=user_id
+            )
+        except DevicePlanningUnavailable:
+            raise HTTPException(409, {"code": "connector_offline", "message": "the device is offline"}) from None
         return SessionCommandResponse(command="plan", ok=result.ok, code=result.code, message=result.message,
             result={"planning": result.model_dump(mode="json"), "executionState": "unknown" if result.outcome == "unknown" else "accepted" if result.ok else "completed", "retryable": False}, serverTime=utc_now())
     await _require_session_action_capability(
@@ -1405,7 +1370,7 @@ def _unknown_command_result(command: str) -> SessionCommandResponse:
     )
 
 
-@router.post("/{session_id}/runtime/messages", response_model=RpcResponsePayload)
+@router.post("/{session_id}/runtime/messages", response_model=RpcResponsePayload, dependencies=V3_SESSION_ONLY)
 async def send_message(
     session_id: str,
     payload: MessageCreateRequest,
@@ -1440,7 +1405,7 @@ async def send_message(
         _raise_session_run_error(exc)
 
 
-@router.post("/{session_id}/runtime/interrupt", response_model=RpcResponsePayload)
+@router.post("/{session_id}/runtime/interrupt", response_model=RpcResponsePayload, dependencies=V3_SESSION_ONLY)
 async def interrupt_session(
     session_id: str,
     user_id: str = Depends(current_user_id),
@@ -1474,7 +1439,7 @@ async def interrupt_session(
         _raise_session_run_error(exc)
 
 
-@router.post("/{session_id}/runtime/steer", response_model=RpcResponsePayload)
+@router.post("/{session_id}/runtime/steer", response_model=RpcResponsePayload, dependencies=V3_SESSION_ONLY)
 async def steer_session(
     session_id: str,
     payload: SessionSteerRequest,
@@ -1513,7 +1478,7 @@ async def steer_session(
         _raise_session_run_error(exc)
 
 
-@router.get("/{session_id}/runtime/notices", response_model=RuntimeNoticeListResponse)
+@router.get("/{session_id}/runtime/notices", response_model=RuntimeNoticeListResponse, dependencies=V3_SESSION_ONLY)
 async def list_session_runtime_notices(
     session_id: str,
     user_id: str = Depends(current_user_id),
@@ -1531,7 +1496,7 @@ async def list_session_runtime_notices(
     )
 
 
-@router.post("/{session_id}/runtime/notices/{notice_id}/respond", response_model=RpcResponsePayload)
+@router.post("/{session_id}/runtime/notices/{notice_id}/respond", response_model=RpcResponsePayload, dependencies=V3_SESSION_ONLY)
 async def respond_interaction(
     session_id: str,
     notice_id: str,
@@ -1616,7 +1581,7 @@ async def respond_interaction(
     return RpcResponsePayload(ok=True, result=result)
 
 
-@router.post("/{session_id}/sync", response_model=RpcResponsePayload)
+@router.post("/{session_id}/sync", response_model=RpcResponsePayload, dependencies=V3_SESSION_ONLY)
 async def sync_session(
     session_id: str,
     user_id: str = Depends(current_user_id),

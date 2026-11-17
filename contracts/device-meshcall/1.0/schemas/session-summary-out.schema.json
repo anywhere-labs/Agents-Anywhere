@@ -1,0 +1,280 @@
+{
+  "$defs": {
+    "DisplayEnvelope": {
+      "description": "Human-facing content the Server stores but never reads.\n\n``plain``: ``payload`` is a JSON object (normal mode).\n``sealed``: ``payload`` is base64 ciphertext encrypted with the device's\ndirectory key identified by ``keyId`` (E2EE mode).",
+      "properties": {
+        "keyId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Keyid"
+        },
+        "mode": {
+          "enum": [
+            "plain",
+            "sealed"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "payload": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Payload"
+        }
+      },
+      "required": [
+        "mode",
+        "payload"
+      ],
+      "title": "DisplayEnvelope",
+      "type": "object"
+    },
+    "LatestItemFacts": {
+      "description": "Scheduling facts about the latest timeline item; no text.",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "role": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Role"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Status"
+        },
+        "time": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Time"
+        },
+        "type": {
+          "minLength": 1,
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "title": "LatestItemFacts",
+      "type": "object"
+    },
+    "SessionSummary": {
+      "description": "Reported fields of a session directory entry (device is the only writer).",
+      "properties": {
+        "displayDevice": {
+          "$ref": "#/$defs/DisplayEnvelope"
+        },
+        "externalSessionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Externalsessionid"
+        },
+        "goalState": {
+          "default": "none",
+          "enum": [
+            "none",
+            "active",
+            "paused",
+            "completed"
+          ],
+          "title": "Goalstate",
+          "type": "string"
+        },
+        "headSeq": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Headseq",
+          "type": "integer"
+        },
+        "lastActivityAt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lastactivityat"
+        },
+        "latestItem": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LatestItemFacts"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "latestTurnEndSeq": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Latestturnendseq"
+        },
+        "planState": {
+          "default": "none",
+          "enum": [
+            "none",
+            "planning",
+            "awaiting_review"
+          ],
+          "title": "Planstate",
+          "type": "string"
+        },
+        "projectId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Projectid"
+        },
+        "resetSeq": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Resetseq",
+          "type": "integer"
+        },
+        "runtimeId": {
+          "minLength": 1,
+          "title": "Runtimeid",
+          "type": "string"
+        },
+        "runtimeType": {
+          "minLength": 1,
+          "title": "Runtimetype",
+          "type": "string"
+        },
+        "sessionId": {
+          "minLength": 1,
+          "title": "Sessionid",
+          "type": "string"
+        },
+        "sortAt": {
+          "title": "Sortat",
+          "type": "string"
+        },
+        "sourceAvailability": {
+          "default": "available",
+          "enum": [
+            "available",
+            "archived",
+            "deleted",
+            "missing",
+            "unknown"
+          ],
+          "title": "Sourceavailability",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "idle",
+            "pending",
+            "running",
+            "waiting",
+            "waiting_approval",
+            "blocked",
+            "stopping",
+            "error",
+            "unknown"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "runtimeId",
+        "runtimeType",
+        "status",
+        "sortAt",
+        "headSeq",
+        "resetSeq",
+        "displayDevice"
+      ],
+      "title": "SessionSummary",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:session-summary-out",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "summary": {
+      "$ref": "#/$defs/SessionSummary"
+    }
+  },
+  "required": [
+    "summary"
+  ],
+  "title": "SessionSummaryOut",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

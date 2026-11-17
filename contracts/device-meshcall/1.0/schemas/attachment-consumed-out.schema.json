@@ -1,0 +1,26 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:attachment-consumed-out",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "fileId": {
+      "minLength": 1,
+      "title": "Fileid",
+      "type": "string"
+    },
+    "sha256": {
+      "minLength": 1,
+      "title": "Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "fileId",
+    "sha256"
+  ],
+  "title": "AttachmentConsumedOut",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

@@ -56,6 +56,8 @@ connectors = Table(
     # JSON object of user-chosen device settings (see docs/api/device-settings.md).
     # Clients write it through the API; the server hands it to the connector.
     Column("device_settings", Text),
+    # ``device-meshcall/1.0`` once the device said hello over MeshCall; NULL for v2 Connectors.
+    Column("link_contract", Text),
     Index("idx_connectors_user_revoked", "user_id", "revoked"),
 )
 
@@ -304,43 +306,12 @@ fs_preview_tokens = Table(
 )
 
 
-connector_terminal_roots = Table(
-    "connector_terminal_roots",
-    metadata,
-    Column(
-        "connector_id",
-        Text,
-        ForeignKey("connectors.id", ondelete="CASCADE"),
-        nullable=False,
-    ),
-    Column("terminal_id", Text, nullable=False),
-    Column("session_id", Text, nullable=False),
-    Column("root", Text, nullable=False),
-    Column("cwd", Text, nullable=False),
-    Column("created_at", Text, nullable=False),
-    Column("updated_at", Text, nullable=False),
-    PrimaryKeyConstraint("connector_id", "terminal_id"),
-    Index("idx_connector_terminal_roots_session", "connector_id", "session_id"),
-)
-
-
 instance_settings = Table(
     "instance_settings",
     metadata,
     Column("key", Text, primary_key=True),
     Column("value", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
-)
-
-
-legacy_import_archive = Table(
-    "legacy_import_archive",
-    metadata,
-    Column("source_table", Text, nullable=False),
-    Column("row_key", Text, nullable=False),
-    Column("payload_json", Text, nullable=False),
-    Column("archived_at", Text, nullable=False),
-    PrimaryKeyConstraint("source_table", "row_key"),
 )
 
 
@@ -444,17 +415,17 @@ sessions = Table(
         BigInteger,
         server_default=text("nextval('session_source_change_seq')"),
     ),
-    Column("last_read_seq", BigInteger, nullable=False, server_default="0"),
+    # Device-clock position the user has read up to. The two negative values are the
+    # sentinels v2_60 left: -1 "read to the newest turn", -2 "unread"; the device's
+    # first ``latestTurnEndSeq`` resolves them (``core.read_marks``).
+    Column("read_seq", BigInteger, nullable=False, server_default="0"),
     Column("latest_turn_end_seq", BigInteger, nullable=False, server_default="0"),
     Column("timeline_reset_seq", BigInteger, nullable=False, server_default="0"),
     Column("last_synced_at", Text),
     Column("source_observed_at", Text),
     Column("last_activity_at", Text),
     Column("sort_at", Text),
-    # Summary of the newest timeline row (same order as
-    # ``idx_timeline_items_session_latest``), kept current by every timeline
-    # write so session lists never look into ``timeline_items``. All NULL when
-    # the session has no timeline rows.
+    # Summary of the newest timeline item, as the device reports it.
     Column("latest_item_id", Text),
     Column("latest_item_time", Text),
     Column("latest_item_order_seq", Integer),
@@ -465,6 +436,20 @@ sessions = Table(
     Column("updated_seq", BigInteger, nullable=False),
     Column("created_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
+    # v3 directory (device-meshcall 1.0): reported by the device, never content.
+    Column("head_seq", BigInteger, nullable=False, server_default="0"),
+    Column("reset_seq", BigInteger, nullable=False, server_default="0"),
+    # Highest sequence forwarded to clients (written before forwarding, every 1024).
+    Column("seq_ceiling", BigInteger, nullable=False, server_default="0"),
+    Column("plan_state", Text, nullable=False, server_default="none"),
+    Column("goal_state", Text, nullable=False, server_default="none"),
+    # Display envelopes {mode, keyId?, payload}: stored, never read by the Server.
+    Column("display_device", Text),
+    Column("display_user", Text),
+    Column("reported_at", Text),
+    Column("latest_item_type", Text),
+    Column("latest_item_role", Text),
+    Column("latest_item_status", Text),
     Index(
         "idx_sessions_connector_runtime_source_state",
         "connector_id",
@@ -519,40 +504,6 @@ session_active_runs = Table(
     Column("params_json", Text),
     Column("started_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
-)
-
-
-timeline_items = Table(
-    "timeline_items",
-    metadata,
-    Column(
-        "session_id",
-        Text,
-        ForeignKey("sessions.id", ondelete="CASCADE"),
-        nullable=False,
-    ),
-    Column("id", Text, nullable=False),
-    Column("type", Text, nullable=False),
-    Column("status", Text, nullable=False),
-    Column("role", Text),
-    Column("order_seq", Integer, nullable=False),
-    Column("updated_seq", BigInteger, nullable=False),
-    Column("item_time", Text),
-    Column("payload_json", Text, nullable=False),
-    PrimaryKeyConstraint("session_id", "id"),
-    Index("idx_timeline_items_session_updated_seq", "session_id", "updated_seq"),
-    Index(
-        "idx_timeline_items_session_latest",
-        "session_id",
-        text("coalesce(item_time, '') DESC"),
-        text("order_seq DESC"),
-        text("updated_seq DESC"),
-    ),
-    Index(
-        "idx_timeline_items_session_order_seq",
-        "session_id",
-        "order_seq",
-    ),
 )
 
 
@@ -684,22 +635,6 @@ usage_inventory_snapshots = Table(
 )
 
 
-pairing_codes = Table(
-    "pairing_codes",
-    metadata,
-    Column("id", Text, primary_key=True),
-    Column("code", Text, nullable=False, unique=True),
-    Column("status", Text, nullable=False),
-    Column("server_url", Text),
-    Column("connector_id", Text),
-    Column("connector_token", Text),
-    Column("expires_at", Text, nullable=False),
-    Column("created_at", Text, nullable=False),
-    Column("claimed_at", Text),
-    Column("consumed_at", Text),
-)
-
-
 runtime_workflows = Table(
     "runtime_workflows", metadata,
     Column("user_id", Text, primary_key=True), Column("kind", Text, primary_key=True), Column("id", Text, primary_key=True),
@@ -709,29 +644,6 @@ runtime_workflows = Table(
     Column("input_digest", Text, nullable=False), Column("request_json", Text, nullable=False),
     Column("result_json", Text, nullable=False), Column("consumed_by", Text),
 )
-
-
-session_runtime_event_receipts = Table(
-    "session_runtime_event_receipts", metadata,
-    Column("session_id", Text, ForeignKey("sessions.id", ondelete="CASCADE"), primary_key=True),
-    Column("source_event_id", Text, primary_key=True),
-    Column("event_digest", Text, nullable=False),
-)
-session_planning = Table("session_planning", metadata,
-    Column("session_id", Text, ForeignKey("sessions.id", ondelete="CASCADE"), primary_key=True),
-    Column("payload", Text, nullable=False))
-plan_documents = Table("plan_documents", metadata,
-    Column("session_id", Text, ForeignKey("sessions.id", ondelete="CASCADE"), primary_key=True),
-    Column("plan_id", Text, primary_key=True), Column("revision", Integer, primary_key=True),
-    Column("content_hash", Text, nullable=False), Column("payload", Text, nullable=False), Column("created_at", Text, nullable=False))
-planning_operations = Table("planning_operations", metadata,
-    Column("session_id", Text, ForeignKey("sessions.id", ondelete="CASCADE"), primary_key=True),
-    Column("operation_id", Text, primary_key=True), Column("fingerprint", Text, nullable=False), Column("payload", Text, nullable=False))
-
-planning_creations = Table("planning_creations", metadata,
-    Column("connector_id", Text, ForeignKey("connectors.id", ondelete="CASCADE"), primary_key=True),
-    Column("runtime_id", Text, primary_key=True), Column("operation_id", Text, primary_key=True),
-    Column("fingerprint", Text, nullable=False), Column("payload", Text, nullable=False))
 
 
 tokens_links = Table("tokens_links", metadata,
@@ -843,12 +755,85 @@ channel_rotation_intents = Table("channel_rotation_intents", metadata,
 channel_device_gates = Table("channel_device_gates", metadata,
     Column("connector_id", Text, ForeignKey("connectors.id", ondelete="CASCADE"), primary_key=True),
     Column("connection_id", Text, nullable=False), Column("expires_at", Text, nullable=False))
-from agent_server.infra.db.goal_schema import define_goal_tables
 
-session_goals, session_goal_state, goal_operations, goal_event_outbox = (
-    define_goal_tables(metadata)
+
+# One durable receipt per state-changing device command (device-meshcall 1.0).
+device_commands = Table(
+    "device_commands",
+    metadata,
+    Column("user_id", Text, nullable=False),
+    Column("command_id", Text, nullable=False),
+    Column("kind", Text, nullable=False),
+    Column("input_digest", Text),
+    Column("device_id", Text, ForeignKey("connectors.id", ondelete="CASCADE"), nullable=False),
+    Column("session_id", Text),
+    Column("state", Text, nullable=False),
+    Column("payload_json", Text),
+    Column("result_json", Text),
+    Column("created_at", Text, nullable=False),
+    Column("updated_at", Text, nullable=False),
+    Column("expires_at", Text, nullable=False),
+    PrimaryKeyConstraint("user_id", "command_id"),
+    CheckConstraint(
+        "state IN ('pending','accepted','rejected','unknown')",
+        name="ck_device_commands_state",
+    ),
+    Index("idx_device_commands_device_state", "device_id", "state"),
 )
 
-from agent_server.infra.db.message_queue_schema import define_message_queue_tables
+# One login (a device or browser) per row: the refresh token chain and whether it was revoked.
+# Access tokens carry the family id; ``current_user_id`` rejects tokens of revoked families.
+user_token_families = Table(
+    "user_token_families",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("client", Text, nullable=False, server_default=""),
+    Column("refresh_hash", Text),
+    Column("previous_refresh_hash", Text),
+    Column("refresh_expires_at", Text, nullable=False),
+    Column("created_at", Text, nullable=False),
+    Column("last_used_at", Text, nullable=False),
+    Column("revoked_at", Text),
+    Column("revoked_reason", Text),
+    Index("idx_user_token_families_user", "user_id"),
+)
 
-session_queued_messages, session_queue_state = define_message_queue_tables(metadata)
+# Port previews (``contracts/preview/1.0``): one row per device port, reopened in place so
+# the slug (the preview's DNS label) stays the same for bookmarks. No content: the page
+# itself travels through frps and the gateway, never through the database.
+previews = Table(
+    "previews",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("slug", Text, nullable=False, unique=True),
+    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("device_id", Text, ForeignKey("connectors.id", ondelete="CASCADE"), nullable=False),
+    Column("session_id", Text, ForeignKey("sessions.id", ondelete="SET NULL")),
+    Column("port", Integer, nullable=False),
+    Column("visibility", Text, nullable=False, server_default="private"),
+    Column("state", Text, nullable=False, server_default="opening"),
+    Column("close_reason", Text),
+    Column("expires_at", Text, nullable=False),
+    Column("created_at", Text, nullable=False),
+    Column("updated_at", Text, nullable=False),
+    UniqueConstraint("device_id", "port", name="uq_previews_device_port"),
+    Index("idx_previews_user", "user_id"),
+    Index("idx_previews_state_expires", "state", "expires_at"),
+)
+
+# E2EE required mode: the plaintext side channel of a command sent through a secure channel
+# (contracts/e2ee/1.0 CommandRegistration). Only ids, a keyed digest and the outcome; never content.
+e2ee_command_registrations = Table(
+    "e2ee_command_registrations",
+    metadata,
+    Column("command_id", Text, primary_key=True),
+    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("device_id", Text, ForeignKey("connectors.id", ondelete="CASCADE"), nullable=False),
+    Column("input_digest", Text, nullable=False),
+    Column("created_at", Text, nullable=False),
+    Column("outcome", Text),
+    Column("error_code", Text),
+    Column("finished_at", Text),
+    Index("idx_e2ee_command_registrations_device_created", "device_id", "created_at"),
+)

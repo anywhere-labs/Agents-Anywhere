@@ -13,7 +13,7 @@ import { spawnSync } from "node:child_process";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { exists, runtimeTargetKey } from "./prepare-uv.mjs";
+import { exists, runtimeTargetKey } from "./bundle-targets.mjs";
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DEPENDENCIES_FILE = join(PROJECT_ROOT, "..", "connector", "connector", "runtimes", "acp", "profiles", "pi", "dependencies.json");

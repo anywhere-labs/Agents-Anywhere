@@ -14,6 +14,8 @@ struct AuthConfig: Decodable {
     let oauthProviderLabel: String?
     let setupTokenExpiresAt: String?
     let serverTime: String
+    /// End-to-end encryption mode; older servers omit it, which means off.
+    var e2ee: E2EEServerConfig? = nil
 }
 
 struct AuthResponse: Codable, Hashable {

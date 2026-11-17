@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { ConnectorLogStore } from "../log-store";
 import { ConnectorSupervisor } from "../connector-supervisor";
+import type { LaunchConnector } from "../connector-launcher";
 import { DesktopBindingStore } from "../desktop-binding";
 import { DesktopDeviceService } from "../desktop-device-service";
 import { DesktopSettingsStore } from "../desktop-settings";
@@ -8,6 +9,7 @@ import { desktopInstallation, MachineStateStore } from "../machine-state";
 import type { DesktopOnboardingSource, DesktopOnboardingState } from "../machine-state";
 import { readShellEnvironment } from "../shell-environment";
 import { LogBatcher } from "./log-batcher";
+import { removeLegacyPythonFiles } from "../legacy-connector-files";
 import type { OwnershipState } from "../local-runtime";
 import type {
   ConnectorConfigPatch,
@@ -55,26 +57,24 @@ export class BackendState {
   private closed = false;
   private initialized = false;
 
-  constructor(private readonly init: BackendInit, fetcher: BackendFetcher, desktopPid?: number) {
+  constructor(private readonly init: BackendInit, fetcher: BackendFetcher, launch: LaunchConnector) {
     this.server = { serverUrl: init.defaultServerUrl, apiNamespace: init.apiNamespace };
     this.machineState = new MachineStateStore(undefined, (message) => this.appendLog({ level: "WARNING", message }));
     this.settings = new DesktopSettingsStore(init.settingsPath, init.preferredLanguages);
     this.logs = new ConnectorLogStore(init.logsPath, () => this.settings.get());
     this.binding = new DesktopBindingStore(init.bindingPath);
     this.connector = new ConnectorSupervisor({
-      onEnvironment: state => this.emit("environment", state),
       onOwnership: (state) => {
         this.ownership = state;
         this.emit("ownership", state);
       },
       configPath: init.configPath,
       dataPath: init.dataPath,
-      connectorDir: init.connectorDir,
       resourcesPath: init.resourcesPath,
-      uvBundleDir: init.uvBundleDir,
-      pythonBundleDir: init.pythonBundleDir,
+      routerBinary: init.routerBinary,
+      frpcBinary: init.frpcBinary,
       packaged: init.packaged,
-      desktopPid,
+      launch,
       homePath: init.homePath,
       shellEnvironment: {},
       settings: this.settings,
@@ -127,6 +127,10 @@ export class BackendState {
       }
       if (this.closed) return;
       this.connector.setShellEnvironment(shellEnvironment);
+      // The v2 Python Connector's environment is dead weight now (hundreds of MB).
+      void removeLegacyPythonFiles(this.init.dataPath).then((removed) => {
+        if (removed.length) this.appendLog({ level: "INFO", message: `Removed the old Python Connector files: ${removed.join(", ")}` });
+      });
       // The supervisor logs a failed probe and reports it as the `error` state.
       await this.acquireOwnership().catch(() => undefined);
       await this.recordInstallation().catch((error) => this.appendLog({
@@ -168,21 +172,6 @@ export class BackendState {
   async acquireOwnershipOrThrow(): Promise<OwnershipState> {
     await this.requireOwnership();
     return this.ownership;
-  }
-
-  environmentState() { return this.connector.environmentState(); }
-
-  async prepareEnvironment() {
-    await this.connector.prepareEnvironment();
-    return this.connector.environmentState();
-  }
-
-  cancelEnvironment() { return this.connector.cancelEnvironment(); }
-
-  /** Clears the downloaded environment so the next recheck builds it from scratch. */
-  resetConnectorEnvironment(): Promise<ConnectorState> {
-    if (this.closed) throw new Error("Desktop backend is shutting down.");
-    return this.connector.resetEnvironment();
   }
 
   async recheckOwnership(): Promise<OwnershipState> {

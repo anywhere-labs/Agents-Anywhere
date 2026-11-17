@@ -29,7 +29,7 @@ declare module '@deepseek-ai/cordis' {
   interface Events { 'llm/adapters-updated'(): void }
 }
 
-export type NativeChange = { type: 'stream', id: string, turn: number, step: number, chunk: StreamChunk, time: number, throughSeq: number }
+export type NativeChange = { type: 'stream', id: string, turn: number, step: number, chunk: StreamChunk, time: number, throughSeq: number, attemptId?: string }
   | { type: 'event', id: string, event: SessionEvent }
   | { type: 'session', id: string } | { type: 'status', id: string }
   // `resume` recalibrates from the session's committed checkpoint when it still matches.
@@ -55,7 +55,7 @@ export function lastTurnEndKind(events: readonly SessionEvent[]): string | undef
 }
 
 /** Whether DSH already admitted the prompt with this request identity. */
-function admitted(events: readonly SessionEvent[], requestId: string): boolean {
+export function admitted(events: readonly SessionEvent[], requestId: string): boolean {
   const matches = (message: { id: string, source: unknown }) => message.id === requestId || record(message.source).rpcId === requestId
   return events.some(event => event.type === 'user/message' ? matches(event.data)
     : event.type === 'agent/inbox/spliced' && event.data.inserted.some(matches))
@@ -123,7 +123,7 @@ export class NativeRuntime {
       else {
         const attempt = attempts.get(agent.id)
         if (attempt?.attemptId !== frame.attemptId) return
-        if (frame.type === 'chunk') this.emit({ type: 'stream', id: agent.id,
+        if (frame.type === 'chunk') this.emit({ type: 'stream', id: agent.id, attemptId: String(attempt.attemptId),
           turn: attempt.turn, step: attempt.step, chunk: frame.chunk, time: frame.time, throughSeq: Number(agent.session.seq) - 1 })
         else {
           attempts.delete(agent.id)

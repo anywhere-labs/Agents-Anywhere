@@ -13,9 +13,54 @@ DEFAULT_EXPIRES_IN = 900
 DEFAULT_USER_EXPIRES_IN = 60 * 60 * 24 * 7
 
 
+DEVELOPMENT_SECRET = "agent-server-dev-secret"
+# Defaults that shipped in samples and Compose files; never accepted outside development.
+KNOWN_DEFAULT_SECRETS = frozenset(
+    {DEVELOPMENT_SECRET, "change-me-before-production", "change-me-too", "replace-with-a-long-random-secret"}
+)
+MIN_SECRET_LENGTH = 32
+
+
 def _secret() -> bytes:
-    value = os.environ.get("AGENT_SERVER_SECRET", "agent-server-dev-secret")
+    value = os.environ.get("AGENT_SERVER_SECRET", DEVELOPMENT_SECRET)
     return value.encode("utf-8")
+
+
+def server_secret() -> bytes:
+    """The key that signs tokens and seals server-side secrets."""
+
+    return _secret()
+
+
+def development_mode() -> bool:
+    return os.environ.get("AGENT_SERVER_DEV_MODE", "").strip().lower() in {"1", "true", "yes"}
+
+
+def server_secret_problem() -> str | None:
+    """Why the configured ``AGENT_SERVER_SECRET`` must not be used outside development, or None."""
+
+    value = os.environ.get("AGENT_SERVER_SECRET", "")
+    if not value:
+        return "AGENT_SERVER_SECRET is not set"
+    if value in KNOWN_DEFAULT_SECRETS:
+        return "AGENT_SERVER_SECRET is a published default"
+    if len(value) < MIN_SECRET_LENGTH:
+        return f"AGENT_SERVER_SECRET must be at least {MIN_SECRET_LENGTH} characters"
+    return None
+
+
+def require_server_secret() -> None:
+    """Refuse to start with a missing or default secret unless ``AGENT_SERVER_DEV_MODE=1``.
+
+    Anyone who knows the secret can sign user tokens for any account.
+    """
+
+    problem = server_secret_problem()
+    if problem is not None and not development_mode():
+        raise SystemExit(
+            f"{problem}. Set it to at least {MIN_SECRET_LENGTH} random characters "
+            "(for example `openssl rand -hex 32`), or set AGENT_SERVER_DEV_MODE=1 on a development machine."
+        )
 
 
 def create_connector_access_token(
@@ -105,9 +150,15 @@ def hash_password_verifier(verifier: str, *, salt: str) -> str:
     return f"pbkdf2_sha256${salt}${verifier}"
 
 
-def create_user_access_token(user_id: str, expires_in: int = DEFAULT_USER_EXPIRES_IN) -> str:
+def create_user_access_token(
+    user_id: str, expires_in: int = DEFAULT_USER_EXPIRES_IN, *, family_id: str | None = None
+) -> str:
+    """``family_id``: the login the token belongs to; revoking it rejects the token."""
+
     header = {"alg": "HS256", "typ": "JWT"}
-    payload = {"sub": user_id, "exp": int(time.time()) + expires_in}
+    payload: dict[str, Any] = {"sub": user_id, "exp": int(time.time()) + expires_in}
+    if family_id is not None:
+        payload["fam"] = family_id
     signing_input = f"{_b64_json(header)}.{_b64_json(payload)}"
     signature = _b64_bytes(hmac.new(_secret(), signing_input.encode("utf-8"), hashlib.sha256).digest())
     return f"{signing_input}.{signature}"
@@ -137,9 +188,16 @@ def verify_signed_token(kind: str, token: str) -> dict[str, Any] | None:
 
 
 def verify_user_access_token(token: str) -> str | None:
+    claims = verify_user_access_claims(token)
+    return claims[0] if claims is not None else None
+
+
+def verify_user_access_claims(token: str) -> tuple[str, str | None] | None:
+    """``(user_id, family_id)`` of a valid token; tokens issued before families have no family."""
+
     try:
         header, payload, signature = token.split(".", 2)
-        expected = _b64_bytes(hmac.new(_secret(), f"{header}.{payload}".encode("utf-8"), hashlib.sha256).digest())
+        expected = _b64_bytes(hmac.new(_secret(), f"{header}.{payload}".encode(), hashlib.sha256).digest())
         if not hmac.compare_digest(expected, signature):
             return None
         data = json.loads(_b64_decode(payload).decode("utf-8"))
@@ -148,7 +206,10 @@ def verify_user_access_token(token: str) -> str | None:
     if int(data.get("exp") or 0) < int(time.time()):
         return None
     subject = data.get("sub")
-    return subject if isinstance(subject, str) and subject else None
+    if not isinstance(subject, str) or not subject:
+        return None
+    family = data.get("fam")
+    return subject, family if isinstance(family, str) and family else None
 
 
 def _b64_json(value: dict[str, Any]) -> str:

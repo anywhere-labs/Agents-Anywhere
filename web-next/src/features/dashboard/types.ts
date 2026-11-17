@@ -13,10 +13,28 @@ import type {
 } from "@/generated/protocol/v1_1/session-snapshot-response";
 import type { ProtocolWsTicketResponse } from "@/generated/protocol/v1_1/ws-ticket-response";
 
-export type {
-  ProtocolEventEnvelope,
-  ProtocolEventRecoveryResponse,
-} from "@/generated/protocol/v1_1/event-recovery-response";
+import type { ProtocolEventRecoveryResponseV12 } from "@/generated/protocol/v1_2/event-recovery-response";
+import type {
+  DisplayEnvelope,
+  Goalstate,
+  Historysource,
+  Planstate,
+} from "@/generated/protocol/v1_2/session-snapshot-response";
+
+export type { ProtocolEventEnvelope } from "@/generated/protocol/v1_2/event-recovery-response";
+export type { SessionCatchupRequiredPayload } from "@/generated/protocol/v1_2/session-catchup-required-payload";
+/** Protocol 1.2 recovery. Servers before 1.2 omit ``deviceOffline``. */
+export type ProtocolEventRecoveryResponse = Pick<
+  ProtocolEventRecoveryResponseV12,
+  "events" | "nextCursor" | "serverTime" | "snapshotRequired"
+> & {
+  deviceOffline?: boolean;
+};
+/** Where a snapshot or page came from: ``unavailable`` means the device is offline (protocol 1.2). */
+export type HistorySource = Historysource;
+export type SessionPlanState = Planstate;
+export type SessionGoalState = Goalstate;
+export type SessionDisplayEnvelope = DisplayEnvelope;
 export type {
   ProtocolModelCatalog,
   ProtocolModelCatalogResponse,
@@ -328,6 +346,12 @@ export type SessionView = {
   effectiveRunMode?: "chat" | "terminal" | null;
   runtimeSettings?: Record<string, unknown> | null;
   runtimeSettingsOverride?: Record<string, unknown> | null;
+  /** Protocol 1.2 display envelopes: plaintext JSON normally, ciphertext in E2EE mode. */
+  displayDevice?: SessionDisplayEnvelope | null;
+  displayUser?: SessionDisplayEnvelope | null;
+  /** Protocol 1.2 status-only enums that stay visible while the device is offline. */
+  planState?: SessionPlanState;
+  goalState?: SessionGoalState;
 };
 
 export type ConnectorListResponse = {
@@ -722,6 +746,9 @@ export type SessionTimelineSnapshot = {
 export type SessionTimelineResponse = SessionTimelineSnapshot & {
   sessionId: string;
   serverTime: string;
+  /** Protocol 1.2: the device is offline and the page is empty, not the end of history. */
+  deviceOffline?: boolean;
+  historySource?: HistorySource;
 };
 
 export type SessionSnapshotResponse = Pick<
@@ -739,6 +766,9 @@ export type SessionSnapshotResponse = Pick<
     permission?: ProtocolPermissionCatalog;
     [key: string]: unknown;
   };
+  /** Protocol 1.2: ``unavailable`` with ``deviceOffline`` means the Server holds no history for an offline device. */
+  historySource?: HistorySource;
+  deviceOffline?: boolean;
 };
 
 export type WsTicketResponse = ProtocolWsTicketResponse;
@@ -757,6 +787,8 @@ export type SessionPatchRequest = {
   title?: string;
   pinned?: boolean;
   archived?: boolean;
+  /** E2EE: the client assigns sessions the device found on its own (the Server cannot read their cwd). */
+  projectId?: string;
 };
 
 export type FsEntry = {

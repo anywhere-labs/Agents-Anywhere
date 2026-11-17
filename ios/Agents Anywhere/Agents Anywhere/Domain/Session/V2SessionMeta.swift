@@ -11,6 +11,33 @@ nonisolated enum V2ConnectorPresence: String, Codable, Hashable {
     }
 }
 
+/// Protocol 1.2 directory state of the session's plan. Servers before 1.2 omit it.
+nonisolated enum V2SessionPlanState: String, Codable, Hashable {
+    case none
+    case planning
+    case awaitingReview = "awaiting_review"
+    case unknown
+
+    init(from decoder: Decoder) throws {
+        let value = try decoder.singleValueContainer().decode(String.self)
+        self = Self(rawValue: value) ?? .unknown
+    }
+}
+
+/// Protocol 1.2 directory state of the session's goal, readable while the device is offline.
+nonisolated enum V2SessionGoalState: String, Codable, Hashable {
+    case none
+    case active
+    case paused
+    case completed
+    case unknown
+
+    init(from decoder: Decoder) throws {
+        let value = try decoder.singleValueContainer().decode(String.self)
+        self = Self(rawValue: value) ?? .unknown
+    }
+}
+
 nonisolated struct V2SessionMeta: Codable, Identifiable, Hashable {
     let id: V2SessionID
     let connectorId: V2ConnectorID
@@ -21,8 +48,10 @@ nonisolated struct V2SessionMeta: Codable, Identifiable, Hashable {
     var runtimeName: String? = nil
     var runtimeTypeDisplayName: String? = nil
     let externalSessionId: String?
-    let title: String?
-    let cwd: String?
+    /// Encrypted mode: the Server sends null; `V2SessionDisplayResolver` fills in the
+    /// title and working directory decrypted from the display envelopes.
+    var title: String?
+    var cwd: String?
     var status: V2RuntimeStatus
     let takeover: Bool
     let connectorStatus: V2ConnectorPresence
@@ -47,6 +76,17 @@ nonisolated struct V2SessionMeta: Codable, Identifiable, Hashable {
     let sortAt: String?
     let updatedSeq: Int
     var createdAt: String? = nil
+    /// Protocol 1.2; nil from older Servers.
+    var planState: V2SessionPlanState? = nil
+    var goalState: V2SessionGoalState? = nil
+    /// Protocol 1.2 display envelopes: `displayDevice` is written by the device
+    /// (`{title?, cwd?, preview?}`), `displayUser` by a client (`{title}`). Nil from
+    /// Servers that do not send them; the plaintext `title` / `cwd` then apply unchanged.
+    var displayDevice: V2DisplayEnvelope? = nil
+    var displayUser: V2DisplayEnvelope? = nil
+    /// Client-side only, never sent by the Server: an envelope this phone cannot open
+    /// (no key for its `keyId`, or decryption failed). Views show the locked placeholder.
+    var displayLocked: Bool? = nil
 
     var effectiveRuntimeId: V2RuntimeID { runtimeId ?? runtime }
 }
@@ -72,6 +112,8 @@ nonisolated struct V2SessionMetaPatchRequest: Encodable, Hashable {
     let title: String?
     let pinned: Bool?
     let archived: Bool?
+    /// Assigns the session to a project (encrypted mode: matched by the decrypted `cwd`).
+    var projectId: String? = nil
 }
 
 nonisolated struct V2SessionCreateRequest: Encodable, Hashable {

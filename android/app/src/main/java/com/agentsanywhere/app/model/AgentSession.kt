@@ -31,6 +31,14 @@ data class AgentSession(
     val optimisticTopUntil: Long = 0L,
     // Preserve the canonical timestamp, including null, separately from the display activity fallback.
     val sortAt: String? = null,
+    /** Protocol 1.2 state-only enums (`none` from older Servers); readable while the device is offline. */
+    val planState: String = "none",
+    val goalState: String = "none",
+    /** E2EE: the title / working directory came from sealed display envelopes (never the Server's plaintext). */
+    val encryptedDisplay: Boolean = false,
+    /** E2EE: the envelope could not be opened; [title] / [workspaceLabel] hold the "Encrypted" placeholder and [cwd] is null. */
+    val titleLocked: Boolean = false,
+    val cwdLocked: Boolean = false,
 ) {
     val runtimeLabels: RuntimeInstanceLabels
         get() = runtimeInstanceLabels(runtimeName, runtimeType)

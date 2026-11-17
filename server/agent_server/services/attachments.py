@@ -19,6 +19,9 @@ LOCAL_FILE_TOKEN_EXPIRES_IN = 300
 FILE_OPEN_EXPIRES_IN = 300
 
 
+V2_ATTACHMENT_PURGE_KEY = "v3_attachment_purge"
+
+
 class AttachmentService:
     def __init__(self, store: Any, files: FileStorage) -> None:
         self._store = store
@@ -236,6 +239,53 @@ class AttachmentService:
         data, metadata = await self._files.read(session_id, file_id)
         self._validate_blob_integrity(data, metadata)
         return data, metadata
+
+    async def staged_file_metadata(self, *, session_id: str, file_id: str) -> dict[str, Any]:
+        """Metadata of a file the Server still holds; KeyError when it does not."""
+
+        self._validate_file_id(file_id)
+        return await self._files.metadata(session_id, file_id)
+
+    async def save_share_copy(
+        self,
+        *,
+        session_id: str,
+        file_id: str,
+        data: bytes,
+        name: str | None,
+        media_type: str | None,
+        expected_sha256: str | None,
+    ) -> dict[str, Any]:
+        """Keep the Server's copy of a file a share exposes (v3: the original lives on the device)."""
+
+        if expected_sha256 and hashlib.sha256(data).hexdigest() != expected_sha256:
+            raise ValueError(f"{file_id} does not match its sha256")
+        return await self._persist_file_blob(
+            session_id=session_id,
+            data=data,
+            name=name,
+            media_type=media_type,
+            origin="share",
+            file_id=file_id,
+        )
+
+    async def purge_v2_files(self) -> int:
+        """Delete the attachments v2 stored, once, after v2_60 (D8); share files stay.
+
+        The migration leaves ``v3_attachment_purge = pending``; every worker may run this at
+        start, and deleting twice is harmless. Returns how many sessions were swept.
+        """
+
+        if await self._store.get_setting(V2_ATTACHMENT_PURGE_KEY) != "pending":
+            return 0
+        plan = await self._store.attachment_purge_plan()
+        for session_id, keep in plan:
+            try:
+                await self._files.delete_session_except(session_id, keep)
+            except ValueError:
+                continue
+        await self._store.set_setting(V2_ATTACHMENT_PURGE_KEY, "done")
+        return len(plan)
 
     async def delete_file(self, *, session_id: str, file_id: str) -> None:
         self._validate_file_id(file_id)

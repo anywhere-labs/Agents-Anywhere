@@ -7,13 +7,17 @@ from typing import Any
 from fastapi import Depends, Header, HTTPException
 from starlette.requests import HTTPConnection
 
-from agent_server.core.auth import verify_user_access_token
+from agent_server.core.auth import verify_user_access_claims
+from agent_server.core.e2ee_settings import E2eeSettings
 from agent_server.core.models import UserView
 from agent_server.infra.connector_gateway import ConnectorGateway
 from agent_server.infra.connector_rpc import ConnectorRpcManager
+from agent_server.infra.device_mesh import DeviceMesh
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.infra.repositories.facade import Store
+from agent_server.infra.session_watch import SessionWatchHub
 from agent_server.infra.terminal_broker import TerminalBroker
+from agent_server.infra.terminal_roots import TerminalRootStore
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.services.attachments import AttachmentService
 from agent_server.services.catalogs import CatalogService
@@ -22,23 +26,22 @@ from agent_server.services.connector_ingest import ConnectorIngestService
 from agent_server.services.connector_notifications import ConnectorNotificationService
 from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.connector_shell import ConnectorShellService
+from agent_server.services.device_reads import DeviceReadService
 from agent_server.services.device_runtimes import (
     DeviceRuntimeError,
     DeviceRuntimeService,
 )
-from agent_server.services.event_recovery import EventRecoveryService
+from agent_server.services.e2ee_commands import E2eeCommandService
 from agent_server.services.model_channels import (
     ChannelDriver,
     ChannelWakeIndex,
     ModelChannelService,
 )
 from agent_server.services.model_config import ModelConfigError, ModelConfigService
-from agent_server.services.session_message_queue import MessageQueueService
 from agent_server.services.session_run import SessionRunConflictError, SessionRunService
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 from agent_server.services.terminal import TerminalService
 from agent_server.services.terminal_relay import TerminalRelayService
-from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 from agent_server.services.tokens_link import TokensLinkError, TokensLinkService
 from agent_server.services.usage_events import UsageRecorder
 
@@ -55,14 +58,6 @@ def get_catalog_service(conn: HTTPConnection) -> CatalogService:
     return CatalogService(conn.app.state.store)
 
 
-def get_event_recovery_service(conn: HTTPConnection) -> EventRecoveryService:
-    return EventRecoveryService(
-        conn.app.state.store,
-        conn.app.state.rpc,
-        conn.app.state.timeline_write_buffer,
-    )
-
-
 def get_connector_ingest_service(conn: HTTPConnection) -> ConnectorIngestService:
     realtime = get_connector_realtime_service(conn)
     return ConnectorIngestService(
@@ -70,8 +65,8 @@ def get_connector_ingest_service(conn: HTTPConnection) -> ConnectorIngestService
         ConnectorNotificationService(
             conn.app.state.store,
             realtime,
-            conn.app.state.timeline_write_buffer,
             usage_recorder=get_usage_recorder(conn),
+            e2ee_settings=lambda: get_e2ee_settings(conn),
         ),
         conn.app.state.timeline_broker,
         conn.app.state.device_runtime_service,
@@ -79,17 +74,7 @@ def get_connector_ingest_service(conn: HTTPConnection) -> ConnectorIngestService
         conn.app.state.session_runtime_state_cache,
         conn.app.state.capability_refresh,
         runtime_event=model_channel_service_for(conn.app.state).runtime_event,
-        session_idle=message_queue_wake_for(conn.app.state),
     )
-
-
-def message_queue_wake_for(state: Any):
-    dispatcher = getattr(state, "message_queue_dispatcher", None)
-    return dispatcher.wake if dispatcher is not None else None
-
-
-def get_message_queue_wake(conn: HTTPConnection):
-    return message_queue_wake_for(conn.app.state)
 
 
 def get_usage_recorder(conn: HTTPConnection) -> UsageRecorder:
@@ -147,18 +132,16 @@ def session_run_service_for(state: Any) -> SessionRunService:
         usage_recorder=state.usage_recorder,
         prepare_model_channel=prepare_channel,
         admit_runtime=admit,
-        message_queue=getattr(state, "message_queue_dispatcher", None),
-        queue_broker=getattr(state, "timeline_broker", None),
     )
 
 
-def get_message_queue_service(conn: HTTPConnection) -> MessageQueueService:
-    state = conn.app.state
-    return MessageQueueService(
-        state.store,
-        getattr(state, "timeline_broker", None),
-        getattr(state, "message_queue_dispatcher", None),
-    )
+def get_e2ee_settings(conn: HTTPConnection) -> E2eeSettings:
+    settings = getattr(conn.app.state, "e2ee_settings", None)
+    return settings if settings is not None else E2eeSettings()
+
+
+def get_e2ee_command_service(conn: HTTPConnection) -> E2eeCommandService:
+    return E2eeCommandService(conn.app.state.store)
 
 
 def get_device_runtime_service(conn: HTTPConnection) -> DeviceRuntimeService:
@@ -224,9 +207,13 @@ def get_terminal_service(conn: HTTPConnection) -> TerminalService:
     )
 
 
+def get_terminal_roots(conn: HTTPConnection) -> TerminalRootStore:
+    return conn.app.state.terminal_roots
+
+
 def get_terminal_relay_service(conn: HTTPConnection) -> TerminalRelayService:
     return TerminalRelayService(
-        conn.app.state.store,
+        conn.app.state.terminal_roots,
         conn.app.state.rpc,
         conn.app.state.terminal_broker,
     )
@@ -234,6 +221,24 @@ def get_terminal_relay_service(conn: HTTPConnection) -> TerminalRelayService:
 
 def get_rpc(conn: HTTPConnection) -> ConnectorRpcManager:
     return conn.app.state.rpc
+
+
+def get_device_mesh(conn: HTTPConnection) -> DeviceMesh:
+    return conn.app.state.device_mesh
+
+
+def get_device_reads(conn: HTTPConnection) -> DeviceReadService:
+    return conn.app.state.device_reads
+
+
+def get_device_planning(conn: HTTPConnection) -> Any:
+    """``services.device_planning.DevicePlanningService``: plans and goals on the device."""
+
+    return conn.app.state.device_planning
+
+
+def get_session_watch(conn: HTTPConnection) -> SessionWatchHub:
+    return conn.app.state.session_watch
 
 
 def get_terminal_broker(conn: HTTPConnection) -> TerminalBroker:
@@ -248,8 +253,6 @@ def get_timeline_broker(conn: HTTPConnection) -> TimelineBroker:
     return conn.app.state.timeline_broker
 
 
-def get_timeline_write_buffer(conn: HTTPConnection) -> TimelineWriteBuffer:
-    return conn.app.state.timeline_write_buffer
 
 
 def get_session_runtime_state_cache(
@@ -258,29 +261,44 @@ def get_session_runtime_state_cache(
     return conn.app.state.session_runtime_state_cache
 
 
-def user_id_from_authorization(authorization: str | None) -> str:
-    """Return the user id carried by a bearer token header, without DB lookup."""
+async def authenticate_access_token(app: Any, token: str) -> tuple[str, str | None] | None:
+    """``(user_id, family_id)`` for a valid token of an active login (``services.user_tokens``)."""
+
+    tokens = getattr(app.state, "user_tokens", None)
+    if tokens is None:
+        claims = verify_user_access_claims(token)
+        return claims
+    return await tokens.authenticate(token)
+
+
+async def current_user_claims(
+    conn: HTTPConnection,
+    authorization: str | None = Header(None, alias="Authorization"),
+) -> tuple[str, str | None]:
+    """``(user_id, family_id)`` of the bearer token; 401 when it is invalid or its login was revoked."""
+
     prefix = "Bearer "
     if authorization is None or not authorization.startswith(prefix):
         raise HTTPException(status_code=401, detail="missing user access token")
-    user_id = verify_user_access_token(authorization[len(prefix) :])
-    if user_id is None:
+    claims = await authenticate_access_token(conn.app, authorization[len(prefix) :])
+    if claims is None:
         raise HTTPException(status_code=401, detail="invalid user access token")
-    return user_id
+    return claims
 
 
 async def current_user_id(
     conn: HTTPConnection,
     authorization: str | None = Header(None, alias="Authorization"),
 ) -> str:
-    """Lightweight: returns user id from the bearer token without DB lookup.
+    """The caller's user id.
 
-    Use this for endpoints that only need to know who the caller is. For
-    endpoints that need role / disabled, use current_user instead. Every
-    authenticated call also counts as platform presence for usage statistics;
-    the recorder throttles that per user so it stays off the hot path.
+    The token's signature is checked, and the account and login (token family)
+    must still be active; that status is cached per worker for a few seconds.
+    For endpoints that need role, use current_user. Every authenticated call
+    also counts as platform presence for usage statistics; the recorder
+    throttles that per user so it stays off the hot path.
     """
-    user_id = user_id_from_authorization(authorization)
+    user_id, _family = await current_user_claims(conn, authorization)
     recorder = getattr(conn.app.state, "usage_recorder", None)
     if recorder is not None:
         await recorder.touch_user(user_id)

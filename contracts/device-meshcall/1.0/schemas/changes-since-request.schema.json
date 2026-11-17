@@ -1,0 +1,40 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:changes-since-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "afterSeq": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "title": "Afterseq",
+      "type": "integer"
+    },
+    "byteBudget": {
+      "default": 1048576,
+      "minimum": 4096,
+      "title": "Bytebudget",
+      "type": "integer"
+    },
+    "limit": {
+      "default": 500,
+      "maximum": 2000,
+      "minimum": 1,
+      "title": "Limit",
+      "type": "integer"
+    },
+    "sessionId": {
+      "minLength": 1,
+      "title": "Sessionid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "sessionId",
+    "afterSeq"
+  ],
+  "title": "ChangesSinceRequest",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

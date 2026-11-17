@@ -1,6 +1,8 @@
 import { dashboardApi } from "@/features/dashboard/api"
 import { isApiError } from "@/lib/api/errors"
 import { createClientId } from "@/lib/id"
+import { contentTransportFor, socketEventStream, type SessionEventStream } from "@/lib/transport/content-transport"
+import { applySessionPortEvent, isPortEventType, type ListeningPort } from "@/features/preview/session-ports"
 import { sessionRuntimeId, sessionRuntimeType } from "@/features/dashboard/runtime-instances"
 import type { ProtocolEventEnvelope, SessionView, TimelineItem } from "@/features/dashboard/types"
 import type { SessionRemoteState } from "./session-state-cache"
@@ -17,12 +19,14 @@ import {
   cursorSequence,
   isTimelineItem,
   loadInitialSessionState,
+  mergeOfflineSnapshot,
   mergeRuntimeState,
   mergeSessionEvent,
   mergeSessionSnapshot,
   parseProtocolEvent,
   readPayloadValue,
   sessionEventCanUpdateState,
+  sessionHistoryUnavailable,
 } from "./session-remote-state"
 
 type StateUpdate = SessionRemoteState | null | ((current: SessionRemoteState | null) => SessionRemoteState | null)
@@ -38,6 +42,17 @@ function runtimeDomain(event: ProtocolEventEnvelope): RuntimeDomain | null {
   return null
 }
 
+/** Events whose sequence advances the recovery cursor of the session history. */
+function isTimelineEvent(event: ProtocolEventEnvelope): boolean {
+  return event.type === "timeline.item_created" || event.type === "timeline.item_updated" || event.type === "timeline.snapshot"
+}
+
+/**
+ * ``session.catchup_required`` (protocol 1.2): the device link was rebuilt and
+ * live changes resumed from its head, so each client recovers its own gap.
+ */
+const CATCHUP_REQUIRED = "session.catchup_required"
+
 export type SessionControllerSnapshot = {
   state: SessionRemoteState | null
   error: string | null
@@ -49,6 +64,8 @@ export type SessionControllerSnapshot = {
   recoveryGeneration: number
   invalidated: boolean
   domainEvents: ReadonlyMap<string, ProtocolEventEnvelope>
+  /** Ports this session's processes listen on (port preview, preview 1.0 events). */
+  listeningPorts: ReadonlyMap<number, ListeningPort>
 }
 
 export type SessionControllerOptions = {
@@ -77,6 +94,7 @@ export function createSessionController(options: SessionControllerOptions) {
     recoveryGeneration: 0,
     invalidated: false,
     domainEvents: new Map(),
+    listeningPorts: new Map(),
   }
   const listeners = new Set<() => void>()
   const errors = new Map<string, string>()
@@ -84,7 +102,7 @@ export function createSessionController(options: SessionControllerOptions) {
   let callbacks = options
   let started = false
   let disposed = false
-  let socket: WebSocket | null = null
+  let socket: SessionEventStream | null = null
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   let recoveryRetryTimer: ReturnType<typeof setTimeout> | null = null
   let snapshotReady = options.hasSnapshot
@@ -94,6 +112,8 @@ export function createSessionController(options: SessionControllerOptions) {
   let recoveryStarting = false
   let recoveryRequired = true
   let refetchPromise: Promise<boolean> | null = null
+  // A catch-up request that arrived while a recovery was already reading.
+  let catchupPending = false
   let bufferedEvents: ProtocolEventEnvelope[] = []
   let processedIds = new Set<string>()
   const liveReads = new Map<RuntimeDomain, LiveRead>()
@@ -112,11 +132,16 @@ export function createSessionController(options: SessionControllerOptions) {
     publish({ state })
     if (!state || !started || !snapshotReady || !snapshot.subscribed || recoveryPromise || recoveryStarting) return
     if (state.session.connectorStatus !== previous?.session.connectorStatus) {
-      if (state.session.connectorStatus === "online") refreshRuntime(true)
-      else {
+      if (state.session.connectorStatus === "online") {
+        // The device is back: read the history it could not serve while offline.
+        if (sessionHistoryUnavailable(state) || !snapshot.hasSnapshot) void recoverEvents()
+        else refreshRuntime(true)
+      } else {
         releaseLiveReads()
         clearError("capabilities")
         clearError("notices")
+        // An offline device serves nothing; its ports return with its next report.
+        if (snapshot.listeningPorts.size) publish({ listeningPorts: new Map() })
       }
     } else if (state.effectiveCapabilities !== previous?.effectiveCapabilities) refreshCatalogs(false)
   }
@@ -187,6 +212,22 @@ export function createSessionController(options: SessionControllerOptions) {
       return
     }
     if (event.type === "keepalive") return
+    if (isPortEventType(event.type)) {
+      const listeningPorts = applySessionPortEvent(snapshot.listeningPorts, event.type, event.payload, sessionId)
+      if (listeningPorts !== snapshot.listeningPorts) publish({ listeningPorts })
+      return
+    }
+    if (event.type === CATCHUP_REQUIRED) {
+      requestCatchup()
+      return
+    }
+    // While history is unavailable the cursor is not proven to cover the gap
+    // before a live item; recover first so the gap cannot be skipped.
+    if (isTimelineEvent(event) && sessionHistoryUnavailable(snapshot.state)) {
+      bufferedEvents.push(event)
+      requestCatchup()
+      return
+    }
     const domain = runtimeDomain(event)
     const read = domain && liveReads.get(domain)
     if (read) {
@@ -327,6 +368,10 @@ export function createSessionController(options: SessionControllerOptions) {
   }
 
   function replaceSnapshot(next: SessionRemoteState, reset: boolean) {
+    if (sessionHistoryUnavailable(next)) {
+      applyOfflineSnapshot(next)
+      return
+    }
     releaseLiveReads()
     renderBuffer.clear()
     const merged = callbacks.applyOptimisticItems(next)
@@ -347,6 +392,27 @@ export function createSessionController(options: SessionControllerOptions) {
     callbacks.onSessionUpdated?.(next.session)
   }
 
+  /**
+   * The Server keeps no history (D1): an offline snapshot carries metadata
+   * only. Retained content and its cursor survive; without any, the empty
+   * page is not an authoritative base, so the next visit reads again.
+   */
+  function applyOfflineSnapshot(next: SessionRemoteState) {
+    const current = snapshot.state
+    if (current && (snapshot.hasSnapshot || current.items.length > 0)) {
+      updateState((state) => (state ? mergeOfflineSnapshot(state, next) : state))
+    } else {
+      releaseLiveReads()
+      renderBuffer.clear()
+      cursor.replaceFromSnapshot(sessionId, 0)
+      processedIds.clear()
+      updateState({ ...callbacks.applyOptimisticItems(next), nextSeq: 0, eventCursor: "seq:0", hasMore: false })
+      publish({ hasSnapshot: false })
+    }
+    clearError("snapshot")
+    callbacks.onSessionUpdated?.(next.session)
+  }
+
   function refetch(reason: string, recoveringConnection: number) {
     if (refetchPromise) return refetchPromise
     refetchPromise = loadInitialSessionState(token, sessionId, { reason })
@@ -363,6 +429,25 @@ export function createSessionController(options: SessionControllerOptions) {
         refetchPromise = null
       })
     return refetchPromise
+  }
+
+  function requestCatchup() {
+    if (recoveryPromise || recoveryStarting) catchupPending = true
+    else void recoverEvents()
+  }
+
+  function markHistoryUnavailable() {
+    updateState((current) =>
+      current && !(current.deviceOffline && current.historySource === "unavailable")
+        ? { ...current, deviceOffline: true, historySource: "unavailable" }
+        : current,
+    )
+  }
+
+  function markHistoryLive() {
+    updateState((current) =>
+      current && sessionHistoryUnavailable(current) ? { ...current, deviceOffline: false, historySource: "live" } : current,
+    )
   }
 
   function recoverEvents(): Promise<void> {
@@ -397,9 +482,23 @@ export function createSessionController(options: SessionControllerOptions) {
       .then(() => dashboardApi.getSessionEvents(token, sessionId, after))
       .then(async (recovery) => {
         if (disposed || recoveringConnection !== connection || snapshot.invalidated || !snapshot.subscribed) return
-        if (recovery.snapshotRequired) {
-          recovered = await recoverSnapshot("websocket.recovery:snapshot-required")
+        if (recovery.deviceOffline) {
+          // Nothing is readable until the device returns. Keep the cursor and
+          // drop buffered history items: the next recovery reads them again.
+          previousConsumed = true
+          drainSessionEventBuffer(previous.filter((event) => !isTimelineEvent(event)), applyEvent)
+          markHistoryUnavailable()
+          renderBuffer.flush()
+          refreshRuntime()
+          recovered = true
+        } else if (recovery.snapshotRequired || !snapshot.hasSnapshot) {
+          // Without an authoritative base (an offline first load), read one now.
+          recovered = await recoverSnapshot(
+            recovery.snapshotRequired ? "websocket.recovery:snapshot-required" : "websocket.recovery:device-online",
+          )
         } else {
+          // The device answered: history is readable again before items apply.
+          markHistoryLive()
           // Sort together so newer buffered timeline items cannot hide older
           // recovered ones; at equal sequences the authoritative read wins.
           drainSessionEventBuffer([...previous, ...recovery.events], applyEvent)
@@ -423,6 +522,12 @@ export function createSessionController(options: SessionControllerOptions) {
         recoveryPromise = null
         if (disposed || snapshot.invalidated) return
         if (!previousConsumed) bufferedEvents = [...previous, ...bufferedEvents]
+        if (catchupPending && recoveringConnection === connection && snapshot.subscribed) {
+          // The request was answered before the device link was rebuilt.
+          catchupPending = false
+          void recoverEvents()
+          return
+        }
         if (recovered && recoveringConnection === connection && snapshot.subscribed) {
           recoveryRequired = false
           drainBufferedEvents()
@@ -451,13 +556,25 @@ export function createSessionController(options: SessionControllerOptions) {
     await recoverEvents()
   }
 
+  /** The encrypted channel when one carries this session, otherwise the ticketed WebSocket. */
+  async function openSessionStream(): Promise<SessionEventStream | null> {
+    const tunnel = contentTransportFor(sessionId)
+    if (tunnel) return tunnel.openSessionStream(sessionId)
+    const ticket = await dashboardApi.createWsTicket(token, createClientId("web"), sessionId)
+    if (disposed || snapshot.invalidated) return null
+    return socketEventStream(new WebSocket(dashboardApi.sessionWebSocketUrl(sessionId, ticket.ticket)))
+  }
+
   async function connect() {
     if (disposed || snapshot.invalidated) return
     const currentConnection = ++connection
     try {
-      const ticket = await dashboardApi.createWsTicket(token, createClientId("web"), sessionId)
-      if (disposed || snapshot.invalidated || currentConnection !== connection) return
-      const currentSocket = new WebSocket(dashboardApi.sessionWebSocketUrl(sessionId, ticket.ticket))
+      const currentSocket = await openSessionStream()
+      if (disposed || snapshot.invalidated || currentConnection !== connection) {
+        currentSocket?.close()
+        return
+      }
+      if (!currentSocket) return
       socket = currentSocket
       currentSocket.onmessage = (message) => {
         if (disposed || snapshot.invalidated || currentConnection !== connection || typeof message.data !== "string")
@@ -469,7 +586,9 @@ export function createSessionController(options: SessionControllerOptions) {
           publish({ subscribed: true })
           if (snapshotReady) void recoverAfterSubscription(currentConnection)
         } else if (!snapshotReady || recoveryRequired || recoveryPromise) {
-          bufferedEvents.push(event)
+          if (event.type === CATCHUP_REQUIRED) {
+            if (snapshotReady) requestCatchup()
+          } else bufferedEvents.push(event)
           if (event.type === "session.refetch_required") void recoverEvents()
         } else applyEvent(event)
       }
@@ -509,6 +628,10 @@ export function createSessionController(options: SessionControllerOptions) {
       }
     },
     updateState,
+    /** Read the gap from this session's cursor, e.g. after a command whose outcome is unknown. */
+    catchUp() {
+      requestCatchup()
+    },
     configure(next: SessionControllerOptions) {
       callbacks = next
     },

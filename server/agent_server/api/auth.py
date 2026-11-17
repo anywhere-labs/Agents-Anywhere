@@ -21,10 +21,12 @@ from agent_server.core.models import (
     AuthMeResponse,
     AuthPasswordSaltRequest,
     AuthPasswordSaltResponse,
+    AuthRefreshRequest,
     AuthRequest,
     AuthResponse,
     BindEmailRequest,
     ChangePasswordRequest,
+    E2eeConfigView,
     EmailCodeRequest,
     EmailCodeResponse,
     MobileLoginConfirmRequest,
@@ -43,7 +45,13 @@ from agent_server.core.models import (
     UserView,
 )
 from agent_server.core.utc import utc_now
-from agent_server.deps import current_user, get_store, user_id_from_authorization
+from agent_server.deps import (
+    current_user,
+    current_user_claims,
+    current_user_id,
+    get_e2ee_settings,
+    get_store,
+)
 from agent_server.infra.repositories.email_accounts import (
     EmailRateLimitError,
     EmailVerificationError,
@@ -65,6 +73,12 @@ from agent_server.services.oauth import (
     verify_pending_token,
 )
 from agent_server.services.setup_tokens import SetupTokenService
+from agent_server.services.user_tokens import (
+    InvalidRefreshToken,
+    IssuedTokens,
+    UserTokenService,
+    iso_from_epoch,
+)
 
 
 def _setup_token(request: Request) -> SetupTokenService:
@@ -107,6 +121,7 @@ async def auth_config(
         oauthProviderLabel=str(oauth_config.get("label") or "OAuth") if oauth_enabled(oauth_config) else None,
         passwordResetEnabled=email_enabled and await db.is_password_reset_enabled(),
         setupTokenExpiresAt=expires_at,
+        e2ee=E2eeConfigView.model_validate(get_e2ee_settings(request).view()),
         serverTime=utc_now(),
     )
 
@@ -159,7 +174,7 @@ async def auth_register(
 
     if bootstrap_user is not None:
         await _setup_token(request).consume()
-        return _auth_response(bootstrap_user)
+        return await _issue_auth(request, bootstrap_user, "register")
 
     if not await db.is_registration_open():
         raise HTTPException(status_code=403, detail="registration is closed")
@@ -176,11 +191,11 @@ async def auth_register(
         )
     except ValueError as exc:
         raise _value_error_to_http(exc) from exc
-    return _auth_response(user)
+    return await _issue_auth(request, user, "register")
 
 
 @router.post("/auth/login", response_model=AuthResponse)
-async def auth_login(payload: AuthRequest, db: Store = Depends(get_store)) -> AuthResponse:
+async def auth_login(payload: AuthRequest, request: Request, db: Store = Depends(get_store)) -> AuthResponse:
     try:
         user = await db.verify_email_user(
             email=payload.email, password=payload.password, verifier=payload.passwordVerifier,
@@ -189,7 +204,7 @@ async def auth_login(payload: AuthRequest, db: Store = Depends(get_store)) -> Au
         raise _value_error_to_http(exc) from exc
     if user is None:
         raise HTTPException(status_code=401, detail="invalid credentials")
-    return _auth_response(user)
+    return await _issue_auth(request, user, "password")
 
 
 @router.post("/auth/email-code", response_model=EmailCodeResponse)
@@ -198,7 +213,7 @@ async def send_email_code(
 ) -> EmailCodeResponse:
     user = None
     if request.headers.get("authorization"):
-        user = await current_user(user_id_from_authorization(request.headers.get("authorization")), db)
+        user = await current_user(await current_user_id(request, request.headers.get("authorization")), db)
     if payload.purpose == "bind" and user is None:
         raise HTTPException(status_code=401, detail="authentication required")
     if payload.purpose == "register":
@@ -342,6 +357,7 @@ async def oauth_callback(
 @router.post("/auth/oauth/finalize", response_model=OAuthFinalizeResponse)
 async def oauth_finalize(
     payload: OAuthFinalizeRequest,
+    request: Request,
     db: Store = Depends(get_store),
 ) -> OAuthFinalizeResponse:
     identity = verify_pending_token(payload.pendingToken)
@@ -349,7 +365,7 @@ async def oauth_finalize(
         raise HTTPException(status_code=401, detail="oauth session expired")
     existing = await db.oauth_user_for_subject(provider=identity.provider, subject=identity.subject)
     if existing is not None:
-        return OAuthFinalizeResponse(auth=_auth_response(existing), serverTime=utc_now())
+        return OAuthFinalizeResponse(auth=await _issue_auth(request, existing, "oauth"), serverTime=utc_now())
     try:
         email = normalize_email(payload.email or "")
         target = await db.user_for_email(email)
@@ -363,7 +379,7 @@ async def oauth_finalize(
                 user_id=verified.userId, provider=identity.provider, subject=identity.subject,
                 email=identity.email, display_name=identity.display_name,
             )
-            return OAuthFinalizeResponse(auth=_auth_response(user), serverTime=utc_now())
+            return OAuthFinalizeResponse(auth=await _issue_auth(request, user, "oauth"), serverTime=utc_now())
         if not await db.is_oauth_registration_open():
             raise HTTPException(status_code=403, detail="oauth registration is closed")
         password_hash = _password_hash_from_oauth_finalize(payload)
@@ -379,7 +395,7 @@ async def oauth_finalize(
         )
     except ValueError as exc:
         raise _value_error_to_http(exc) from exc
-    return OAuthFinalizeResponse(auth=_auth_response(user), serverTime=utc_now())
+    return OAuthFinalizeResponse(auth=await _issue_auth(request, user, "oauth"), serverTime=utc_now())
 
 
 @router.get("/auth/me", response_model=AuthMeResponse)
@@ -439,7 +455,8 @@ async def change_password(
     if authorization is None and payload.email and payload.code:
         await _reset_password(payload, db)
         return
-    user = await current_user(user_id_from_authorization(authorization), db)
+    user_id, family_id = await current_user_claims(request, authorization)
+    user = await current_user(user_id, db)
     if not payload.newPassword and not payload.newPasswordVerifier:
         raise HTTPException(status_code=422, detail="new password is required")
     await db.update_user_password(
@@ -447,6 +464,8 @@ async def change_password(
         payload.newPassword,
         password_hash=_password_hash_from_change(payload),
     )
+    # Every other login of this account ends; this one stays signed in.
+    await _user_tokens(request).revoke_user(user.userId, reason="password_changed", keep=family_id)
 
 
 @router.post("/auth/mobile-login/qr", response_model=MobileLoginQrCreateResponse)
@@ -481,6 +500,7 @@ async def create_mobile_login_qr(
 @router.post("/auth/mobile-login/exchange", response_model=MobileLoginExchangeResponse)
 async def exchange_mobile_login(
     payload: MobileLoginExchangeRequest,
+    request: Request,
     db: Store = Depends(get_store),
 ) -> MobileLoginExchangeResponse:
     token_payload = verify_signed_token(MOBILE_LOGIN_TOKEN_KIND, payload.loginToken)
@@ -494,17 +514,20 @@ async def exchange_mobile_login(
         raise HTTPException(status_code=401, detail="user no longer exists") from None
     if user.disabled:
         raise HTTPException(status_code=403, detail="account disabled")
+    tokens = await _user_tokens(request).issue(user.userId, client=_client_label(request, "mobile"))
     refresh_token = create_signed_token(
         MOBILE_REFRESH_TOKEN_KIND,
         {
             "sub": user.userId,
             "aud": "agents-anywhere-mobile",
             "nonce": secrets.token_urlsafe(16),
+            # Revoking the login (logout, password change, disabling) also ends this refresh token.
+            "fam": tokens.family_id,
         },
         MOBILE_REFRESH_EXPIRES_IN,
     )
     return MobileLoginExchangeResponse(
-        auth=_auth_response(user),
+        auth=_auth_payload(user, tokens),
         refreshToken=refresh_token,
         expiresAt=_iso_from_epoch(int(time.time()) + MOBILE_REFRESH_EXPIRES_IN),
         serverTime=utc_now(),
@@ -514,6 +537,7 @@ async def exchange_mobile_login(
 @router.post("/auth/mobile-login/refresh", response_model=AuthResponse)
 async def refresh_mobile_login(
     payload: MobileLoginRefreshRequest,
+    request: Request,
     db: Store = Depends(get_store),
 ) -> AuthResponse:
     token_payload = verify_signed_token(MOBILE_REFRESH_TOKEN_KIND, payload.refreshToken)
@@ -528,7 +552,14 @@ async def refresh_mobile_login(
         raise HTTPException(status_code=401, detail="user no longer exists") from None
     if user.disabled:
         raise HTTPException(status_code=403, detail="account disabled")
-    return _auth_response(user)
+    family_id = token_payload.get("fam")
+    if not isinstance(family_id, str) or not family_id:
+        # Issued before token families: an access token without one, as before.
+        return _auth_payload(user, None)
+    tokens = _user_tokens(request)
+    if not await tokens.allows(user.userId, family_id, cached=False):
+        raise HTTPException(status_code=401, detail="invalid or expired mobile refresh token")
+    return _auth_payload(user, await tokens.access_in_family(user.userId, family_id))
 
 
 @router.post("/auth/mobile-login/request", response_model=MobileLoginStatusResponse)
@@ -602,14 +633,68 @@ def _me_response(user: UserView) -> AuthMeResponse:
     )
 
 
-def _auth_response(user: UserView) -> AuthResponse:
+def _user_tokens(request: Request) -> UserTokenService:
+    return request.app.state.user_tokens
+
+
+def _client_label(request: Request, method: str) -> str:
+    agent = (request.headers.get("user-agent") or "").strip()
+    return f"{method} · {agent}" if agent else method
+
+
+async def _issue_auth(request: Request, user: UserView, method: str) -> AuthResponse:
+    """A new login (token family): access token plus a rotating refresh token."""
+
+    tokens = await _user_tokens(request).issue(user.userId, client=_client_label(request, method))
+    return _auth_payload(user, tokens)
+
+
+def _auth_payload(user: UserView, tokens: IssuedTokens | None) -> AuthResponse:
+    if tokens is None:
+        access, expires_at, refresh, refresh_expires_at = create_user_access_token(user.userId), None, None, None
+    else:
+        access = tokens.access_token
+        expires_at = iso_from_epoch(tokens.access_expires_at)
+        refresh = tokens.refresh_token
+        refresh_expires_at = iso_from_epoch(tokens.refresh_expires_at)
     return AuthResponse(
         userId=user.userId,
         role=user.role,
         email=user.email, emailVerified=user.emailVerified, displayName=user.displayName,
-        accessToken=create_user_access_token(user.userId),
+        accessToken=access,
+        expiresAt=expires_at,
+        refreshToken=refresh,
+        refreshExpiresAt=refresh_expires_at,
         serverTime=utc_now(),
     )
+
+
+@router.post("/auth/refresh", response_model=AuthResponse)
+async def auth_refresh(payload: AuthRefreshRequest, request: Request, db: Store = Depends(get_store)) -> AuthResponse:
+    """Trade a refresh token for a new access token and the next refresh token.
+
+    Each refresh token works once. Presenting one that was already used revokes
+    the whole login: it means someone else holds a copy.
+    """
+
+    try:
+        tokens = await _user_tokens(request).refresh(payload.refreshToken)
+    except InvalidRefreshToken:
+        raise HTTPException(status_code=401, detail="invalid or expired refresh token") from None
+    try:
+        user = await db.get_user(tokens.user_id)
+    except KeyError:
+        raise HTTPException(status_code=401, detail="user no longer exists") from None
+    return _auth_payload(user, tokens)
+
+
+@router.post("/auth/logout", status_code=204)
+async def auth_logout(request: Request, claims: tuple[str, str | None] = Depends(current_user_claims)) -> None:
+    """End this login: its access and refresh tokens stop working on every worker within seconds."""
+
+    user_id, family_id = claims
+    if family_id is not None:
+        await _user_tokens(request).revoke(user_id, family_id, reason="logout")
 
 
 def _iso_from_epoch(value: int) -> str:

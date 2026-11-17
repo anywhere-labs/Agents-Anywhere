@@ -1,0 +1,53 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:store-read-response",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "hasMore": {
+      "title": "Hasmore",
+      "type": "boolean"
+    },
+    "headSeq": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "title": "Headseq",
+      "type": "integer"
+    },
+    "items": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "oldestOrderSeq": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Oldestorderseq"
+    },
+    "resetSeq": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "title": "Resetseq",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "headSeq",
+    "resetSeq",
+    "hasMore"
+  ],
+  "title": "StoreReadResponse",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

@@ -29,10 +29,14 @@ from agent_server.api import (
     connector_terminal,
     connectors,
     dashboard_stream,
+    device_link,
+    device_transfers,
+    e2ee,
     error_handlers,
     model_config,
     oauth,
     pairing,
+    previews,
     projects,
     runtime_workflows,
     service,
@@ -44,8 +48,12 @@ from agent_server.api import (
     sessions_terminal,
     shares,
     tokens_link,
+    tunnel,
 )
-from agent_server.core.api_namespace import API_V2_PREFIX
+from agent_server.api.e2ee_gate import E2eeGateMiddleware
+from agent_server.core.api_namespace import API_V2_PREFIX, API_V3_PREFIX
+from agent_server.core.auth import require_server_secret
+from agent_server.core.e2ee_settings import E2eeSettings
 from agent_server.core.process_settings import ProcessSettings
 from agent_server.core.setup_token import SetupToken
 from agent_server.core.utc import utc_now
@@ -56,15 +64,21 @@ from agent_server.infra.db.migrations import (
     require_current_database,
     upgrade_database,
 )
+from agent_server.infra.device_link import DeviceLinkHub, DeviceRpcBridge
+from agent_server.infra.device_mesh import DeviceMesh, MeshSettings
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.infra.malloc_trim import run_malloc_trim_loop
 from agent_server.infra.model_gateway_probe import (
     GatewayProber,
     private_gateways_allowed,
 )
+from agent_server.infra.pairing_store import PairingStore
+from agent_server.infra.preview_state import PreviewStateStore
 from agent_server.infra.redis_coordinator import RedisCoordinator
 from agent_server.infra.repositories.facade import Store
+from agent_server.infra.session_watch import SessionWatchHub
 from agent_server.infra.terminal_broker import TerminalBroker
+from agent_server.infra.terminal_roots import TerminalRootStore
 from agent_server.infra.terminal_stream_hub import TerminalStreamHub
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.infra.tokens_access_cache import TokensAccessCache
@@ -74,19 +88,41 @@ from agent_server.services.channel_reconciliation import ChannelReconciler
 from agent_server.services.connector_deletion import ConnectorDeletionRecovery
 from agent_server.services.connector_rpc import ConnectorServiceError
 from agent_server.services.dashboard_events import publish_dashboard_changed
+from agent_server.services.device_blobs import DeviceBlobService
+from agent_server.services.device_commands import DeviceCommandService
+from agent_server.services.device_link import DeviceLinkService
+from agent_server.services.device_planning import DevicePlanningService
+from agent_server.services.device_queue import DeviceQueueService
+from agent_server.services.device_reads import DeviceReadService
 from agent_server.services.device_runtimes import DeviceRuntimeService
+from agent_server.services.e2ee_mode import apply_e2ee_mode
 from agent_server.services.effective_capabilities import (
     ConnectorCapabilityRefresh,
 )
+from agent_server.services.previews import PreviewService
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 from agent_server.services.setup_tokens import SetupTokenService
 from agent_server.services.shell_tasks import ShellTaskManager
-from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 from agent_server.services.usage_events import UsageRecorder
 from agent_server.services.usage_maintenance import UsageMaintenanceLoop
+from agent_server.services.user_tokens import UserTokenService
 from agent_server.services.workspace import WorkspaceServiceError
 
 CONNECTOR_PRESENCE_SWEEP_SECONDS = 5
+
+
+async def _purge_v2_attachments(app: FastAPI) -> None:
+    """Delete the attachments v2 stored, once after the 3.0 upgrade (v2_60, D8)."""
+
+    try:
+        swept = await app.state.store.attachments.purge_v2_files()
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001 - retried at the next start; never stops the Server
+        logger.exception("failed to delete v2 attachments; retrying at the next start")
+        return
+    if swept:
+        logger.info("deleted v2 attachments of {} sessions (share files kept)", swept)
 
 
 async def _connector_presence_watchdog(app: FastAPI) -> None:
@@ -127,6 +163,7 @@ def create_app(
     default; the test suite migrates its own database once per session.
     """
     process_settings = ProcessSettings.from_environment()
+    e2ee_settings = E2eeSettings.from_environment()
     resolved_redis_url = redis_url
     if resolved_redis_url is None:
         resolved_redis_url = os.environ.get("AGENT_SERVER_REDIS_URL")
@@ -138,40 +175,39 @@ def create_app(
         deletion_task: asyncio.Task[None] | None = None
         usage_task: asyncio.Task[None] | None = None
         tokens_task: asyncio.Task[None] | None = None
-        goal_task: asyncio.Task[None] | None = None
         trim_task: asyncio.Task[None] | None = None
+        purge_task: asyncio.Task[None] | None = None
+        preview_task: asyncio.Task[None] | None = None
         try:
             logger.info(
                 "server concurrency pid={} workers={} event_workers={}",
                 os.getpid(), process_settings.workers, process_settings.event_workers,
             )
             await require_current_database(app.state.store.engine)
+            await apply_e2ee_mode(app.state.store, app.state.e2ee_settings)
             app.state.database_schema_version = await database_schema_version(
                 app.state.store.engine
             )
             await app.state.redis.start()
             await app.state.timeline_broker.start()
-            await app.state.timeline_write_buffer.start()
             await app.state.terminal_stream_hub.start()
             await app.state.terminal_broker.start()
             await app.state.rpc.start()
+            # Never blocks startup: a Router that is down only shows in readiness (#441 review).
+            await app.state.device_mesh.start()
+            await app.state.session_watch.start()
             await app.state.usage_recorder.start()
             presence_task = asyncio.create_task(_connector_presence_watchdog(app))
             deletion_task = asyncio.create_task(app.state.connector_deletion_recovery.run())
             usage_task = asyncio.create_task(app.state.usage_maintenance.run())
             tokens_task = asyncio.create_task(tokens_link_service_for(app.state).run_keep_alive())
+            purge_task = asyncio.create_task(_purge_v2_attachments(app), name="v2-attachment-purge")
+            preview_task = asyncio.create_task(app.state.previews.run(), name="preview-sweeper")
             # Switches a stopped worker left behind; waiting ones resume on events.
             await model_channel_service_for(app.state).resume()
             app.state.channel_reconciler = ChannelReconciler(app.state.store,
                 model_channel_service_for(app.state), app.state.redis, tokens_link_service_for(app.state))
             await app.state.channel_reconciler.start()
-            from agent_server.services.goal.outbox import run_goal_outbox
-
-            goal_task = asyncio.create_task(
-                run_goal_outbox(app.state.store, app.state.timeline_broker)
-            )
-            # Messages that waited across a restart go out once their session is idle.
-            app.state.message_queue_dispatcher.start()
             if process_settings.malloc_trim_interval_seconds > 0:
                 # Opt-in mitigation for glibc heap creep in long-lived workers (#466).
                 trim_task = asyncio.create_task(
@@ -183,6 +219,12 @@ def create_app(
                 await SetupTokenService(app.state.setup_token, app.state.redis).snapshot()
             yield
         finally:
+            if preview_task is not None:
+                preview_task.cancel()
+                await asyncio.gather(preview_task, return_exceptions=True)
+            if purge_task is not None:
+                purge_task.cancel()
+                await asyncio.gather(purge_task, return_exceptions=True)
             if trim_task is not None:
                 trim_task.cancel()
                 await asyncio.gather(trim_task, return_exceptions=True)
@@ -195,12 +237,6 @@ def create_app(
             driver = getattr(app.state, "channel_driver", None)
             if driver is not None:
                 await driver.close()
-            dispatcher = getattr(app.state, "message_queue_dispatcher", None)
-            if dispatcher is not None:
-                await dispatcher.close()
-            if goal_task is not None:
-                goal_task.cancel()
-                await asyncio.gather(goal_task, return_exceptions=True)
             if usage_task is not None:
                 usage_task.cancel()
                 await asyncio.gather(usage_task, return_exceptions=True)
@@ -220,24 +256,28 @@ def create_app(
                 logger.exception("failed to flush usage events on shutdown")
             await app.state.capability_refresh.close()
             try:
+                await app.state.session_watch.close()
+                await app.state.device_blobs.close()
+                await app.state.device_link_hub.close()
+                await app.state.device_mesh.close()
+            except Exception:  # noqa: BLE001 - shutdown must continue
+                logger.exception("failed to close the device mesh client")
+            try:
                 await app.state.rpc.close()
             finally:
                 try:
-                    await app.state.timeline_write_buffer.close()
+                    await app.state.terminal_broker.close()
                 finally:
                     try:
-                        await app.state.terminal_broker.close()
+                        await app.state.terminal_stream_hub.close()
                     finally:
                         try:
-                            await app.state.terminal_stream_hub.close()
+                            await app.state.timeline_broker.close()
                         finally:
                             try:
-                                await app.state.timeline_broker.close()
+                                await app.state.redis.close()
                             finally:
-                                try:
-                                    await app.state.redis.close()
-                                finally:
-                                    await app.state.store.close()
+                                await app.state.store.close()
 
     app = FastAPI(title="Agent Server", version="2.2.0", lifespan=lifespan)
     app.add_exception_handler(
@@ -248,6 +288,8 @@ def create_app(
         WorkspaceServiceError,
         error_handlers.workspace_service_error_handler,
     )
+    # Inside CORS, so a refused request still carries CORS headers and the browser can read e2ee_required.
+    app.add_middleware(E2eeGateMiddleware, settings=e2ee_settings)
     cors_origins = os.environ.get("AGENT_SERVER_CORS_ORIGINS")
     app.add_middleware(
         CORSMiddleware,
@@ -262,6 +304,7 @@ def create_app(
     if migrate_database:
         upgrade_database()
     app.state.store = Store()
+    app.state.e2ee_settings = e2ee_settings
     app.state.database_schema_version = "unknown"
     app.state.redis = RedisCoordinator(
         resolved_redis_url,
@@ -279,6 +322,15 @@ def create_app(
         instance_id=process_settings.instance_id(),
     )
     app.state.store.bind_connector_lifecycle(app.state.rpc.lifecycle_guard)
+    app.state.terminal_roots = TerminalRootStore(app.state.redis)
+    app.state.store.bind_terminal_roots(app.state.terminal_roots)
+    app.state.device_mesh = DeviceMesh(MeshSettings.from_environment())
+    app.state.device_link_hub = DeviceLinkHub(
+        app.state.device_mesh, app.state.redis, worker_id=app.state.rpc.instance_id
+    )
+    # v3 devices answer ConnectorRpcManager requests over MeshCall.
+    app.state.device_rpc_bridge = DeviceRpcBridge(app.state.device_link_hub, app.state.device_mesh)
+    app.state.rpc.attach_mesh_link(app.state.device_rpc_bridge)
     app.state.fs_downloads = FsDownloadRelayManager(app.state.redis)
     app.state.shell_tasks = ShellTaskManager(app.state.redis)
     app.state.terminal_broker = TerminalBroker(
@@ -302,30 +354,6 @@ def create_app(
     app.state.capability_refresh = ConnectorCapabilityRefresh(
         app.state.store, app.state.rpc, app.state.timeline_broker,
     )
-    app.state.timeline_write_buffer = TimelineWriteBuffer(
-        app.state.store,
-        app.state.timeline_broker,
-        app.state.redis,
-        presence=app.state.rpc,
-        flush_interval_seconds=float(
-            os.environ.get("AGENT_SERVER_TIMELINE_FLUSH_INTERVAL_SECONDS", "1")
-        ),
-        revision_lease_size=int(
-            os.environ.get("AGENT_SERVER_TIMELINE_REVISION_LEASE_SIZE", "4096")
-        ),
-        profile_hotpath=os.environ.get(
-            "AGENT_SERVER_TIMELINE_PROFILE", ""
-        ).strip().lower()
-        in {"1", "true", "yes"},
-        profile_min_ms=float(
-            os.environ.get("AGENT_SERVER_TIMELINE_PROFILE_MIN_MS", "0")
-        ),
-        single_instance=process_settings.single_instance,
-        lane_idle_seconds=float(
-            os.environ.get("AGENT_SERVER_TIMELINE_LANE_IDLE_SECONDS", "900")
-        ),
-        max_lanes=int(os.environ.get("AGENT_SERVER_TIMELINE_MAX_LANES", "4096")),
-    )
     app.state.session_runtime_state_cache = SessionRuntimeStateCache(app.state.redis)
     app.state.device_runtime_service = DeviceRuntimeService(
         app.state.store,
@@ -333,12 +361,11 @@ def create_app(
         app.state.timeline_broker,
         app.state.redis,
         app.state.session_runtime_state_cache,
-        timeline_write_buffer=app.state.timeline_write_buffer,
         terminal_broker=app.state.terminal_broker,
     )
     app.state.connector_deletion_recovery = ConnectorDeletionRecovery(
         app.state.store, app.state.rpc, app.state.terminal_broker,
-        app.state.timeline_write_buffer, app.state.session_runtime_state_cache, app.state.timeline_broker,
+        app.state.session_runtime_state_cache, app.state.timeline_broker,
     )
     app.state.usage_recorder = UsageRecorder(
         app.state.store,
@@ -346,16 +373,50 @@ def create_app(
             os.environ.get("AGENT_SERVER_USAGE_FLUSH_INTERVAL_SECONDS", "1")
         ),
     )
-    from agent_server.deps import session_run_service_for
-    from agent_server.services.session_message_queue import MessageQueueDispatcher
+    def _e2ee_settings() -> E2eeSettings:
+        return app.state.e2ee_settings
 
-    app.state.message_queue_dispatcher = MessageQueueDispatcher(
+    app.state.device_link = DeviceLinkService(
         app.state.store,
+        app.state.device_mesh,
+        app.state.device_link_hub,
+        app.state.redis,
         app.state.timeline_broker,
-        lambda: session_run_service_for(app.state),
-        coordinator=app.state.redis,
-        # Read through app state so a replaced RPC manager is used.
-        is_online=lambda connector_id: app.state.rpc.is_online(connector_id),
+        capability_refresh=app.state.capability_refresh,
+        usage_recorder=app.state.usage_recorder,
+        e2ee_settings=_e2ee_settings,
+    )
+    app.state.device_reads = DeviceReadService(
+        app.state.store, app.state.device_mesh, app.state.device_link_hub
+    )
+    app.state.session_watch = SessionWatchHub(
+        app.state.device_mesh,
+        app.state.device_link_hub,
+        app.state.redis,
+        app.state.store,
+        app.state.timeline_broker.publish,
+        worker_id=app.state.rpc.instance_id,
+        # Encrypted mode: content never passes through the Server, the device registers no Sessions.
+        enabled=lambda: not _e2ee_settings().required,
+    )
+    app.state.device_link.session_watch = app.state.session_watch
+    app.state.device_commands = DeviceCommandService(
+        app.state.store, app.state.device_mesh, app.state.device_link_hub, e2ee_settings=_e2ee_settings
+    )
+    app.state.device_link.commands = app.state.device_commands
+    app.state.device_rpc_bridge.commands = app.state.device_commands
+    app.state.device_blobs = DeviceBlobService(
+        app.state.store,
+        app.state.device_mesh,
+        app.state.device_link_hub,
+        app.state.fs_downloads,
+        app.state.store.attachments,
+        app.state.redis,
+    )
+    app.state.device_link.attachment_consumed = app.state.device_blobs.consumed
+    app.state.device_queue = DeviceQueueService(app.state.device_reads, app.state.device_commands)
+    app.state.device_planning = DevicePlanningService(
+        app.state.store, app.state.device_reads, app.state.device_commands
     )
     app.state.usage_maintenance = UsageMaintenanceLoop(
         app.state.store,
@@ -363,6 +424,23 @@ def create_app(
         retention_days=int(os.environ.get("AGENT_SERVER_USAGE_RETENTION_DAYS", "400")),
     )
     app.state.ws_tickets = ClientWsTicketManager(app.state.redis)
+    app.state.pairing = PairingStore(app.state.redis)
+    app.state.preview_state = PreviewStateStore(app.state.redis)
+
+    async def _device_online(device_id: str) -> bool:
+        return await app.state.device_link_hub.current_connection(device_id) is not None
+
+    app.state.previews = PreviewService(
+        app.state.store,
+        app.state.preview_state,
+        app.state.device_commands,
+        app.state.timeline_broker.publish,
+        _device_online,
+        e2ee_settings=_e2ee_settings,
+    )
+    app.state.device_link.event_listeners.append(app.state.previews.on_device_event)
+    app.state.device_link.presence_listeners.append(app.state.previews.on_presence)
+    app.state.user_tokens = UserTokenService(app.state.store)
     app.state.setup_token = SetupToken()
     app.state.started_at_iso = utc_now()
     app.state.started_at_monotonic = time.monotonic()
@@ -414,6 +492,8 @@ def create_app(
                 checks["redis"] = {"status": "error", "message": str(exc)}
         else:
             checks["redis"] = {"status": "not_configured"}
+        # The Router is reported, never required: without it devices are offline, not the Server.
+        checks["mesh"] = await app.state.device_mesh.check()
         if app.state.timeline_broker.healthy:
             checks["realtime"] = {"status": "ok"}
         else:
@@ -448,8 +528,13 @@ def create_app(
     app.include_router(connector_terminal.router, prefix=API_V2_PREFIX)
     app.include_router(client_ws.router, prefix=API_V2_PREFIX)
     app.include_router(connector_ingress.router, prefix=API_V2_PREFIX)
+    app.include_router(device_link.router)
+    app.include_router(device_transfers.router)
+    app.include_router(tunnel.router)
     app.include_router(agents.router, prefix=API_V2_PREFIX)
     app.include_router(pairing.router, prefix=API_V2_PREFIX)
+    app.include_router(previews.router)
+    app.include_router(previews.internal_router)
     app.include_router(projects.router, prefix=API_V2_PREFIX)
     app.include_router(sessions.router, prefix=API_V2_PREFIX)
     app.include_router(session_planning.router, prefix=API_V2_PREFIX)
@@ -457,6 +542,7 @@ def create_app(
     app.include_router(session_goals.router, prefix=API_V2_PREFIX)
     app.include_router(sessions_fs.router, prefix=API_V2_PREFIX)
     app.include_router(sessions_terminal.router, prefix=API_V2_PREFIX)
+    app.include_router(e2ee.router, prefix=API_V3_PREFIX)
 
     static_dir = os.environ.get("AGENT_SERVER_STATIC_DIR")
     if static_dir:
@@ -526,6 +612,7 @@ def create_app(
 
 
 def main() -> None:
+    require_server_secret()
     settings = ProcessSettings.from_environment()
     settings.validate_shared_state(
         redis_configured=bool(os.environ.get("AGENT_SERVER_REDIS_URL"))

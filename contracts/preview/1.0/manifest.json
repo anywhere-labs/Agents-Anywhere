@@ -1,0 +1,72 @@
+{
+  "artifacts": [
+    {
+      "direction": "ingress",
+      "model": "CreatePreviewRequest",
+      "path": "schemas/create-preview-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "beabb77c49e012191bbd2fc73cc61e2be3303fda1cc7619503b39898cdc53da0",
+      "slug": "create-preview-request"
+    },
+    {
+      "direction": "egress",
+      "model": "PreviewView",
+      "path": "schemas/preview-view.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "322eb0f88c126b6c31ce588054eaa9f9b4c67cd03258424d0e49b7cbd624dca9",
+      "slug": "preview-view"
+    },
+    {
+      "direction": "egress",
+      "model": "PreviewListResponse",
+      "path": "schemas/preview-list-response.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "a14f656a4529886b222544a30c418ad7b0cc480ab5aea591b1c7beea66fd0e4b",
+      "slug": "preview-list-response"
+    },
+    {
+      "direction": "egress",
+      "model": "PreviewTicketResponse",
+      "path": "schemas/preview-ticket-response.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "6e8b7cde4bd6f8fbd22458c3e0107c42b07a9bdef34ca26d9640cb85efcec914",
+      "slug": "preview-ticket-response"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "PortListeningEvent",
+      "path": "schemas/port-listening-event.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "4baabe916c0d8c171882b52ba033cfabde38fe12bf017397783f7f23ac3122b6",
+      "slug": "port-listening-event"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "PortClosedEvent",
+      "path": "schemas/port-closed-event.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "2fc03d0a0c6c5a3cdfec42d0aab0b06b184bcc60549071ea91a56ac31d1bcb5a",
+      "slug": "port-closed-event"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "PreviewOpenCommand",
+      "path": "schemas/preview-open-command.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "90caed71102944cf4958da4f06a18d6b8b3c5eeea111e2edde1bc89b8a29d4b2",
+      "slug": "preview-open-command"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "PreviewCloseCommand",
+      "path": "schemas/preview-close-command.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "b0cedcda525fe3679749d4d6f77b695bd62d259a5f127616d4fe198cfef73f9c",
+      "slug": "preview-close-command"
+    }
+  ],
+  "contract": "preview",
+  "jsonSchemaDraft": "https://json-schema.org/draft/2020-12/schema",
+  "protocolVersion": "1.0",
+  "source": "server/agent_server/core/preview.py"
+}

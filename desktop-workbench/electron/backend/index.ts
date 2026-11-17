@@ -1,3 +1,4 @@
+import { IpcConnectorLauncher } from "../connector-launcher";
 import type { BackendControlMessage, BackendInit } from "./protocol";
 import { BackendServer } from "./server";
 import { BackendState, type BackendFetcher } from "./state";
@@ -42,10 +43,12 @@ const fetcher: BackendFetcher = (input, requestInit) => new Promise<Response>((r
   send({ type: "netFetch", id, url: String(input), method: requestInit?.method ?? "GET", headers, body });
 });
 
-const state = new BackendState(init, fetcher, Number(process.argv[3] ?? process.ppid));
+const connectors = new IpcConnectorLauncher(send);
+const state = new BackendState(init, fetcher, connectors.launch);
 const server = new BackendServer(state);
 
 process.on("message", (message: BackendControlMessage) => {
+  if (connectors.handle(message)) return;
   if (message.type === "netFetchResult") {
     const pending = pendingFetches.get(message.id);
     if (!pending) return;

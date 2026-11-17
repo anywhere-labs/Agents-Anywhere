@@ -1,0 +1,49 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:display-envelope",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Human-facing content the Server stores but never reads.\n\n``plain``: ``payload`` is a JSON object (normal mode).\n``sealed``: ``payload`` is base64 ciphertext encrypted with the device's\ndirectory key identified by ``keyId`` (E2EE mode).",
+  "properties": {
+    "keyId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Keyid"
+    },
+    "mode": {
+      "enum": [
+        "plain",
+        "sealed"
+      ],
+      "title": "Mode",
+      "type": "string"
+    },
+    "payload": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "string"
+        }
+      ],
+      "title": "Payload"
+    }
+  },
+  "required": [
+    "mode",
+    "payload"
+  ],
+  "title": "DisplayEnvelope",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

@@ -4,7 +4,7 @@ import urllib.parse
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from agent_server.api.connector_common import (
@@ -17,7 +17,6 @@ from agent_server.core.api_namespace import api_v2_path
 from agent_server.core.auth import (
     create_signed_token,
     verify_signed_token,
-    verify_user_access_token,
 )
 from agent_server.core.models import (
     FsPreviewReadRequest,
@@ -33,6 +32,7 @@ from agent_server.core.models import (
 )
 from agent_server.core.utc import utc_now
 from agent_server.deps import (
+    authenticate_access_token,
     current_user_id,
     get_connector_file_service,
     get_fs_downloads,
@@ -285,6 +285,7 @@ async def connector_fs_transfer_download(
     connector_id: str,
     transfer_id: str,
     token: str,
+    request: Request,
     previewAccessToken: str | None = Query(default=None),
     authorization: str | None = Header(None, alias="Authorization"),
     store: Store = Depends(get_store),
@@ -305,7 +306,7 @@ async def connector_fs_transfer_download(
             raise HTTPException(status_code=404, detail="transfer not found")
         user_id = preview["user_id"]
     else:
-        user_id = _user_id_from_authorization(authorization)
+        user_id = await _user_id_from_authorization(request.app, authorization)
     await require_owned_online_connector(connector_id, user_id, store, manager)
     if transfer is None or transfer.connector_id != connector_id:
         raise HTTPException(status_code=404, detail="transfer not found")
@@ -405,14 +406,14 @@ def _safe_header_value(value: str) -> str:
     return value.encode("latin-1", errors="replace").decode("latin-1")
 
 
-def _user_id_from_authorization(authorization: str | None) -> str:
+async def _user_id_from_authorization(app: Any, authorization: str | None) -> str:
     prefix = "Bearer "
     if authorization is None or not authorization.startswith(prefix):
         raise HTTPException(status_code=401, detail="missing user access token")
-    user_id = verify_user_access_token(authorization[len(prefix) :])
-    if user_id is None:
+    claims = await authenticate_access_token(app, authorization[len(prefix) :])
+    if claims is None:
         raise HTTPException(status_code=401, detail="invalid user access token")
-    return user_id
+    return claims[0]
 
 
 def _fs_preview_access_payload(token: str) -> dict[str, str]:

@@ -1,0 +1,200 @@
+{
+  "artifacts": [
+    {
+      "direction": "bidirectional",
+      "model": "GoalRequest",
+      "path": "schemas/goal-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "6d2b236cb816348a6055f619da29b1f378d3bd2d8229d0bb679b642cbd26159f",
+      "slug": "goal-request"
+    },
+    {
+      "direction": "egress",
+      "model": "GoalState",
+      "path": "schemas/goal-state.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "f2f1f0ba8b770075d4d086960491201eba518c2e8916bd0a72ccd5ee981eede7",
+      "slug": "goal-state"
+    },
+    {
+      "direction": "egress",
+      "model": "GoalResponse",
+      "path": "schemas/goal-response.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "4314f7063e4a399ac8d56de220460fa5a2725b32615056d6d5e87937b4f55ef9",
+      "slug": "goal-response"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "PlanningRequest",
+      "path": "schemas/planning-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "1bb110fc30bacfd07c4d57918d0fe80c7f832e108c3c5586e542222d4683c758",
+      "slug": "planning-request"
+    },
+    {
+      "direction": "egress",
+      "model": "PlanningState",
+      "path": "schemas/planning-state.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "91695707149659ff64038549db7974f33e26c188fccb3910524ca51c75cd9c6a",
+      "slug": "planning-state"
+    },
+    {
+      "direction": "egress",
+      "model": "PlanningResponse",
+      "path": "schemas/planning-response.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "155b23692fbcc2280d869a42f39910bf0016dc19c39b3456c7c8d7662945dc0f",
+      "slug": "planning-response"
+    },
+    {
+      "direction": "egress",
+      "model": "PlanDocument",
+      "path": "schemas/plan-document.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "2d2a2684ed0f85044cda1d0cf8f21d811c4de2cef220c154fba656d431476df2",
+      "slug": "plan-document"
+    },
+    {
+      "direction": "ingress",
+      "model": "ProtocolHandshakeRequest",
+      "path": "schemas/handshake-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "434027ca3f6397a55929734580772d4f0acf43e714194f33aa8e5a5a58720bce",
+      "slug": "handshake-request"
+    },
+    {
+      "direction": "egress",
+      "model": "ProtocolHandshakeResponse",
+      "path": "schemas/handshake-response.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "1b52e8ce03193c989d08145979b4c06b0c399a775d9887b508d9588d4a79883a",
+      "slug": "handshake-response"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "ProtocolCapabilitySet",
+      "path": "schemas/capability-set.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "53329ba00fa4d0b9f5edfb0fbed14594dc788128aa5bace1fe87be82c5536b0f",
+      "slug": "capability-set"
+    },
+    {
+      "direction": "egress",
+      "model": "ProtocolCapabilitiesResponse",
+      "path": "schemas/capabilities-response.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "335c1a668201193c2438f450d034b568583ef912fed97d24092e34a7cea322b7",
+      "slug": "capabilities-response"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "ProtocolModelCatalog",
+      "path": "schemas/model-catalog.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "c53ffea82034ac35600cb17145f791159f9462f13bd2869f9e9cd6c8e1a2847d",
+      "slug": "model-catalog"
+    },
+    {
+      "direction": "egress",
+      "model": "ProtocolModelCatalogResponse",
+      "path": "schemas/model-catalog-response.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "3ac3c783ba78a40584e3a15e45b0ed0aaffb9b8de91af2a43266a6e75270cea4",
+      "slug": "model-catalog-response"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "ProtocolPermissionCatalog",
+      "path": "schemas/permission-catalog.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "9ec3bf02eadaec196d688eff8ea7b93a6aabe1dc7e5b7eb9efbd24786e06ec7c",
+      "slug": "permission-catalog"
+    },
+    {
+      "direction": "egress",
+      "model": "ProtocolPermissionCatalogResponse",
+      "path": "schemas/permission-catalog-response.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "27e64adbe6bd477aeecdfb6e904d8974655f92816b03096fc3d9ba00c5328157",
+      "slug": "permission-catalog-response"
+    },
+    {
+      "direction": "egress",
+      "model": "ProtocolSessionSnapshotResponseV12",
+      "path": "schemas/session-snapshot-response.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "6209619e1213f975cb0f755e868e61f5cf6b9b15551aea5e00520977d5db9805",
+      "slug": "session-snapshot-response"
+    },
+    {
+      "direction": "egress",
+      "model": "ProtocolTimelineResponseV12",
+      "path": "schemas/timeline-response.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "9390268f602ab87460aba36957c329b3990f899b140170f9eb23647714df6ee9",
+      "slug": "timeline-response"
+    },
+    {
+      "direction": "ingress",
+      "model": "ProtocolWsTicketRequest",
+      "path": "schemas/ws-ticket-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "c4e1963c753eab77bedc6e8398e7fd49b9e8b3d539441168786fdf4c0e3bb660",
+      "slug": "ws-ticket-request"
+    },
+    {
+      "direction": "egress",
+      "model": "ProtocolWsTicketResponse",
+      "path": "schemas/ws-ticket-response.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "451c2ad33ac59106e8335a316c55012009d569009bc131c1c9a2959d6d83459c",
+      "slug": "ws-ticket-response"
+    },
+    {
+      "direction": "egress",
+      "model": "ProtocolEventEnvelope",
+      "path": "schemas/event-envelope.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "7f7093bc64e90e38532cf3c7c0550e031ec5f450787636413e8a425b329eb2ee",
+      "slug": "event-envelope"
+    },
+    {
+      "direction": "egress",
+      "model": "ProtocolEventRecoveryResponseV12",
+      "path": "schemas/event-recovery-response.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "df5ac52958c8ba4265193a0430739ffa64fe945cb2d0254af95801269f94b775",
+      "slug": "event-recovery-response"
+    },
+    {
+      "direction": "egress",
+      "model": "SessionCatchupRequiredPayload",
+      "path": "schemas/session-catchup-required-payload.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "3dd8825240d799bd69ae05bfeb8ea5e891214687142263841301387dcbb5d58f",
+      "slug": "session-catchup-required-payload"
+    },
+    {
+      "direction": "egress",
+      "model": "SessionQueueStateV12",
+      "path": "schemas/session-queue-state.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "23c00342f686f958693ef589226b4301224dde5efb4aee75ec51ea146d851ebb",
+      "slug": "session-queue-state"
+    },
+    {
+      "direction": "ingress",
+      "model": "DisplayUserUpdateRequest",
+      "path": "schemas/display-user-update-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "63f95ff7415c078fce49dcb10f2c22acab692ee853beb5a8f5e47c3b69cf0950",
+      "slug": "display-user-update-request"
+    }
+  ],
+  "contract": "protocol",
+  "jsonSchemaDraft": "https://json-schema.org/draft/2020-12/schema",
+  "protocolVersion": "1.2",
+  "source": "server/agent_server/core/protocol.py + protocol_v1_2.py"
+}

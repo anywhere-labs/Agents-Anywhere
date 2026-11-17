@@ -34,7 +34,28 @@ data class AuthConfigResponse(
     val setupTokenExpiresAt: String?,
     val serverTime: String,
     val emailVerificationRequired: Boolean = false,
+    /** Absent on Servers without E2EE: treated as off. */
+    val e2ee: E2eeServerConfig = E2eeServerConfig(),
 )
+
+/** `GET /auth/config` 的 `e2ee` 字段：部署是否要求端到端加密。 */
+data class E2eeServerConfig(
+    val mode: String = MODE_OFF,
+    /** `AGENT_SERVER_E2EE_WEB`: `"allow"` or `"deny"` (contracts: Server `E2eeConfigView`). */
+    val web: String = ALLOW,
+    /** `AGENT_SERVER_E2EE_PREVIEW`: `"allow"` or `"deny"`; port preview traffic is not end-to-end encrypted. */
+    val preview: String = ALLOW,
+) {
+    val required: Boolean get() = mode == MODE_REQUIRED
+    val previewAllowed: Boolean get() = preview != DENY
+
+    companion object {
+        const val MODE_OFF = "off"
+        const val MODE_REQUIRED = "required"
+        const val ALLOW = "allow"
+        const val DENY = "deny"
+    }
+}
 
 data class OAuthTokenResponse(
     val accessToken: String,

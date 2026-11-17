@@ -4,10 +4,16 @@
         <exclude
             domain="sharedpref"
             path="auth.xml" />
+        <exclude
+            domain="sharedpref"
+            path="agents_anywhere_e2ee.xml" />
     </cloud-backup>
     <device-transfer>
         <exclude
             domain="sharedpref"
             path="auth.xml" />
+        <exclude
+            domain="sharedpref"
+            path="agents_anywhere_e2ee.xml" />
     </device-transfer>
 </data-extraction-rules>

@@ -388,6 +388,20 @@ The connector application layer bridges `RuntimeHostClient` calls to these
 server-facing notification payloads. Runtime adapters should never call
 connector HTTP/WS transports directly.
 
+## E2EE tunnel
+
+When the deployment sets `AGENT_SERVER_E2EE=required`, clients reach devices through
+one channel (`contracts/e2ee/1.0`):
+
+```text
+WS /api/v3/tunnel?ticket=...
+```
+
+The ticket is the same one-time dashboard ticket as `/api/v2/dashboard/ws`:
+`POST /api/v2/ws-ticket` with `{"scope": {"dashboard": true}}`. There is no separate
+tunnel scope. The Server forwards `ClientTunnelFrame`s to the device's
+`aa.device.v1.Secure/channel` and reads only the route header and frame counter.
+
 ## Terminal realtime
 
 Current terminal channels include:
@@ -398,6 +412,14 @@ WS /api/v2/connectors/{connectorId}/terminals/{terminalId}/stream
 WS /api/v2/connectors/{connectorId}/terminals-v2/{terminalId}/stream
 WS /api/v2/connector/terminals/{terminalId}/relay
 ```
+
+Authenticate the three client streams with a one-time ticket, the same as the
+session WebSocket: `POST /ws-ticket` with `{"scope": {"sessionId": ...}}` for the
+session stream and `{"scope": {"dashboard": true}}` for the connector streams,
+then open `...?ticket=<ticket>`. A ticket works once and expires after a short
+time. Passing the long-lived access token in `?token=` or an `Authorization`
+header still works for now but is deprecated: query strings end up in proxy and
+access logs.
 
 Terminal APIs are local capability APIs, not Agent Runtime Protocol session APIs. They can be cleaned up later as a separate local-capabilities interface pass.
 

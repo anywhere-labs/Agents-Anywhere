@@ -1,0 +1,26 @@
+{
+  "$id": "urn:agents-anywhere:e2ee:1.0:tunnel-unsubscribe",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "id": {
+      "minLength": 1,
+      "title": "Id",
+      "type": "string"
+    },
+    "kind": {
+      "const": "unsubscribe",
+      "default": "unsubscribe",
+      "title": "Kind",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "title": "TunnelUnsubscribe",
+  "type": "object",
+  "x-contract": "e2ee",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

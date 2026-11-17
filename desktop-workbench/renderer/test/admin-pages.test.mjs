@@ -15,7 +15,7 @@ const { NextIntlClientProvider } = await import('next-intl')
 const hooks = registerSource()
 const contextHooks = registerHooks({ load(url, context, nextLoad) {
   if (url.endsWith('/components/auth/auth-context.tsx')) return { format: 'module', shortCircuit: true, source: 'export const useAuth = () => globalThis.adminAuth' }
-  if (url.endsWith('/components/workspace-context.tsx')) return { format: 'module', shortCircuit: true, source: 'export const useWorkspace = () => globalThis.adminWorkspace' }
+  if (url.endsWith('/components/workspace-context.tsx')) return { format: 'module', shortCircuit: true, source: 'export const useWorkspace = () => globalThis.adminWorkspace; export const useOptionalWorkspace = () => globalThis.adminWorkspace ?? null' }
   if (url.endsWith('/features/desktop/desktop-connector-context.tsx')) return { format: 'module', shortCircuit: true, source: 'export const useDesktopConnector = () => ({ isLocalConnector: () => false })' }
   return nextLoad(url, context)
 } })

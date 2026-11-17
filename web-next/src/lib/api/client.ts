@@ -3,6 +3,16 @@ import {
   apiErrorKind,
   extractErrorPayload
 } from "@/lib/api/errors";
+import {
+  SEALED_UPLOAD_HEADER,
+  contentTransportFor,
+  contentTransportForDevice,
+  deviceIdOfContentRequest,
+  isContentTransportRequired,
+  reportContentTransportRequired,
+  sessionIdOfContentPath,
+  type ContentMethod,
+} from "@/lib/transport/content-transport";
 
 export type ApiTokenProvider = () => string | null | undefined;
 
@@ -23,8 +33,12 @@ export const API_NAMESPACE = normalizeApiNamespace(process.env.NEXT_PUBLIC_AGENT
 
 export function apiPath(path: string): string {
   if (path.startsWith("http")) return path;
+  // v3 additions (E2EE commands, the secure-channel tunnel) live beside the v2 namespace.
+  if (path.startsWith("/api/v3/")) return path;
   if (!API_NAMESPACE) return path.startsWith("/") ? path : `/${path}`;
   if (path === API_NAMESPACE || path.startsWith(`${API_NAMESPACE}/`)) return path;
+  // Another API version (v3 port preview, the E2EE tunnel) is already absolute.
+  if (/^\/api\/v\d+(?:\/|$)/.test(path)) return path;
   const normalized = path.startsWith("/") ? path : `/${path}`;
   return `${API_NAMESPACE}${normalized}`;
 }
@@ -79,6 +93,26 @@ export class ApiClient {
   }
 
   async request<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
+    // Session content may have to travel through the device's encrypted channel.
+    const namespacedPath = apiPath(path);
+    const sessionId = namespacedPath.startsWith("http") ? null : sessionIdOfContentPath(namespacedPath);
+    const method = (options.method ?? "GET").toUpperCase() as ContentMethod;
+    const deviceId = namespacedPath.startsWith("http") || sessionId ? null : deviceIdOfContentRequest(method, namespacedPath, options.body);
+    // A sealed upload is already ciphertext: it is the one content request that goes to the Server directly.
+    const sealedUpload = new Headers(options.headers).has(SEALED_UPLOAD_HEADER);
+    const transport = sealedUpload
+      ? null
+      : sessionId
+        ? contentTransportFor(sessionId, method, namespacedPath)
+        : deviceId
+          ? contentTransportForDevice(deviceId, method, namespacedPath)
+          : null;
+    if (transport) {
+      const query: Record<string, string> = {};
+      for (const [key, value] of Object.entries(options.query ?? {})) if (value != null) query[key] = String(value);
+      return (await transport.request({ method, path: namespacedPath, query, body: options.body ?? undefined })) as T;
+    }
+
     const url = this.buildUrl(path, options.query);
     const headers = new Headers(options.headers);
     const body = normalizeBody(options.body);
@@ -111,6 +145,7 @@ export class ApiClient {
     const payload = await readPayload(response);
     if (!response.ok) {
       const normalized = extractErrorPayload(payload);
+      if (isContentTransportRequired(normalized.code)) reportContentTransportRequired(sessionId, normalized.code!);
       throw new ApiError({
         status: response.status,
         kind: apiErrorKind(response.status),

@@ -10,6 +10,8 @@ export type AuthConfig = {
   /** Missing on servers older than 2.0.1. */
   passwordResetEnabled?: boolean;
   setupTokenExpiresAt: string | null;
+  /** Deployment end-to-end encryption declaration; missing on servers before v3 (treated as off). */
+  e2ee?: { mode: "off" | "required"; web: "allow" | "deny"; preview: "allow" | "deny" };
   serverTime: string;
 };
 

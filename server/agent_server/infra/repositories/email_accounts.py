@@ -28,6 +28,7 @@ from agent_server.core.auth import (
 from agent_server.core.models import UserView
 from agent_server.core.utc import utc_now
 from agent_server.infra.db.schema import email_verification_codes as codes_t
+from agent_server.infra.db.schema import user_token_families as user_token_families_t
 from agent_server.infra.db.schema import email_verification_limits as limits_t
 from agent_server.infra.db.schema import oauth_accounts as oauth_accounts_t
 from agent_server.infra.db.schema import users as users_t
@@ -472,6 +473,16 @@ class EmailAccountRepositoryMixin:
                     )
                 )
                 valid_code = result.rowcount == 1
+                if valid_code:
+                    # Whoever had the old password is signed out everywhere.
+                    await conn.execute(
+                        update(user_token_families_t)
+                        .where(
+                            user_token_families_t.c.user_id.in_(select(users_t.c.id).where(users_t.c.email == email)),
+                            user_token_families_t.c.revoked_at.is_(None),
+                        )
+                        .values(revoked_at=now, revoked_reason="password_reset", refresh_hash=None)
+                    )
         if not valid_code:
             raise EmailVerificationError("invalid or expired verification code")
 

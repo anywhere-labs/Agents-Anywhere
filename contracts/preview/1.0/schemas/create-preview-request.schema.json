@@ -1,0 +1,62 @@
+{
+  "$id": "urn:agents-anywhere:preview:1.0:create-preview-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "deviceId": {
+      "minLength": 1,
+      "title": "Deviceid",
+      "type": "string"
+    },
+    "port": {
+      "maximum": 65535,
+      "minimum": 1,
+      "title": "Port",
+      "type": "integer"
+    },
+    "sessionId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sessionid"
+    },
+    "ttlHours": {
+      "anyOf": [
+        {
+          "maximum": 168,
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Ttlhours"
+    },
+    "visibility": {
+      "default": "private",
+      "enum": [
+        "private",
+        "link"
+      ],
+      "title": "Visibility",
+      "type": "string"
+    }
+  },
+  "required": [
+    "deviceId",
+    "port"
+  ],
+  "title": "CreatePreviewRequest",
+  "type": "object",
+  "x-contract": "preview",
+  "x-direction": "ingress",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

@@ -1,0 +1,147 @@
+{
+  "artifacts": [
+    {
+      "direction": "connector -> plugin (file)",
+      "model": "DshBridgeRendezvous",
+      "path": "schemas/rendezvous.schema.json",
+      "sha256": "f454aa1f7675430f1df286a6aadb4bbbac3bdba1dd7dd91b2e326537e408a19b",
+      "slug": "rendezvous"
+    },
+    {
+      "direction": "plugin -> connector",
+      "model": "DshBridgeHello",
+      "path": "schemas/hello.schema.json",
+      "sha256": "2769087fcdff756c48b3a97723bf7f9701e32c8376395e01fd51efdef1c4ccbe",
+      "slug": "hello"
+    },
+    {
+      "direction": "connector -> plugin",
+      "model": "DshBridgeHandshakeReply",
+      "path": "schemas/welcome.schema.json",
+      "sha256": "9245161d0b5da415bf9d915ccbafae32a3db7b416b3571e1e2ca4241555aaf04",
+      "slug": "welcome"
+    },
+    {
+      "direction": "plugin -> connector",
+      "model": "DshAgentMeta",
+      "path": "schemas/agent-meta.schema.json",
+      "sha256": "216715fbc382d767897072a02c08ba0b5695163849c7288a35e256c64a69e76b",
+      "slug": "agent-meta"
+    },
+    {
+      "direction": "plugin -> connector",
+      "model": "DshSessionInfoMeta",
+      "path": "schemas/session-info-meta.schema.json",
+      "sha256": "4a55f12a5d5c8987224cad9bcb26a440eeba89de9e547b92acce6a171c4e27a7",
+      "slug": "session-info-meta"
+    },
+    {
+      "direction": "plugin -> connector",
+      "model": "DshListChanges",
+      "path": "schemas/list-changes.schema.json",
+      "sha256": "903c3386aaa3852bbf8dd480080e46f0d69f17b743f94d6c312ff8dbde336a63",
+      "slug": "list-changes"
+    },
+    {
+      "direction": "connector -> plugin",
+      "model": "DshLoadMeta",
+      "path": "schemas/load-meta.schema.json",
+      "sha256": "af705f14ee0a99c75a4cc5827995cdb60ca4fc217f371b8c4d60c228e12ac5ee",
+      "slug": "load-meta"
+    },
+    {
+      "direction": "plugin -> connector",
+      "model": "DshLoadResultMeta",
+      "path": "schemas/load-result-meta.schema.json",
+      "sha256": "3cee5f0cc9c58a3519077523c0b2f6aa8405288267ffcc2df23314a0546aef24",
+      "slug": "load-result-meta"
+    },
+    {
+      "direction": "connector -> plugin",
+      "model": "DshNewSessionMeta",
+      "path": "schemas/new-session-meta.schema.json",
+      "sha256": "e4ad665491942797b147cfbb7f49eb4d0802b9ee182eea9309aa96fec45e8b75",
+      "slug": "new-session-meta"
+    },
+    {
+      "direction": "plugin -> connector",
+      "model": "DshUpdateMeta",
+      "path": "schemas/update-meta.schema.json",
+      "sha256": "70cf9cb0fa95dc0ad65697cb239d8ec41266c673ab98b8961a8e7a8f5999092b",
+      "slug": "update-meta"
+    },
+    {
+      "direction": "connector -> plugin",
+      "model": "DshPromptMeta",
+      "path": "schemas/prompt-meta.schema.json",
+      "sha256": "452c6168de1d00a749cbaa6ad1058252f02f0327cd730b73d038753978f588e0",
+      "slug": "prompt-meta"
+    },
+    {
+      "direction": "plugin -> connector",
+      "model": "DshPromptResultMeta",
+      "path": "schemas/prompt-result-meta.schema.json",
+      "sha256": "fb247a6d665be1ec82faaea4e6eb2b07d43c5016f70749681fb51d6a9a541e2a",
+      "slug": "prompt-result-meta"
+    },
+    {
+      "direction": "connector -> plugin",
+      "model": "DshUploadMeta",
+      "path": "schemas/upload-meta.schema.json",
+      "sha256": "0a3d56d10bcc6643808754c41c01878b578b401c4903c59dc3ce0ec53537eb7f",
+      "slug": "upload-meta"
+    },
+    {
+      "direction": "plugin -> connector",
+      "model": "DshTurnNotification",
+      "path": "schemas/turn-notification.schema.json",
+      "sha256": "44cd80d47d1a822adf90d777ddcc34e1c1048b4eae3b7e4be59e409685565cf3",
+      "slug": "turn-notification"
+    },
+    {
+      "direction": "connector -> plugin",
+      "model": "DshContinueRequest",
+      "path": "schemas/continue-request.schema.json",
+      "sha256": "330c6316cbff2d37b97e96a20983d34dc371a559208e38658075f1cfcf99aa19",
+      "slug": "continue-request"
+    },
+    {
+      "direction": "plugin -> connector",
+      "model": "DshContinueResponse",
+      "path": "schemas/continue-response.schema.json",
+      "sha256": "b4552ff981357a6bac081bc9dfbc6bca07a67198b685578f4ea42cf9ec53bd10",
+      "slug": "continue-response"
+    },
+    {
+      "direction": "plugin -> connector",
+      "model": "DshSteeringResponse",
+      "path": "schemas/steering-response.schema.json",
+      "sha256": "32434664ff4e264374c4dd1805aa19ab8bf11d9cbd16bf3206a25b11570b8cea",
+      "slug": "steering-response"
+    },
+    {
+      "direction": "plugin -> connector",
+      "model": "DshWriterNotification",
+      "path": "schemas/writer-notification.schema.json",
+      "sha256": "7661920e798a5269c8069d0455d16ddc09358c5e1880f23c124dac6a774cf620",
+      "slug": "writer-notification"
+    },
+    {
+      "direction": "plugin -> connector",
+      "model": "DshInteractionResolved",
+      "path": "schemas/interaction-resolved.schema.json",
+      "sha256": "47ae0a53589954eb159adfd8db293c99dd4d630f0c7638059876e5526e64f01e",
+      "slug": "interaction-resolved"
+    },
+    {
+      "direction": "plugin -> connector",
+      "model": "DshPlanningState",
+      "path": "schemas/planning-state.schema.json",
+      "sha256": "323ecde81befaedf0f87bf020d4e84731289259065f932e81e749d7351e7e2d3",
+      "slug": "planning-state"
+    }
+  ],
+  "contract": "dsh-bridge",
+  "source": "hand-authored JSON Schema (this directory)",
+  "version": "3.0"
+}

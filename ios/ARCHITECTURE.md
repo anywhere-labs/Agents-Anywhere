@@ -113,6 +113,13 @@ atomic writes, iOS data protection and backup exclusion. Launch reads local stat
 before rendering the restored page; profile validation, dashboard refresh and
 session recovery run afterwards. Connectivity failures keep that page available.
 Only a definitive authentication rejection transitions to signed out.
+Protocol 1.2 offline reads (`deviceOffline`, `historySource: unavailable`) never
+replace retained content or move its cursor; an offline read without retained
+content is not a baseline and is not archived. `session.catchup_required`, the
+device returning online and live timeline frames received while history was
+unavailable recover from the repository's own cursor. Signing out invalidates
+the store synchronously and deletes every account's directory; signing in
+removes other accounts' directories. Rules: [session cache](../docs/session-cache.md).
 
 `DeviceAgentModel` distinguishes available types from configured instances.
 `AgentSetupCoordinator` owns pending pairing observations at account scope, so
@@ -149,6 +156,93 @@ the account, balance and usage on request (again when the app returns to the
 foreground), edits a draft of the pushed model choices and saves it in one
 request. `TokensAccountPresentation` sums yuan amounts as integer
 ten-thousandths, never as floating point.
+
+## Port preview
+
+Preview 1.0 (`contracts/preview/1.0`) lives under `/api/v3/previews`;
+`V3PreviewAPI` names that path itself and the HTTP transport passes `/api/v3`
+paths through instead of adding `/api/v2`. `port.listening` (the device's whole
+list) and `port.closed` arrive on the session socket; the repository hands them
+to `V2SessionModel.listeningPorts`, keeping only this session's ports, before
+any recovery logic, so they never acknowledge or move the cursor. A device
+going offline clears the list. `PortPreviewStore` (account scope) creates a
+preview on demand and exchanges a fresh one-time ticket for every open, which
+`SessionPortPreviewCard` shows in `SFSafariViewController`; a 404 or
+`preview_disabled` hides the card for the rest of the app run.
+
+## End-to-end encryption (e2ee 1.0)
+
+`Network/E2EE` implements the client side of `contracts/e2ee/1.0`; every
+primitive comes from CryptoKit. `NoiseHandshake` and friends are the Noise state
+machine (S8). `E2EEFormats` holds the byte formats (client ID, fingerprint,
+prologues, framing, display envelopes, sealed segments, input digests, the
+`aa-pair://` link) and is pinned by `aa-formats.json`. `E2EETransportSession`
+fragments, rekeys (2^20 frames or one hour, only between messages) and checks
+frame counters. `ClientSecureChannel` is an actor: frames from the tunnel reach
+it in order through one reader task, and it encrypts synchronously before
+handing frames to `E2EETunnelLink.send`, which keeps their order, so nonces
+cannot be reordered by actor reentrancy. It sends nothing before `ready`.
+
+`ClientTrustStore` keeps the client identity key, each device's pinned key and
+directory key, and the sticky "this device requires encryption" policy in the
+Keychain (`AfterFirstUnlockThisDeviceOnly`, never synchronized). Only an
+in-channel `close` from the device (revoked / not paired) drops a pin; a
+`ClientTunnelEnd` relayed by the Server is reported (`E2EEError.fromDevice ==
+false`) and never changes trust records or policy.
+
+`URLSessionE2EETunnel` multiplexes routes on `WS /api/v3/tunnel` after a
+`POST /api/v2/ws-ticket {scope: {tunnel: true}}`. `V2E2EEService` reads the
+Server mode from `auth/config`, pairs, reconnects with KK and chooses each
+device's transport: `route(for:)`, `transport(for:plain:)` (an `HTTPTransport`
+that existing API resources accept), `sessionEvents(...)` and `sendCommand(...)`
+(which registers the input digest first).
+
+Every API resource except account and E2EE bookkeeping shares one
+`E2EERoutingHTTPTransport`. It classifies each request like the Server's
+required-mode gate (`E2EEContentTarget`): metadata, including `/api/v3`
+resources such as port previews, goes out as plain HTTP;
+session content (everything under `/sessions/{id}/` except `meta`,
+`runtime/state` and `runtime/capabilities`), session creation and device files,
+shell and terminals ask `V2E2EEService.route(for:)` with the session's
+`connectorId` (dashboard first, else the plaintext `meta`). The answer is plain,
+the secure channel (30-second timeout, `e2ee_timeout`; writes register a
+command first) or an error such as `e2ee_not_paired`, which the session page
+turns into a pairing entry; plaintext is never sent then.
+`E2EERoutingRealtimeAPI` swaps the session WebSocket for the channel's
+`subscribe` and emits `session.subscribed` itself so the repository recovers as
+usual. In an encrypted route, attachment uploads are sealed per file (random
+key, sealed segments with the plaintext SHA-256 as object ID) and sent with
+`x-aa-sealed: segments-v1` as `attachment.bin` / `application/octet-stream`;
+the keys, real names and media types stay in memory (a restart means sealing
+and uploading again) and travel inside the
+channel as `sealedAttachmentKeys` in the body of the message that references
+the files. Device files download chunk by chunk through the channel
+(`TunnelFileChunk`). Binary attachment downloads, file previews and renaming
+(`displayUser` sealed with the directory key) are refused in encrypted routes
+until the Server supports them.
+
+Session lists and pages show the protocol 1.2 display envelopes
+(`displayDevice`, `displayUser`). `V2SessionDisplayResolver` (account scope) opens
+them where sessions enter `V2DashboardRepository` (HTTP inventory, dashboard
+push, PATCH answers, cache restore) and in the observations
+`V2SessionRepository` publishes, and writes the result into `title` / `cwd`, so
+views and file browsing read them as before. An envelope whose `mode` is neither
+`plain` nor `sealed` counts as absent. Normal mode prefers plain envelopes
+and keeps the Server's fields they omit. Once any envelope is sealed, only sealed
+ones count: the AD uses the session's `connectorId` and the slot of its field,
+the key is the device's current-epoch directory key. The title is the opened
+`displayUser.title` (a `displayUser` that does not open never falls back to the
+device's title), else the opened `displayDevice.title`; `cwd` comes only from an
+opened `displayDevice`, never from the Server's plaintext. When any envelope
+does not open the session is locked and an unknown title shows the locked
+placeholder. Opened payloads are cached in memory per (session, slot,
+`keyId`, payload); `ClientTrustStore.observeDevices` (pairing, a new
+`e2ee.directory_key`, forgetting a device) makes both repositories resolve
+again. A session without a project whose sealed `displayDevice` opened is
+matched to a project of the same device (exact path, else the longest
+whole-segment prefix; only `X:\` paths ignore case) and assigned with
+`PATCH /sessions/{id}/meta {projectId}`; each session is sent at most once per
+app run and failures only reach the debug log.
 
 ## Migration boundary
 

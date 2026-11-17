@@ -1,0 +1,27 @@
+{
+  "$id": "urn:agents-anywhere:preview:1.0:port-closed-event",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "deviceId": {
+      "minLength": 1,
+      "title": "Deviceid",
+      "type": "string"
+    },
+    "port": {
+      "maximum": 65535,
+      "minimum": 1,
+      "title": "Port",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "deviceId",
+    "port"
+  ],
+  "title": "PortClosedEvent",
+  "type": "object",
+  "x-contract": "preview",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

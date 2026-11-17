@@ -1,0 +1,33 @@
+{
+  "$id": "urn:agents-anywhere:e2ee:1.0:command-registration",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "``POST /api/v3/e2ee/commands`` before the command goes through the channel, so the Server\nkeeps idempotency for encrypted commands. ``inputDigest`` is keyed (see ``input_digest``):\nthe Server can compare it but cannot confirm a guessed input.",
+  "properties": {
+    "commandId": {
+      "minLength": 1,
+      "title": "Commandid",
+      "type": "string"
+    },
+    "deviceId": {
+      "minLength": 1,
+      "title": "Deviceid",
+      "type": "string"
+    },
+    "inputDigest": {
+      "pattern": "^hmac-sha256:[A-Za-z0-9_-]{43}$",
+      "title": "Inputdigest",
+      "type": "string"
+    }
+  },
+  "required": [
+    "commandId",
+    "deviceId",
+    "inputDigest"
+  ],
+  "title": "CommandRegistration",
+  "type": "object",
+  "x-contract": "e2ee",
+  "x-direction": "ingress",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

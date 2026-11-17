@@ -1,5 +1,7 @@
 package com.agentsanywhere.app.feature.sessiondetail
 
+import com.agentsanywhere.app.api.RemoteTimelineItem
+
 data class SessionTimelineState(
     val messages: List<TimelineMessage> = emptyList(),
     val orderingItems: List<TimelineOrderingItem> = emptyList(),
@@ -12,7 +14,40 @@ data class SessionTimelineState(
     val historyErrorMessage: String? = null,
     // Local generation: history requests cannot cross a snapshot/reset boundary.
     val historyGeneration: Long = 0,
+    /**
+     * The protocol items behind [messages], newest revision per id. The disk
+     * cache stores these instead of the projection, and replays them through
+     * the snapshot projection on restore, so projection changes never strand
+     * stored content. Strings are shared with the projected rows.
+     */
+    val remoteItems: Map<String, RemoteTimelineItem> = emptyMap(),
+    /**
+     * Protocol 1.2: the device is offline, so the Server could not read this
+     * history. Loaded content and the recovery cursor stay as they are.
+     */
+    val historyUnavailable: Boolean = false,
+    /**
+     * Only an offline snapshot was ever applied: the empty page is not an
+     * authoritative base, so it is not cached and the next read is a snapshot.
+     */
+    val historyBaseMissing: Boolean = false,
 )
+
+/** Newest revision per id, using the same rule as the timeline projection. */
+internal fun Map<String, RemoteTimelineItem>.mergeRemoteItems(
+    incoming: Collection<RemoteTimelineItem>,
+    replace: Boolean = false,
+): Map<String, RemoteTimelineItem> {
+    if (!replace && incoming.isEmpty()) return this
+    val byId = if (replace) LinkedHashMap<String, RemoteTimelineItem>(incoming.size) else LinkedHashMap(this)
+    incoming.forEach { observed ->
+        val existing = byId[observed.id]
+        if (existing == null || observed.revision > existing.revision || observed.updatedSeq >= existing.updatedSeq) {
+            byId[observed.id] = observed
+        }
+    }
+    return byId
+}
 
 /**
  * Server-owned ordering data kept separately from visible Android rows.

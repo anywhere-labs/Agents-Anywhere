@@ -1,0 +1,78 @@
+{
+  "$id": "urn:agents-anywhere:e2ee:1.0:client-grant-view",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "clientId": {
+      "description": "client_id_for(identity public key)",
+      "pattern": "^cli_[a-z2-7]{26}$",
+      "title": "Clientid",
+      "type": "string"
+    },
+    "grantedAt": {
+      "title": "Grantedat",
+      "type": "string"
+    },
+    "grantedBy": {
+      "enum": [
+        "qr",
+        "approval",
+        "local"
+      ],
+      "title": "Grantedby",
+      "type": "string"
+    },
+    "identityPubFingerprint": {
+      "minLength": 1,
+      "title": "Identitypubfingerprint",
+      "type": "string"
+    },
+    "label": {
+      "title": "Label",
+      "type": "string"
+    },
+    "platform": {
+      "anyOf": [
+        {
+          "enum": [
+            "web",
+            "desktop",
+            "android",
+            "ios",
+            "cli"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Platform"
+    },
+    "revokedAt": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Revokedat"
+    }
+  },
+  "required": [
+    "clientId",
+    "label",
+    "identityPubFingerprint",
+    "grantedAt",
+    "grantedBy"
+  ],
+  "title": "ClientGrantView",
+  "type": "object",
+  "x-contract": "e2ee",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

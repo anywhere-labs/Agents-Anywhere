@@ -1,0 +1,7 @@
+{
+  "extends": "../../connector-ts/tsconfig.json",
+  "compilerOptions": {
+    "typeRoots": ["../../connector-ts/node_modules/@types"]
+  },
+  "include": ["desktop-main.mts"]
+}

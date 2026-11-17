@@ -21,6 +21,7 @@ import { useWorkspace } from "@/components/workspace-context"
 import { useIsMobile } from "@/hooks/use-mobile"
 import type { SessionMemorySnapshot } from "@/components/session-detail"
 import { cn } from "@/lib/utils"
+import { sessionContentIsEncrypted } from "@/lib/transport/content-transport"
 import { useTranslations } from "next-intl"
 import type { SessionView as SessionViewModel } from "@/lib/demo-api"
 import { runtimeLabel } from "@/components/session/session-utils"
@@ -93,6 +94,11 @@ export function SessionViewHeader({
     if (renaming) return
     if (nextTitle === session.title) {
       setEditingTitle(false)
+      return
+    }
+    if (sessionContentIsEncrypted(session.id)) {
+      // A plaintext title would leak content to the Server, which has no sealed title yet.
+      toast.error(tSession("renameEncrypted"))
       return
     }
     setRenaming(true)

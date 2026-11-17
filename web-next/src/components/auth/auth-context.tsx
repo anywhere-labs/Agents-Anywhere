@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { authApi } from "@/features/auth/api"
+import { webDeniedByE2ee } from "@/features/auth/e2ee"
 import {
   authResponseToSession,
   clearStoredSession,
@@ -11,6 +12,9 @@ import {
 import type { AuthMe, OAuthFinalizePayload, StoredSession } from "@/features/auth/types"
 import { useTranslations } from "next-intl"
 import { authFlowHash, clearAuthFlow, rememberAuthFlow, takeAuthFlow } from "@/features/auth/continuation"
+import { forgetSessionDiskCache } from "@/components/session/session-disk-store"
+import { sessionCacheScope } from "@/components/session/session-state-cache"
+import { e2eeRuntime, startE2ee } from "@/features/e2ee/runtime"
 
 export type AuthScreen =
   | "bootstrap"
@@ -48,6 +52,8 @@ type AuthState = {
   oauthPending: OAuthPending | null
   emailVerificationRequired: boolean
   passwordResetEnabled: boolean
+  /** End-to-end encryption is required and the Web client is turned off on this server. */
+  webDeniedByE2ee: boolean
   refreshConfig: () => Promise<void>
   registrationOpen: boolean
   navigate: (screen: AuthScreen) => void
@@ -177,8 +183,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [oauthPending, setOauthPending] = React.useState<OAuthPending | null>(null)
   const [emailVerificationRequired, setEmailVerificationRequired] = React.useState(false)
   const [passwordResetEnabled, setPasswordResetEnabled] = React.useState(false)
+  const [webDenied, setWebDenied] = React.useState(false)
   const refreshConfig = React.useCallback(async () => {
     const config = await authApi.config()
+    setWebDenied(webDeniedByE2ee(config))
     setEmailVerificationRequired(config.emailVerificationRequired)
     setPasswordResetEnabled(config.passwordResetEnabled === true)
     setRegistrationOpen(config.registrationOpen)
@@ -208,6 +216,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setRegistrationOpen(config.registrationOpen)
           setEmailVerificationRequired(config.emailVerificationRequired)
           setPasswordResetEnabled(config.passwordResetEnabled === true)
+          setWebDenied(webDeniedByE2ee(config))
         }
         if (config.needsBootstrap && !cancelled) {
           setScreenState("bootstrap")
@@ -400,8 +409,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return currentUser
   }, [session?.accessToken])
 
+  // End-to-end encryption: the trust layer runs while signed in; this client's identity stays on the device.
+  React.useEffect(() => {
+    if (session?.accessToken) startE2ee("web")
+  }, [session?.accessToken])
+
+  const signOutUserRef = React.useRef<string | null>(null)
+  signOutUserRef.current = session?.userId ?? null
   const signOut = React.useCallback(() => {
+    // Signing out forgets this account's cached session content on this device.
+    if (signOutUserRef.current)
+      void forgetSessionDiskCache(sessionCacheScope(process.env.NEXT_PUBLIC_AGENTS_ANYWHERE_API ?? "", signOutUserRef.current))
     clearAuthFlow(window.sessionStorage)
+    void e2eeRuntime()?.dispose()
     clearStoredSession()
     setSession(null)
     setMe(null)
@@ -426,6 +446,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         registrationOpen,
         emailVerificationRequired,
         passwordResetEnabled,
+        webDeniedByE2ee: webDenied,
         refreshConfig,
         navigate,
 

@@ -1,5 +1,9 @@
 package com.agentsanywhere.app.api
 
+import com.agentsanywhere.app.api.e2ee.ContentGate
+import com.agentsanywhere.app.api.e2ee.ContentRequest
+import com.agentsanywhere.app.api.e2ee.E2eeContentGate
+import com.agentsanywhere.app.api.e2ee.SealedUpload
 import org.json.JSONArray
 import org.json.JSONObject
 import okhttp3.MediaType.Companion.toMediaType
@@ -18,7 +22,12 @@ import org.json.JSONException
 class ApiClient(
     private val onUnauthorized: (accessToken: String) -> Unit = {},
     private val refreshAccessToken: (serverUrl: String, accessToken: String) -> String? = { _, _ -> null },
+    /** E2EE: session and device content goes through the device's secure channel or is refused. */
+    private val contentGate: () -> ContentGate? = { E2eeContentGate.installed },
 ) {
+    /** The E2EE gate this client consults (null when none is installed). */
+    internal val gate: ContentGate? get() = contentGate()
+
     fun requireHtmlDocument(
         serverUrl: String,
         path: String = "/",
@@ -182,9 +191,14 @@ class ApiClient(
         path: String,
         files: List<UploadFilePart>,
         authorizationToken: String? = null,
+        /** Extra request headers; a sealed upload (`x-aa-sealed`) is already encrypted and skips the gate. */
+        headers: Map<String, String> = emptyMap(),
     ): JSONObject {
+        if (SealedUpload.HEADER !in headers) {
+            contentGate()?.upload(ContentRequest(serverUrl, "POST", path, null, authorizationToken), files)?.let { return it }
+        }
         return withTokenRefresh(serverUrl, authorizationToken) { token ->
-            postMultipartOnce(serverUrl, path, files, token)
+            postMultipartOnce(serverUrl, path, files, token, headers)
         }
     }
 
@@ -193,6 +207,7 @@ class ApiClient(
         path: String,
         files: List<UploadFilePart>,
         authorizationToken: String?,
+        headers: Map<String, String>,
     ): JSONObject {
         return try {
             val endpoint = URL(apiUrl(serverUrl, path))
@@ -208,6 +223,7 @@ class ApiClient(
                 if (!authorizationToken.isNullOrBlank()) {
                     setRequestProperty("Authorization", "Bearer $authorizationToken")
                 }
+                headers.forEach { (name, value) -> setRequestProperty(name, value) }
             }
             try {
                 connection.outputStream.use { output ->
@@ -253,6 +269,9 @@ class ApiClient(
         requestBody: RequestBody? = null,
         headers: Map<String, String> = emptyMap(),
     ): JSONObject {
+        if (requestBody == null) {
+            contentGate()?.intercept(ContentRequest(serverUrl, method, path, bodyText, authorizationToken))?.let { return it }
+        }
         return withTokenRefresh(serverUrl, authorizationToken) { token ->
             requestJsonOnce(serverUrl, path, method, bodyText, token, readTimeoutSeconds, requestBody, headers)
         }

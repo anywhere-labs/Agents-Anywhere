@@ -1,0 +1,92 @@
+{
+  "$defs": {
+    "LinkError": {
+      "properties": {
+        "code": {
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "default": "",
+          "title": "Message",
+          "type": "string"
+        },
+        "retryable": {
+          "default": false,
+          "title": "Retryable",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "title": "LinkError",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:command-status-response",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "commandId": {
+      "minLength": 1,
+      "title": "Commandid",
+      "type": "string"
+    },
+    "e": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/LinkError"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "known": {
+      "title": "Known",
+      "type": "boolean"
+    },
+    "outcome": {
+      "anyOf": [
+        {
+          "enum": [
+            "accepted",
+            "rejected",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Outcome"
+    },
+    "r": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "R"
+    }
+  },
+  "required": [
+    "commandId",
+    "known"
+  ],
+  "title": "CommandStatusResponse",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

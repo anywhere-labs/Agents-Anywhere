@@ -109,6 +109,11 @@ export function useSessionCreation(options: Options) {
     try {
       if (retry) await validateCreationRetry(token, entry.draft.request)
       if (version !== generation.current || userId !== latest.current.userId) return
+      if (dashboardApi.sessionCreationIsEncrypted(entry.draft.request.connectorId)) {
+        // End-to-end encrypted: the whole request goes to the device; nothing of it may reach the Server first.
+        if (entry.draft.attachments.length) throw new Error(tCreation("encryptedAttachmentsUnsupported"))
+        if (entry.draft.preparedWorkspace) throw new Error(tCreation("encryptedWorkflowUnsupported"))
+      }
       const attachments = await inlineAttachmentsFromFiles(entry.draft.attachments)
       if (version !== generation.current || userId !== latest.current.userId) return
       requestSent = true

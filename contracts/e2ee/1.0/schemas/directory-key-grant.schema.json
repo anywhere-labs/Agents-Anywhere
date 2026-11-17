@@ -1,0 +1,40 @@
+{
+  "$id": "urn:agents-anywhere:e2ee:1.0:directory-key-grant",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Sent by the device to a client inside the channel after pairing or rotation.",
+  "properties": {
+    "deviceId": {
+      "minLength": 1,
+      "title": "Deviceid",
+      "type": "string"
+    },
+    "epoch": {
+      "minimum": 0,
+      "title": "Epoch",
+      "type": "integer"
+    },
+    "key": {
+      "description": "32 bytes, base64url without padding",
+      "pattern": "^[A-Za-z0-9_-]{43}$",
+      "title": "Key",
+      "type": "string"
+    },
+    "keyId": {
+      "minLength": 1,
+      "title": "Keyid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "deviceId",
+    "keyId",
+    "epoch",
+    "key"
+  ],
+  "title": "DirectoryKeyGrant",
+  "type": "object",
+  "x-contract": "e2ee",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

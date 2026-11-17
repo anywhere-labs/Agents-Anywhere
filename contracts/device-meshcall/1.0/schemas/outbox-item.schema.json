@@ -1,0 +1,33 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:outbox-item",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Persistent outbox message; every ``Link/outbox`` open resends from the lowest unacknowledged ``oid``.",
+  "properties": {
+    "m": {
+      "minLength": 1,
+      "title": "M",
+      "type": "string"
+    },
+    "oid": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "title": "Oid",
+      "type": "integer"
+    },
+    "p": {
+      "additionalProperties": true,
+      "title": "P",
+      "type": "object"
+    }
+  },
+  "required": [
+    "oid",
+    "m"
+  ],
+  "title": "OutboxItem",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

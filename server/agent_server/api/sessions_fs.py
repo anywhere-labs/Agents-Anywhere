@@ -16,21 +16,41 @@ from fastapi import (
     Request,
     UploadFile,
 )
-from fastapi.responses import FileResponse, RedirectResponse, Response
+from fastapi.responses import (
+    FileResponse,
+    RedirectResponse,
+    Response,
+    StreamingResponse,
+)
 
-from agent_server.core.auth import verify_signed_token, verify_user_access_token
+from agent_server.api.device_session_reads import device_read_http_error
+from agent_server.api.device_transfers import get_device_blobs
+from agent_server.api.v2_compat import V3_SESSION_ONLY
+from agent_server.core.auth import verify_signed_token
 from agent_server.core.models import (
     FsDownloadResponse,
     UploadedAttachment,
     UserUploadResponse,
 )
 from agent_server.core.utc import utc_now
-from agent_server.deps import current_user_id, get_attachment_service, get_store
+from agent_server.deps import (
+    authenticate_access_token,
+    current_user_id,
+    get_attachment_service,
+    get_device_reads,
+    get_store,
+)
 from agent_server.infra.files.base import UploadEmpty, UploadTooLarge
 from agent_server.infra.repositories.facade import Store
 from agent_server.services.attachments import (
     LOCAL_FILE_TOKEN_KIND,
     AttachmentService,
+)
+from agent_server.services.device_blobs import DeviceBlobService
+from agent_server.services.device_reads import (
+    DeviceReadError,
+    DeviceReadService,
+    DeviceReadTimeout,
 )
 from agent_server.services.thumbnails import (
     DEFAULT_THUMBNAIL_WIDTH,
@@ -76,14 +96,23 @@ async def attachment_open(
     token: str | None = Query(None),
     authorization: str | None = Header(None, alias="Authorization"),
     attachments: AttachmentService = Depends(get_attachment_service),
+    db: Store = Depends(get_store),
+    reads: DeviceReadService = Depends(get_device_reads),
+    blobs: DeviceBlobService = Depends(get_device_blobs),
 ) -> Response:
+    user_id = await _user_id_from_header(request.app, authorization=authorization, token=token)
     try:
-        user_id = _user_id_from_header(authorization=authorization, token=token)
         path, metadata = await attachments.local_user_file(
             session_id=session_id,
             file_id=file_id,
             user_id=user_id,
         )
+    except KeyError:
+        # v3: once the device took a file, its copy lives on the device.
+        return await _device_attachment(db, reads, blobs, session_id, file_id, user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    try:
         if path is not None:
             await attachments.verify_local_file(path, metadata)
             return _attachment_file_response(request, path, metadata)
@@ -97,6 +126,40 @@ async def attachment_open(
     except ValueError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return RedirectResponse(url=url, status_code=302)
+
+
+async def _device_attachment(
+    db: Store,
+    reads: DeviceReadService,
+    blobs: DeviceBlobService,
+    session_id: str,
+    file_id: str,
+    user_id: str,
+) -> Response:
+    try:
+        session = await db.get_session(session_id, user_id=user_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="file not found") from None
+    if not file_id.startswith("file_") or not await reads.is_v3_device(session.connectorId):
+        raise HTTPException(status_code=404, detail="file not found")
+    try:
+        blob = await blobs.open_blob(session.connectorId, session_id, file_id)
+    except (DeviceReadTimeout, DeviceReadError) as exc:
+        raise device_read_http_error(exc) from exc
+    if blob is None:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "connector_offline", "message": "the device holding this file is offline"},
+        )
+    headers = {
+        "Content-Disposition": _content_disposition("inline", blob.name),
+        "Cache-Control": "private, max-age=300",
+    }
+    if blob.size:
+        headers["Content-Length"] = str(blob.size)
+    if blob.sha256:
+        headers["ETag"] = f'"{blob.sha256}"'
+    return StreamingResponse(blob.chunks, media_type=blob.media_type, headers=headers)
 
 
 @router.get("/{session_id}/attachments/{file_id}/thumb")
@@ -117,7 +180,7 @@ async def attachment_thumbnail(
     output stays immutably cacheable.
     """
     try:
-        user_id = _user_id_from_header(authorization=authorization, token=token)
+        user_id = await _user_id_from_header(request.app, authorization=authorization, token=token)
         path, metadata = await attachments.local_user_file(
             session_id=session_id,
             file_id=file_id,
@@ -177,7 +240,7 @@ async def local_file_raw(
     )
 
 
-@router.post("/{session_id}/attachments", response_model=UserUploadResponse)
+@router.post("/{session_id}/attachments", response_model=UserUploadResponse, dependencies=V3_SESSION_ONLY)
 async def create_attachments(
     session_id: str,
     files: list[UploadFile] = File(...),
@@ -363,18 +426,19 @@ def _attachment_file_response(
     )
 
 
-def _user_id_from_header(
+async def _user_id_from_header(
+    app: Any,
     *,
     authorization: str | None,
     token: str | None = None,
 ) -> str:
     prefix = "Bearer "
     if authorization and authorization.startswith(prefix):
-        user_id = verify_user_access_token(authorization[len(prefix) :])
-        if user_id is not None:
-            return user_id
+        claims = await authenticate_access_token(app, authorization[len(prefix) :])
+        if claims is not None:
+            return claims[0]
     if token:
-        user_id = verify_user_access_token(token)
-        if user_id is not None:
-            return user_id
+        claims = await authenticate_access_token(app, token)
+        if claims is not None:
+            return claims[0]
     raise HTTPException(status_code=401, detail="invalid user access token")

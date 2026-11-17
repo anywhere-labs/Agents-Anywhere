@@ -3,6 +3,7 @@ package com.agentsanywhere.app.feature.realtime
 import com.agentsanywhere.app.api.ApiException
 import com.agentsanywhere.app.api.RealtimeTransport
 import com.agentsanywhere.app.api.RemoteSessionEventEnvelope
+import com.agentsanywhere.app.api.SESSION_CATCHUP_REQUIRED
 import com.agentsanywhere.app.api.eventCursorSequence
 import com.agentsanywhere.app.feature.auth.AuthSessionReader
 import kotlinx.coroutines.CancellationException
@@ -28,10 +29,13 @@ class SessionRealtimeController(
     private val sessionStore: AuthSessionReader,
     private val clientId: String,
     private val retryDelay: (Int) -> Long = ::reconnectDelayMillis,
+    /** E2EE: when it returns a stream, events come through the device's secure channel instead of the WS. */
+    private val streamRouter: () -> SessionStreamRouter? = { null },
 ) {
     private val retryNow = Channel<Unit>(Channel.CONFLATED)
     private val connectionLock = Any()
     private val activeSocket = AtomicReference<WebSocket?>()
+    private val activeSecureStream = AtomicReference<(() -> Unit)?>()
     private val activeJob = AtomicReference<Job?>()
     private val generationSequence = AtomicLong(0)
     private val activeConnectionGeneration = AtomicLong(0)
@@ -46,6 +50,7 @@ class SessionRealtimeController(
     fun requestImmediateReconnect() {
         synchronized(connectionLock) {
             activeSocket.getAndSet(null)?.cancel()
+            activeSecureStream.getAndSet(null)?.invoke()
         }
         retryNow.trySend(Unit)
     }
@@ -60,6 +65,12 @@ class SessionRealtimeController(
         onRuntimeRefreshRequired: suspend (connectionGeneration: Long, refreshGeneration: Long) -> Unit,
         onConnectionChanged: (connected: Boolean, recovering: Boolean, attempt: Int, error: String?) -> Unit,
         onAccessRevoked: suspend (Throwable) -> Unit = {},
+        /** Protocol 1.2: the device is offline, so the shown history is only what was loaded before. */
+        historyUnavailable: suspend () -> Boolean = { false },
+        /** Only an offline snapshot was applied; once the device answers, a snapshot is read first. */
+        historyBaseMissing: suspend () -> Boolean = { false },
+        /** A recovery read learned whether the device can serve history. */
+        onHistoryAvailability: suspend (available: Boolean) -> Unit = {},
     ): Job {
         val job = scope.launch(Dispatchers.IO) {
         val visitJob = coroutineContext.job
@@ -72,7 +83,8 @@ class SessionRealtimeController(
             if (!isCurrentConnection(connectionGeneration)) return@withLock false
             val requiredReason = pendingSnapshotReason ?: reason ?: return@withLock false
             val request = connectionGeneration to cursor()
-            if (pendingSnapshotReason == null && lastSnapshotRequest == request) return@withLock true
+            // An offline snapshot is no base: once the device answers it is read again at the same cursor.
+            if (pendingSnapshotReason == null && lastSnapshotRequest == request && !historyBaseMissing()) return@withLock true
             // Retain the requirement across reconnects even if live events advance the cursor.
             pendingSnapshotReason = requiredReason
             onSnapshotRequired(requiredReason)
@@ -94,32 +106,73 @@ class SessionRealtimeController(
             val opened = AtomicBoolean(false)
             val openSignal = CompletableDeferred<Boolean>()
             var recoveryJob: Job? = null
+            // Catch-up requests that arrive while a recovery is reading run once it ends.
+            val catchupLock = Any()
+            var recoveryRunning = false
+            var recoveryGeneration = 0L
+            var catchupPending = false
+            // Live timeline items received while the history is unavailable wait for
+            // the gap before them to be recovered, so the cursor cannot skip it.
+            val deferredTimeline = mutableListOf<RemoteSessionEventEnvelope>()
+            fun takeDeferredTimeline(): List<RemoteSessionEventEnvelope> =
+                synchronized(deferredTimeline) { deferredTimeline.toList().also { deferredTimeline.clear() } }
             var snapshotJob: Job? = null
             var runtimeRefreshJob: Job? = null
             var latestRuntimeRefreshGeneration = 0L
+            var secureStream: (() -> Unit)? = null
             try {
-                val ticket = transport.createSessionTicket(serverUrl, accessToken, clientId, sessionId)
-                if (!isCurrentConnection(connectionGeneration)) return@launch
-                socket = transport.openWebSocket(
-                    transport.sessionWebSocketUrl(serverUrl, sessionId, ticket.ticket),
-                    channelListener(incoming) {
-                        opened.set(true)
-                        openSignal.complete(true)
-                        if (isCurrentConnection(connectionGeneration)) {
-                            onConnectionChanged(true, hasConnected, 0, null)
-                        }
-                    }.also { listener -> listener.onTerminated = { openSignal.complete(false) } },
+                val secure = streamRouter()?.openSecureStream(
+                    serverUrl = serverUrl,
+                    token = accessToken,
+                    sessionId = sessionId,
+                    afterCursor = cursor(),
+                    onMessage = { message -> incoming.trySend(message) },
+                    onClosed = { incoming.close() },
                 )
-                val installed = synchronized(connectionLock) {
-                    if (!isCurrentConnection(connectionGeneration)) {
-                        false
-                    } else {
-                        activeSocket.getAndSet(socket)?.cancel()
-                        true
+                if (secure != null) {
+                    val close: () -> Unit = {
+                        secure()
+                        incoming.close()
                     }
+                    secureStream = close
+                    val installed = synchronized(connectionLock) {
+                        if (!isCurrentConnection(connectionGeneration)) {
+                            false
+                        } else {
+                            activeSecureStream.getAndSet(close)?.invoke()
+                            true
+                        }
+                    }
+                    if (!installed) {
+                        close()
+                        return@launch
+                    }
+                    opened.set(true)
+                    onConnectionChanged(true, hasConnected, 0, null)
+                } else {
+                    val ticket = transport.createSessionTicket(serverUrl, accessToken, clientId, sessionId)
+                    if (!isCurrentConnection(connectionGeneration)) return@launch
+                    socket = transport.openWebSocket(
+                        transport.sessionWebSocketUrl(serverUrl, sessionId, ticket.ticket),
+                        channelListener(incoming) {
+                            opened.set(true)
+                            openSignal.complete(true)
+                            if (isCurrentConnection(connectionGeneration)) {
+                                onConnectionChanged(true, hasConnected, 0, null)
+                            }
+                        }.also { listener -> listener.onTerminated = { openSignal.complete(false) } },
+                    )
+                    val installed = synchronized(connectionLock) {
+                        if (!isCurrentConnection(connectionGeneration)) {
+                            false
+                        } else {
+                            activeSocket.getAndSet(socket)?.cancel()
+                            true
+                        }
+                    }
+                    if (!installed) return@launch
+                    if (!openSignal.await()) throw IllegalStateException("Session WebSocket handshake failed.")
                 }
-                if (!installed) return@launch
-                if (!openSignal.await()) throw IllegalStateException("Session WebSocket handshake failed.")
 
                 fun refreshRuntime() {
                     runtimeRefreshJob?.cancel()
@@ -148,40 +201,77 @@ class SessionRealtimeController(
                     }
                 }
 
-                fun recoverFrom(recoveryCursor: String) {
+                fun recoverFrom(recoveryCursor: String?) {
                     recoveryJob?.cancel()
+                    val generation = synchronized(catchupLock) {
+                        recoveryRunning = true
+                        catchupPending = false
+                        ++recoveryGeneration
+                    }
                     recoveryJob = launch {
-                        recoverWithFailureHandling {
-                            if (!requestSnapshot(null, connectionGeneration)) {
-                                recover(
-                                    serverUrl = serverUrl,
-                                    accessToken = accessToken,
-                                    sessionId = sessionId,
-                                    initialCursor = recoveryCursor,
-                                    onEvents = { events ->
-                                        if (isCurrentConnection(connectionGeneration)) onEvents(events)
-                                    },
-                                    onCursorAdvanced = { recoveredCursor ->
-                                        if (isCurrentConnection(connectionGeneration)) {
-                                            onCursorAdvanced(recoveredCursor)
-                                        }
-                                    },
-                                    onSnapshotRequired = { reason ->
-                                        requestSnapshot(reason, connectionGeneration)
-                                    },
-                                )
+                        try {
+                            recoverWithFailureHandling {
+                                var from = recoveryCursor ?: cursor()
+                                while (true) {
+                                    if (!requestSnapshot(null, connectionGeneration)) {
+                                        recover(
+                                            serverUrl = serverUrl,
+                                            accessToken = accessToken,
+                                            sessionId = sessionId,
+                                            initialCursor = from,
+                                            onEvents = { events ->
+                                                if (isCurrentConnection(connectionGeneration)) onEvents(events)
+                                            },
+                                            onCursorAdvanced = { recoveredCursor ->
+                                                if (isCurrentConnection(connectionGeneration)) {
+                                                    onCursorAdvanced(recoveredCursor)
+                                                }
+                                            },
+                                            onSnapshotRequired = { reason ->
+                                                requestSnapshot(reason, connectionGeneration)
+                                            },
+                                            takeDeferred = ::takeDeferredTimeline,
+                                            historyBaseMissing = historyBaseMissing,
+                                            onHistoryAvailability = { available ->
+                                                if (isCurrentConnection(connectionGeneration)) onHistoryAvailability(available)
+                                            },
+                                        )
+                                    }
+                                    val again = synchronized(catchupLock) {
+                                        if (recoveryGeneration != generation || !catchupPending) false
+                                        else { catchupPending = false; true }
+                                    }
+                                    if (!again || !isCurrentConnection(connectionGeneration)) break
+                                    from = cursor()
+                                }
+                                if (isCurrentConnection(connectionGeneration)) {
+                                    onConnectionChanged(true, false, 0, null)
+                                }
                             }
-                            if (isCurrentConnection(connectionGeneration)) {
-                                onConnectionChanged(true, false, 0, null)
+                        } finally {
+                            synchronized(catchupLock) {
+                                if (recoveryGeneration == generation) recoveryRunning = false
                             }
                         }
                     }
+                }
+
+                /** Recovers from this client's own cursor, after any recovery already reading. */
+                fun requestCatchup() {
+                    val start = synchronized(catchupLock) {
+                        if (recoveryRunning) { catchupPending = true; false } else true
+                    }
+                    if (start) recoverFrom(null)
                 }
 
                 if (hasConnected) {
                     onConnectionChanged(true, true, 0, null)
                     recoverFrom(cursor())
                     refreshRuntime()
+                } else if (secureStream != null) {
+                    // The subscription replays events after the cursor itself; it may not send `session.subscribed`.
+                    refreshRuntime()
+                    hasConnected = true
                 }
                 for (firstMessage in incoming) {
                     // One fixed window from the first event; new messages never
@@ -205,6 +295,7 @@ class SessionRealtimeController(
                     delay(remainingBatchMillis(flushDeadline))
                     if (batch.isEmpty()) continue
                     if (!isCurrentConnection(connectionGeneration)) break
+                    var catchup = false
                     batch.forEach { event ->
                         when (event.type) {
                         "session.subscribed" -> {
@@ -225,10 +316,25 @@ class SessionRealtimeController(
                         "runtime.refetch_required" -> {
                             refreshRuntime()
                         }
+                        SESSION_CATCHUP_REQUIRED -> if (hasConnected) catchup = true
                         else -> Unit
                         }
                     }
-                    if (isCurrentConnection(connectionGeneration)) onEvents(batch)
+                    var deliver: List<RemoteSessionEventEnvelope> = batch
+                    if (hasConnected && historyUnavailable()) {
+                        val (timeline, other) = batch.partition(RemoteSessionEventEnvelope::isTimelineEvent)
+                        if (timeline.isNotEmpty()) {
+                            synchronized(deferredTimeline) { deferredTimeline += timeline }
+                            catchup = true
+                        }
+                        // The device came back: read what it could not serve while offline.
+                        if (other.any { it.type == "session.meta.updated" && it.payload.session?.connectorStatus == "online" }) {
+                            catchup = true
+                        }
+                        deliver = other
+                    }
+                    if (isCurrentConnection(connectionGeneration) && deliver.isNotEmpty()) onEvents(deliver)
+                    if (catchup && isCurrentConnection(connectionGeneration)) requestCatchup()
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -246,6 +352,7 @@ class SessionRealtimeController(
                     val current = isCurrentConnection(connectionGeneration)
                     if (current) activeConnectionGeneration.set(0)
                     activeSocket.compareAndSet(socket, null)
+                    secureStream?.let { activeSecureStream.compareAndSet(it, null) }
                     current
                 }
                 activeRuntimeRefreshGeneration.compareAndSet(latestRuntimeRefreshGeneration, 0)
@@ -253,6 +360,7 @@ class SessionRealtimeController(
                 snapshotJob?.cancel()
                 runtimeRefreshJob?.cancel()
                 socket?.cancel()
+                secureStream?.invoke()
                 incoming.close()
                 if (wasActiveConnection) onConnectionChanged(false, false, attempt, null)
             }
@@ -275,18 +383,32 @@ class SessionRealtimeController(
         onEvents: suspend (List<RemoteSessionEventEnvelope>) -> Unit,
         onCursorAdvanced: suspend (String) -> Unit,
         onSnapshotRequired: suspend (reason: String) -> Unit,
+        takeDeferred: () -> List<RemoteSessionEventEnvelope> = { emptyList() },
+        historyBaseMissing: suspend () -> Boolean = { false },
+        onHistoryAvailability: suspend (available: Boolean) -> Unit = {},
     ) {
         var after = initialCursor
-        repeat(MAX_RECOVERY_PAGES) {
+        repeat(MAX_RECOVERY_PAGES) { page ->
             val response = transport.recoverSessionEvents(serverUrl, accessToken, sessionId, after)
-            if (response.snapshotRequired) {
-                onSnapshotRequired("events.snapshotRequired")
+            if (response.deviceOffline) {
+                // Nothing is readable until the device returns. The cursor stays and
+                // deferred live items are dropped: the next recovery reads them again.
+                takeDeferred()
+                onHistoryAvailability(false)
                 return
             }
-            val events = recoveredEventsToApply(
-                response.events.sortedWith(
-                    compareBy<RemoteSessionEventEnvelope> { it.sequence }.thenBy { it.eventId },
-                ),
+            if (response.snapshotRequired || (page == 0 && historyBaseMissing())) {
+                // Without an authoritative base (an offline first read), read one now.
+                onSnapshotRequired(if (response.snapshotRequired) "events.snapshotRequired" else "events.deviceOnline")
+                takeDeferred().takeIf { it.isNotEmpty() }?.let { onEvents(it) }
+                return
+            }
+            // The device answered: history is readable again before items apply.
+            if (page == 0) onHistoryAvailability(true)
+            val deferred = if (page == 0) takeDeferred() else emptyList()
+            // Sorted together so newer live items cannot hide older recovered ones.
+            val events = (recoveredEventsToApply(response.events) + deferred).sortedWith(
+                compareBy<RemoteSessionEventEnvelope> { it.sequence }.thenBy { it.eventId },
             )
             if (events.isNotEmpty()) onEvents(events)
             val next = response.nextCursor
@@ -309,6 +431,10 @@ class SessionRealtimeController(
 
 private fun RemoteSessionEventEnvelope.isTimelineUpsert(): Boolean =
     type == "timeline.item_created" || type == "timeline.item_updated"
+
+/** Events whose sequence advances the recovery cursor of the session history. */
+private fun RemoteSessionEventEnvelope.isTimelineEvent(): Boolean =
+    isTimelineUpsert() || type == "timeline.snapshot"
 
 /**
  * Recovered capabilities are projected from stored connector facts and can be

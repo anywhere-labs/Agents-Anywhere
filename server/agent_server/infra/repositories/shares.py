@@ -6,12 +6,12 @@ from typing import Any
 from sqlalchemy import insert, select
 
 from agent_server.core.utc import utc_now
+from agent_server.infra.db.engine import read_connection
 from agent_server.infra.repositories.store_support import (
     _json_dumps,
     _json_loads,
     session_shares_t,
 )
-from agent_server.infra.db.engine import read_connection
 
 
 class SessionShareRepositoryMixin:
@@ -66,3 +66,16 @@ class SessionShareRepositoryMixin:
             "allowedFileIds": _json_loads(row["allowed_file_ids_json"]) or [],
             "createdAt": row["created_at"],
         }
+
+    async def file_referenced_by_share(self, session_id: str, file_id: str) -> bool:
+        """Whether any share of ``session_id`` exposes ``file_id`` (its copy must stay)."""
+
+        async with read_connection(self._engine) as connection:
+            rows = (
+                await connection.execute(
+                    select(session_shares_t.c.allowed_file_ids_json).where(
+                        session_shares_t.c.session_id == session_id
+                    )
+                )
+            ).scalars().all()
+        return any(file_id in (_json_loads(raw) or []) for raw in rows)

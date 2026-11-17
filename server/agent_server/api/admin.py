@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from agent_server.core.auth import hash_password_verifier
 from agent_server.core.models import (
@@ -17,7 +17,6 @@ from agent_server.deps import (
     get_session_runtime_state_cache,
     get_store,
     get_terminal_broker,
-    get_timeline_write_buffer,
     require_admin,
 )
 from agent_server.infra.connector_rpc import ConnectorRpcManager
@@ -29,7 +28,6 @@ from agent_server.services.email_delivery import (
     update_email_settings,
 )
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
-from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 from agent_server.services.user_deletion import UserDeletionPending, delete_user_account
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
@@ -108,6 +106,7 @@ async def create_user(
 async def update_user(
     user_id: str,
     payload: AdminUserUpdateRequest,
+    request: Request,
     db: Store = Depends(get_store),
     admin: UserView = Depends(require_admin),
 ) -> UserView:
@@ -130,9 +129,13 @@ async def update_user(
             updated = await db.update_user_role(target, payload.role)
         if payload.disabled is not None:
             updated = await db.set_user_disabled(target, payload.disabled)
+            if payload.disabled:
+                # Signing back in is required even if the account is enabled again.
+                await request.app.state.user_tokens.revoke_user(target, reason="account_disabled")
         password_hash = _password_hash_from_update(payload)
         if payload.password is not None or password_hash is not None:
             await db.update_user_password(target, payload.password, password_hash=password_hash)
+            await request.app.state.user_tokens.revoke_user(target, reason="password_reset")
     except KeyError:
         raise HTTPException(status_code=404, detail="user not found") from None
     except ValueError as exc:
@@ -148,7 +151,6 @@ async def delete_user(
     admin: UserView = Depends(require_admin),
     manager: ConnectorRpcManager = Depends(get_rpc),
     terminals: TerminalBroker = Depends(get_terminal_broker),
-    timeline_buffer: TimelineWriteBuffer = Depends(get_timeline_write_buffer),
     runtime_state_cache: SessionRuntimeStateCache = Depends(get_session_runtime_state_cache),
 ) -> None:
     target = (user_id or "").strip().lower()
@@ -156,7 +158,7 @@ async def delete_user(
         raise HTTPException(status_code=409, detail="cannot delete yourself")
     try:
         await delete_user_account(
-            target, db, manager, terminals, timeline_buffer, runtime_state_cache
+            target, db, manager, terminals, runtime_state_cache
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="user not found") from None

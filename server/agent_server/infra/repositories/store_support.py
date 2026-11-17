@@ -5,9 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
-import functools
 import hashlib
-import inspect
 import json
 import re
 import secrets
@@ -33,7 +31,6 @@ from agent_server.infra.db import (
     connector_protocol_capabilities as connector_protocol_capabilities_t,
     connector_runtime_catalogs as connector_runtime_catalogs_t,
     connector_runtime_types as connector_runtime_types_t,
-    connector_terminal_roots as connector_terminal_roots_t,
     connectors as connectors_t,
     device_runtimes as device_runtimes_t,
     fs_preview_tokens as fs_preview_tokens_t,
@@ -41,12 +38,10 @@ from agent_server.infra.db import (
     oauth_accounts as oauth_accounts_t,
     oauth_authorization_codes as oauth_authorization_codes_t,
     oauth_clients as oauth_clients_t,
-    pairing_codes as pairing_codes_t,
     projects as projects_t,
     session_inventory_scans as session_inventory_scans_t,
     sessions as sessions_t,
     session_shares as session_shares_t,
-    timeline_items as timeline_items_t,
     usage_events as usage_events_t,
     usage_inventory_snapshots as usage_inventory_snapshots_t,
     users as users_t,
@@ -70,7 +65,6 @@ from agent_server.infra.repositories import (
 )
 from agent_server.services.attachments import AttachmentService
 from agent_server.core.utc import utc_now
-from agent_server.infra.timeline_store import SqlTimelineStore
 
 DERIVED_SESSION_TITLE_MAX_CHARS = 48
 
@@ -97,48 +91,6 @@ def _json_loads(value: str | None) -> Any:
     if not value:
         return None
     return json.loads(value)
-
-
-def session_revision_fenced(method: Any) -> Any:
-    """Run one single-session revision writer inside the bound coordinator.
-
-    Repository mixins stay independent from the service implementation.  The
-    app-scoped timeline buffer binds the actual context manager on ``Store``;
-    tests and tools that construct a Store without a buffer keep the original
-    direct database behavior.
-    """
-
-    signature = inspect.signature(method)
-
-    @functools.wraps(method)
-    async def wrapped(self: Any, *args: Any, **kwargs: Any) -> Any:
-        arguments = signature.bind(self, *args, **kwargs).arguments
-        session_id = arguments.get("session_id")
-        if not isinstance(session_id, str) or not session_id:
-            raise ValueError("session revision writer requires a session_id")
-        async with self.session_revision_fence(session_id):
-            try:
-                previous = await self.get_session(session_id)
-            except KeyError:
-                previous = None
-            result = await method(self, *args, **kwargs)
-            if (
-                previous is not None
-                and isinstance(result, SessionView)
-                and previous.updatedSeq == result.updatedSeq
-                and previous.sortAt == result.sortAt
-            ):
-                return result
-            await self.publish_session_revision_result(
-                session_id,
-                operation=method.__name__,
-                result=result,
-            )
-            return result
-
-    return wrapped
-
-
 
 
 def _hash_token(token: str) -> str:
@@ -179,15 +131,6 @@ def _user_from_row(row: Any) -> UserView:
 
 def _mobile_login_token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
-
-
-def _message_text(content: Any) -> str:
-    if not isinstance(content, dict):
-        return ""
-    text = content.get("text")
-    if not isinstance(text, str):
-        return ""
-    return " ".join(text.split())
 
 
 def _truncate_title(text: str) -> str:

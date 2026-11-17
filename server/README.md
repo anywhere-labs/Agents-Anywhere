@@ -82,7 +82,7 @@ curl http://127.0.0.1:8000/api/v2/health/ready
 
 | Variable | Purpose |
 | --- | --- |
-| `AGENT_SERVER_WORKERS` | Number of Uvicorn workers when launched with `uv run python -m agent_server.main` or the server Docker image. Defaults to `1`. More than one requires Redis and disallows `AGENT_SERVER_TIMELINE_SINGLE_INSTANCE`. |
+| `AGENT_SERVER_WORKERS` | Number of Uvicorn workers when launched with `uv run python -m agent_server.main` or the server Docker image. Defaults to `1`. More than one requires Redis. |
 | `AGENT_SERVER_EVENT_WORKERS` | Compute subprocesses **per Uvicorn worker** for large outbound session events. Defaults to `2`; `0` disables offload. |
 | `AGENT_SERVER_EVENT_THRESHOLD_BYTES` | Minimum UTF-8 envelope size sent to a compute subprocess. Defaults to `262144` (256 KiB). Smaller events use shared inline preparation. |
 | `AGENT_SERVER_EVENT_QUEUE_ITEMS` | Maximum admitted large-event jobs per Uvicorn worker, including waiting and running jobs. Defaults to `32`. |
@@ -100,7 +100,6 @@ curl http://127.0.0.1:8000/api/v2/health/ready
 | `AGENT_SERVER_REDIS_PREFIX` | Redis key/channel prefix. Defaults to `agents-anywhere`. |
 | `AGENT_SERVER_REDIS_CONNECT_TIMEOUT` | Redis connection timeout in seconds. Defaults to `5`. |
 | `AGENT_SERVER_REDIS_HEALTH_CHECK_INTERVAL` | Redis connection health-check interval in seconds. Defaults to `30`. |
-| `AGENT_SERVER_TIMELINE_REVISION_LEASE_SIZE` | Number of Timeline revisions reserved from PostgreSQL per Redis sequence lease. Defaults to `4096`. Larger leases reduce database writes but leave larger unused sequence gaps after Redis state loss. |
 | `AGENT_SERVER_INSTANCE_ID` | Optional Server instance ID for Connector RPC routing. With multiple workers the process ID is appended, so workers do not claim the same RPC route. A random ID is generated when unset. |
 | `AGENT_SERVER_FILES_BACKEND` | File storage backend. Use `local` or `s3`. Defaults to `local`. |
 | `AGENT_SERVER_FILES_LOCAL_ROOT` | Local attachment/file root. Defaults next to the database. |
@@ -111,13 +110,21 @@ curl http://127.0.0.1:8000/api/v2/health/ready
 | `AGENT_SERVER_FILES_S3_REGION` | S3 region. Defaults to `us-east-1`. |
 | `AGENT_SERVER_FILES_S3_ENDPOINT_URL` | Optional S3-compatible endpoint URL. |
 | `AGENT_SERVER_FILES_S3_VIRTUAL_HOST_STYLE` | Set to `true` for virtual-host-style S3 URLs. |
-| `AGENT_SERVER_SECRET` | Secret used for signed auth tokens. Set this outside local dev. It also derives the key that encrypts saved model keys and Tokens Anywhere refresh tokens, so model configuration needs at least 32 characters and a non-default value; changing it makes those saved values unreadable. |
+| `AGENT_SERVER_SECRET` | Secret used for signed auth tokens. Required: `python -m agent_server.main` refuses to start when it is unset, shorter than 32 characters or a published example value, unless `AGENT_SERVER_DEV_MODE=1` (local development only). It also derives the key that encrypts saved model keys and Tokens Anywhere refresh tokens, so model configuration needs at least 32 characters and a non-default value; changing it makes those saved values unreadable. |
+| `AGENT_SERVER_PREVIEW_DOMAIN` | Port preview: a separately registered domain (for example `example-preview.net`, never a subdomain of the AA site) whose wildcard `*.<domain>` points at the gateway. Port preview is hidden while it is unset. |
+| `AGENT_SERVER_PREVIEW_INTERNAL_TOKEN` | Port preview: a random value of at least 32 characters shared by the Server, preview-auth and frps (`openssl rand -hex 32`). It signs the frp tokens and preview cookies and authenticates the internal preview endpoints; port preview stays hidden without it. |
+| `AGENT_SERVER_PREVIEW_FRPS_ADDR` | Port preview: where devices' frpc connects (`wss://host[/path]`, `tcp://host:port`). Defaults to `wss://frp.<preview domain>`. |
+| `AGENT_SERVER_E2EE_PREVIEW` | `deny` turns port preview off when `AGENT_SERVER_E2EE=required` (preview traffic is not end-to-end encrypted). |
+| `AGENT_SERVER_PREVIEW_SERVER_URL` | preview-auth only: the Server on the internal network, used to redeem one-time tickets. Defaults to `http://agent-server-next:8000`. |
 | `AGENT_SERVER_SETUP_TOKEN_TTL` | First-run setup token TTL in seconds. |
 | `AGENT_SERVER_PUBLIC_ORIGIN` | Public Web origin used for OAuth redirect URLs when reverse-proxy headers or `returnTo` are unavailable. Example: `https://agents.example.com`. Tokens Anywhere identifies the instance by this origin, so set it before users link. |
 | `AGENT_SERVER_TOKENS_URL` | Default Tokens Anywhere origin for linking accounts in 配置管理, such as `https://tokens.example.com`. It must equal Tokens Anywhere's `TOKENS_PUBLIC_ORIGIN` exactly, because the authorization answer's `iss` is checked against it. Tokens Anywhere must also set `TOKENS_SECRETS_KEY`: without it it hands out a managed key's secret only once, and Agents Anywhere fetches the key again each time it applies it. An administrator can override it under 管理 → 常规 in Web or Desktop (`PUT /api/v2/admin/integrations/tokens`). Unset with no override turns the link off. |
 | `AGENT_SERVER_ALLOW_PRIVATE_MODEL_GATEWAYS` | Set to `1` to let the server detect model services on private addresses (LAN, loopback, link-local) when a user adds one by address. Off by default, so the server cannot be used to call internal hosts; users can still enter such a service's protocols by hand. See `docs/api/model-config.md`. |
 | `AGENT_SERVER_TOKENS_ANYWHERE_CLIENT_SECRET` | Client secret that lets Tokens Anywhere offer "Sign in with Agents Anywhere". At least 32 characters, and `AGENT_SERVER_SECRET` must also be at least 32 characters. Leave it and the redirect URI unset to turn the client off. |
 | `AGENT_SERVER_TOKENS_ANYWHERE_REDIRECT_URI` | Tokens Anywhere's exact HTTPS callback URL, such as `https://tokens.example.com/oauth/aa`. No query or fragment. |
+| `AGENT_SERVER_E2EE` | `off` (default) or `required`. In `required` mode the Server refuses every plaintext content route (session reads and socket, commands, files, terminals, the server-side queue) with `409 {"detail": {"code": "e2ee_required"}}` and only forwards end-to-end encrypted frames; on the first start in `required` mode it clears stored session titles and working directories. Switching back to `off` does not relax devices or clients that already require encryption. See `docs/api/e2ee.md`. |
+| `AGENT_SERVER_E2EE_WEB` | `allow` (default) or `deny`: whether the Web client may be used when `AGENT_SERVER_E2EE=required`. Published in `/auth/config`. |
+| `AGENT_SERVER_E2EE_PREVIEW` | `allow` (default) or `deny`: whether port preview stays available in `required` mode (its traffic is not end-to-end encrypted). Published in `/auth/config`. |
 | `AGENT_SERVER_CORS_ORIGINS` | Comma-separated explicit CORS origins. |
 | `AGENT_SERVER_CORS_ORIGIN_REGEX` | CORS origin regex. Defaults to local `localhost` / `127.0.0.1` ports. |
 | `AGENT_SERVER_STATIC_DIR` | Built frontend directory. When set, `/` serves `index.html` and `/assets` serves static assets. |

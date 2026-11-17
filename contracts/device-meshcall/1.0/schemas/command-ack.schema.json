@@ -1,0 +1,74 @@
+{
+  "$defs": {
+    "LinkError": {
+      "properties": {
+        "code": {
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "default": "",
+          "title": "Message",
+          "type": "string"
+        },
+        "retryable": {
+          "default": false,
+          "title": "Retryable",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "title": "LinkError",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:command-ack",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Response of a ``Commands/*`` call. ``accepted`` only after the device committed it to disk.\n\n``unknown`` never travels: the Server derives it from transport errors after the call opened.",
+  "properties": {
+    "e": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/LinkError"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "outcome": {
+      "enum": [
+        "accepted",
+        "rejected"
+      ],
+      "title": "Outcome",
+      "type": "string"
+    },
+    "r": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "R"
+    }
+  },
+  "required": [
+    "outcome"
+  ],
+  "title": "CommandAck",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

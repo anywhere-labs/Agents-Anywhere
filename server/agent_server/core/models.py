@@ -250,7 +250,17 @@ class AuthResponse(BaseModel):
     role: UserRoleName
     accessToken: str
     tokenType: str = "bearer"
+    # When the access token expires; refresh before then with ``refreshToken``.
+    expiresAt: str | None = None
+    # One-time: ``POST /auth/refresh`` returns the next one. None for tokens issued
+    # without a login (token family) of their own.
+    refreshToken: str | None = None
+    refreshExpiresAt: str | None = None
     serverTime: str
+
+
+class AuthRefreshRequest(BaseModel):
+    refreshToken: str = Field(min_length=1, max_length=512)
 
 
 class AuthMeResponse(BaseModel):
@@ -262,6 +272,12 @@ class AuthMeResponse(BaseModel):
     disabled: bool
     avatar: str | None = None
     serverTime: str
+
+
+class E2eeConfigView(BaseModel):
+    mode: Literal["off", "required"] = "off"
+    web: Literal["allow", "deny"] = "allow"
+    preview: Literal["allow", "deny"] = "allow"
 
 
 class AuthConfigResponse(BaseModel):
@@ -278,6 +294,9 @@ class AuthConfigResponse(BaseModel):
     # page show a countdown / "expired, check log" hint without ever exposing
     # the token value itself.
     setupTokenExpiresAt: str | None = None
+    #: Deployment E2EE declaration (``AGENT_SERVER_E2EE*``). A client that already requires encryption for
+    #: a device never relaxes because this says ``off`` (docs/v3/11-e2ee-noise.md §3).
+    e2ee: E2eeConfigView = Field(default_factory=lambda: E2eeConfigView())
     serverTime: str
 
 
@@ -879,6 +898,12 @@ class SessionView(BaseModel):
     lastItemOrderSeq: int | None = None
     sortAt: str | None = None
     updatedSeq: int
+    # Protocol 1.2 directory fields (``SessionViewV12``), additive for older clients. E2EE clients
+    # decrypt the list from the envelopes (``device_meshcall.DisplayEnvelope``, contracts/e2ee/1.0).
+    displayDevice: dict[str, Any] | None = None
+    displayUser: dict[str, Any] | None = None
+    planState: str = "none"
+    goalState: str = "none"
 
     @model_validator(mode="after")
     def _normalize_runtime_identity(self) -> SessionView:
@@ -956,6 +981,13 @@ class SessionPatchRequest(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=255)
     pinned: bool | None = None
     archived: bool | None = None
+    # A title the client sealed with the directory key (E2EE mode; ``DisplayUserUpdateRequest``,
+    # validated as ``device_meshcall.DisplayEnvelope``). Only ``mode: "sealed"`` is accepted; the
+    # Server stores it without reading it.
+    displayUser: dict[str, Any] | None = None
+    # The project the session belongs to; it must be the same user's, on the session's device. In E2EE
+    # required mode the client assigns it after matching the decrypted working directory.
+    projectId: str | None = Field(default=None, min_length=1)
 
 
 class BulkArchiveRequest(BaseModel):

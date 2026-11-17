@@ -124,6 +124,9 @@ def timeline_events_from_items(
     return events
 
 
+PORT_EVENT_TYPES = ("port.listening", "port.closed")
+
+
 def events_from_invalidation(payload: dict[str, Any]) -> list[ProtocolEventEnvelope]:
     session_id = payload.get("sessionId")
     if not isinstance(session_id, str):
@@ -143,6 +146,16 @@ def events_from_invalidation(payload: dict[str, Any]) -> list[ProtocolEventEnvel
         ]
     else:
         events = timeline_events_from_items(session_id, items)
+    # Already client-shaped events (v3 devices push them through ``Sessions/watch``).
+    raw_events = payload.get("events")
+    if isinstance(raw_events, list):
+        for raw in raw_events:
+            if not isinstance(raw, dict):
+                continue
+            try:
+                events.append(ProtocolEventEnvelope.model_validate(raw))
+            except ValueError:
+                continue
 
     goal = payload.get("goalState")
     if isinstance(goal, dict):
@@ -165,6 +178,17 @@ def events_from_invalidation(payload: dict[str, Any]) -> list[ProtocolEventEnvel
                 event_type="runtime.queue.updated",
                 payload={"queue": queue},
             )
+        )
+    # Port preview (``contracts/preview/1.0``): the device's listening ports for this session.
+    # Live state only; sequence 0 so it never moves a client's cursor.
+    port_event = payload.get("portEvent")
+    if (
+        isinstance(port_event, dict)
+        and port_event.get("type") in PORT_EVENT_TYPES
+        and isinstance(port_event.get("payload"), dict)
+    ):
+        events.append(
+            protocol_event(session_id, sequence=0, event_type=port_event["type"], payload=port_event["payload"])
         )
     planning = payload.get("planningState")
     if isinstance(planning, dict):
@@ -278,17 +302,3 @@ def notice_with_event_sequence(
     }
 
 
-def revisions_are_complete(
-    *,
-    after_sequence: int,
-    current_sequence: int,
-    events: list[ProtocolEventEnvelope],
-) -> bool:
-    if after_sequence == current_sequence:
-        return True
-    revisions = {
-        event.sequence
-        for event in events
-        if after_sequence < event.sequence <= current_sequence
-    }
-    return len(revisions) == current_sequence - after_sequence

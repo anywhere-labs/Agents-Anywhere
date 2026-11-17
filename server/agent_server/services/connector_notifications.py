@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import hashlib
-import json
+from collections.abc import Callable
 from typing import Any, ClassVar
 
 from loguru import logger
@@ -12,11 +11,11 @@ from agent_server.core.catalogs import (
     validate_model_catalog,
     validate_permission_catalog,
 )
+from agent_server.core.e2ee_settings import E2eeSettings
 from agent_server.core.models import (
     NoticeIn,
     SessionStatus,
     SessionView,
-    TimelineItemIn,
 )
 from agent_server.core.protocol import (
     ProtocolCapability,
@@ -25,22 +24,30 @@ from agent_server.core.protocol import (
     ProtocolPermissionCatalog,
 )
 from agent_server.core.runtime_identity import RuntimeIdentity, RuntimeIdentityError
-from agent_server.core.timeline import (
-    TIMELINE_ORDER_SEQ_MAX,
-    TIMELINE_ORDER_SEQ_MIN,
-    timeline_order_seq_in_range,
-)
 from agent_server.infra.repositories.projects import MissingWorkspaceError
 from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.ingest_effects import IngestEffect
 from agent_server.services.repository_ports import ConnectorNotificationRepository
-from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 from agent_server.services.usage_events import (
     NullUsageRecorder,
     UsageRecorder,
     approval_event,
     runtime_error_event,
-    turn_ended_event,
+)
+
+# Conversation content a v2 Connector pushes. A v3 Server stores none of it (D1, D8): the
+# notification is acknowledged and dropped, so the Connector does not retry it forever
+# (D4, ``06-protocols.md`` §7). Its sessions keep their list entry and live status.
+V2_CONTENT_NOTIFICATIONS = frozenset(
+    {
+        "timeline.sync",
+        "timeline.itemUpsert",
+        "notice.upsert",
+        "session.planning.updated",
+        "session.goal.updated",
+        # Turn ends moved the v2 timeline clock; v3 devices report ``latestTurnEndSeq`` instead.
+        "session.turnEnded",
+    }
 )
 
 TIMELINE_SYNC_PUSH_LIMIT = 100
@@ -82,25 +89,20 @@ class ConnectorNotificationService:
         self,
         store: ConnectorNotificationRepository,
         realtime: ConnectorRealtimeService,
-        timeline_write_buffer: TimelineWriteBuffer | None = None,
         *,
         usage_recorder: UsageRecorder | NullUsageRecorder | None = None,
+        e2ee_settings: Callable[[], E2eeSettings] = E2eeSettings,
     ) -> None:
         self._realtime = realtime
+        self._e2ee_settings = e2ee_settings
         usage = usage_recorder or NullUsageRecorder()
         self._handlers = (
             ConnectorProtocolNotificationHandler(store),
             RuntimeCatalogNotificationHandler(store),
             SessionStateNotificationHandler(store),
-            PlanningNotificationHandler(store),
-            GoalNotificationHandler(store),
-            SessionTurnEndedNotificationHandler(
-                store, timeline_write_buffer, usage_recorder=usage
-            ),
             SessionSourceNotificationHandler(store),
             SessionInventoryNotificationHandler(store),
             SessionNotificationHandler(store),
-            TimelineNotificationHandler(store, timeline_write_buffer),
             InteractionNotificationHandler(store, usage_recorder=usage),
         )
 
@@ -126,6 +128,14 @@ class ConnectorNotificationService:
                 "unsupported_notification",
                 "runtime catalogs are live Connector RPC reads and are no longer ingested",
             )
+        if method in V2_CONTENT_NOTIFICATIONS:
+            logger.debug("v2 content notification dropped connector_id={} method={}", connector_id, method)
+            return IngestEffect()
+        if method in _SESSION_DISPLAY_NOTIFICATIONS and self._e2ee_settings().required:
+            # A v2 Connector cannot seal titles or working directories; in encrypted mode the
+            # Server must not store them (they would undo clearing the directory). Without a
+            # ``cwd`` a session the Server does not know yet is not created.
+            params = _without_plaintext_display(params)
         if await self._realtime.apply(
             connector_id=connector_id,
             method=method,
@@ -141,6 +151,14 @@ class ConnectorNotificationService:
             if effect is not None:
                 return effect
         return IngestEffect()
+
+
+_SESSION_DISPLAY_NOTIFICATIONS = frozenset({"session.meta.upsert", "session.updated"})
+_PLAINTEXT_DISPLAY_FIELDS = ("title", "cwd")
+
+
+def _without_plaintext_display(params: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in params.items() if key not in _PLAINTEXT_DISPLAY_FIELDS}
 
 
 class ConnectorProtocolNotificationHandler:
@@ -673,308 +691,6 @@ class SessionStateNotificationHandler:
         )
 
 
-class SessionTurnEndedNotificationHandler:
-    def __init__(
-        self,
-        store: ConnectorNotificationRepository,
-        timeline_write_buffer: TimelineWriteBuffer | None = None,
-        *,
-        usage_recorder: UsageRecorder | NullUsageRecorder | None = None,
-    ) -> None:
-        self._store = store
-        self._timeline_write_buffer = timeline_write_buffer
-        self._usage = usage_recorder or NullUsageRecorder()
-
-    async def apply(
-        self,
-        *,
-        connector_id: str,
-        method: str,
-        params: dict[str, Any],
-    ) -> IngestEffect | None:
-        if method != "session.turnEnded":
-            return None
-        session_id = params.get("sessionId")
-        if not isinstance(session_id, str) or not session_id:
-            raise NotificationValidationError(
-                "invalid_session_id",
-                "session.turnEnded sessionId must be a non-empty string",
-            )
-        outcome = params.get("outcome")
-        if outcome not in TURN_END_OUTCOMES:
-            raise NotificationValidationError(
-                "invalid_turn_outcome",
-                "session.turnEnded outcome must be completed, interrupted, cancelled, or failed",
-            )
-        source_event_id = params.get("sourceEventId")
-        if source_event_id is not None and (
-            not isinstance(source_event_id, str)
-            or not source_event_id
-            or len(source_event_id) > 160
-        ):
-            raise NotificationValidationError(
-                "invalid_source_event_id",
-                "sourceEventId must be a non-empty bounded string",
-            )
-        source_event = (
-            {
-                "source_event_id": source_event_id,
-                "source_event_digest": hashlib.sha256(
-                    json.dumps(
-                        [outcome, params.get("sourceObservedAt")], sort_keys=True
-                    ).encode()
-                ).hexdigest(),
-            }
-            if source_event_id
-            else {}
-        )
-        turn_id = params.get("turnId") or source_event_id
-        if turn_id is not None and (not isinstance(turn_id, str) or not turn_id):
-            raise NotificationValidationError(
-                "invalid_turn_id",
-                "session.turnEnded turnId must be a non-empty string when provided",
-            )
-        runtime, runtime_id = runtime_identity_from_params(params)
-        external_session_id = _string_or_none(params.get("externalSessionId"))
-        if external_session_id is not None:
-            try:
-                session_id = await self._store.resolve_connector_session_id(
-                    connector_id=connector_id,
-                    session_id=session_id,
-                    external_session_id=external_session_id,
-                    runtime=runtime,
-                    runtime_id=runtime_id,
-                )
-            except KeyError:
-                pass
-        try:
-            session = await self._store.get_session(session_id)
-        except KeyError:
-            try:
-                session = await self._store.upsert_connector_session(
-                    connector_id=connector_id,
-                    session_id=session_id,
-                    runtime=runtime,
-                    runtime_id=runtime_id,
-                    external_session_id=external_session_id,
-                )
-            except MissingWorkspaceError:
-                return IngestEffect()
-            except ValueError as exc:
-                raise NotificationValidationError(
-                    "session_identity_conflict",
-                    str(exc),
-                ) from exc
-            session_id = session.id
-        else:
-            _require_session_binding(
-                session,
-                connector_id=connector_id,
-                runtime=runtime,
-                runtime_id=runtime_id,
-            )
-        if await _session_disabled(self._store, session_id):
-            return IngestEffect()
-        if self._timeline_write_buffer is None:
-            session = await self._store.record_session_turn_end(
-                session_id=session_id,
-                source_observed_at=_string_or_none(params.get("sourceObservedAt")),
-                mark_read_on_change=False,
-                **source_event,
-            )
-        else:
-            async with self._timeline_write_buffer.session_fence(session_id):
-                session = await self._store.record_session_turn_end(
-                    session_id=session_id,
-                    source_observed_at=_string_or_none(params.get("sourceObservedAt")),
-                    mark_read_on_change=False,
-                    **source_event,
-                )
-        if session.takeover:
-            # Only platform-driven sessions count as usage; a turn started from
-            # the local CLI in an imported session is not platform activity.
-            await self._usage.record(
-                turn_ended_event(
-                    session,
-                    outcome=outcome,
-                    turn_id=turn_id,
-                    started_at=await self._usage.last_message_sent_at(session.id),
-                )
-            )
-        return IngestEffect(
-            session_id=session.id,
-            session_changed=True,
-            dashboard_changed=True,
-        )
-
-
-class TimelineNotificationHandler:
-    METHODS: ClassVar[set[str]] = {"timeline.sync", "timeline.itemUpsert"}
-
-    def __init__(
-        self,
-        store: ConnectorNotificationRepository,
-        timeline_write_buffer: TimelineWriteBuffer | None = None,
-    ) -> None:
-        self._store = store
-        self._timeline_write_buffer = timeline_write_buffer
-
-    async def apply(
-        self,
-        *,
-        connector_id: str,
-        method: str,
-        params: dict[str, Any],
-    ) -> IngestEffect | None:
-        if method not in self.METHODS:
-            return None
-        if method == "timeline.sync":
-            return await self._sync(connector_id, params)
-        return await self._upsert(connector_id, params)
-
-    async def _sync(
-        self,
-        connector_id: str,
-        params: dict[str, Any],
-    ) -> IngestEffect:
-        items = [
-            TimelineItemIn.model_validate(item) for item in params.get("items", [])
-        ]
-        _require_storable_order_seq(items)
-        snapshot_range = _snapshot_range(params.get("snapshotRange"))
-        runtime, runtime_id = await timeline_runtime_identity_from_params(
-            self._store,
-            params,
-        )
-        requested_session_id = params["sessionId"]
-        session_id = await _resolve_timeline_session_id(
-            self._store,
-            connector_id,
-            requested_session_id,
-            items,
-            runtime=runtime,
-            runtime_id=runtime_id,
-        )
-        if await _session_disabled(self._store, session_id):
-            return IngestEffect()
-        items = [_timeline_item_for_session(item, session_id) for item in items]
-        replace_snapshot = params.get("complete") is True
-
-        async def write():
-            common = {
-                "session_id": session_id,
-                "source_observed_at": params.get("sourceObservedAt"),
-                "items": items,
-                "mark_read_on_change": True,
-            }
-            if snapshot_range is not None:
-                after_order_seq, through_order_seq = snapshot_range
-                return await self._store.replace_timeline_range(
-                    **common,
-                    after_order_seq=after_order_seq,
-                    through_order_seq=through_order_seq,
-                )
-            if replace_snapshot:
-                return await self._store.replace_timeline_snapshot(**common)
-            return await self._store.sync_timeline_items(**common)
-
-        try:
-            if self._timeline_write_buffer is None:
-                result = await write()
-            else:
-                async with self._timeline_write_buffer.session_fence(session_id):
-                    result = await write()
-        finally:
-            if self._timeline_write_buffer is not None:
-                await self._timeline_write_buffer.invalidate(session_id)
-        changed_items = list(result.items) if result.changed else []
-        push_items = len(changed_items) <= TIMELINE_SYNC_PUSH_LIMIT
-        timeline_published = result.changed and self._timeline_write_buffer is not None
-        return IngestEffect(
-            session_id=session_id,
-            items=[item.model_dump(mode="json") for item in changed_items]
-            if push_items
-            else None,
-            # One page of a paged snapshot holds only part of the timeline,
-            # so it never resets clients to its items; a page that deleted or
-            # moved rows makes them refetch instead.
-            timeline_reset=(
-                replace_snapshot
-                and snapshot_range is None
-                and result.changed
-                and push_items
-            ),
-            needs_refetch=not push_items or result.reordered,
-            accepted_sequence=(
-                await self._store.get_session_seq(session_id)
-                if timeline_published
-                else None
-            ),
-            timeline_published=timeline_published,
-            dashboard_changed=result.changed,
-        )
-
-    async def _upsert(
-        self,
-        connector_id: str,
-        params: dict[str, Any],
-    ) -> IngestEffect:
-        if _timeline_item_type(params.get("item")) in {"turn.start", "turn.end"}:
-            raise NotificationValidationError(
-                "unsupported_timeline_marker",
-                "turn lifecycle markers must use dedicated session notifications",
-            )
-        item = TimelineItemIn.model_validate(params["item"])
-        _require_storable_order_seq([item])
-        resolution = await self._store.resolve_connector_session_binding(
-            connector_id=connector_id,
-            session_id=params["sessionId"],
-            external_session_id=item.source.sessionId,
-            runtime=params.get("runtime"),
-            runtime_id=params.get("runtimeId"),
-            source_runtime=item.source.runtime,
-            source_runtime_id=None,
-        )
-        if resolution.sessionId is None:
-            if resolution.boundConnectorId is not None:
-                _require_bound_session_identity(
-                    bound_connector_id=resolution.boundConnectorId,
-                    bound_runtime=resolution.boundRuntime or "",
-                    bound_runtime_id=resolution.boundRuntimeId or "",
-                    connector_id=connector_id,
-                    runtime=resolution.runtime or "",
-                    runtime_id=resolution.runtimeId or "",
-                )
-            return IngestEffect()
-        session_id = resolution.sessionId
-        item = _timeline_item_for_session(item, session_id)
-        if self._timeline_write_buffer is None:
-            result = await self._store.upsert_timeline_item(
-                session_id=session_id,
-                source_observed_at=params.get("sourceObservedAt"),
-                item=item,
-                mark_read_on_change=True,
-            )
-        else:
-            result = await self._timeline_write_buffer.accept(
-                session_id=session_id,
-                source_observed_at=params.get("sourceObservedAt"),
-                item=item,
-                mark_read_on_change=True,
-            )
-        return IngestEffect(
-            session_id=session_id,
-            item=result.item.model_dump(mode="json") if result.changed else None,
-            timeline_pending=(
-                result.changed and self._timeline_write_buffer is not None
-            ),
-            accepted_sequence=result.item.updatedSeq if result.changed else None,
-            timeline_published=(
-                result.changed and self._timeline_write_buffer is not None
-            ),
-            dashboard_changed=(result.changed and self._timeline_write_buffer is None),
-        )
-
 
 class InteractionNotificationHandler:
     METHODS: ClassVar[set[str]] = {
@@ -1270,63 +986,6 @@ def _require_bound_session_identity(
             "notification runtime does not match the session binding",
         )
 
-
-async def _resolve_timeline_session_id(
-    store: ConnectorNotificationRepository,
-    connector_id: str,
-    session_id: str,
-    items: list[TimelineItemIn],
-    *,
-    runtime: str,
-    runtime_id: str,
-) -> str:
-    external_session_id = next(
-        (item.source.sessionId for item in items if item.source.sessionId),
-        None,
-    )
-    return await _resolve_timeline_session_id_by_external(
-        store,
-        connector_id,
-        session_id,
-        external_session_id,
-        runtime=runtime,
-        runtime_id=runtime_id,
-    )
-
-
-async def _resolve_timeline_session_id_by_external(
-    store: ConnectorNotificationRepository,
-    connector_id: str,
-    session_id: str,
-    external_session_id: str | None,
-    *,
-    runtime: str,
-    runtime_id: str,
-) -> str:
-    try:
-        return await store.resolve_connector_session_id(
-            connector_id=connector_id,
-            session_id=session_id,
-            external_session_id=external_session_id,
-            runtime=runtime,
-            runtime_id=runtime_id,
-        )
-    except KeyError:
-        try:
-            session = await store.get_session(session_id)
-        except KeyError:
-            return session_id
-        _require_session_binding(
-            session,
-            connector_id=connector_id,
-            runtime=runtime,
-            runtime_id=runtime_id,
-        )
-        return session_id
-
-
-def _timeline_item_type(value: Any) -> str | None:
-    return value.get("type") if isinstance(value, dict) else None
 
 
 def _v2_session_status(value: Any) -> SessionStatus | None:
@@ -1650,73 +1309,6 @@ def runtime_state_from_session_state_params(
     }
 
 
-def _require_storable_order_seq(items: list[TimelineItemIn]) -> None:
-    """Refuse an item the timeline table cannot store before it is buffered.
-
-    An out-of-range ``orderSeq`` accepted into the shared pending projection
-    used to fail every later flush of the session, and later new items were
-    placed after it, so they could not be stored either.
-    """
-
-    for item in items:
-        if not timeline_order_seq_in_range(item.orderSeq):
-            raise NotificationValidationError(
-                "invalid_order_seq",
-                f"timeline item {item.id} orderSeq {item.orderSeq} is outside "
-                f"{TIMELINE_ORDER_SEQ_MIN}..{TIMELINE_ORDER_SEQ_MAX}",
-            )
-
-
-def _snapshot_range(value: Any) -> tuple[int | None, int | None] | None:
-    """Parse the ``orderSeq`` range one page of a paged snapshot covers.
-
-    ``{"afterOrderSeq": a, "throughOrderSeq": b}`` says the request carries
-    every snapshot item with ``a < orderSeq <= b``; a missing or null bound is
-    unbounded, and ``a == b`` is an empty range that deletes nothing. Without
-    it, ``complete: true`` replaces the whole timeline.
-    """
-
-    if value is None:
-        return None
-    if not isinstance(value, dict):
-        raise NotificationValidationError(
-            "invalid_snapshot_range", "snapshotRange must be an object"
-        )
-    bounds: list[int | None] = []
-    for key in ("afterOrderSeq", "throughOrderSeq"):
-        bound = value.get(key)
-        if bound is not None and (
-            isinstance(bound, bool)
-            or not isinstance(bound, int)
-            or not timeline_order_seq_in_range(bound)
-        ):
-            raise NotificationValidationError(
-                "invalid_snapshot_range",
-                f"snapshotRange.{key} must be null or an integer within "
-                f"{TIMELINE_ORDER_SEQ_MIN}..{TIMELINE_ORDER_SEQ_MAX}",
-            )
-        bounds.append(bound)
-    after_order_seq, through_order_seq = bounds
-    if (
-        after_order_seq is not None
-        and through_order_seq is not None
-        and after_order_seq > through_order_seq
-    ):
-        raise NotificationValidationError(
-            "invalid_snapshot_range",
-            "snapshotRange.afterOrderSeq must not exceed throughOrderSeq",
-        )
-    return after_order_seq, through_order_seq
-
-
-def _timeline_item_for_session(
-    item: TimelineItemIn,
-    session_id: str,
-) -> TimelineItemIn:
-    if item.sessionId == session_id:
-        return item
-    return TimelineItemIn.model_validate({**item.model_dump(), "sessionId": session_id})
-
 
 def _without_runtime_turn_ids(value: Any) -> Any:
     """Keep legacy Connector turn identifiers outside Server business handlers."""
@@ -1732,46 +1324,3 @@ def _without_runtime_turn_ids(value: Any) -> Any:
     return value
 
 
-class PlanningNotificationHandler:
-    def __init__(self, store):
-        self._store = store
-
-    async def apply(self, *, connector_id, method, params):
-        if method != "session.planning.updated":
-            return None
-        from agent_server.core.planning.models import PlanningState
-        state = PlanningState.model_validate(params)
-        if not state.runtimeId or not await _session_matches_runtime(self._store, state.sessionId, state.runtime, state.runtimeId, connector_id=connector_id):
-            raise NotificationValidationError("planning_binding_invalid", "Plan session binding is invalid")
-        payload = state.model_dump(mode="json", exclude_unset=True)
-        if state.draft is not None:
-            return IngestEffect(session_id=state.sessionId, planning_state=payload)
-        if not await self._store.save_planning(state.sessionId, payload):
-            return IngestEffect()
-        return IngestEffect(session_id=state.sessionId, planning_state=payload)
-
-
-class GoalNotificationHandler:
-    def __init__(self, store):
-        self._store = store
-
-    async def apply(self, *, connector_id, method, params):
-        if method != "session.goal.updated":
-            return None
-        from agent_server.core.goal.models import GoalState
-
-        state = GoalState.model_validate(params)
-        if not state.runtimeId or not await _session_matches_runtime(
-            self._store,
-            state.sessionId,
-            state.runtime,
-            state.runtimeId,
-            connector_id=connector_id,
-        ):
-            raise NotificationValidationError(
-                "goal_binding_invalid", "Goal session binding is invalid"
-            )
-        await self._store.save_goal(
-            state.sessionId, state.model_dump(mode="json"), connector_id=connector_id
-        )
-        return IngestEffect()

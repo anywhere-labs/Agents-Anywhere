@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "load-meta.schema.json",
+  "title": "DshLoadMeta",
+  "description": "session/load request _meta.dsh (§5).",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "replayFromSeq": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

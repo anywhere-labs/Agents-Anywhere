@@ -285,6 +285,7 @@ test("a backend that stops after ready opens the gate, and its recheck starts a 
     app: { isPackaged: false },
     net: { fetch: () => assert.fail("no network in this test") },
     backendInit: () => ({}),
+    forkConnector: () => assert.fail("no Connector in this test"),
     applyLoginItemSettings: () => {},
     appendMainLog: () => {},
     errorMessage: (error: unknown) => error instanceof Error ? error.message : String(error),

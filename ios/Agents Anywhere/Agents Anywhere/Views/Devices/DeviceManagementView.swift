@@ -19,9 +19,12 @@ struct DeviceManagementView: View {
     let onConnectorDeleted: (V2ConnectorID) -> Void
     let onSessionsUpdated: ([V2SessionMeta]) -> Void
     let onSetSessionsArchived: ([V2SessionID], Bool) async -> Bool
+    /// End-to-end encryption; nil hides the encryption section.
+    var e2ee: V2E2EEService? = nil
 
     @State private var model = DeviceManagementModel()
     @State private var deviceSettings = DeviceSettingsModel()
+    @State private var encryption = DeviceEncryptionModel()
     @AppStorage(ProjectSidebarPreferences.sessionListKey) private var showsSessionList = false
     @State private var showsToolbarTitle = false
     @State private var toasts = ChatToastStore()
@@ -57,6 +60,10 @@ struct DeviceManagementView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 32) {
                     header
+                    if let e2ee, encryption.isVisible, let status = encryption.status {
+                        DeviceEncryptionSection(connector: connector, status: status, service: e2ee, serverURL: serverURL,
+                            onChange: { Task { await loadEncryption() } })
+                    }
                     DeviceAgentSection(model: agents, showsConnectionNotice: false) { report($0, source: "agents") }
                     if connector.supportsDeviceSettings {
                         DeviceSettingsSection(model: deviceSettings, canWrite: dashboard.canWrite,
@@ -96,7 +103,7 @@ struct DeviceManagementView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .scrollIndicators(.hidden).scrollEdgeEffectStyle(.soft, for: .all)
-        .refreshable { await dashboard.refresh(); await agents.refresh(); await loadDeviceSettings() }
+        .refreshable { await dashboard.refresh(); await agents.refresh(); await loadDeviceSettings(); await loadEncryption() }
         .modifier(ChatPageToolbar(title: showsToolbarTitle ? connector.name : "",
             subtitle: showsToolbarTitle ? connectionDescription : nil, onMenu: onMenu))
         .toolbar {
@@ -135,6 +142,7 @@ struct DeviceManagementView: View {
         }
         // Reads again when the phone regains a fresh connection to the Server.
         .task(id: dashboard.canWrite) { await loadDeviceSettings() }
+        .task { await loadEncryption() }
         .sheet(isPresented: $createsProject) { ProjectEditorSheet(repository: dashboard, connectorID: connector.id) }
         .sheet(item: $editingProject) { ProjectEditorSheet(repository: dashboard, project: $0) }
         .sheet(item: $selectedWorkspace) {
@@ -215,6 +223,10 @@ struct DeviceManagementView: View {
     private func loadDeviceSettings() async {
         guard connector.supportsDeviceSettings else { return }
         await deviceSettings.load(connectorId: connector.id, service: service)
+    }
+    private func loadEncryption() async {
+        guard let e2ee else { return }
+        await encryption.load(service: e2ee, deviceId: connector.id)
     }
     private func setConfirmQuitOnShutdown(_ value: Bool) {
         guard dashboard.canWrite else { return }
