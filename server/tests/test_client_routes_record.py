@@ -158,9 +158,55 @@ class Recorder:
         else:
             assert file.exists(), f"{file.name} missing: run with UPDATE_CLIENT_ROUTES=1"
             stored = json.loads(file.read_text(encoding="utf-8"))
-            assert stored["status"] == entry["status"], (route, stored["status"], entry["status"], payload)
-            assert shape_mismatches(stored["response"], entry["response"]) == [], (route, payload)
+            check_answer(route, stored, entry, payload)
         return payload
+
+
+def _terminal_v1() -> dict[str, Any]:
+    return {"terminalId": "x", "sessionId": "x", "label": "x", "root": "x", "cwd": "x", "cols": 1, "rows": 1,
+            "purpose": "user", "pid": 1, "status": "running", "exitCode": None, "scrollbackBytes": 0,
+            "scrollbackSeq": 0, "ephemeralGroupId": None, "persistent": False, "createdAt": "x"}
+
+
+# Routes the device answers otherwise on purpose (the same table as ``DEVIATIONS`` in
+# connector-ts/test/sync/client-routes.test.ts): the status it answers and, when given, the shape it must have
+# instead of the recorded failure.
+DEVIATIONS: dict[str, tuple[int, Any]] = {
+    "device.runtime.catalog.model": (200, {"catalog": {"runtime": "x", "revision": 1, "models": [{
+        "displayName": "x", "id": "x", "selectionId": "x", "description": None, "default": False,
+        "reasoningItems": [], "group": None, "metadata": {}}]}, "serverTime": "x"}),
+    "device.runtime.catalog.permission": (200, {"catalog": {"runtime": "x", "revision": 1, "permissions": []},
+                                                "serverTime": "x"}),
+    "device.runtime.commands": (200, {"commands": [], "serverTime": "x"}),
+    "device.terminals_v1.create": (200, {"terminal": _terminal_v1(), "serverTime": "x"}),
+    "session.terminals_v1.create": (200, {"terminal": _terminal_v1(), "serverTime": "x"}),
+}
+
+
+def check_answer(route: str, stored: dict[str, Any], entry: dict[str, Any], payload: Any) -> None:
+    """The live answer against the stored one, by the rules of connector-ts/test/sync/client-routes.test.ts: a
+    success has the stored shape; an error has the stored code (or, for a plain-text ``detail``, its message, which
+    the device sends as ``{detail: {code, message}}``)."""
+
+    deviation = DEVIATIONS.get(route)
+    if deviation is not None:
+        status, shape = deviation
+        assert entry["status"] == status, (route, entry["status"], payload)
+        if shape is not None:
+            assert shape_mismatches(shape, entry["response"]) == [], (route, payload)
+        return
+    assert stored["status"] == entry["status"], (route, stored["status"], entry["status"], payload)
+    if stored["status"] < 400:
+        assert shape_mismatches(stored["response"], entry["response"]) == [], (route, payload)
+        return
+    expected = stored["response"].get("detail") if isinstance(stored["response"], dict) else None
+    got = entry["response"].get("detail") if isinstance(entry["response"], dict) else None
+    if isinstance(expected, str):
+        message = got.get("message") if isinstance(got, dict) else got
+        assert message == expected, (route, payload)
+    else:
+        assert isinstance(expected, dict) and isinstance(got, dict), (route, payload)
+        assert got.get("code") == expected.get("code"), (route, payload)
 
 
 def test_shape_rules() -> None:
@@ -194,8 +240,7 @@ def test_record_client_routes(e2e: E2E) -> None:  # noqa: F811, PLR0915
     d = "/connectors/{connectorId}"
 
     # Reads.
-    rec.record("session.snapshot", "GET", f"{s}/snapshot", query={"limit": 50},
-               note="500 at 4c8012369: the device streams raw JSON slices, the Server inflates base64 deflate")
+    rec.record("session.snapshot", "GET", f"{s}/snapshot", query={"limit": 50})
     rec.record("session.timeline", "GET", f"{s}/timeline", query={"mode": "latest", "limit": 50})
     rec.record("session.events", "GET", f"{s}/events", query={"after": "seq:0"})
     rec.record("session.runtime.state", "GET", f"{s}/runtime/state")

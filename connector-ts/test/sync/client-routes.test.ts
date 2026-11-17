@@ -90,7 +90,7 @@ export function shapeMismatches(expected: unknown, actual: unknown, path = '$'):
  * is the response model the device must match instead of the recorded failure.
  */
 const DEVIATIONS: Record<string, { status: number; reason: string; shape?: unknown }> = {
-  'session.snapshot': { status: 200, reason: 'the Server fails to join the device snapshot chunks at 4c8012369 (raw JSON slices vs base64 deflate)' },
+  'session.snapshot': { status: 200, reason: 'hybrid: the Server overlays its session view, catalogs and effective capabilities on the device\'s snapshot' },
   'device.runtime.catalog.model': {
     status: 200,
     reason: 'a v3 device serves Runtime-level catalogs; the Server asked Runtime/catalogs without a session and got session_not_found',
