@@ -87,6 +87,11 @@ export class BackendState {
       onDeviceSettings: (settings) => {
         if (this.settings.saveDeviceSettings(settings)) this.emit("settings", this.settings.get());
       },
+      onReclaimed: ({ resume }) => {
+        void this.resumeAfterReclaim(resume).catch((error) => this.reportStartupError(
+          `Could not start the local Connector after the newer Connector exited: ${errorMessage(error)}`,
+        ));
+      },
       ...(confirmClientApproval ? { confirmClientApproval } : {}),
     });
     this.devices = new DesktopDeviceService({
@@ -169,9 +174,19 @@ export class BackendState {
     return { ...this.server };
   }
 
-  /** Acquires ownership and rethrows conflicts, for callers that must fail. */
+  /**
+   * Before signing in: acquires ownership and rethrows conflicts. A newer
+   * Connector serving this computer is not one: sign-in only needs the Server,
+   * and nothing is provisioned while that Connector runs.
+   */
   async acquireOwnershipOrThrow(): Promise<OwnershipState> {
-    await this.requireOwnership();
+    const external = () => this.ownership.status === "external";
+    if (external()) return this.ownership;
+    try {
+      await this.requireOwnership();
+    } catch (error) {
+      if (!external()) throw error;
+    }
     return this.ownership;
   }
 
@@ -298,6 +313,17 @@ export class BackendState {
     if (state.hasCredential && !state.manualDisconnected) await this.connector.start();
   }
 
+  /**
+   * The newer Connector Desktop stepped aside for has exited. A runtime that
+   * was running when it took over comes back; otherwise the launch setting decides.
+   */
+  private async resumeAfterReclaim(resume: boolean): Promise<void> {
+    if (this.closed) return;
+    if (!resume) return this.startOwnedConnectorOnLaunch();
+    const state = await this.connector.getState();
+    if (state.hasCredential && !state.manualDisconnected) await this.connector.start();
+  }
+
   async shutdown(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
@@ -312,8 +338,8 @@ export class BackendState {
       this.connector.reportError(message);
       return;
     }
-    // A conflict already explains itself; anything else would leave the gate on `checking`.
-    if (this.ownership.status === "conflict") return;
+    // A conflict or a newer Connector already explains itself; anything else would leave the gate on `checking`.
+    if (this.ownership.status === "conflict" || this.ownership.status === "external") return;
     this.ownership = { status: "error", message };
     this.emit("ownership", this.ownership);
   }

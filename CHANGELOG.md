@@ -8,7 +8,7 @@
 
 - Server 需要执行 `v2_64` 数据库迁移：操作记录里保存的消息原文、排队文本和计划反馈会被清除，只保留结果状态；之后用同一个操作重试时只返回是否成功，不再返回设备当时的完整结果。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - Server 需要执行 `v2_62` 数据库迁移，删除记录终端工作目录的表，改为保存在 Redis（未配置 Redis 时保存在 Server 进程内）；删除设备或运行环境时一并清理。升级时已打开的终端仍在设备上运行，但 Server 重新接入它时可能提示找不到终端，重新打开一个即可。（[#739](https://github.com/anywhere-labs/Agents-Anywhere/pull/739)）
-- 端口预览需要 Server 执行 `v2_61` 数据库迁移（只新增预览表），并配置单独注册的预览域名 `AGENT_SERVER_PREVIEW_DOMAIN`（不能是 AA 站点的子域名）和至少 32 个字符的随机 `AGENT_SERVER_PREVIEW_INTERNAL_TOKEN`；预览域名要有通配符 DNS 记录和通配符证书（需要 DNS-01 验证，在网关前终止 TLS）。自托管 Compose 默认带上 frps 和 preview-auth，网关同时承载预览域名，填好这两项即开启；没有配置时端口预览在各端隐藏，其他功能不受影响。加密模式下预览流量不在端到端加密范围内，可用 `AGENT_SERVER_E2EE_PREVIEW=deny` 关闭。（[#734](https://github.com/anywhere-labs/Agents-Anywhere/pull/734)、[#735](https://github.com/anywhere-labs/Agents-Anywhere/pull/735)）
+- 端口预览需要 Server 执行 `v2_61` 数据库迁移（只新增预览表），并配置单独注册的预览域名 `AGENT_SERVER_PREVIEW_DOMAIN`（不能是 AA 站点的子域名）和至少 32 个字符、只含字母和数字的随机 `AGENT_SERVER_PREVIEW_INTERNAL_TOKEN`（可用 `openssl rand -hex 32` 生成，它不再出现在请求路径和访问日志里）；预览域名要有通配符 DNS 记录和通配符证书（需要 DNS-01 验证，在网关前终止 TLS）。自托管 Compose 默认带上 frps 和 preview-auth，网关同时承载预览域名，填好这两项即开启；没有配置时端口预览在各端隐藏，其他功能不受影响。加密模式下预览流量不在端到端加密范围内，可用 `AGENT_SERVER_E2EE_PREVIEW=deny` 关闭。（[#734](https://github.com/anywhere-labs/Agents-Anywhere/pull/734)、[#735](https://github.com/anywhere-labs/Agents-Anywhere/pull/735)、[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - Server 需要执行 `v2_60` 数据库迁移，迁移会删除 Server 上保存的会话内容（对话记录、计划、目标和排队消息）且不能降级，升级前请备份数据库：会话列表、标题、归档、置顶和分享都会保留，v3 设备连上后会从电脑上的原始记录重新生成内容；以前上传的附件在 Server 启动后于后台删除，分享里用到的文件保留；升级前已读的会话保持已读，未读的保持未读，直到设备升级到 v3 后随新的回合更新。（[#733](https://github.com/anywhere-labs/Agents-Anywhere/pull/733)）
 - Server 不再使用 `AGENT_SERVER_TIMELINE_SINGLE_INSTANCE`，可以从部署配置里删除；保留也不会影响启动。（[#741](https://github.com/anywhere-labs/Agents-Anywhere/pull/741)）
 - 升级 Server 后，还在用旧版 Agents Anywhere（2.x 的 Connector、Desktop 或 DSH 插件）的设备只显示会话列表和实时状态：打开会话、发消息、规划、目标、排队、上传附件和创建分享都会提示「请在设备上升级 Agents Anywhere」，这些设备推送的会话内容不再保存；改名、置顶、归档和终端不受影响。（[#731](https://github.com/anywhere-labs/Agents-Anywhere/pull/731)）
@@ -24,6 +24,7 @@
 
 ### 会话创建与消息交付
 
+- 连接 v3 Connector 的设备上：回答审批时选项无效不再让这一轮卡住，可以重新回答；附件文件缺失时发送会直接提示失败，之后还能继续发消息；Agent 进程意外退出不再让 Connector 一起崩溃；Hermes 和其他通用 ACP Agent 第二轮的回复不再覆盖上一轮的最后一条回复；Connector 在执行完操作、还没记下结果时重启，Server 重试同一操作不会再执行一次。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 设备上的 Connector 在收下消息、还没交给 Agent 时重启，重启后会接着发出这条消息，不再一直停在已接收却没有发出的状态。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 连接 v3 Connector 的设备上可以新建会话并发出第一条消息，带附件也可以；网络不稳重试时不会建出重复的会话，设备拒绝或离线时不留下空会话。（[#732](https://github.com/anywhere-labs/Agents-Anywhere/pull/732)）
 - 连接 v3 Connector 的设备上，运行中排队的消息改由设备保存和按序发出，Server 不再保存消息内容；设备离线时排队区显示为空并提示设备离线。（[#718](https://github.com/anywhere-labs/Agents-Anywhere/pull/718)）
@@ -36,17 +37,19 @@
 
 - DSH 插件接上已有会话后，DSH 里新产生的消息、工具调用和回合开始结束都会同步到 AA，不再只剩流式片段；直接连接 DSH 时，连续的多条回复不再互相覆盖、只剩最后一条。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - DSH 插件可以直接连接新版 Connector：DSH 里打开的会话实时同步到 AA，在 AA 里可以发送图片和文件、回答 DSH 的提问、审阅计划，在 DSH 和 AA 之间切换时不会出现重复的消息；本机只有旧版 Connector 时，插件仍按原来的方式同步。（[#747](https://github.com/anywhere-labs/Agents-Anywhere/pull/747)）
-- 打开装有插件的 DSH Desktop 或 `dsh web` 后，AA 里的 DSH 会话会自动交给它继续：空闲的会话马上切换，正在运行的等这一轮结束再切换；DSH 退出后会话自动回到本机 DSH 继续，退出时正在进行的那一轮显示为结果未知，不会自动重发。会话在 DSH Desktop 里打开而没有安装插件时，AA 会提示关闭它或安装插件。（[#752](https://github.com/anywhere-labs/Agents-Anywhere/pull/752)、[#755](https://github.com/anywhere-labs/Agents-Anywhere/pull/755)）
+- 打开装有插件的 DSH Desktop 或 `dsh web` 后，AA 里的 DSH 会话会自动交给它继续：空闲的会话马上切换，正在运行的等这一轮结束再切换；DSH 退出后会话自动回到本机 DSH 继续，退出时正在进行的那一轮显示为结果未知，不会自动重发；等待切换期间正在等审批的回合仍然可以审批和停止。会话在 DSH Desktop 里打开而没有安装插件时，AA 会提示关闭它或安装插件。（[#752](https://github.com/anywhere-labs/Agents-Anywhere/pull/752)、[#755](https://github.com/anywhere-labs/Agents-Anywhere/pull/755)、[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 
 ### Desktop
 
 - 第一次启动不再下载 Python 和依赖，也不会再停在「正在准备运行环境」；设置页的「运行环境」改为只设置「Connector 网络」。（[#748](https://github.com/anywhere-labs/Agents-Anywhere/pull/748)）
 - Desktop 安装包自带端口预览需要的 frp 客户端：会话里启动的本机服务可以直接从其他设备预览，端口停止监听后对应的预览会自动关闭。（[#749](https://github.com/anywhere-labs/Agents-Anywhere/pull/749)）
-- 这台电脑上已有更新版本的 Connector（命令行或 DSH 插件）在运行时，Desktop 会让它继续连接服务器并说明原因，不再报「已有其他 Connector 在运行」；更新版本的 Connector 启动时，Desktop 内置的 Connector 会自动交接给它。（[#748](https://github.com/anywhere-labs/Agents-Anywhere/pull/748)）
+- 这台电脑上已有更新版本的 Connector（命令行或 DSH 插件）在运行时，Desktop 会让它继续连接服务器并在侧栏和设置页说明原因，界面照常可用，只有本机连接相关的操作暂不可用，对方退出后自动接回，不再报「已有其他 Connector 在运行」；更新版本的 Connector 启动时，Desktop 内置的 Connector 会自动交接给它。（[#748](https://github.com/anywhere-labs/Agents-Anywhere/pull/748)、[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - Desktop 安装包自带 Pi 运行环境，第一次启动只需在本地复制，不再下载 Node 和 npm 依赖；准备失败时也不再停在启动页、点「重试」也进不去，Pi 会在第一次使用时再次准备并在会话里提示错误。（[#657](https://github.com/anywhere-labs/Agents-Anywhere/pull/657)）
 
 ### 本机连接
 
+- 设备连接半断（连接还在但不再有心跳）时，所有 Server 实例会在一分钟内一致显示离线；设备上报的会话摘要遇到 Server 存储出错时由设备重发，不再丢失；设备删除本地数据或重装后重建的会话，新消息不会被客户端当成已经看过的旧消息；Connector 的本地存储意外退出时会停止并报错，不再整体卡住。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
+- 系统钥匙串锁定或暂时不可用时，Connector 不再生成新密钥覆盖旧的（以前会导致设备身份和加密配对全部失效），第一次运行且没有可用钥匙串时改用仅本人可读的文件保存；密钥也不再出现在命令行参数里。端口预览只开放属于会话的端口；加密模式下端口通知不再带进程名和网址路径，普通模式下网址里的令牌参数也会被去掉。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 吊销设备凭据、删除设备或删除账号后，连接 v3 Connector 的设备会立即断开并显示离线，不再继续接收操作。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 加密模式下可以在工作设备上运行 `anywhere-cli pair-client` 显示配对二维码和链接（Desktop 等在运行时也可以）；已配对的客户端批准新客户端时，要在工作设备上确认（命令行询问或 Desktop 弹窗），超时或无人回答视为拒绝。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 设备配对码和配对时下发的连接凭据不再写入数据库，只在 Redis 里以哈希和加密形式保存到配对过期，凭据被领取一次后立即删除。（[#723](https://github.com/anywhere-labs/Agents-Anywhere/pull/723)）
@@ -55,6 +58,7 @@
 
 ### Web 与 Desktop 界面
 
+- 多个窗口或设备同时打开同一个会话时，关掉其中一个不再让其他窗口读取会话失败。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 会话所在的设备离线时，已经看过的消息仍然保留，输入框上方提示「设备离线」并说明显示的是本机缓存；从没打开过的会话显示「设备离线，上线后查看」；设备重新上线后自动补齐离线期间的新消息。（[#667](https://github.com/anywhere-labs/Agents-Anywhere/pull/667)）
 - 看过的会话会保存在本机，刷新页面或重新打开 Desktop 后能立即显示，设备离线时也能看；退出登录时清除本机保存的内容，切换账号时清除其他账号的内容。在共享电脑上可以在 Web 登录页勾选「不在此设备保存会话内容」。（[#677](https://github.com/anywhere-labs/Agents-Anywhere/pull/677)）
 - 会话里的 Agent 或终端启动了本地网页服务时，输入框上方会显示「检测到 http://localhost:端口」，点「在手机上预览」后可以扫码或复制链接在手机上打开，也能在浏览器中打开或随时停止预览；服务器没有开启端口预览时不显示。（[#700](https://github.com/anywhere-labs/Agents-Anywhere/pull/700)）

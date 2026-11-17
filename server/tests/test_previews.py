@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 
 import fakeredis
@@ -18,6 +19,8 @@ from scripts.v3_fake_device import connect_device
 
 DOMAIN = "preview.test"
 TOKEN = "t" * 40
+# frps sends the token as basic auth (userinfo of the plugin addr in docker/frps/frps.toml).
+FRPS_AUTH = {"Authorization": "Basic " + base64.b64encode(f"frps:{TOKEN}".encode()).decode()}
 
 
 @pytest.fixture
@@ -52,7 +55,7 @@ def test_previews_open_through_the_device_and_frps(mesh_router: RouterProcess, m
                 return {"previewId": p.get("previewId"), "port": p.get("port"), "localIP": "127.0.0.1"}
 
             device.state.command_handler = handle
-            plugin = f"/api/v3/internal/preview/frps/{TOKEN}"
+            plugin = "/api/v3/internal/preview/frps"
             try:
                 created = await client.post(
                     "/api/v3/previews", headers=headers, json={"deviceId": device_id, "port": 5173}
@@ -68,17 +71,22 @@ def test_previews_open_through_the_device_and_frps(mesh_router: RouterProcess, m
                 frp_token = sent["frpToken"]
 
                 # frps: login and the proxy registration check the Server's token.
-                login = await client.post(f"{plugin}?op=Login", json={"op": "Login", "content": {"metas": {"token": frp_token}}})
+                login = await client.post(f"{plugin}?op=Login", headers=FRPS_AUTH, json={"op": "Login", "content": {"metas": {"token": frp_token}}})
                 assert login.json() == {"reject": False, "unchange": True}
-                forged = await client.post(f"{plugin}?op=Login", json={"content": {"metas": {"token": frp_token + "x"}}})
+                forged = await client.post(f"{plugin}?op=Login", headers=FRPS_AUTH, json={"content": {"metas": {"token": frp_token + "x"}}})
                 assert forged.json()["reject"] is True
-                assert (await client.post("/api/v3/internal/preview/frps/wrong?op=Login", json={})).status_code == 404
+                # The token travels in a header, never in the path; without it the plugin is not there.
+                assert (await client.post(f"{plugin}?op=Login", json={})).status_code == 404
+                wrong = {"Authorization": "Basic " + base64.b64encode(b"frps:wrong").decode()}
+                assert (await client.post(f"{plugin}?op=Login", headers=wrong, json={})).status_code == 404
+                assert (await client.post(f"{plugin}?op=Login", headers={"Authorization": "Basic %%%"}, json={})).status_code == 404
+                assert (await client.post(f"{plugin}/{TOKEN}?op=Login", json={})).status_code == 404
                 good = _proxy(slug, frp_token, frp_token, preview["previewId"])
-                assert (await client.post(f"{plugin}?op=NewProxy", json=good)).json()["reject"] is False
+                assert (await client.post(f"{plugin}?op=NewProxy", headers=FRPS_AUTH, json=good)).json()["reject"] is False
                 hijack = _proxy(slug, frp_token, frp_token, preview["previewId"], custom_domains=["aa.example.com"])
-                assert (await client.post(f"{plugin}?op=NewProxy", json=hijack)).json()["reject"] is True
+                assert (await client.post(f"{plugin}?op=NewProxy", headers=FRPS_AUTH, json=hijack)).json()["reject"] is True
                 other = _proxy("aaaaaaaaaa", frp_token, frp_token, preview["previewId"])
-                assert (await client.post(f"{plugin}?op=NewProxy", json=other)).json()["reject"] is True
+                assert (await client.post(f"{plugin}?op=NewProxy", headers=FRPS_AUTH, json=other)).json()["reject"] is True
 
                 # Reopening the same port keeps the id and the slug.
                 again = await client.post("/api/v3/previews", headers=headers, json={"deviceId": device_id, "port": 5173})
@@ -121,7 +129,7 @@ def test_previews_open_through_the_device_and_frps(mesh_router: RouterProcess, m
                 await app.state.previews.on_device_event(device_id, "port.closed", {"deviceId": device_id, "port": 5173})
                 closed = await app.state.store.get_preview(preview["previewId"])
                 assert closed["state"] == "closed" and closed["closeReason"] == "port_closed"
-                assert (await client.post(f"{plugin}?op=NewProxy", json=good)).json()["reject"] is True
+                assert (await client.post(f"{plugin}?op=NewProxy", headers=FRPS_AUTH, json=good)).json()["reject"] is True
                 gone = await client.post(f"/api/v3/previews/{preview['previewId']}/ticket", headers=headers)
                 assert gone.status_code == 404
 
@@ -313,3 +321,28 @@ def test_preview_auth_checks_cookies_locally_and_redeems_tickets(preview_env) ->
             assert (await verify(None)).status_code == 404
 
     asyncio.run(scenario())
+
+
+def test_frps_sends_the_internal_token_in_a_header_to_the_internal_address() -> None:
+    """frps's plugin has no header setting: the token is the basic-auth password in ``addr``'s
+    userinfo, the ``path`` carries no secret, and ``addr`` is the Server on the Compose network
+    (the gateway answers 404 for ``/api/v3/internal/*``)."""
+
+    import tomllib
+    from pathlib import Path
+
+    from agent_server.api.previews import _presented_token
+
+    docker = Path(__file__).resolve().parents[2] / "docker"
+    config = tomllib.loads((docker / "frps" / "frps.toml").read_text())
+    (plugin,) = config["httpPlugins"]
+    assert plugin["path"] == "/api/v3/internal/preview/frps"
+    assert plugin["addr"] == "frps:{{ .Envs.AGENT_SERVER_PREVIEW_INTERNAL_TOKEN }}@server-next:8000"
+    assert "handle /api/v3/internal/* {\n\t\trespond 404" in (docker / "gateway" / "Caddyfile").read_text()
+
+    assert _presented_token(FRPS_AUTH["Authorization"]) == TOKEN
+    assert _presented_token(f"Bearer {TOKEN}") == TOKEN
+    assert _presented_token("Basic " + base64.b64encode(TOKEN.encode()).decode()) is None
+    assert _presented_token("Basic not-base64!") is None
+    assert _presented_token(TOKEN) is None
+    assert _presented_token(None) is None

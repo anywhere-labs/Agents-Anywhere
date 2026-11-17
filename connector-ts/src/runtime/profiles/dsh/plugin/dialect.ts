@@ -84,6 +84,7 @@ export function dshPluginDialect(): AcpDialect {
         return typeof meta.itemId === 'string' ? meta.itemId : null
       },
       userItemId,
+      finish: () => fallback.finish?.(),
     }
   }
 

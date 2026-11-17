@@ -338,7 +338,11 @@ class DeviceLinkService:
                 project_id=summary.projectId if required else None,
                 allow_unplaced=required,
             )
-        except Exception as exc:  # noqa: BLE001 - e.g. no project for this workspace yet
+        except (KeyError, ValueError) as exc:
+            # A summary that resending cannot fix: the device is gone or revoked (``KeyError``), no
+            # working directory to place a new session, or a session bound to another device or
+            # runtime (``ValueError``). Acknowledged and skipped. Anything else (database, Redis,
+            # connection) propagates: the outbox pump closes and the device resends the summary.
             logger.info(
                 "device session not placed device_id={} session_id={} reason={!r}",
                 device_id,

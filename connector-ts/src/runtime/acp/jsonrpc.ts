@@ -99,9 +99,16 @@ export function ndjsonTransport(input: Readable, output: Writable, maxMessageByt
     input.removeAllListeners('data')
     onClose?.(reason)
   }
+  // 对端已退出时写入会异步报 EPIPE / ERR_STREAM_DESTROYED：没有监听就是未捕获异常，整个 Connector 退出。
+  // 这里把它转成连接关闭，挂着的请求得到 ConnectionClosedError（runtime_disconnected）。
+  output.on('error', error => finish(`ACP write failed: ${error.message}`))
   return {
     send(message) {
       if (closed) throw new ConnectionClosedError('closed')
+      if (output.destroyed || output.writableEnded) {
+        finish('ACP connection closed')
+        throw new ConnectionClosedError('ACP connection closed')
+      }
       output.write(JSON.stringify(message) + '\n')
     },
     start(onMessage, close) {

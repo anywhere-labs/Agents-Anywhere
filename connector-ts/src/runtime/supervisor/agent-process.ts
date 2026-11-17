@@ -62,6 +62,15 @@ export class AgentProcess {
         (tail !== '' ? `: ${tail.split('\n').slice(-3).join(' / ').slice(0, 500)}` : ''))
     })
     this.peer = new JsonRpcPeer(ndjsonTransport(this.child.stdout!, this.child.stdin!, options.maxMessageBytes ?? DEFAULT_MAX_MESSAGE_BYTES))
+    // 管道错误（Agent 退出瞬间写入的 EPIPE 等）只关闭这条 Runtime 连接，不能变成 Connector 进程的未捕获异常。
+    for (const [name, stream] of [['stdin', this.child.stdin], ['stdout', this.child.stdout]] as const) {
+      stream?.on('error', (error: Error) => {
+        if (!this.peer.isClosed) this.peer.close(`agent ${name} failed: ${error.message}`)
+      })
+    }
+    this.child.stderr?.on('error', (error: Error) => {
+      this.stderrTail = (this.stderrTail + `\nstderr failed: ${error.message}`).slice(-4000)
+    })
     // 连接断了但进程还在（超限、stdout 上的垃圾）：没人还能和它说话，按崩溃处理。
     void this.peer.whenClosed().then(reason => {
       if (this.exitedReason !== undefined || this.stopping) return

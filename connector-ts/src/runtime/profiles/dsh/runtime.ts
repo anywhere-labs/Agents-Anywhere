@@ -358,8 +358,19 @@ export class DshSession implements RuntimeSession {
     return inner.steer(input, delivery)
   }
 
-  async cancel(expectedTurnId?: string): Promise<void> { await (await this.current()).cancel(expectedTurnId) }
-  async respond(interactionId: string, answer: InteractionAnswer): Promise<void> { await (await this.current()).respond(interactionId, answer) }
+  /**
+   * The session a running turn lives on. While a handover waits for that turn to end (`holdCalls`
+   * before `move`), the turn and its pending interactions are still on the old route, and the
+   * handover cannot finish until they are answered or cancelled: these calls must not wait for it.
+   * Only once the move itself started (old route released) do they wait for the new one.
+   */
+  private async running(): Promise<RuntimeSession> {
+    if (this.closed) throw new RuntimeFailure({ code: 'session_closed', message: 'The DSH session is closed.' })
+    return this.moving ? this.current() : this.inner
+  }
+
+  async cancel(expectedTurnId?: string): Promise<void> { await (await this.running()).cancel(expectedTurnId) }
+  async respond(interactionId: string, answer: InteractionAnswer): Promise<void> { await (await this.running()).respond(interactionId, answer) }
   async configure(change: ConfigChange): Promise<ConfigResult> { return (await this.current()).configure(change) }
   async command(name: string, args?: string): Promise<CommandResult> { return (await this.current()).command(name, args) }
 

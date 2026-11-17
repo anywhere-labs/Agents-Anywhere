@@ -2,8 +2,6 @@
   "localOwnership": {
     "title": "Another Connector is running",
     "description": "Exit the other app or stop its process, then check again.",
-    "newerTitle": "A newer Connector is in charge",
-    "newerDescription": "A newer Connector (command line or DSH plugin) is running on this computer and connects it to the server, so Desktop does not start its own. To use Desktop’s built-in Connector, quit that Connector first, then check again.",
     "errorTitle": "Unable to check Connector status",
     "errorDescription": "The local Connector check failed with the error below. Include it and the logs when you report the problem.",
     "errorWithoutDetail": "No error details were reported. Open the logs folder to see more.",
@@ -16,7 +14,25 @@
     "checking": "Checking…",
     "backendStoppedTitle": "The Desktop background service stopped",
     "backendStoppedDescription": "The local Connector, devices and settings all depend on it. Click Restart to recover. If this keeps happening, report it with the error and logs below.",
-    "restartBackend": "Restart"
+    "restartBackend": "Restart",
+    "externalTitle": "Another Connector connects this computer",
+    "externalSummary": "This computer is connected to the server by a newer Connector ({source, select, cli {command line} dshPlugin {DSH plugin} desktop {another Desktop} other {another app}}{hasVersion, select, yes {, version {version}} other {}}).",
+    "externalShort": "Connected by another Connector{hasVersion, select, yes { ({version})} other {}}",
+    "externalHandedOver": "Desktop’s built-in Connector handed this computer over to it.",
+    "externalUsable": "Sessions, devices and settings work as usual. When it exits, Desktop takes over again on its own; no restart needed.",
+    "externalLocalUnavailable": "Starting, stopping and pairing the local Connector, and its proxy and connection settings, belong to that Connector and are unavailable in Desktop for now.",
+    "externalBadge": "Served by another Connector",
+    "externalSource": "Source",
+    "externalSourceValue": "{source, select, cli {command line} dshPlugin {DSH plugin} desktop {another Desktop} other {another app}}",
+    "externalVersion": "Version",
+    "externalVersionUnknown": "Unknown",
+    "externalPid": "Process ID",
+    "externalDevice": "Device ID",
+    "externalDeviceStatus": "Server status",
+    "externalOnline": "Online",
+    "externalOffline": "Offline",
+    "externalStatusUnavailable": "Not available (that device is not in this account, or not connected yet)",
+    "externalActionUnavailable": "A newer Connector connects this computer, so local Connector actions are unavailable for now."
   },
   "app": {
     "name": "Agents Anywhere"

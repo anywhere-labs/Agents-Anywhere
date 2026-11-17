@@ -9,7 +9,7 @@ import type { PreviewOpenCommand } from '../../generated/preview/v1_0/preview-op
 import { listeningPorts, PortWatcher, type ListeningPort } from '../ports.js'
 import { previewCommands } from './commands.js'
 import { FrpcManager, type PreviewTransport } from './frpc-manager.js'
-import { annotatePorts, processParents, type ProcessParents, type SessionHints } from './session-ports.js'
+import { annotatePorts, processParents, sessionOfPort, type ProcessParents, type SessionHints } from './session-ports.js'
 
 /** The Server keeps the last port list per device; a reconnected link or restarted Server gets it again this often. */
 export const PORT_REFRESH_MS = 60_000
@@ -27,6 +27,11 @@ export interface PreviewHostOptions {
   readonly proxyUrl?: string | null
   /** Root processes of sessions and URLs they printed (the Runtime and terminals provide them). */
   readonly hints?: () => SessionHints
+  /**
+   * The link's E2EE mode, read for every `port.listening`. Under `required` the event carries only the port and its
+   * session (11-e2ee-noise.md §10): process ids and names and printed URLs stay on the device. Omitted means `off`.
+   */
+  readonly e2eeMode?: () => 'off' | 'required'
   readonly log?: (level: 'info' | 'warn' | 'error', message: string) => void
   /** Test seams. */
   readonly transport?: PreviewTransport
@@ -61,15 +66,24 @@ export function previewHost(options: PreviewHostOptions): PreviewHost {
     proxyUrl: options.proxyUrl ?? null,
     log: message => log('info', message),
   })
-  const preview = previewCommands({ transport, listening: list })
+  const readParents = (): Promise<ProcessParents> => (options.parents ?? (() => processParents()))().catch(() => new Map<number, number>())
+  const preview = previewCommands({
+    transport,
+    listening: list,
+    // A preview opens only for a port a session on this device started or printed (PortShare, 09 §4.1).
+    sessionOf: async bindings => {
+      if (bindings.length === 0) return null
+      return sessionOfPort(bindings[0]!.port, bindings.map(b => b.pid), options.hints?.() ?? NO_HINTS, await readParents())
+    },
+  })
   let stop: (() => void) | null = null
 
   /** The watcher's list with each port's session and URL (preview 1.0 `ListeningPort`). */
   const annotated = async (payload: Record<string, unknown>): Promise<Record<string, unknown>> => {
     const wire = Array.isArray(payload.ports) ? (payload.ports as { port: number; pid: number | null; processName: string | null }[]) : []
     const ports: ListeningPort[] = wire.map(port => ({ port: port.port, address: '', pid: port.pid, process: port.processName ?? '' }))
-    const parents = await (options.parents ?? (() => processParents()))().catch(() => new Map<number, number>())
-    return { deviceId: payload.deviceId, ports: annotatePorts(ports, options.hints?.() ?? NO_HINTS, parents) }
+    const parents = await readParents()
+    return { deviceId: payload.deviceId, ports: annotatePorts(ports, options.hints?.() ?? NO_HINTS, parents, options.e2eeMode?.() ?? 'off') }
   }
 
   const watch = (emit: Emit, deviceId: string): (() => void) => {

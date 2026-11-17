@@ -116,6 +116,81 @@ describe('AcpRuntimeSession', () => {
     expect(events.at(-1)).toMatchObject({ type: 'turn.ended', reason: 'cancelled' })
   })
 
+  it('keeps a pending approval when the answer names an option that was not offered', async () => {
+    const agent = new FakeAcpAgent()
+    let answer: unknown
+    agent.onPrompt = async (params, a) => {
+      answer = await a.ask('session/request_permission', {
+        sessionId: params.sessionId, toolCall: { toolCallId: 't1', title: 'Write x' },
+        options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }],
+      })
+      return { stopReason: 'end_turn' }
+    }
+    const { session, events } = await open(agent)
+    await session.prompt({ text: 'write' }, { deliveryId: 'd', clientMessageId: 'c' })
+    await tick(10)
+    const opened = events.find((e): e is Extract<RuntimeEvent, { type: 'interaction.opened' }> => e.type === 'interaction.opened')!
+    await expect(session.respond(opened.interactionId, { kind: 'option', optionId: 'bogus' })).rejects.toThrow(/not offered/)
+    await tick(10)
+    expect(answer).toBeUndefined()
+    expect(events.some(e => e.type === 'interaction.resolved')).toBe(false)
+    expect(session.busy).toBe(true)
+    // 交互还在：用户可以重答，Agent 收到答复，回合正常结束。
+    await session.respond(opened.interactionId, { kind: 'option', optionId: 'allow' })
+    await tick(10)
+    expect(answer).toEqual({ outcome: { outcome: 'selected', optionId: 'allow' } })
+    expect(events.at(-1)).toMatchObject({ type: 'turn.ended', reason: 'end_turn' })
+  })
+
+  it('rejects a prompt whose input the dialect cannot convert, without sending it or taking the turn', async () => {
+    const agent = new FakeAcpAgent()
+    agent.onPrompt = async () => ({ stopReason: 'end_turn' })
+    const failing: AcpDialect = {
+      ...dialect,
+      promptBlocks: input => {
+        if (input.attachments?.length) throw Object.assign(new Error('ENOENT: no such file /w/missing.png'), { code: 'ENOENT' })
+        return [{ type: 'text', text: input.text }]
+      },
+    }
+    const { session, events } = await open(agent, failing)
+    const rejected = await session.prompt({ text: 'look', attachments: [{ kind: 'file', path: '/w/missing.png', mimeType: 'image/png' }] }, { deliveryId: 'd1', clientMessageId: 'c1' })
+    expect(rejected).toMatchObject({ outcome: 'rejected', error: { code: 'invalid_argument', message: expect.stringContaining('ENOENT') } })
+    expect(session.busy).toBe(false)
+    expect(events.some(e => e.type === 'turn.started')).toBe(false)
+    const next = await session.prompt({ text: 'again' }, { deliveryId: 'd2', clientMessageId: 'c2' })
+    expect(next.outcome).toBe('accepted')
+    expect(agent.received.filter(r => r.method === 'session/prompt')).toHaveLength(1)
+  })
+
+  it('starts a new assistant item in each turn even though the user echo is filtered (v2 Projection.finish)', async () => {
+    const agent = new FakeAcpAgent()
+    agent.onPrompt = async (params, a) => {
+      const sessionId = String(params.sessionId)
+      a.update(sessionId, { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'echo' } })
+      a.text(sessionId, `reply ${agent.received.filter(r => r.method === 'session/prompt').length}`)
+      await tick()
+      return { stopReason: 'end_turn' }
+    }
+    const { session, events } = await open(agent)
+    await session.prompt({ text: 'one' }, { deliveryId: 'd1', clientMessageId: 'c1' })
+    await tick(20)
+    await session.prompt({ text: 'two' }, { deliveryId: 'd2', clientMessageId: 'c2' })
+    await tick(20)
+    const assistant = events.filter((e): e is Extract<RuntimeEvent, { type: 'message.delta' }> => e.type === 'message.delta' && e.role === 'assistant')
+    expect(assistant.map(e => e.text)).toEqual(['reply 1', 'reply 2'])
+    expect(assistant[0]!.itemId).not.toBe(assistant[1]!.itemId)
+    expect(events.filter(e => e.type === 'message.delta' && e.role === 'user')).toHaveLength(0)
+  })
+
+  it('AcpProjectionIdentity.finish ends the current message, like v2 Projection.finish', () => {
+    const identity = new AcpProjectionIdentity('aa_s1', 'epoch')
+    const chunk = { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'x' } }
+    const first = identity.apply(chunk)
+    expect(identity.apply(chunk)).toBe(first)
+    identity.finish()
+    expect(identity.apply(chunk)).toBe(acpFingerprint(['aa_s1', 'epoch', 'agent_message_chunk', 2]))
+  })
+
   it('maps plan review answers to ACP options (revise steers the feedback)', async () => {
     const agent = new FakeAcpAgent()
     let answer: unknown

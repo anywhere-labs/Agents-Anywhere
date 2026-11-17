@@ -109,6 +109,7 @@ export function piDialect(state: PiDialectState = piDialectState()): AcpDialect 
       return {
         itemFor: update => projection.apply((update.messageId || update.toolCallId ? { ...update, aaProjectionVerified: true } : update) as Parameters<AcpProjectionIdentity['apply']>[0]),
         userItemId: clientMessageId => acpFingerprint([context.sessionId, 'user_message_chunk', clientMessageId]),
+        finish: () => projection.finish(),
       }
     },
     // 补丁后的适配器把它绑到这条消息上，原生历史因此带着 AA 的消息 ID、显示文本与附件。

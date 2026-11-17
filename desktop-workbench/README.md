@@ -361,12 +361,25 @@ provisioning. RPC conflicts use `-32009 / connector_already_running`, and their
   asked to hand over and waited for (up to five minutes, so the ownership probe
   allows that long).
 - `use_existing` (a newer Connector already serves the machine): Desktop stops
-  its own Connector, does not restart it, and the gate explains that a newer
-  Connector is in charge. **Check again** tries once more, for when that
-  Connector has exited.
+  its own Connector, does not restart it, and reports ownership `external`.
+  The gate lets the app through: sign-in, sessions, devices and settings go
+  through the Server. The sidebar and the Desktop settings tab say which
+  Connector (source, version, PID, and its device's server status) connects
+  the computer; starting, stopping, pairing, the proxy and the connection
+  settings of the local Connector are unavailable, and nothing is provisioned.
+  Desktop has no key for that Connector's control channel (the keys it
+  publishes only request a handover or a client pairing), so the details come
+  from `connector-runtime.json` and the owner's `<instanceId>.handover.json`.
 
 A Desktop Connector that hands over to a newer one (`stopped` with
-`handed_over`) is treated the same way. `connector.stop` stops the server
+`handed_over`) is treated the same way. While `external`, Desktop reads the
+lease record every 5 seconds; once the owner's process is gone it claims the
+machine again (launching its own Connector), backing off from 5 to 60 seconds
+while claims keep finding a newer Connector, plus a claim every 5 minutes in
+case the record is stale or unreadable. Taking the machine back restarts
+Desktop's runtime if it was running when it stepped aside, or follows
+"start the Connector on launch" otherwise. Only `conflict` and failures block
+the window. `connector.stop` stops the server
 connection; ownership remains while that Connector process is alive. Explicit
 Quit asks it to shut down (and kills it after five seconds); a utility process
 also ends with Main, and the Connector stops when its parent port closes.

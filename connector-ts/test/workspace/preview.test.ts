@@ -12,11 +12,14 @@ import {
   annotatePorts,
   decidePortShare,
   localUrlsIn,
+  originOf,
   parseFrpsAddr,
   parsePs,
   previewCommands,
   renderFrpcConfig,
+  sessionOfPort,
   sessionOfProcess,
+  withoutQuery,
   type ChildLike,
   type ListeningPort,
   type PreviewSpec,
@@ -24,19 +27,31 @@ import {
 
 const listening = (port: number, address = '127.0.0.1', pid: number | null = 100): ListeningPort => ({ port, address, pid, process: 'node' })
 
+const inSession = (): string => 'sess_a'
+const noSession = (): null => null
+
 describe('PortShare', () => {
   it('forwards only to loopback and refuses LAN-only bindings', () => {
-    expect(decidePortShare(5173, [listening(5173, '0.0.0.0')], 0, false)).toEqual({ port: 5173, localIP: '127.0.0.1' })
-    expect(decidePortShare(5173, [listening(5173, '::1')], 0, false)).toEqual({ port: 5173, localIP: '::1' })
-    expect(() => decidePortShare(3000, [listening(3000, '192.168.1.5')], 0, false)).toThrow(expect.objectContaining({ code: 'preview_port_not_allowed', details: expect.objectContaining({ reason: 'not_local' }) }))
-    expect(() => decidePortShare(4000, [listening(3000)], 0, false)).toThrow(expect.objectContaining({ code: 'preview_port_not_allowed', details: expect.objectContaining({ reason: 'not_listening' }) }))
-    expect(() => decidePortShare(0, [], 0, false)).toThrow(WorkspaceError)
+    expect(decidePortShare(5173, [listening(5173, '0.0.0.0')], 0, false, inSession)).toEqual({ port: 5173, localIP: '127.0.0.1' })
+    expect(decidePortShare(5173, [listening(5173, '::1')], 0, false, inSession)).toEqual({ port: 5173, localIP: '::1' })
+    expect(() => decidePortShare(3000, [listening(3000, '192.168.1.5')], 0, false, inSession)).toThrow(expect.objectContaining({ code: 'preview_port_not_allowed', details: expect.objectContaining({ reason: 'not_local' }) }))
+    expect(() => decidePortShare(4000, [listening(3000)], 0, false, inSession)).toThrow(expect.objectContaining({ code: 'preview_port_not_allowed', details: expect.objectContaining({ reason: 'not_listening' }) }))
+    expect(() => decidePortShare(0, [], 0, false, inSession)).toThrow(WorkspaceError)
+  })
+
+  it('refuses a loopback port no session on this device started or printed', () => {
+    // A notebook or database console on 127.0.0.1 is listening and local, but no session owns it.
+    expect(() => decidePortShare(8888, [listening(8888)], 0, false, noSession))
+      .toThrow(expect.objectContaining({ code: 'preview_port_not_allowed', details: { port: 8888, reason: 'not_session' } }))
+    const seen: number[][] = []
+    decidePortShare(5173, [listening(5173), listening(5173, '::1')], 0, false, bindings => { seen.push(bindings.map(b => b.port)); return 'sess_a' })
+    expect(seen).toEqual([[5173, 5173]])
   })
 
   it('limits open previews per device but lets an open one refresh', () => {
     const ports = [listening(5173)]
-    expect(() => decidePortShare(5173, ports, MAX_OPEN_PREVIEWS, false)).toThrow(expect.objectContaining({ code: 'preview_limit_reached' }))
-    expect(decidePortShare(5173, ports, MAX_OPEN_PREVIEWS, true).port).toBe(5173)
+    expect(() => decidePortShare(5173, ports, MAX_OPEN_PREVIEWS, false, inSession)).toThrow(expect.objectContaining({ code: 'preview_limit_reached' }))
+    expect(decidePortShare(5173, ports, MAX_OPEN_PREVIEWS, true, inSession).port).toBe(5173)
   })
 })
 
@@ -47,6 +62,36 @@ describe('session association', () => {
     expect(sessionOfProcess(100, roots, parents)).toBe('sess_a')
     expect(sessionOfProcess(200, roots, parents)).toBeNull()
     expect(sessionOfProcess(null, roots, parents)).toBeNull()
+  })
+
+  it('drops query and fragment from printed URLs, where dev servers put access tokens', () => {
+    const urls = localUrlsIn('Jupyter: http://127.0.0.1:8888/lab?token=abc123 or http://localhost:8889/tree#access_token=xyz, then http://localhost:5173/app/?x=1.')
+    expect([...urls]).toEqual([[8888, 'http://127.0.0.1:8888/lab'], [8889, 'http://localhost:8889/tree'], [5173, 'http://localhost:5173/app/']])
+    expect(withoutQuery('http://localhost:3000?token=s')).toBe('http://localhost:3000')
+    expect(originOf('http://127.0.0.1:8888/lab?token=abc')).toBe('http://127.0.0.1:8888')
+    expect(originOf('https://example.com:443/')).toBeNull()
+    // Hints from elsewhere are cleaned again before they go out.
+    const annotated = annotatePorts([listening(8888)], { roots: new Map(), mentioned: new Map([[8888, { sessionId: 's', url: 'http://localhost:8888/?token=leak#k=v' }]]) }, new Map())
+    expect(annotated[0]!.url).toBe('http://localhost:8888/')
+    expect(JSON.stringify(annotated)).not.toContain('leak')
+  })
+
+  it('sends only the port and its session in plaintext under E2EE', () => {
+    const hints = { roots: new Map([[10, 'sess_a']]), mentioned: new Map([[8888, { sessionId: 'sess_b', url: 'http://127.0.0.1:8888/lab?token=leak' }]]) }
+    const annotated = annotatePorts([listening(5173, '127.0.0.1', 100), listening(8888, '127.0.0.1', 300)], hints, new Map([[100, 10]]), 'required')
+    expect(annotated).toEqual([
+      { port: 5173, pid: null, processName: null, sessionId: 'sess_a', url: 'http://localhost:5173' },
+      { port: 8888, pid: null, processName: null, sessionId: 'sess_b', url: 'http://127.0.0.1:8888' },
+    ])
+    expect(JSON.stringify(annotated)).not.toMatch(/node|leak|lab/u)
+  })
+
+  it('associates a port with a session through any of its bindings or a printed URL', () => {
+    const hints = { roots: new Map([[10, 'sess_a']]), mentioned: new Map([[3001, { sessionId: 'sess_b', url: 'http://localhost:3001' }]]) }
+    const parents = new Map([[100, 10]])
+    expect(sessionOfPort(5173, [null, 100], hints, parents)).toBe('sess_a')
+    expect(sessionOfPort(3001, [999], hints, parents)).toBe('sess_b')
+    expect(sessionOfPort(8888, [999], hints, parents)).toBeNull()
   })
 
   it('falls back to URLs printed in a session', () => {
@@ -196,12 +241,20 @@ describe('preview commands', () => {
       closePort: async () => [],
       closeAll: async () => {},
     }
-    const commands = previewCommands({ transport, listening: async () => [listening(5173, '0.0.0.0')] })
+    const commands = previewCommands({
+      transport,
+      listening: async () => [listening(5173, '0.0.0.0'), listening(8888, '127.0.0.1', 300)],
+      sessionOf: async bindings => (bindings.some(b => b.pid === 100) ? 'sess_a' : null),
+    })
     await expect(commands.previewOpen({ previewId: 'pv1', slug: 'abcdefghij', port: 5173, frpToken: 't', frpsAddr: 'wss://f.example', tokenExpiresAt: '2026-11-16T12:10:00Z' }))
       .resolves.toEqual({ previewId: 'pv1', port: 5173, localIP: '127.0.0.1' })
     expect(opened[0]).toMatchObject({ slug: 'abcdefghij', token: 't' })
     await expect(commands.previewOpen({ previewId: 'pv2', slug: 'abcdefghik', port: 9999, frpToken: 't', frpsAddr: 'wss://f.example', tokenExpiresAt: 'x' }))
       .rejects.toMatchObject({ code: 'preview_port_not_allowed' })
+    // Listening on loopback, but not a session's: a Server cannot open it.
+    await expect(commands.previewOpen({ previewId: 'pv3', slug: 'abcdefghim', port: 8888, frpToken: 't', frpsAddr: 'wss://f.example', tokenExpiresAt: 'x' }))
+      .rejects.toMatchObject({ code: 'preview_port_not_allowed', details: { reason: 'not_session' } })
+    expect(opened.map(p => p.previewId)).toEqual(['pv1'])
     await expect(commands.previewClose({ previewId: 'pv1', slug: 'abcdefghij' })).resolves.toEqual({ closed: true })
   })
 })

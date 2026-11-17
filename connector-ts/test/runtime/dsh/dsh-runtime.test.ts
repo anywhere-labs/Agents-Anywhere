@@ -166,6 +166,39 @@ describe('DSH route switching and write-lock handoff (04 §5.6)', () => {
     expect(host.fake.prompts.map(prompt => prompt.text)).toEqual(['second'])
   })
 
+  test('a host appears while a direct turn waits for approval: respond and cancel still reach the direct session, then it moves', async () => {
+    const within = <T>(promise: Promise<T>, label: string) => Promise.race([promise,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`deadlocked: ${label}`)), 1000))])
+    const { runtime, disk } = setup()
+    const session = await runtime.open(existing('cold-1'), { sessionId: 'sess_c', replay: 'none' })
+    const events = collect(session)
+    await session.prompt({ text: 'needs approval' }, delivery('c1'))
+    await until(() => events.some(event => event.type === 'interaction.opened'), 'approval')
+    runtime.attachHost(fakeHost(disk).route)
+    await new Promise(resolve => setTimeout(resolve, 30))
+    expect(session.routeKind).toBe('direct')
+    const opened = events.find(event => event.type === 'interaction.opened')!
+    await within(session.respond(opened.type === 'interaction.opened' ? opened.interactionId : '', { kind: 'option', optionId: 'allow-once' }), 'respond')
+    await until(() => events.some(event => event.type === 'turn.ended'), 'turn ended')
+    expect(completed(events)).toEqual(['allow-once'])
+    await until(() => session.routeKind === 'plugin', 'moved to the host')
+
+    const second = setup()
+    const running = await second.runtime.open(existing('cold-1'), { sessionId: 'sess_c', replay: 'none' })
+    const runningEvents = collect(running)
+    let never!: () => void
+    second.direct.fake.gate = new Promise(resolve => { never = resolve })
+    void running.prompt({ text: 'long' }, delivery('c2'))
+    await until(() => runningEvents.some(event => event.type === 'turn.started'), 'turn started')
+    second.runtime.attachHost(fakeHost(second.disk).route)
+    await new Promise(resolve => setTimeout(resolve, 30))
+    await within(running.cancel(), 'cancel')
+    await until(() => runningEvents.some(event => event.type === 'turn.ended'), 'cancelled turn')
+    expect(runningEvents.find(event => event.type === 'turn.ended')).toMatchObject({ reason: 'cancelled' })
+    await until(() => running.routeKind === 'plugin', 'moved after the cancel')
+    never()
+  })
+
   test('the host quits mid-turn: the turn ends with an unknown result (not resent) and the session falls back to the direct route', async () => {
     const { runtime, disk } = setup()
     const host = fakeHost(disk)

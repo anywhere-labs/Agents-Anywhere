@@ -1,16 +1,31 @@
-/**
- * `checking` is the value before the first probe answers. An `error` carries
- * the underlying failure in `message`.
- */
 /** Mirrors `OwnershipRecovery` in electron/local-runtime.ts. */
 export type LocalOwnershipRecovery =
   | { kind: "backendStopped" }
-  /** A newer Connector (CLI or DSH plugin) serves this computer; Desktop stepped aside. */
-  | { kind: "newerConnector" }
+/**
+ * Mirrors `ExternalConnector` in electron/local-runtime.ts: a newer Connector
+ * (CLI or DSH plugin) that serves this computer instead of Desktop's own.
+ */
+export type LocalExternalConnector = {
+  kind: string
+  pid?: number
+  version?: string
+  connectorId?: string
+  serverUrl?: string
+  /** Desktop's own Connector handed the machine over to it. */
+  handedOver: boolean
+}
+/**
+ * `checking` is the value before the first probe answers. An `error` carries
+ * the underlying failure in `message`. `conflict`: a v2 or unknown Connector
+ * holds the machine. `external`: a newer Connector serves this computer. The app keeps working
+ * through the Server; only local Connector actions are unavailable, and
+ * Desktop takes the machine back on its own once that Connector exits.
+ */
 export type LocalOwnershipState = {
-  status: "owned" | "conflict" | "checking" | "error"
+  status: "owned" | "external" | "conflict" | "checking" | "error"
   message?: string
   recovery?: LocalOwnershipRecovery
+  external?: LocalExternalConnector
 }
 import type { DesktopUpdateState } from "../../../../shared/desktop-updates"
 export type { DesktopUpdateState } from "../../../../shared/desktop-updates"

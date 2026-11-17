@@ -7,9 +7,12 @@ export { MAX_OPEN_PREVIEWS, decidePortShare, loopbackTarget, type PortShareDecis
 export {
   annotatePorts,
   localUrlsIn,
+  originOf,
   parsePs,
   processParents,
+  sessionOfPort,
   sessionOfProcess,
+  withoutQuery,
   type AnnotatedPort,
   type ProcessParents,
   type SessionHints,

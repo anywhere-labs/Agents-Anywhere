@@ -18,6 +18,7 @@ import base64
 import json
 import zlib
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any, TypeVar
 
 from agent_server.core.device_meshcall import (
@@ -86,34 +87,54 @@ def merge_snapshot_chunks(chunks: list[StreamChunk]) -> dict[str, Any]:
     return body
 
 
+@dataclass
+class _Flight:
+    """One shared device read and how many callers wait for it."""
+
+    task: asyncio.Task[Any]
+    waiters: int = 0
+
+
 class DeviceReadService:
     def __init__(self, store: Any, mesh: DeviceMesh, hub: DeviceLinkHub) -> None:
         self._store = store
         self._mesh = mesh
         self._hub = hub
-        self._flights: dict[tuple[Any, ...], asyncio.Future[Any]] = {}
+        self._flights: dict[tuple[Any, ...], _Flight] = {}
 
     async def is_v3_device(self, connector_id: str) -> bool:
         return bool(await self._store.connector_link_contract(connector_id))
 
     async def _single_flight(self, key: tuple[Any, ...], work: Callable[[], Awaitable[T]]) -> T:
+        """Run ``work`` once for every concurrent caller with the same ``key``.
+
+        The device read runs as its own task. A caller that is cancelled (the client went away)
+        stops waiting for it without failing the others; the read is cancelled only once nobody
+        waits for it any more, and a later caller then starts a new one.
+        """
+
         flight = self._flights.get(key)
-        if flight is not None:
-            return await asyncio.shield(flight)
-        future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
-        self._flights[key] = future
+        if flight is None:
+            flight = _Flight(asyncio.create_task(work(), name=f"device-read-{key[0]}"))
+            self._flights[key] = flight
+            flight.task.add_done_callback(lambda task, key=key, flight=flight: self._land(key, flight, task))
+        flight.waiters += 1
         try:
-            result = await work()
-        except BaseException as exc:
-            if not future.done():
-                future.set_exception(exc)
-                future.exception()  # observed: waiters re-raise it
-            raise
-        else:
-            future.set_result(result)
-            return result
+            return await asyncio.shield(flight.task)
         finally:
-            self._flights.pop(key, None)
+            flight.waiters -= 1
+            if flight.waiters == 0 and not flight.task.done():
+                self._drop(key, flight)
+                flight.task.cancel()
+
+    def _drop(self, key: tuple[Any, ...], flight: _Flight) -> None:
+        if self._flights.get(key) is flight:
+            del self._flights[key]
+
+    def _land(self, key: tuple[Any, ...], flight: _Flight, task: asyncio.Task[Any]) -> None:
+        self._drop(key, flight)
+        if not task.cancelled():
+            task.exception()  # observed: the waiters re-raise it, and nobody may be left to
 
     def _fail(self, exc: DeviceCallError) -> Exception | None:
         if exc.not_delivered:

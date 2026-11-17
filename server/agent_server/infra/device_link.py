@@ -9,7 +9,9 @@ device's holder: it opens ``Link/attach`` and ``Link/outbox`` and keeps them ope
   "mesh"}``), renews it on every heartbeat (every 20 s, TTL 60 s) and deletes
   it by value when the stream ends, so an older holder, of this generation or
   an older one, never deletes a newer one. ``ready`` again with the current
-  ``connectionId`` takes the link over. v2 code that asks
+  ``connectionId`` takes the link over. A half-dead ``attach`` (open, but no
+  item for ``ATTACH_IDLE_SECONDS``) is closed before the lease can expire, so
+  the holder deletes its own lease and reports the device offline. v2 code that asks
   ``ConnectorRpcManager.is_online`` sees v3 devices through the same key.
 - ``outbox`` items are handed to a handler and acknowledged cumulatively after
   it returns; a handler failure closes the pump so the device resends.
@@ -30,7 +32,6 @@ from typing import Any
 from loguru import logger
 
 from agent_server.core.device_meshcall import (
-    ATTACH_HEARTBEAT_SECONDS,
     LINK_ROUTES,
     PRESENCE_LEASE_SECONDS,
     Empty,
@@ -47,9 +48,15 @@ OutboxHandler = Callable[[str, OutboxItem], Awaitable[None]]
 EventHandler = Callable[[str, str, dict[str, Any]], Awaitable[None]]
 PresenceHandler = Callable[[str, bool], Awaitable[None]]
 
-# A device that sends nothing on attach for this long is treated as gone even if the
-# stream looks open (a half-dead link); the lease TTL is the same bound across workers.
-ATTACH_IDLE_SECONDS = PRESENCE_LEASE_SECONDS
+# How often the holder checks that attach is still alive.
+ATTACH_WATCHDOG_SECONDS = 5.0
+# A device that sends nothing on attach for this long is treated as gone even if the stream
+# looks open (a half-dead link). The lease is renewed with every attach item, so the watchdog
+# must fire (idle + one check interval) before the lease expires: the holder then deletes its own
+# lease and reports the device offline, instead of other workers seeing it offline first while
+# this worker still serves it. 45 s tolerates one missed heartbeat; it is above the device's own
+# ``ATTACH_STALL_SECONDS`` (40 s), so a stuck holder is normally noticed by the device first.
+ATTACH_IDLE_SECONDS = PRESENCE_LEASE_SECONDS - 3 * ATTACH_WATCHDOG_SECONDS
 
 
 @dataclass
@@ -73,12 +80,16 @@ class DeviceLinkHub:
         worker_id: str,
         lease_seconds: float = PRESENCE_LEASE_SECONDS,
         idle_seconds: float = ATTACH_IDLE_SECONDS,
+        watchdog_seconds: float = ATTACH_WATCHDOG_SECONDS,
     ) -> None:
+        if idle_seconds + watchdog_seconds >= lease_seconds:
+            raise ValueError("the attach watchdog must fire before the presence lease expires")
         self._mesh = mesh
         self._coordinator = coordinator
         self.worker_id = worker_id
         self._lease_seconds = lease_seconds
         self._idle_seconds = idle_seconds
+        self._watchdog_seconds = watchdog_seconds
         self._links: dict[str, HeldLink] = {}
         # Without Redis: ``deviceId -> (connectionId, expires, lease value)``; compared by value like Redis.
         self._local_leases: dict[str, tuple[str, float, str]] = {}
@@ -304,9 +315,8 @@ class DeviceLinkHub:
                 await self._stop(held, held.close_reason or "outbox ended")
 
     async def _watchdog(self, held: HeldLink) -> None:
-        interval = max(1.0, min(ATTACH_HEARTBEAT_SECONDS, self._idle_seconds) / 2)
         while not held.closed.is_set():
-            await asyncio.sleep(interval)
+            await asyncio.sleep(self._watchdog_seconds)
             if time.monotonic() - held.last_heartbeat > self._idle_seconds:
                 await self._stop(held, "no heartbeat")
                 return

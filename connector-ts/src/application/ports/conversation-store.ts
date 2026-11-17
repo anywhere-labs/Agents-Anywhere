@@ -93,7 +93,8 @@ export interface SessionRepository {
   heads(): Promise<{ sessionId: string; headSeq: number; resetSeq: number }[]>
   /**
    * Applies `LinkWelcome.seqFloors`; returns the sessions whose clock jumped (their items were restamped
-   * past the floor and a reset fence raised).
+   * past the floor and a reset fence raised). The floor of a session the store does not have yet is kept:
+   * `create` starts that session's clock above it (a native rescan recreating it after a reinstall).
    */
   applySeqFloors(floors: Readonly<Record<string, number>>): Promise<string[]>
   /** Queues a `session.summary` for every session (after a directory key rotation or on demand). */
@@ -164,6 +165,8 @@ export interface ReceiveMessageInput {
    */
   pending?: PendingDelivery | null
   commandId: string | null
+  /** The command's receipt, committed with the delivery (a queued message gets the queue filled in). */
+  receipt?: CommandReceipt | null
   at: string
 }
 
@@ -210,8 +213,11 @@ export type QueueOp =
 
 export interface QueueRepository {
   get(sessionId: string): Promise<SessionQueue>
-  /** Applies a domain queue operation atomically; also settles the matching delivery when one exists. */
-  apply(sessionId: string, op: QueueOp, at: string): Promise<SessionQueue>
+  /**
+   * Applies a domain queue operation atomically; also settles the matching delivery when one exists. With a
+   * receipt, the command's receipt (its result the resulting queue state) commits in the same transaction.
+   */
+  apply(sessionId: string, op: QueueOp, at: string, receipt?: CommandReceipt | null): Promise<SessionQueue>
   /** Every non-empty queue (dispatch checks after a restart). */
   nonEmpty(): Promise<SessionQueue[]>
 }
@@ -230,14 +236,14 @@ export interface InteractionRepository {
 
 export interface PlanningRepository {
   load(sessionId: string): Promise<PlanningState | null>
-  /** Saves the state and, when given, an immutable new document revision, with the session's `planState`. */
-  save(state: PlanningState, document: PlanDocument | null): Promise<SessionCommit>
+  /** Saves the state and, when given, an immutable new document revision, with the session's `planState` (and the receipt). */
+  save(state: PlanningState, document: PlanDocument | null, receipt?: CommandReceipt | null): Promise<SessionCommit>
   document(sessionId: string, planId: string, revision: number): Promise<PlanDocument | null>
 }
 
 export interface GoalRepository {
   load(sessionId: string): Promise<GoalState | null>
-  save(state: GoalState): Promise<SessionCommit>
+  save(state: GoalState, receipt?: CommandReceipt | null): Promise<SessionCommit>
 }
 
 export type CommandOutcome = 'accepted' | 'rejected' | 'unknown'
@@ -254,11 +260,29 @@ export interface CommandRecord {
   updatedAt: string
 }
 
+/**
+ * An accepted command's receipt handed to the write that is its effect: the store commits the receipt (and queues
+ * `command.result`) in that write's transaction, so a crash never leaves an effect without its receipt and a retry
+ * with the same `commandId` replays the receipt instead of running the command again.
+ */
+export interface CommandReceipt {
+  commandId: string
+  method: string
+  sessionId: string | null
+  inputDigest: string | null
+  createdAt: string
+  /** The ack body; queue operations and queued messages get the resulting queue state merged in by the store. */
+  result: Record<string, unknown> | null
+}
+
 /** Durable receipts by `commandId` (Server's `Commands/status`; `command.result` in the outbox). */
 export interface CommandLog {
   get(commandId: string): Promise<CommandRecord | null>
-  /** Records the outcome and queues `command.result` in the outbox in the same transaction. */
-  settle(record: CommandRecord): Promise<void>
+  /**
+   * Records the outcome and queues `command.result` in the outbox in the same transaction, and returns the record
+   * that stands: a final receipt already committed with the effect is kept as it is (nothing is queued again).
+   */
+  settle(record: CommandRecord): Promise<CommandRecord>
 }
 
 export interface OutboxRecord {

@@ -27,6 +27,7 @@ import { TimelineProjector } from './projection.js'
 import type {
   ChangeFeed,
   Clock,
+  CommandReceipt,
   ConversationStore,
   IdSource,
   LiveEvents,
@@ -77,6 +78,16 @@ export interface CommandContext {
   readonly inputDigest: string | null
   /** Who asked (`usr_…`), for `createdBy` of queue items. */
   readonly actor: string
+  /**
+   * The command's receipt (CommandInbox): the use case hands it to the write that is the command's effect, so the
+   * receipt commits in the same transaction and a retry after a crash replays it instead of running again.
+   */
+  readonly receipt?: CommandReceipt | null
+}
+
+/** The receipt with the ack body the use case already knows (null: none to write). */
+function withResult(receipt: CommandReceipt | null | undefined, result: Record<string, unknown> | null): CommandReceipt | null {
+  return receipt === null || receipt === undefined ? null : { ...receipt, result }
 }
 
 export interface CreateSessionCommand {
@@ -437,6 +448,7 @@ export class ConversationService {
           open: { cwd: command.cwd, ...(command.title != null ? { title: command.title } : {}), ...(command.selections !== undefined ? { selections: command.selections } : {}) },
         },
         commandId: context.commandId,
+        receipt: withResult(context.receipt, { sessionId: command.sessionId, delivery: 'accepted', clientMessageId: command.clientMessageId }),
         at,
       })
       if (received.duplicate) return { delivery: 'duplicate', clientMessageId: command.clientMessageId, state: received.delivery.state }
@@ -483,14 +495,14 @@ export class ConversationService {
           : null,
         pending: admission.kind === 'enqueue' ? null : { content: command.content, attachments: (command.attachments ?? []) as unknown as Record<string, unknown>[] },
         commandId: context.commandId,
+        // A queued message's ack body is the queue after it, which the store fills in.
+        receipt: withResult(context.receipt, admission.kind === 'enqueue' ? null : { delivery: 'accepted', clientMessageId: command.clientMessageId }),
         at,
       })
       if (received.queue !== null && received.queueItem !== null) {
-        const state = queueRules.queueState(received.queue)
-        this.deps.live.emit('runtime.queue.updated', { sessionId: command.sessionId, queue: state })
+        this.deps.live.emit('runtime.queue.updated', { sessionId: command.sessionId, queue: queueRules.queueState(received.queue) })
         if (admission.kind === 'enqueue' && admission.interrupt) void this.serial(command.sessionId, () => this.interruptForQueue(command.sessionId))
-        const item = state.items.find(entry => entry.messageId === received.queueItem?.messageId)
-        return { delivery: 'queued', clientMessageId: command.clientMessageId, item: item as unknown as Record<string, unknown>, queuePosition: item?.position ?? 0, queue: state as unknown as Record<string, unknown> }
+        return queueRules.queuedDelivery(received.queue, received.queueItem.messageId, command.clientMessageId)
       }
       this.handOff(command.sessionId, command.clientMessageId, command.content, command.attachments ?? [])
       return { delivery: 'accepted', clientMessageId: command.clientMessageId }
@@ -697,12 +709,12 @@ export class ConversationService {
   }
 
   /** Queue management (`session.queue.*`). */
-  public async queueOp(sessionId: string, op: Exclude<QueueOp, { kind: 'markSending' | 'markSent' | 'markFailed' | 'turnEnded' | 'dropForArchive' }>): Promise<Record<string, unknown>> {
+  public async queueOp(sessionId: string, op: Exclude<QueueOp, { kind: 'markSending' | 'markSent' | 'markFailed' | 'turnEnded' | 'dropForArchive' }>, receipt?: CommandReceipt | null): Promise<Record<string, unknown>> {
     return this.serial(sessionId, async () => {
       const session = await this.requireSession(sessionId)
       if (!session.takeover) throw new UseCaseError('session_not_taken_over', 'Take over the session before changing its queue.')
       const before = await this.deps.store.queues.get(sessionId)
-      const after = await this.deps.store.queues.apply(sessionId, op, this.deps.clock.nowIso())
+      const after = await this.deps.store.queues.apply(sessionId, op, this.deps.clock.nowIso(), withResult(receipt, null))
       const state = queueRules.queueState(after)
       if (after.revision !== before.revision) this.deps.live.emit('runtime.queue.updated', { sessionId, queue: state })
       if (op.kind === 'sendNow') void this.serial(sessionId, () => this.interruptForQueue(sessionId))
@@ -784,7 +796,7 @@ export class ConversationService {
   }
 
   /** `session.planning`: mode switches and review actions; approval must name the current plan version. */
-  public async planning(sessionId: string, request: { command: string; operationId: string; reviewId?: string | null; planId?: string | null; planRevision?: number | null; contentHash?: string | null; expectedRevision?: number | null; epoch?: string | null; feedback?: string | null }): Promise<Record<string, unknown>> {
+  public async planning(sessionId: string, request: { command: string; operationId: string; reviewId?: string | null; planId?: string | null; planRevision?: number | null; contentHash?: string | null; expectedRevision?: number | null; epoch?: string | null; feedback?: string | null }, receipt?: CommandReceipt | null): Promise<Record<string, unknown>> {
     return this.serial(sessionId, async () => {
       let state = await this.planningOf(sessionId)
       const binding = await this.binding(sessionId)
@@ -812,9 +824,10 @@ export class ConversationService {
         default:
           throw new UseCaseError('invalid_argument', `unknown planning command ${request.command}`)
       }
-      const commit = await this.deps.store.planning.save(state, null)
+      const result = { operationId: request.operationId, revision: state.revision }
+      const commit = await this.deps.store.planning.save(state, null, withResult(receipt, result))
       this.publish(commit)
-      return { operationId: request.operationId, revision: state.revision }
+      return result
     })
   }
 
@@ -840,7 +853,7 @@ export class ConversationService {
     if (next !== state) this.publish(await this.deps.store.planning.save(next, null))
   }
 
-  public async goal(sessionId: string, request: GoalRequest): Promise<Record<string, unknown>> {
+  public async goal(sessionId: string, request: GoalRequest, receipt?: CommandReceipt | null): Promise<Record<string, unknown>> {
     return this.serial(sessionId, async () => {
       const session = await this.requireSession(sessionId)
       const state = (await this.deps.store.goals.load(sessionId)) ?? initialGoalState({ sessionId, runtime: session.runtimeType, runtimeId: session.runtimeId, sourceEpoch: this.deps.ids.newId('ep_') })
@@ -864,13 +877,14 @@ export class ConversationService {
           break
       }
       const observed = await port.get()
-      await this.onGoalUpdated(sessionId, observed as unknown as Record<string, unknown> | null)
+      // The goal state the Runtime reported commits with the receipt (when it changed; otherwise nothing local did).
+      await this.onGoalUpdated(sessionId, observed as unknown as Record<string, unknown> | null, revision => withResult(receipt, { operationId: request.operationId, revision }))
       const saved = await this.deps.store.goals.load(sessionId)
       return { operationId: request.operationId, revision: saved?.revision ?? state.revision }
     })
   }
 
-  public async onGoalUpdated(sessionId: string, wire: Record<string, unknown> | null): Promise<void> {
+  public async onGoalUpdated(sessionId: string, wire: Record<string, unknown> | null, receiptFor?: (revision: number) => CommandReceipt | null): Promise<void> {
     const session = await this.requireSession(sessionId)
     const state = (await this.deps.store.goals.load(sessionId)) ?? initialGoalState({ sessionId, runtime: session.runtimeType, runtimeId: session.runtimeId, sourceEpoch: this.deps.ids.newId('ep_') })
     const native = (wire?.goal ?? null) as Record<string, unknown> | null
@@ -885,7 +899,7 @@ export class ConversationService {
       empty: native === null,
     }, { newId: () => this.deps.ids.newId('goal_'), now: this.deps.clock.nowIso() })
     if (next.revision !== state.revision || JSON.stringify(next) !== JSON.stringify(state)) {
-      this.publish(await this.deps.store.goals.save(next))
+      this.publish(await this.deps.store.goals.save(next, receiptFor?.(next.revision) ?? null))
       this.emitSessionStatus(sessionId, { event: 'goal.state.updated', revision: next.revision })
     }
   }

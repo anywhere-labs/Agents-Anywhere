@@ -184,6 +184,14 @@ CREATE TABLE runtime_kv (
     breaksPrevious: false,
     sql: 'ALTER TABLE deliveries ADD COLUMN pending_json TEXT;',
   },
+  {
+    // `LinkWelcome.seqFloors` of sessions this store does not have yet (06-protocols.md §3.1). A session created
+    // later under the same id (a native rescan after a reinstall, a deleted store or a v2 upgrade) starts its clock
+    // above the floor instead of at 0, so clients never take its new items for old ones.
+    version: 4,
+    breaksPrevious: false,
+    sql: 'CREATE TABLE IF NOT EXISTS seq_floors (session_id TEXT PRIMARY KEY, seq_floor INTEGER NOT NULL);',
+  },
 ]
 
 export const SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]?.version ?? 0

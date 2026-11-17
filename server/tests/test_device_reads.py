@@ -22,7 +22,7 @@ from device_link_helpers import (
 from mesh_fixtures import RouterProcess
 
 from agent_server.core.device_meshcall import StreamChunk
-from agent_server.services.device_reads import merge_snapshot_chunks
+from agent_server.services.device_reads import DeviceReadService, merge_snapshot_chunks
 from scripts.v3_fake_device import connect_device
 
 
@@ -139,3 +139,90 @@ def test_snapshot_chunks_merge_in_order_and_inflate() -> None:
         "notices": [],
         "eventCursor": "seq:9",
     }
+
+
+def _reads() -> DeviceReadService:
+    return DeviceReadService(None, None, None)  # type: ignore[arg-type]
+
+
+def test_single_flight_survives_the_first_caller_being_cancelled() -> None:
+    async def scenario() -> None:
+        reads = _reads()
+        release = asyncio.Event()
+        calls: list[int] = []
+
+        async def read() -> dict:
+            calls.append(1)
+            await release.wait()
+            return {"ok": True}
+
+        key = ("snapshot", "conn_1", "sess_1")
+        first = asyncio.create_task(reads._single_flight(key, read))
+        await asyncio.sleep(0)
+        second = asyncio.create_task(reads._single_flight(key, read))
+        await asyncio.sleep(0)
+        first.cancel()
+        await asyncio.sleep(0)
+        assert first.cancelled()
+        assert not second.done()
+        release.set()
+        assert await second == {"ok": True}
+        assert calls == [1]
+        assert reads._flights == {}
+
+    asyncio.run(scenario())
+
+
+def test_single_flight_cancels_the_read_when_nobody_waits() -> None:
+    async def scenario() -> None:
+        reads = _reads()
+        started = asyncio.Event()
+        cancelled: list[bool] = []
+
+        async def read() -> dict:
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.append(True)
+                raise
+            return {}
+
+        key = ("snapshot", "conn_1", "sess_1")
+        first = asyncio.create_task(reads._single_flight(key, read))
+        second = asyncio.create_task(reads._single_flight(key, read))
+        await started.wait()
+        first.cancel()
+        second.cancel()
+        await asyncio.gather(first, second, return_exceptions=True)
+        await asyncio.sleep(0)
+        assert cancelled == [True]
+        assert reads._flights == {}
+
+        # A later caller starts a new read.
+        async def fresh() -> dict:
+            return {"fresh": True}
+
+        assert await reads._single_flight(key, fresh) == {"fresh": True}
+
+    asyncio.run(scenario())
+
+
+def test_single_flight_shares_a_failure() -> None:
+    async def scenario() -> None:
+        reads = _reads()
+        release = asyncio.Event()
+
+        async def read() -> dict:
+            await release.wait()
+            raise RuntimeError("device answered with an error")
+
+        key = ("snapshot", "conn_1", "sess_1")
+        waiters = [asyncio.create_task(reads._single_flight(key, read)) for _ in range(2)]
+        await asyncio.sleep(0)
+        release.set()
+        results = await asyncio.gather(*waiters, return_exceptions=True)
+        assert all(isinstance(result, RuntimeError) for result in results)
+        assert reads._flights == {}
+
+    asyncio.run(scenario())

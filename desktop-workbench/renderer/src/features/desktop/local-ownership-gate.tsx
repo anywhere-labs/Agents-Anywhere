@@ -8,8 +8,17 @@ import { Button } from "@/components/ui/button"
 import { LoadingState } from "@/components/loading-state"
 import { copyText } from "@/lib/clipboard"
 import { getDesktopWorkbenchBridge, type LocalOwnershipState } from "./bridge"
+import { LocalOwnershipContext } from "./local-ownership-context"
 
-/** Mount before auth/provisioning, so a second Connector cannot rotate credentials. */
+/**
+ * Mount before auth/provisioning, so a second Connector cannot rotate credentials.
+ *
+ * Only what Desktop cannot coexist with blocks: a v2 or unknown Connector
+ * (`conflict`), a failed check or a stopped backend (`error`). A newer
+ * Connector serving this computer (`external`) lets the app through like
+ * `owned`; the provider tells the local Connector UI, and the same tree stays
+ * mounted when Desktop takes the machine back.
+ */
 export function LocalOwnershipGate({ children }: { children: ReactNode }) {
   const t = useTranslations("localOwnership")
   const [state, setState] = useState<LocalOwnershipState | null>(null)
@@ -29,7 +38,9 @@ export function LocalOwnershipGate({ children }: { children: ReactNode }) {
     return () => { active = false; unsubscribe() }
   }, [])
 
-  if (state?.status === "owned") return children
+  if (state?.status === "owned" || state?.status === "external") {
+    return <LocalOwnershipContext.Provider value={state}>{children}</LocalOwnershipContext.Provider>
+  }
   if (!state || state.status === "checking") {
     return <LoadingState className="min-h-screen bg-background" label={t("checkingConnector")} />
   }
@@ -44,18 +55,16 @@ export function LocalOwnershipGate({ children }: { children: ReactNode }) {
     catch (error) { setActionError(errorMessage(error)) }
     finally { setBusy(false) }
   }
-  const newer = state.status === "conflict" && state.recovery?.kind === "newerConnector"
-  const conflict = state.status === "conflict" && !newer
+  const conflict = state.status === "conflict"
   const backendStopped = state.recovery?.kind === "backendStopped"
-  // The newer Connector's own message is the description; only other failures quote a detail.
-  const detail = newer ? "" : state.message?.trim() ?? ""
+  const detail = state.message?.trim() ?? ""
   const connector = getDesktopWorkbenchBridge()?.connector
   const copyDetail = async () => {
     try { await copyText(detail); setCopied(true) }
     catch { /* The detail stays selectable. */ }
   }
-  const title = newer ? "newerTitle" : conflict ? "title" : backendStopped ? "backendStoppedTitle" : "errorTitle"
-  const description = newer ? "newerDescription" : conflict ? "description"
+  const title = conflict ? "title" : backendStopped ? "backendStoppedTitle" : "errorTitle"
+  const description = conflict ? "description"
     : backendStopped ? "backendStoppedDescription"
     : detail ? "errorDescription" : "errorWithoutDetail"
 

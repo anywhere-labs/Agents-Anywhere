@@ -68,6 +68,15 @@ export class AcpProjectionIdentity {
     this.revisions.set(key, (this.revisions.get(key) ?? 0) + 1)
     return key
   }
+
+  /**
+   * Identity half of projection.py `Projection.finish`: the turn is over, so the next message
+   * update starts a new item even when it has the same kind as the last one (the user echo that
+   * would otherwise separate two assistant messages is filtered on live delivery).
+   */
+  finish(): void {
+    this.currentKind = null
+  }
 }
 
 /**

@@ -77,9 +77,25 @@ export async function activeTurns(store: RemoteStore): Promise<number> {
  */
 export function connectorRuntime(options: ComposeOptions, track?: { store(store: RemoteStore | null): void; trust?(trust: DeviceTrust | null): void }): RuntimeFactory {
   return (settings, hooks): ConnectorRuntime => ({
-    async run(signal) {
+    async run(outer) {
+      // Stops on the host's signal, or when the store worker dies: without its store the Connector can neither
+      // acknowledge commands nor drain the outbox, so `run` fails and the host shows (and may restart) it.
+      const stop = new AbortController()
+      const signal = stop.signal
+      const onOuterAbort = (): void => stop.abort()
+      if (outer.aborted) stop.abort()
+      else outer.addEventListener('abort', onOuterAbort, { once: true })
+      let storeFailure: Error | null = null
       const storeOptions = { dataDir: join(options.dataDir, 'store'), durability: 'normal' as const, now: clock.nowIso }
-      const store = options.storeMode === 'in-process' ? inProcessStore(openSqliteStore(storeOptions)) : await openStoreWorker(storeOptions)
+      const store = options.storeMode === 'in-process'
+        ? inProcessStore(openSqliteStore(storeOptions))
+        : await openStoreWorker(storeOptions, {
+          onUnavailable: error => {
+            storeFailure = error
+            options.log('error', `${error.message}; stopping the Connector`)
+            stop.abort()
+          },
+        })
       track?.store(store)
       let link: DeviceLink | null = null
       const sessionFacts = new SessionFactsHub()
@@ -232,7 +248,12 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
         })
         options.onLink?.(link)
         await link.run(signal)
+        if (storeFailure !== null) throw storeFailure
+      } catch (error) {
+        // A use case that failed because the store went away reports the store, not its own symptom.
+        throw storeFailure ?? error
       } finally {
+        outer.removeEventListener('abort', onOuterAbort)
         scans.close()
         if (trust !== null) track?.trust?.(null)
         await trust?.close().catch(() => undefined)

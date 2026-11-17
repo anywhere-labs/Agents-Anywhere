@@ -1,12 +1,16 @@
 """Port preview API (``contracts/preview/1.0``) and the internal endpoints frps and preview-auth call.
 
 ``/api/v3/internal/preview/*`` is not for browsers: the gateway does not route it, and
-each call carries ``AGENT_SERVER_PREVIEW_INTERNAL_TOKEN`` (frps in the plugin path,
-preview-auth as a bearer token).
+each call carries ``AGENT_SERVER_PREVIEW_INTERNAL_TOKEN`` in the ``Authorization`` header,
+never in the URL (access logs record the path): preview-auth as a bearer token, frps as the
+password of HTTP basic auth (its plugin has no header setting, so ``frps.toml`` puts the token in
+the userinfo of the plugin ``addr``, which Go's HTTP client sends as ``Authorization: Basic``).
 """
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hmac
 from typing import Any
 
@@ -85,16 +89,35 @@ def _token_matches(presented: str | None) -> bool:
     return expected is not None and presented is not None and hmac.compare_digest(presented.encode(), expected.encode())
 
 
-@internal_router.post("/frps/{token}")
+def _presented_token(authorization: str | None) -> str | None:
+    """The internal token of ``Authorization: Bearer <token>`` or ``Basic <user:token>``."""
+
+    if not authorization:
+        return None
+    scheme, _, value = authorization.strip().partition(" ")
+    value = value.strip()
+    if scheme.lower() == "bearer":
+        return value or None
+    if scheme.lower() == "basic":
+        try:
+            decoded = base64.b64decode(value, validate=True).decode()
+        except (binascii.Error, UnicodeDecodeError):
+            return None
+        _user, sep, password = decoded.partition(":")
+        return password if sep and password else None
+    return None
+
+
+@internal_router.post("/frps")
 async def frps_plugin(
-    token: str,
     op: str = Query(""),
     body: dict[str, Any] = Body(default_factory=dict),
+    authorization: str | None = Header(None, alias="Authorization"),
     previews: PreviewService = Depends(get_preview_service),
 ) -> dict[str, Any]:
     """frps ``httpPlugins`` callback (``Login``, ``NewProxy``, ``CloseProxy``)."""
 
-    if not _token_matches(token):
+    if not _token_matches(_presented_token(authorization)):
         raise HTTPException(status_code=404, detail="not found")
     content = body.get("content") if isinstance(body.get("content"), dict) else {}
     return await previews.frps_plugin(op or str(body.get("op") or ""), content)
@@ -113,8 +136,7 @@ async def redeem_ticket(
 ) -> dict[str, Any]:
     """preview-auth exchanges a one-time ticket for the preview cookie."""
 
-    presented = authorization[len("Bearer ") :] if authorization and authorization.startswith("Bearer ") else None
-    if not _token_matches(presented):
+    if not _token_matches(_presented_token(authorization)):
         raise HTTPException(status_code=401, detail="invalid internal token")
     try:
         return await previews.redeem(payload.ticket, payload.slug)

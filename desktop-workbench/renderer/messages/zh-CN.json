@@ -2,8 +2,6 @@
   "localOwnership": {
     "title": "已有其他 Connector 在运行",
     "description": "请先退出对应应用或手动结束进程，再点击“重新检查”。",
-    "newerTitle": "已由更新版本的 Connector 接管",
-    "newerDescription": "这台电脑上已有更新版本的 Connector（命令行或 DSH 插件）在运行，由它连接服务器，Desktop 不再启动自己的 Connector。要改用 Desktop 内置的 Connector，请先退出那个 Connector，再点击“重新检查”。",
     "errorTitle": "暂时无法检查 Connector 状态",
     "errorDescription": "本机 Connector 检查失败，具体错误如下。反馈问题时，请附上这段错误信息和日志。",
     "errorWithoutDetail": "没有收到具体的错误信息，请打开日志文件夹查看。",
@@ -16,7 +14,25 @@
     "checking": "正在检查…",
     "backendStoppedTitle": "桌面端后台服务已停止",
     "backendStoppedDescription": "本机 Connector、设备和设置都依赖这个服务。点击“重新启动”恢复；如果反复出现，请附上下面的错误信息和日志反馈问题。",
-    "restartBackend": "重新启动"
+    "restartBackend": "重新启动",
+    "externalTitle": "由另一个 Connector 连接服务器",
+    "externalSummary": "这台电脑由另一个更新的 Connector（{source, select, cli {命令行} dshPlugin {DSH 插件} desktop {另一个桌面端} other {另一个应用}}{hasVersion, select, yes {，版本 {version}} other {}}）连接服务器。",
+    "externalShort": "本机由另一个 Connector{hasVersion, select, yes {（{version}）} other {}}连接",
+    "externalHandedOver": "Desktop 内置的 Connector 已把这台电脑交给它。",
+    "externalUsable": "会话、设备和设置照常可用。它退出后，Desktop 会自动接回，不需要重启。",
+    "externalLocalUnavailable": "本机 Connector 的启动、停止、配对、代理和连接参数由那个 Connector 负责，在 Desktop 里暂不可用。",
+    "externalBadge": "由其他 Connector 连接",
+    "externalSource": "来源",
+    "externalSourceValue": "{source, select, cli {命令行} dshPlugin {DSH 插件} desktop {另一个桌面端} other {另一个应用}}",
+    "externalVersion": "版本",
+    "externalVersionUnknown": "未知",
+    "externalPid": "进程 PID",
+    "externalDevice": "设备 ID",
+    "externalDeviceStatus": "服务器状态",
+    "externalOnline": "在线",
+    "externalOffline": "离线",
+    "externalStatusUnavailable": "无法读取（那台设备不在当前账号下，或尚未连接）",
+    "externalActionUnavailable": "这台电脑由另一个更新的 Connector 连接，本机 Connector 的操作暂不可用。"
   },
   "app": {
     "name": "Agents Anywhere"

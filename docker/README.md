@@ -193,8 +193,10 @@ AGENT_SERVER_PREVIEW_INTERNAL_TOKEN="$(openssl rand -hex 32)" \
 docker compose -f docker/docker-compose.postgres.yml up -d
 ```
 
-Keep the token as stable as `AGENT_SERVER_SECRET`: changing it signs devices' frp
-tokens and visitors' preview cookies anew, so open previews must be reopened.
+The token must be URL-safe (letters and digits; `openssl rand -hex 32` is), because frps
+puts it in the plugin URL's userinfo. Keep the token as stable as `AGENT_SERVER_SECRET`:
+changing it signs devices' frp tokens and visitors' preview cookies anew, so open previews
+must be reopened.
 
 **How the pieces fit**
 
@@ -202,7 +204,7 @@ tokens and visitors' preview cookies anew, so open previews must be reopened.
 | --- | --- |
 | `gateway-next` | `https://<slug>.<preview domain>`: asks `preview-auth-next` about every request (`forward_auth`), then proxies to frps's vhost port; `/__aa/ticket` goes to preview-auth. `frp.<preview domain>/~!frp`: devices' frpc WebSocket to frps. Strips the preview cookie and `Authorization` before the page sees the request. `/api/v3/internal/*` is never routed from outside. |
 | `preview-auth-next` | Checks the preview cookie's signature and the slug's state in Redis (cached a few seconds); it never calls the Server per request. Redeems one-time tickets through the Server and sets the `__Host-aa_preview` cookie (8 hours at most). Runs from the Server image. |
-| `frps` | Data plane. Its HTTP plugin asks the Server about every frpc login and proxy (`/api/v3/internal/preview/frps/<token>`). Neither of its ports is published. |
+| `frps` | Data plane. Its HTTP plugin asks the Server about every frpc login and proxy (`POST http://server-next:8000/api/v3/internal/preview/frps` on the Compose network). The token goes as HTTP basic auth (userinfo of the plugin `addr` in `docker/frps/frps.toml`), never in the path, so access logs do not record it. Neither of its ports is published. |
 | `server-next` | Decides who may preview which device port, signs the frp tokens, issues tickets and closes previews (stopped, expired, port closed, device offline for 10 minutes). |
 
 Notes:

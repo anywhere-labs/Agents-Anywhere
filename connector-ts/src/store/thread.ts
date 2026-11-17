@@ -110,9 +110,25 @@ export function serveStore(port: MessagePort, store: SyncStore, onClosed?: () =>
 
 export type RemoteStore = ConversationStore & { readonly readOnly: boolean; readonly storeEpoch: string }
 
+/** The main-thread side of a channel to a served store. */
+export interface StoreChannel {
+  readonly store: RemoteStore
+  /**
+   * The store side is gone (its worker exited or crashed): every waiting call and every later one rejects with
+   * `error`. Returns true when this was unexpected, false when the store was already closing or had failed.
+   */
+  fail(error: Error): boolean
+}
+
 /** Builds the async port on top of a channel to a served store (main-thread side). */
 export function connectStore(port: MessagePort, ready: ReadyMessage, onClose?: () => Promise<void>): RemoteStore {
+  return openStoreChannel(port, ready, onClose).store
+}
+
+export function openStoreChannel(port: MessagePort, ready: ReadyMessage, onClose?: () => Promise<void>): StoreChannel {
   let next = 1
+  let state: 'open' | 'closing' | 'failed' = 'open'
+  let failure: Error | null = null
   const waiting = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>()
   port.on('message', (response: Response) => {
     const pending = waiting.get(response.id)
@@ -123,6 +139,10 @@ export function connectStore(port: MessagePort, ready: ReadyMessage, onClose?: (
   })
   const call = (repo: Request['repo'], method: string, args: unknown[]): Promise<unknown> =>
     new Promise((resolve, reject) => {
+      if (failure !== null) {
+        reject(failure)
+        return
+      }
       const id = next++
       waiting.set(id, { resolve, reject })
       port.postMessage({ id, repo, method, args } satisfies Request)
@@ -134,13 +154,23 @@ export function connectStore(port: MessagePort, ready: ReadyMessage, onClose?: (
     store[repo] = proxy
   }
   store.close = async () => {
-    await call('$close', 'close', [])
+    const wasOpen = state === 'open'
+    if (wasOpen) state = 'closing'
+    if (wasOpen) await call('$close', 'close', [])
     for (const pending of waiting.values()) pending.reject(new Error('store closed'))
     waiting.clear()
     port.close()
     await onClose?.()
   }
-  return store as unknown as RemoteStore
+  const fail = (error: Error): boolean => {
+    const unexpected = state === 'open'
+    if (failure === null) failure = error
+    if (state !== 'closing') state = 'failed'
+    for (const pending of waiting.values()) pending.reject(failure)
+    waiting.clear()
+    return unexpected
+  }
+  return { store: store as unknown as RemoteStore, fail }
 }
 
 /** The same async port over an in-process synchronous store (tests, short-lived tools). */

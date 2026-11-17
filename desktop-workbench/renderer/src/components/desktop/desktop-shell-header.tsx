@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { useWorkspace } from "@/components/workspace-context"
 import { useDesktopConnector } from "@/features/desktop/desktop-connector-context"
+import { externalConnectorMessageValues } from "@/features/desktop/local-ownership-context"
 import { cn } from "@/lib/utils"
 
 const HEADER_SIDEBAR_MIN_WIDTH = 224
@@ -83,8 +84,26 @@ export function DesktopShellHeader({
 
 export function DesktopConnectionStatus() {
   const t = useTranslations("desktopConnector")
-  const { supported, busy, state, binding, reconnect } = useDesktopConnector()
+  const tOwnership = useTranslations("localOwnership")
+  const { supported, busy, state, binding, reconnect, external } = useDesktopConnector()
   const localConnectorId = binding?.connectorId ?? state?.connectorId
+  // Not a problem to fix: a newer Connector serves this computer and Desktop takes it back on its own.
+  if (external) {
+    const values = externalConnectorMessageValues(external)
+    return (
+      <div className="aa-window-no-drag flex min-w-0 items-center gap-2 px-1 pt-2">
+        <span
+          className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground"
+          role="status"
+          aria-live="polite"
+          title={`${tOwnership("externalSummary", values)} ${tOwnership("externalUsable")}`}
+        >
+          <Info className="size-3.5 shrink-0" aria-hidden="true" />
+          <span className="truncate">{tOwnership("externalShort", values)}</span>
+        </span>
+      </div>
+    )
+  }
   if (!supported || !localConnectorId || !(state?.authFailed || state?.manualDisconnected)) return null
 
   return (

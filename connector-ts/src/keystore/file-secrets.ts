@@ -6,7 +6,7 @@ import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { DeviceSecrets } from '../application/ports/trust.js'
 import { generateX25519, x25519FromSecret } from '../channel/noise/node-crypto.js'
-import type { VaultKeyProvider } from './vault.js'
+import { KeystoreError, type VaultKeyProvider } from './vault.js'
 
 interface SecretsFile {
   identity: string | null
@@ -25,16 +25,27 @@ export class FileDeviceSecrets implements DeviceSecrets {
   readonly #file: string
   readonly #vault: VaultKeyProvider
   #cache: SecretsFile | null = null
+  readonly #warn: (message: string) => void
+  /**
+   * What is on disk, which decides how the next save is protected:
+   * - `fresh`: no secrets file, nothing a new key could lose. Use the vault; when it is unreachable (no session bus
+   *   on a headless Linux, an inaccessible keychain) fall back to the 0600 file and say why.
+   * - `sealed`: sealed with the vault key. Reuse that key; never create, replace or fall back.
+   * - `plain`: the 0600 fallback. Stay on it, even once a vault is reachable, so the secrets never change keys.
+   */
+  #state: 'fresh' | 'sealed' | 'plain' = 'fresh'
+  #protection: string | null = null
   #queue: Promise<unknown> = Promise.resolve()
 
-  constructor(dataDir: string, vault: VaultKeyProvider) {
+  constructor(dataDir: string, vault: VaultKeyProvider, options: { readonly warn?: (message: string) => void } = {}) {
     this.#file = path.join(dataDir, 'trust', 'secrets.json')
     this.#vault = vault
+    this.#warn = options.warn ?? (message => console.warn(message))
   }
 
-  /** Which protection the secrets have; the Desktop settings page shows it. */
+  /** Which protection the secrets have (`none` for the 0600 fallback); the Desktop settings page shows it. */
   get protection(): string {
-    return this.#vault.kind
+    return this.#protection ?? this.#vault.kind
   }
 
   async identityKey(): Promise<{ publicKey: Uint8Array; secretKey: Uint8Array }> {
@@ -78,16 +89,27 @@ export class FileDeviceSecrets implements DeviceSecrets {
       raw = await readFile(this.#file, 'utf8')
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      this.#state = 'fresh'
       this.#cache = { identity: null, directoryKeys: {} }
       return this.#cache
     }
     const envelope = JSON.parse(raw) as Envelope
     let plaintext: Buffer
     if (envelope.protection === 'none') {
+      this.#state = 'plain'
+      this.#protection = 'none'
       plaintext = Buffer.from(envelope.data, 'base64url')
     } else {
-      const key = await this.#vault.getOrCreate()
-      if (!key) throw new Error(`device secrets are protected by ${envelope.protection}, which is not available`)
+      // The file exists, so the key must too: never create one here (it could not open this file anyway).
+      const key = await this.#vault.getOrCreate({ create: false })
+      if (!key) {
+        throw new KeystoreError('keystore_unavailable', `device secrets are protected by ${envelope.protection}, whose key is not available`, {
+          kind: envelope.protection,
+          reason: 'key_missing',
+        })
+      }
+      this.#state = 'sealed'
+      this.#protection = envelope.protection
       const bytes = Buffer.from(envelope.data, 'base64url')
       const decipher = createDecipheriv('aes-256-gcm', key, bytes.subarray(0, 12), { authTagLength: 16 })
       decipher.setAAD(AD)
@@ -100,7 +122,7 @@ export class FileDeviceSecrets implements DeviceSecrets {
 
   async #save(secrets: SecretsFile): Promise<void> {
     const plaintext = Buffer.from(JSON.stringify(secrets), 'utf8')
-    const key = await this.#vault.getOrCreate()
+    const key = await this.#sealKey()
     let envelope: Envelope
     if (key) {
       const nonce = randomBytes(12)
@@ -112,7 +134,29 @@ export class FileDeviceSecrets implements DeviceSecrets {
       envelope = { v: 1, protection: 'none', data: plaintext.toString('base64url') }
     }
     await writeAtomic(this.#file, JSON.stringify(envelope))
+    this.#state = key ? 'sealed' : 'plain'
+    this.#protection = envelope.protection
     this.#cache = secrets
+  }
+
+  /** The key the next save seals with; null writes the 0600 fallback (see `#state`). */
+  async #sealKey(): Promise<Uint8Array | null> {
+    switch (this.#state) {
+      case 'plain':
+        return null
+      case 'sealed': {
+        const key = await this.#vault.getOrCreate({ create: false })
+        if (!key) throw new KeystoreError('keystore_unavailable', 'the vault key that protects the device secrets is no longer available', { reason: 'key_missing' })
+        return key
+      }
+      case 'fresh':
+        try {
+          return await this.#vault.getOrCreate()
+        } catch (error) {
+          this.#warn(`device secrets: the ${this.#vault.kind} vault is unavailable (${(error as Error).message}); storing them in an owner-only (0600) file instead`)
+          return null
+        }
+    }
   }
 
   #serial<T>(task: () => Promise<T>): Promise<T> {

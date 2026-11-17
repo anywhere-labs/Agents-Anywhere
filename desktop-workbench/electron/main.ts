@@ -240,7 +240,8 @@ async function resolveLaunchRoute(silentLoginLaunch: boolean): Promise<string> {
 }
 
 function drainDesktopOAuthCallbacks(): Promise<void> {
-  if (ownership.status !== "owned" || isQuitting) return Promise.resolve();
+  // A newer Connector serving this computer does not stop a sign-in: it only needs the Server.
+  if ((ownership.status !== "owned" && ownership.status !== "external") || isQuitting) return Promise.resolve();
   if (desktopOAuthDrainPromise) return desktopOAuthDrainPromise;
   desktopOAuthDrainPromise = (async () => {
     while (pendingDesktopOAuthCallbacks.length > 0) {
@@ -670,7 +671,7 @@ function syncDesktopUpdateSession(serverUrl: unknown) {
   return updates?.check(connection) ?? null;
 }
 
-/** Throws on a Connector conflict, matching the previous acquire semantics. */
+/** Throws on a Connector conflict; a newer Connector serving this computer is not one. */
 async function requireLocalOwnership(): Promise<void> {
   if (isQuitting || !backend) throw new Error("Desktop is shutting down or not ready.");
   ownership = await backend.request<OwnershipState>("/ownership/acquire", { method: "POST", body: "{}" });
@@ -693,7 +694,7 @@ function registerIpcHandlers(): void {
       try {
         ownership = await backend.request<OwnershipState>("/ownership/recheck", { method: "POST", body: "{}" });
       } catch { return ownership; }
-      if (ownership.status === "owned" && app.isPackaged) void drainDesktopOAuthCallbacks();
+      if ((ownership.status === "owned" || ownership.status === "external") && app.isPackaged) void drainDesktopOAuthCallbacks();
       return ownership;
     })().finally(() => { recheckingOwnership = null; });
     return recheckingOwnership;
@@ -982,7 +983,7 @@ async function restartDesktopBackend(): Promise<OwnershipState> {
 function publishOwnership(state: OwnershipState): void {
   ownership = state;
   sendToRenderer("workbench:ownership:state", ownership);
-  if (ownership.status === "owned" && app.isPackaged) void drainDesktopOAuthCallbacks();
+  if ((ownership.status === "owned" || ownership.status === "external") && app.isPackaged) void drainDesktopOAuthCallbacks();
   applySilentLaunchState();
 }
 
@@ -1177,7 +1178,7 @@ if (hasSingleInstanceLock) {
       silentLaunch = "holding";
       applySilentLaunchState();
     }
-    if (app.isPackaged && ownership.status === "owned") await drainDesktopOAuthCallbacks();
+    if (app.isPackaged && (ownership.status === "owned" || ownership.status === "external")) await drainDesktopOAuthCallbacks();
     if (process.platform === "darwin" && app.dock) app.dock.setIcon(appWindowIcon());
   }).catch((error) => {
     console.error("Failed to initialize Desktop Workbench", error);

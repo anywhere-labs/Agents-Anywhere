@@ -23,7 +23,9 @@ import {
   type DesktopConnectorSettings,
   type DesktopConnectorState,
   type DesktopLocalBinding,
+  type LocalExternalConnector,
 } from "@/features/desktop/bridge"
+import { useExternalConnector } from "@/features/desktop/local-ownership-context"
 
 export type DesktopConnectionStatus =
   | "idle"
@@ -101,6 +103,11 @@ type DesktopConnectorContextValue = {
   provisionError: string | null
   state: DesktopConnectorState | null
   binding: DesktopLocalBinding | null
+  /**
+   * A newer Connector serving this computer instead of Desktop's own. Local
+   * Connector actions are unavailable meanwhile; nothing is provisioned.
+   */
+  external: LocalExternalConnector | null
   isLocalConnector: (connectorId: string) => boolean
   refresh: () => Promise<void>
   retryProvision: () => void
@@ -127,7 +134,12 @@ export function useDesktopConnector() {
 
 export function DesktopConnectorProvider({ children }: { children: React.ReactNode }) {
   const t = useTranslations("desktopConnector")
+  const tOwnership = useTranslations("localOwnership")
   const { session } = useAuth()
+  const external = useExternalConnector()
+  const externalActive = external !== null
+  const externalRef = React.useRef(externalActive)
+  externalRef.current = externalActive
   const { refreshData } = useWorkspace()
   const [supported, setSupported] = React.useState(false)
   const [loading, setLoading] = React.useState(true)
@@ -174,6 +186,8 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
     }
     setConnectionStatus("disconnected")
     if (
+      // Desktop's own device is not the one serving this computer now.
+      !externalRef.current &&
       reconnectPromptDismissedRef.current !== connectorId &&
       intentionalDisconnectConnectorIdRef.current !== connectorId
     ) {
@@ -282,10 +296,27 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
   }, [])
 
   React.useEffect(() => {
+    if (externalActive) setReconnectPromptOpen(false)
+  }, [externalActive])
+
+  /** Local Connector actions while a newer Connector serves this computer. */
+  const refuseWhileExternal = React.useCallback(() => {
+    if (!externalRef.current) return false
+    toast.info(tOwnership("externalActionUnavailable"))
+    return true
+  }, [tOwnership])
+
+  React.useEffect(() => {
     const accessToken = session?.accessToken
     const userId = session?.userId
     const bridge = getDesktopWorkbenchBridge()
     if (!accessToken || !userId || !bridge?.device || !bridge.connector) return
+    // A newer Connector serves this computer: provisioning would only fight it.
+    // Desktop provisions once it has taken the machine back.
+    if (externalActive) {
+      setLoading(false)
+      return
+    }
     const deviceBridge = bridge.device
     const connectorBridge = bridge.connector
     const userToken = accessToken
@@ -371,6 +402,7 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
   }, [
     applyState,
     beginConnectionCheck,
+    externalActive,
     finishConnectionCheck,
     provisionRetryNonce,
     refresh,
@@ -387,6 +419,7 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
     const userId = session?.userId
     const bridge = getDesktopWorkbenchBridge()
     if (!accessToken || !userId || !bridge?.device || busy) return false
+    if (refuseWhileExternal()) return false
     setBusy(true)
     setConnectionStatus("connecting")
     setProvisionError(null)
@@ -427,6 +460,7 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
     binding?.connectorId,
     busy,
     refresh,
+    refuseWhileExternal,
     session?.accessToken,
     session?.userId,
     state?.connectorId,
@@ -468,6 +502,7 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
     const connectorId = binding?.connectorId ?? state?.connectorId
     const bridge = getDesktopWorkbenchBridge()
     if (!accessToken || !connectorId || !bridge?.connector || busy) return false
+    if (refuseWhileExternal()) return false
     setBusy(true)
     setConnectionStatus("connecting")
     setProvisionError(null)
@@ -500,6 +535,7 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
     applyState,
     binding?.connectorId,
     busy,
+    refuseWhileExternal,
     session?.accessToken,
     showConnectionFailure,
     state?.connectorId,
@@ -512,6 +548,7 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
     const connectorId = binding?.connectorId ?? state?.connectorId
     const bridge = getDesktopWorkbenchBridge()
     if (!accessToken || !connectorId || !bridge?.connector || busy) return false
+    if (refuseWhileExternal()) return false
     setBusy(true)
     setConnectionStatus("connecting")
     try {
@@ -529,7 +566,7 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
     } finally {
       setBusy(false)
     }
-  }, [applyState, binding?.connectorId, busy, session?.accessToken, state?.connectorId, t, waitUntilOnline])
+  }, [applyState, binding?.connectorId, busy, refuseWhileExternal, session?.accessToken, state?.connectorId, t, waitUntilOnline])
 
   const stop = React.useCallback(async () => {
     const bridge = getDesktopWorkbenchBridge()
@@ -553,6 +590,8 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
   const saveSettings = React.useCallback(async (settings: DesktopConnectorSettings) => {
     const bridge = getDesktopWorkbenchBridge()
     if (!bridge?.connector || busy) return false
+    // Desktop's proxy only reaches Desktop's own Connector.
+    if ("connectorProxy" in settings && refuseWhileExternal()) return false
     setBusy(true)
     const restartsConnector = Boolean(
       state?.running && "connectorProxy" in settings && settings.connectorProxy !== state.connectorProxy,
@@ -579,11 +618,12 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
     } finally {
       setBusy(false)
     }
-  }, [applyState, binding?.connectorId, busy, session?.accessToken, state, t, waitUntilOnline])
+  }, [applyState, binding?.connectorId, busy, refuseWhileExternal, session?.accessToken, state, t, waitUntilOnline])
 
   const saveConnectorConfig = React.useCallback(async (config: DesktopConnectorConfigPatch) => {
     const bridge = getDesktopWorkbenchBridge()
     if (!bridge?.connector || busy) return false
+    if (refuseWhileExternal()) return false
     setBusy(true)
     if (state?.running) setConnectionStatus("connecting")
     try {
@@ -604,7 +644,7 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
     } finally {
       setBusy(false)
     }
-  }, [applyState, binding?.connectorId, busy, session?.accessToken, state?.connectorId, state?.running, t, waitUntilOnline])
+  }, [applyState, binding?.connectorId, busy, refuseWhileExternal, session?.accessToken, state?.connectorId, state?.running, t, waitUntilOnline])
 
   const factoryReset = React.useCallback(async (forceLocal = false) => {
     const accessToken = session?.accessToken
@@ -613,6 +653,7 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
     if (!bridge?.connector?.factoryReset || busy || (!forceLocal && (!accessToken || !userId))) {
       throw new Error(t("factoryResetUnavailable"))
     }
+    if (externalRef.current) throw new Error(tOwnership("externalActionUnavailable"))
     setBusy(true)
     try {
       const serverUrl = binding?.serverUrl || state?.serverUrl || undefined
@@ -622,7 +663,7 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
     } finally {
       setBusy(false)
     }
-  }, [binding?.serverUrl, busy, session?.accessToken, session?.userId, state?.serverUrl, t])
+  }, [binding?.serverUrl, busy, session?.accessToken, session?.userId, state?.serverUrl, t, tOwnership])
 
   const openDataFolder = React.useCallback(async () => {
     const bridge = getDesktopWorkbenchBridge()
@@ -662,6 +703,7 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
     provisionError,
     state,
     binding,
+    external,
     isLocalConnector: (connectorId: string) => connectorId === binding?.connectorId,
     refresh,
     retryProvision,
@@ -682,6 +724,7 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
     connectionStatus,
     disconnect,
     explainRemoteReconnect,
+    external,
     factoryReset,
     loading,
     openDataFolder,

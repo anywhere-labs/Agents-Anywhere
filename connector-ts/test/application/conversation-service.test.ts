@@ -279,6 +279,52 @@ describe('command inbox', () => {
   })
 })
 
+describe('command receipts across a crash', () => {
+  // The process dies after the effect committed and before the inbox wrote the receipt itself.
+  const crashing = (base: RemoteStore): RemoteStore => ({ ...base, commands: { ...base.commands, settle: async () => { throw new Error('process died') } } }) as RemoteStore
+  const resultsOf = async (commandId: string) => (await store.outbox.pending(0, 200)).filter(record => record.kind === 'command.result' && record.payload.commandId === commandId)
+
+  it('replays a queue deletion instead of running it again', async () => {
+    await makeSession()
+    await store.deliveries.receive({
+      sessionId: 'sess_1', clientMessageId: 'mq', inputDigest: 'dq', userItem: null, pending: null, commandId: null, at: clock.nowIso(),
+      enqueue: { mode: 'auto', item: { messageId: 'qmsg_x', sessionId: 'sess_1', clientMessageId: 'mq', content: 'later', attachments: [], createdBy: 'usr_1', createdAt: 't', updatedAt: 't' } },
+    })
+    const call = { commandId: 'cq', deadline: 'x', p: { sessionId: 'sess_1', messageId: 'qmsg_x' } }
+    await expect(new CommandInbox(crashing(store), clock, service).handle('sessionQueueDelete', call)).rejects.toThrow('process died')
+    expect((await store.queues.get('sess_1')).items).toEqual([])
+    // The Server retries with the same commandId after the restart: the deletion happened, so it is accepted.
+    const retry = await new CommandInbox(store, clock, service).handle('sessionQueueDelete', call)
+    expect(retry).toMatchObject({ outcome: 'accepted', r: { sessionId: 'sess_1', items: [] } })
+    expect(await resultsOf('cq')).toHaveLength(1)
+    expect((await store.deliveries.get('sess_1', 'mq'))?.state).toBe('rejected')
+  })
+
+  it('replays a queued message with its original ack', async () => {
+    await makeSession()
+    await store.sessions.update('sess_1', { status: 'running' })
+    const call = { commandId: 'cm', deadline: 'x', inputDigest: 'dm', p: { sessionId: 'sess_1', clientMessageId: 'm9', content: 'queued', queue: 'auto' } }
+    await expect(new CommandInbox(crashing(store), clock, service).handle('sessionSendMessage', call)).rejects.toThrow('process died')
+    const retry = await new CommandInbox(store, clock, service).handle('sessionSendMessage', call)
+    expect(retry).toMatchObject({ outcome: 'accepted', r: { delivery: 'queued', clientMessageId: 'm9', queuePosition: 1 } })
+    expect((await store.queues.get('sess_1')).items).toHaveLength(1)
+    expect(await resultsOf('cm')).toHaveLength(1)
+  })
+
+  it('replays a planning command without calling the Runtime again', async () => {
+    await makeSession()
+    await service.binding('sess_1')
+    const modes: string[] = []
+    Object.assign(sessions[0]!, { planning: { setMode: async (mode: string) => { modes.push(mode) }, current: async () => ({ mode: 'unknown' }) } })
+    const call = { commandId: 'cp', deadline: 'x', p: { sessionId: 'sess_1', command: 'enter_plan', operationId: 'op1' } }
+    await expect(new CommandInbox(crashing(store), clock, service).handle('sessionPlanning', call)).rejects.toThrow('process died')
+    const retry = await new CommandInbox(store, clock, service).handle('sessionPlanning', call)
+    expect(retry).toMatchObject({ outcome: 'accepted', r: { operationId: 'op1' } })
+    expect(modes).toEqual(['plan'])
+    expect(await resultsOf('cp')).toHaveLength(1)
+  })
+})
+
 describe('sync streams', () => {
   it('watch streams client-shaped changes from afterSeq and a snapshot after a reset', async () => {
     await makeSession()

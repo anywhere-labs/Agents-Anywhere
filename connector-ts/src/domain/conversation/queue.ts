@@ -63,6 +63,13 @@ export function queueState(queue: SessionQueue): SessionQueueState {
   }
 }
 
+/** The ack body of a message that went into the queue (`session.sendMessage`, `delivery: queued`). */
+export function queuedDelivery(queue: SessionQueue, messageId: string, clientMessageId: string): { delivery: 'queued'; clientMessageId: string; item: Record<string, unknown>; queuePosition: number; queue: Record<string, unknown> } {
+  const state = queueState(queue)
+  const item = state.items.find(entry => entry.messageId === messageId)
+  return { delivery: 'queued', clientMessageId, item: item as unknown as Record<string, unknown>, queuePosition: item?.position ?? 0, queue: state as unknown as Record<string, unknown> }
+}
+
 function changed(queue: SessionQueue, items: readonly QueueItem[], paused = queue.paused): SessionQueue {
   return { sessionId: queue.sessionId, revision: queue.revision + 1, items, paused }
 }

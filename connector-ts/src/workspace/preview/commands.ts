@@ -11,6 +11,11 @@ export interface PreviewCommandDeps {
   readonly transport: PreviewTransport
   /** The ports listening right now (the Connector's `listeningPorts`). */
   readonly listening: () => Promise<ListeningPort[]>
+  /**
+   * The session a port's bindings belong to, or null (PortShare refuses it). Read when a preview opens, from the
+   * process tree and session output at that moment (`host-wiring.ts`).
+   */
+  readonly sessionOf: (bindings: readonly ListeningPort[]) => Promise<string | null>
 }
 
 export interface PreviewOpenResult {
@@ -33,7 +38,10 @@ export function previewCommands(deps: PreviewCommandDeps): {
     async previewOpen(payload) {
       const previewId = text(payload.previewId, 'previewId')
       const open = deps.transport.openPreviews()
-      const decision = decidePortShare(payload.port, await deps.listening(), open.length, open.some(p => p.previewId === previewId))
+      const listening = await deps.listening()
+      const bindings = listening.filter(entry => entry.port === payload.port)
+      const session = bindings.length === 0 ? null : await deps.sessionOf(bindings)
+      const decision = decidePortShare(payload.port, listening, open.length, open.some(p => p.previewId === previewId), () => session)
       await deps.transport.open({
         previewId,
         slug: text(payload.slug, 'slug'),

@@ -35,6 +35,8 @@ test("ownership window decisions match the states that block the machine", () =>
   assert.equal(ownershipNeedsWindow("error"), true);
   assert.equal(ownershipNeedsWindow("owned"), false);
   assert.equal(ownershipNeedsWindow("checking"), false);
+  // A newer Connector serving this computer leaves Desktop usable: nothing to resolve.
+  assert.equal(ownershipNeedsWindow("external"), false);
 });
 
 test("a login-item launch stays silent even before the Connector reports settings", () => {

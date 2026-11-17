@@ -109,6 +109,10 @@ function fixture(t: TestContext, options: {
   frpcBinary?: string;
   onShutdown?: "exit" | "hang";
   confirmClientApproval?: ConfirmClientApproval;
+  /** Pids the lease watch sees as running. */
+  alive?: Set<number>;
+  externalWatch?: { intervalMs?: number; probeBackoffMs?: number; maxProbeBackoffMs?: number; slowProbeMs?: number };
+  onReclaimed?: (reclaimed: { resume: boolean }) => void;
 } = {}): Fixture {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "aa-desktop-supervisor-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -143,6 +147,9 @@ function fixture(t: TestContext, options: {
     onLog: entry => logs.push(entry),
     connectControl: async value => { rendezvous.push(value); return (options.channel ?? fakeChannel)(); },
     ...(options.confirmClientApproval ? { confirmClientApproval: options.confirmClientApproval } : {}),
+    ...(options.alive ? { processAlive: (pid: number) => options.alive!.has(pid) } : {}),
+    ...(options.externalWatch ? { externalWatch: options.externalWatch } : {}),
+    ...(options.onReclaimed ? { onReclaimed: options.onReclaimed } : {}),
   });
   t.after(() => supervisor.shutdown());
   return { root, supervisor, settings, processes, rendezvous, ownership, logs, configPath };
@@ -265,49 +272,156 @@ test("a v2 or unknown Connector is a conflict the user resolves", async (t) => {
   assert.equal(f.processes.length, 1, "a refused claim keeps the process for the retry");
 });
 
-test("a newer Connector already serving the machine makes Desktop step aside", async (t) => {
+/** The shared lease record as the Connector writes it; `null` removes its owner. */
+function writeRuntimeRecord(root: string, owner: Record<string, unknown> | null): void {
+  const file = path.join(root, ".agents-anywhere", "connector-runtime.json");
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ version: 2, connectorIds: [], ...(owner ? { runtime: owner } : {}) }));
+}
+
+const newerOwner = (pid: number, connectorVersion: string, kind = "dsh-plugin") => ({
+  instanceId: `owner-${pid}`, kind, pid, startedAt: "2026-11-17T08:00:00.000Z", connectorVersion,
+  connectorId: "cli-device", serverUrl: "https://example.test",
+});
+
+const useExisting = (pid: number, kind = "dsh-plugin") => ({
+  code: "connector_already_running", message: "newer",
+  details: { reason: "connector_already_running", owner: { kind, pid }, decision: "use_existing" },
+});
+
+const until = async (condition: () => boolean, timeoutMs = 2_000) => {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error("timed out waiting for the condition");
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+};
+
+const FAST_WATCH = { intervalMs: 5, probeBackoffMs: 10, maxProbeBackoffMs: 40, slowProbeMs: 60_000 };
+
+test("a newer Connector serving the machine makes Desktop step aside without blocking, and Desktop takes the machine back once it exits", async (t) => {
   let newer = true;
+  const alive = new Set([77]);
+  const reclaimed: Array<{ resume: boolean }> = [];
   const f = fixture(t, {
+    alive,
+    externalWatch: FAST_WATCH,
+    onReclaimed: value => reclaimed.push(value),
     channel: () => fakeChannel({
       acquireOwnership: async () => {
-        if (newer) throw { code: "connector_already_running", message: "newer", details: { reason: "connector_already_running", owner: { kind: "dsh-plugin", pid: 77 }, decision: "use_existing" } };
+        if (newer) throw useExisting(77);
         return { running: false, authFailed: false };
       },
     }),
   });
+  writeRuntimeRecord(f.root, newerOwner(77, "3.2.0"));
   await assert.rejects(f.supervisor.acquireOwnership(), isConflict);
   const state = f.ownership.at(-1);
-  assert.equal(state?.status, "conflict");
-  assert.deepEqual(state?.status === "conflict" ? state.recovery : undefined, { kind: "newerConnector" });
-  assert.deepEqual(state?.status === "conflict" ? state.owner : undefined, { kind: "dsh-plugin", pid: 77 });
-  // Desktop's own process stops and nothing restarts it.
-  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(state?.status, "external");
+  assert.equal(state?.recovery, undefined);
+  assert.deepEqual(state?.external, {
+    kind: "dsh-plugin", pid: 77, version: "3.2.0", connectorId: "cli-device", serverUrl: "https://example.test", handedOver: false,
+  });
+  assert.deepEqual(f.ownership.map(value => value.status), ["checking", "external"], "the workspace is never blocked again");
+  // Desktop's own process stops and nothing restarts it while the newer Connector runs.
+  await until(() => f.processes[0]!.exited);
   assert.equal(f.processes[0]!.shutdowns, 1);
-  assert.equal(f.processes[0]!.exited, true);
   await assert.rejects(f.supervisor.start(), isConflict);
-  assert.equal(f.processes.length, 1, "a stepped-aside Desktop does not launch again on its own");
+  await new Promise(resolve => setTimeout(resolve, 80));
+  assert.equal(f.processes.length, 1, "a live owner is watched through its record, not by launching Desktop's Connector");
   assert.equal(f.logs.some(entry => entry.message.includes("will restart")), false);
-  // The gate's recheck tries again: the newer Connector may have exited.
+  // The newer Connector exits and releases its lease: Desktop claims the machine back on its own.
   newer = false;
-  await f.supervisor.acquireOwnership();
-  assert.equal(f.ownership.at(-1)?.status, "owned");
+  alive.delete(77);
+  writeRuntimeRecord(f.root, null);
+  await until(() => f.ownership.at(-1)?.status === "owned");
+  assert.equal(f.processes.length, 2);
+  assert.deepEqual(reclaimed, [{ resume: false }]);
+  assert.equal(f.ownership.some(value => value.status === "checking" && f.ownership.indexOf(value) > 0), false);
+  // Owned again: the watch is over.
+  await new Promise(resolve => setTimeout(resolve, 40));
   assert.equal(f.processes.length, 2);
 });
 
-test("a Connector that hands over to a newer one is not restarted", async (t) => {
-  const f = fixture(t);
+test("a Connector that hands over to a newer one is not restarted, and its runtime resumes once the newer one exits", async (t) => {
+  let newerRunning = true;
+  const alive = new Set([88]);
+  const reclaimed: Array<{ resume: boolean }> = [];
+  const f = fixture(t, {
+    alive,
+    externalWatch: FAST_WATCH,
+    onReclaimed: value => reclaimed.push(value),
+    channel: () => fakeChannel({
+      acquireOwnership: async () => {
+        if (newerRunning) throw useExisting(88, "cli");
+        return { running: false, authFailed: false };
+      },
+    }),
+  });
   await f.supervisor.start();
   assert.equal(f.supervisor.publicState().running, true);
+  writeRuntimeRecord(f.root, newerOwner(88, "3.3.0", "cli"));
   const child = f.processes[0]!;
   child.post({ type: "stopped", reason: "handed_over" });
   child.exit(0);
   await new Promise(resolve => setTimeout(resolve, 20));
   const state = f.ownership.at(-1);
-  assert.equal(state?.status, "conflict");
-  assert.deepEqual(state?.status === "conflict" ? state.recovery : undefined, { kind: "newerConnector" });
+  assert.equal(state?.status, "external");
+  assert.equal(state?.external?.handedOver, true);
+  assert.equal(state?.external?.version, "3.3.0");
+  assert.equal(state?.external?.kind, "cli");
   assert.equal(f.supervisor.publicState().running, false);
   assert.equal(f.supervisor.publicState().lastError, null);
   assert.equal(f.processes.length, 1);
+  newerRunning = false;
+  alive.delete(88);
+  writeRuntimeRecord(f.root, null);
+  await until(() => reclaimed.length === 1);
+  assert.equal(f.ownership.at(-1)?.status, "owned");
+  assert.deepEqual(reclaimed, [{ resume: true }], "the runtime that was running comes back");
+});
+
+test("taking the machine back backs off while claims keep finding a newer Connector", async (t) => {
+  const launches: number[] = [];
+  const f = fixture(t, {
+    alive: new Set(),
+    externalWatch: { intervalMs: 5, probeBackoffMs: 20, maxProbeBackoffMs: 80, slowProbeMs: 60_000 },
+    boot: child => { launches.push(Date.now()); setImmediate(() => child.ready()); },
+    // The record says nobody owns the machine, yet every claim is answered by a newer Connector.
+    channel: () => fakeChannel({ acquireOwnership: async () => { throw useExisting(99); } }),
+  });
+  writeRuntimeRecord(f.root, null);
+  await assert.rejects(f.supervisor.acquireOwnership(), isConflict);
+  await until(() => launches.length >= 5, 3_000);
+  const gaps = launches.slice(1).map((at, index) => at - launches[index]!);
+  // Gaps: the first claim after 20ms, then 40ms, then the 80ms ceiling.
+  for (const [index, minimum] of [20, 40, 80, 80].entries()) assert.ok(gaps[index]! >= minimum - 2, `gap ${index} was ${gaps[index]}ms`);
+  assert.equal(f.ownership.at(-1)?.status, "external");
+  assert.equal(f.logs.filter(entry => entry.message.includes("更新版本")).length, 2, "stepping aside is logged on the first claim only, not on every retry");
+});
+
+test("a v2 Connector found while taking the machine back is a conflict that blocks", async (t) => {
+  let decision = "use_existing";
+  const alive = new Set([77]);
+  const f = fixture(t, {
+    alive,
+    externalWatch: FAST_WATCH,
+    channel: () => fakeChannel({
+      acquireOwnership: async () => {
+        throw { code: "connector_already_running", message: "", details: { reason: "connector_already_running", owner: { kind: "cli", pid: 55 }, decision } };
+      },
+    }),
+  });
+  writeRuntimeRecord(f.root, newerOwner(77, "3.2.0"));
+  await assert.rejects(f.supervisor.acquireOwnership(), isConflict);
+  assert.equal(f.ownership.at(-1)?.status, "external");
+  decision = "conflict";
+  alive.delete(77);
+  writeRuntimeRecord(f.root, null);
+  await until(() => f.ownership.at(-1)?.status === "conflict");
+  const launched = f.processes.length;
+  await new Promise(resolve => setTimeout(resolve, 60));
+  assert.equal(f.processes.length, launched, "a conflict stops the watch");
 });
 
 test("an unexpected exit is recorded and restarts a running Connector", async (t) => {

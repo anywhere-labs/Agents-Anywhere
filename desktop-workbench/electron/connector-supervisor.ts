@@ -8,7 +8,15 @@ import type { DesktopBindingStore } from "./desktop-binding";
 import type { DesktopSettingsStore } from "./desktop-settings";
 import type { ClientApprovalPrompt, ConfirmClientApproval } from "./backend/protocol";
 import { removeFile, writeJsonFile } from "./json-store";
-import { localRuntimePath, type OwnershipState, type RuntimeOwner } from "./local-runtime";
+import {
+  localRuntimePath,
+  processAlive,
+  readHandoverVersion,
+  readRuntimeOwner,
+  type ExternalConnector,
+  type OwnershipState,
+  type RuntimeOwner,
+} from "./local-runtime";
 import type { ConnectorLogStore } from "./log-store";
 import type {
   ConnectorConfigPatch,
@@ -43,8 +51,16 @@ const RECENT_OUTPUT_LINES = 12;
 const RECENT_OUTPUT_LINE_LENGTH = 500;
 /** The decision a newer (or same-version) Connector's lease reports: use it, do not compete. */
 const USE_EXISTING = "use_existing";
-const NEWER_CONNECTOR_MESSAGE = "这台电脑上已有更新版本的 Connector 在运行（命令行或 DSH 插件），由它连接服务器。Desktop 不会再启动自己的 Connector。";
-const HANDED_OVER_MESSAGE = "更新版本的 Connector 已接管这台电脑，Desktop 内置的 Connector 已让出。";
+const NEWER_CONNECTOR_MESSAGE = "这台电脑上已有更新版本的 Connector 在运行（命令行或 DSH 插件），由它连接服务器。它退出后，Desktop 会自动接回。";
+const HANDED_OVER_MESSAGE = "更新版本的 Connector 已接管这台电脑，Desktop 内置的 Connector 已让出。它退出后，Desktop 会自动接回。";
+/**
+ * Watching a newer Connector's lease (04-connector.md §9.1): a cheap look at
+ * the shared record every few seconds, and a claim (which launches Desktop's
+ * Connector) only when the owner looks gone, backing off while claims keep
+ * failing. A slow claim also runs while the owner looks alive, in case its pid
+ * was reused or the record cannot be read.
+ */
+const EXTERNAL_WATCH_DEFAULTS = { intervalMs: 5_000, probeBackoffMs: 5_000, maxProbeBackoffMs: 60_000, slowProbeMs: 300_000 };
 
 /** The control surface of one Connector process; tests substitute their own. */
 export interface ConnectorChannel {
@@ -116,6 +132,15 @@ type ConnectorSupervisorOptions = {
   connectControl?: (rendezvous: Rendezvous) => Promise<ConnectorChannel>;
   /** Shows the Connector's confirmation requests to the person at this computer; absent = never answered (refused on timeout). */
   confirmClientApproval?: ConfirmClientApproval;
+  /**
+   * The newer Connector Desktop stepped aside for is gone and Desktop holds
+   * the machine again. `resume`: Desktop's own Connector was running (or asked
+   * to start) when it stepped aside.
+   */
+  onReclaimed?: (reclaimed: { resume: boolean }) => void;
+  /** Test seams for watching a newer Connector's lease. */
+  externalWatch?: Partial<typeof EXTERNAL_WATCH_DEFAULTS>;
+  processAlive?: (pid: number) => boolean;
 };
 
 type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void; reject: (error: Error) => void };
@@ -132,7 +157,8 @@ type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void; reject: (
  * Version arbitration happens inside the Connector's lease. Desktop only
  * reacts to the outcome: a newer Connector already running (`use_existing`)
  * or a newer one taking over from Desktop's (`handed_over`) means Desktop
- * stops competing and says so.
+ * stops competing, reports `external` ownership (the app keeps working
+ * through the Server), and claims the machine back once that Connector exits.
  */
 export class ConnectorSupervisor {
   private process: ConnectorProcess | null = null;
@@ -147,6 +173,15 @@ export class ConnectorSupervisor {
   private keepRuntimeRunning = false;
   /** A newer Connector serves this computer; Desktop does not start or restart its own. */
   private yielded = false;
+  /** What Desktop knows about the Connector it stepped aside for. */
+  private external: ExternalConnector | null = null;
+  /** Start Desktop's own runtime again once the machine is back. */
+  private resumeAfterReclaim = false;
+  private externalTimer: NodeJS.Timeout | null = null;
+  private externalProbe = { backoffMs: 0, nextAt: 0, lastAt: 0 };
+  /** The pid of Desktop's last Connector process, whose stale lease record is not "another" owner. */
+  private ownPid = 0;
+  private readonly watch: typeof EXTERNAL_WATCH_DEFAULTS;
   private crashCount = 0;
   private restartTimer: NodeJS.Timeout | null = null;
   /** Processes this supervisor is stopping on purpose; their exit is not an error. */
@@ -159,6 +194,7 @@ export class ConnectorSupervisor {
 
   constructor(private readonly options: ConnectorSupervisorOptions) {
     this.shellEnvironment = options.shellEnvironment;
+    this.watch = { ...EXTERNAL_WATCH_DEFAULTS, ...options.externalWatch };
     this.state = {
       platform: process.platform,
       status: "stopped",
@@ -271,30 +307,61 @@ export class ConnectorSupervisor {
     return this.emitState();
   }
 
-  acquireOwnership(): Promise<void> {
+  /** `quiet`: see `acquire`; only the lease watch passes it. */
+  acquireOwnership(options: { quiet?: boolean } = {}): Promise<void> {
     if (this.acquisition) return this.acquisition;
     if (this.shuttingDown) return Promise.reject(new Error("Connector is stopping."));
-    this.acquisition = this.acquire().finally(() => { this.acquisition = null; });
+    this.acquisition = this.acquire(options).finally(() => { this.acquisition = null; });
     return this.acquisition;
   }
 
-  private async acquire(): Promise<void> {
+  /**
+   * `quiet`: a background claim while a newer Connector still looks alive; a
+   * failure other than the newer Connector answering keeps Desktop stepped aside.
+   */
+  private async acquire(options: { quiet?: boolean } = {}): Promise<void> {
+    // A claim after Desktop yielded tries again: the newer Connector may be gone.
+    const wasYielded = this.yielded;
+    this.yielded = false;
     try {
-      // A recheck after Desktop yielded tries again: the newer Connector may be gone.
-      this.yielded = false;
-      // Revalidating a live lease must not unmount the workspace.
-      if (!this.process || this.claimedProcess !== this.process) this.options.onOwnership?.({ status: "checking" });
+      // Revalidating a live lease, or trying to take the machine back, must not unmount the workspace.
+      if (!wasYielded && (!this.process || this.claimedProcess !== this.process)) this.options.onOwnership?.({ status: "checking" });
       await this.request("connector.acquireOwnership", undefined, { requiresConfig: false, timeoutMs: OWNERSHIP_TIMEOUT_MS });
       this.claimedProcess = this.process;
       this.options.onOwnership?.({ status: "owned" });
+      if (wasYielded) this.reclaimed();
     } catch (error) {
       this.claimedProcess = null;
       const conflict = error instanceof ConnectorRpcError && error.ownershipConflict;
       const message = errorMessage(error);
-      this.log({ level: conflict ? "WARNING" : "ERROR", message: `Could not acquire Connector ownership: ${message}` });
+      if (wasYielded && options.quiet && !conflict && !this.shuttingDown) {
+        this.log({ level: "WARNING", message: `Could not take the machine back from the newer Connector yet: ${message}` });
+        this.yielded = true;
+        this.keepRuntimeRunning = false;
+        void this.terminate().catch(failure => this.logError(failure));
+        this.watchExternal();
+        throw error;
+      }
+      // Stepping aside again is expected while the newer Connector runs; it is logged once.
+      if (!(wasYielded && this.yielded)) this.log({ level: conflict ? "WARNING" : "ERROR", message: `Could not acquire Connector ownership: ${message}` });
+      if (!this.yielded) {
+        this.stopExternalWatch();
+        this.external = null;
+        this.resumeAfterReclaim = false;
+      }
       if (!conflict) this.options.onOwnership?.({ status: "error", message });
       throw error;
     }
+  }
+
+  /** The machine is Desktop's again after a newer Connector served it. */
+  private reclaimed(): void {
+    const resume = this.resumeAfterReclaim;
+    this.stopExternalWatch();
+    this.external = null;
+    this.resumeAfterReclaim = false;
+    this.log({ level: "INFO", message: "The newer Connector has exited; Desktop's built-in Connector serves this computer again." });
+    this.options.onReclaimed?.({ resume });
   }
 
   /** A failure outside any Connector request, such as the launch auto-start, still belongs in `lastError`. */
@@ -399,6 +466,7 @@ export class ConnectorSupervisor {
     this.shuttingDown = true;
     this.keepRuntimeRunning = false;
     this.clearRestartTimer();
+    this.stopExternalWatch();
     await this.acquisition?.catch(() => undefined);
     await this.terminate();
   }
@@ -453,12 +521,13 @@ export class ConnectorSupervisor {
     if (!code) return error instanceof Error ? error : new Error(String(error));
     const details = value?.details;
     if (code === "connector_already_running") {
+      const resume = this.keepRuntimeRunning;
       this.keepRuntimeRunning = false;
       this.clearRestartTimer();
       const ownerRecord = details?.owner && typeof details.owner === "object" && !Array.isArray(details.owner)
         ? details.owner as Record<string, unknown>
         : undefined;
-      if (details?.decision === USE_EXISTING) return this.yieldTo(ownerRecord, NEWER_CONNECTOR_MESSAGE, details);
+      if (details?.decision === USE_EXISTING) return this.yieldTo(ownerRecord, NEWER_CONNECTOR_MESSAGE, { details, resume });
       const rawMessage = typeof value?.message === "string" ? value.message.trim() : "";
       const ownerParts = [
         typeof ownerRecord?.kind === "string" && ownerRecord.kind.trim() ? ownerRecord.kind.trim() : "",
@@ -481,23 +550,115 @@ export class ConnectorSupervisor {
 
   /**
    * A newer Connector serves this computer (04-connector.md §9.1). Desktop's own
-   * process exits and stays stopped; a recheck from the gate tries again.
+   * process exits and stays stopped, the app keeps working through the Server,
+   * and a watch on the lease takes the machine back once that Connector exits.
    */
-  private yieldTo(owner: Record<string, unknown> | undefined, message: string, details?: Record<string, unknown>): ConnectorRpcError {
+  private yieldTo(
+    owner: Record<string, unknown> | undefined,
+    message: string,
+    options: { details?: Record<string, unknown>; resume: boolean; handedOver?: boolean; version?: string },
+  ): ConnectorRpcError {
+    const already = this.external !== null;
     this.yielded = true;
+    this.resumeAfterReclaim ||= options.resume;
     this.keepRuntimeRunning = false;
     this.clearRestartTimer();
     this.claimedProcess = null;
-    this.log({ level: "INFO", message });
-    this.options.onOwnership?.({
-      status: "conflict",
-      message,
-      recovery: { kind: "newerConnector" },
-      ...(owner ? { owner: owner as unknown as RuntimeOwner } : {}),
-    });
+    this.external = this.describeExternal(owner, { handedOver: options.handedOver ?? this.external?.handedOver ?? false, version: options.version });
+    if (!already) this.log({ level: "INFO", message });
+    this.publishExternal(message);
     void this.terminate().catch(error => this.logError(error));
-    return new ConnectorRpcError(-32009, message, { reason: "connector_already_running", decision: USE_EXISTING, ...(details ?? {}) });
+    this.watchExternal();
+    return new ConnectorRpcError(-32009, message, { reason: "connector_already_running", decision: USE_EXISTING, ...(options.details ?? {}) });
   }
+
+  private publishExternal(message = this.external?.handedOver ? HANDED_OVER_MESSAGE : NEWER_CONNECTOR_MESSAGE): void {
+    const external = this.external;
+    if (!external) return;
+    this.options.onOwnership?.({
+      status: "external",
+      message,
+      external: { ...external },
+    });
+  }
+
+  /**
+   * What the lease record (and the handover rendezvous next to it) says about
+   * the owner. Desktop has no key for that Connector's control channel: the
+   * keys it publishes only ask for a handover or a client pairing.
+   */
+  private describeExternal(owner: Record<string, unknown> | undefined, hint: { handedOver: boolean; version?: string }): ExternalConnector {
+    const record = readRuntimeOwner(this.options.homePath);
+    const named = typeof owner?.pid === "number" ? owner.pid : undefined;
+    const other = record && record.pid !== this.ownPid && (named === undefined || record.pid === named) ? record : undefined;
+    const kind = typeof owner?.kind === "string" && owner.kind.trim() ? owner.kind.trim() : other?.kind ?? this.external?.kind ?? "";
+    const pid = named ?? other?.pid ?? this.external?.pid;
+    const version = other?.connectorVersion?.trim()
+      || (other ? readHandoverVersion(this.options.homePath, other.instanceId) : undefined)
+      || hint.version
+      || (this.external && this.external.pid === pid ? this.external.version : undefined);
+    return {
+      kind,
+      ...(pid ? { pid } : {}),
+      ...(version ? { version } : {}),
+      ...(other?.connectorId ? { connectorId: other.connectorId } : {}),
+      ...(other?.serverUrl ? { serverUrl: other.serverUrl } : {}),
+      handedOver: hint.handedOver,
+    };
+  }
+
+  private watchExternal(): void {
+    if (this.externalTimer || this.shuttingDown) return;
+    const now = Date.now();
+    if (!this.externalProbe.lastAt) this.externalProbe = { backoffMs: this.watch.probeBackoffMs, nextAt: now + this.watch.probeBackoffMs, lastAt: now };
+    const tick = () => {
+      this.externalTimer = null;
+      if (!this.yielded || this.shuttingDown) return;
+      void this.checkExternal().catch(error => this.logError(error)).finally(() => {
+        if (!this.yielded || this.shuttingDown || this.externalTimer) return;
+        this.externalTimer = setTimeout(tick, this.watch.intervalMs);
+        this.externalTimer.unref?.();
+      });
+    };
+    this.externalTimer = setTimeout(tick, this.watch.intervalMs);
+    this.externalTimer.unref?.();
+  }
+
+  private stopExternalWatch(): void {
+    if (this.externalTimer) clearTimeout(this.externalTimer);
+    this.externalTimer = null;
+    this.externalProbe = { backoffMs: 0, nextAt: 0, lastAt: 0 };
+  }
+
+  /** One look at the lease while a newer Connector serves this computer. */
+  private async checkExternal(): Promise<void> {
+    if (this.acquisition) return;
+    const record = readRuntimeOwner(this.options.homePath);
+    const alive = this.options.processAlive ?? processAlive;
+    const ownerLive = record ? record.pid !== this.ownPid && (alive(record.pid) || (record.childPid !== undefined && alive(record.childPid))) : false;
+    // An unreadable record (`null`) says nothing either way; only the slow claim covers it.
+    const released = record === undefined || (record !== null && !ownerLive);
+    if (ownerLive) {
+      const next = this.describeExternal({ kind: record!.kind, pid: record!.pid }, { handedOver: this.external?.handedOver ?? false });
+      if (JSON.stringify(next) !== JSON.stringify(this.external)) {
+        this.external = next;
+        this.publishExternal();
+      }
+    }
+    const now = Date.now();
+    const due = released ? now >= this.externalProbe.nextAt : now - this.externalProbe.lastAt >= this.watch.slowProbeMs;
+    if (!due) return;
+    this.externalProbe.lastAt = now;
+    try {
+      // While the owner still looks alive, a failed claim keeps Desktop stepped aside.
+      await this.acquireOwnership({ quiet: !released });
+    } catch {
+      if (!this.yielded) return;
+      this.externalProbe.backoffMs = Math.min(this.watch.maxProbeBackoffMs, Math.max(this.watch.probeBackoffMs, this.externalProbe.backoffMs * 2));
+      this.externalProbe.nextAt = Date.now() + this.externalProbe.backoffMs;
+    }
+  }
+
 
   private yieldedError(): ConnectorRpcError {
     return new ConnectorRpcError(-32009, NEWER_CONNECTOR_MESSAGE, { reason: "connector_already_running", decision: USE_EXISTING });
@@ -534,6 +695,7 @@ export class ConnectorSupervisor {
         void this.terminate().catch(error => this.logError(error));
         return;
       }
+      if (rendezvous.pid > 0) this.ownPid = rendezvous.pid;
       this.log({ level: "INFO", message: `Connector ready (${rendezvous.instanceId}, PID ${rendezvous.pid})` });
       void this.connect(rendezvous, ready).then(
         channel => ready.resolve(channel),
@@ -555,7 +717,11 @@ export class ConnectorSupervisor {
       this.terminating.add(child);
       child.kill();
       // A newer Connector asked this one to hand over and it did (04-connector.md §9.1).
-      if (message.reason === "handed_over") this.yieldTo(undefined, HANDED_OVER_MESSAGE);
+      if (message.reason === "handed_over") {
+        // The Connector's last state says `handed over to Connector <version>`.
+        const version = /handed over to Connector (\S+)/.exec(this.state.lastError ?? "")?.[1];
+        this.yieldTo(undefined, HANDED_OVER_MESSAGE, { resume: this.keepRuntimeRunning || this.state.running, handedOver: true, ...(version ? { version } : {}) });
+      }
     }
   }
 

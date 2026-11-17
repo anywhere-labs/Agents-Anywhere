@@ -8,6 +8,7 @@ import type {
   BlobRepository,
   ChangesPage,
   CommandLog,
+  CommandReceipt,
   CommandRecord,
   ConversationStore,
   DeliveryRepository,
@@ -69,7 +70,8 @@ export type SyncStore = { [K in Exclude<keyof ConversationStore, 'close'>]: Sync
 
 export class StoreError extends Error {
   public constructor(
-    public readonly code: 'store_read_only' | 'store_corrupt' | 'not_found',
+    /** `store_unavailable`: the store worker exited or crashed; nothing can be read or written until a restart. */
+    public readonly code: 'store_read_only' | 'store_corrupt' | 'not_found' | 'store_unavailable',
     message: string,
   ) {
     super(message)
@@ -296,6 +298,56 @@ export function openSqliteStore(options: OpenStoreOptions): SyncStore {
     return Number(result.lastInsertRowid)
   }
 
+  function commandFromRow(row: Row): CommandRecord {
+    return {
+      commandId: String(row.operation_id),
+      method: String(row.method),
+      sessionId: nullableString(row.session_id),
+      inputDigest: nullableString(row.input_digest),
+      outcome: String(row.outcome) as CommandRecord['outcome'],
+      result: row.result_json === null ? null : parse<Record<string, unknown>>(row.result_json),
+      error: row.error_json === null ? null : parse<CommandRecord['error']>(row.error_json),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    }
+  }
+
+  /**
+   * Writes a receipt and queues `command.result`, inside the caller's transaction. A final receipt (accepted or
+   * rejected) is never replaced: the one committed with the effect stands, and its result is not queued twice.
+   */
+  function writeReceipt(record: CommandRecord): CommandRecord {
+    const row = get('SELECT * FROM operations WHERE operation_id = ?', record.commandId)
+    if (row !== undefined) {
+      const existing = commandFromRow(row)
+      if (existing.outcome !== 'unknown') return existing
+    }
+    run(
+      `INSERT INTO operations(operation_id, method, session_id, input_digest, outcome, result_json, error_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(operation_id) DO UPDATE SET outcome = excluded.outcome, result_json = excluded.result_json, error_json = excluded.error_json, updated_at = excluded.updated_at`,
+      record.commandId, record.method, record.sessionId, record.inputDigest, record.outcome,
+      record.result === null ? null : json(record.result), record.error === null ? null : json(record.error), record.createdAt, record.updatedAt,
+    )
+    if (record.outcome !== 'unknown') {
+      appendOutbox('command.result', record.sessionId, {
+        commandId: record.commandId,
+        outcome: record.outcome,
+        ...(record.result !== null ? { r: record.result } : {}),
+        ...(record.error !== null ? { e: record.error } : {}),
+      }, record.updatedAt)
+    }
+    return record
+  }
+
+  /** The accepted receipt of a command whose effect this transaction commits. */
+  function acceptReceipt(receipt: CommandReceipt | null | undefined, result: Record<string, unknown> | null, at: string): void {
+    if (receipt === null || receipt === undefined) return
+    writeReceipt({
+      commandId: receipt.commandId, method: receipt.method, sessionId: receipt.sessionId, inputDigest: receipt.inputDigest,
+      outcome: 'accepted', result, error: null, createdAt: receipt.createdAt, updatedAt: at,
+    })
+  }
+
   /** Applies a patch to the session row and returns the new session (no clock change). */
   function patchSession(session: Session, patch: SessionPatch): Session {
     const next: Session = {
@@ -397,12 +449,16 @@ export function openSqliteStore(options: OpenStoreOptions): SyncStore {
       return tx(() => {
         const existing = get('SELECT * FROM sessions WHERE session_id = ?', input.sessionId)
         if (existing !== undefined) return { session: sessionFromRow(existing), created: false }
+        // A floor the Server gave before this session existed here: its clock starts above it, fence raised.
+        const floorRow = get('SELECT seq_floor FROM seq_floors WHERE session_id = ?', input.sessionId)
+        const clock: SessionClock = floorRow === undefined ? { headSeq: 0, resetSeq: 0 } : applySeqFloor({ headSeq: 0, resetSeq: 0 }, Number(floorRow.seq_floor)).clock
         run(
           `INSERT INTO sessions(session_id, runtime_type, runtime_id, external_session_id, cwd, project_id, native_title, status, source_availability,
-             head_seq, reset_seq, takeover, created_at, last_activity_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)`,
+             head_seq, reset_seq, takeover, created_at, last_activity_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           input.sessionId, input.runtimeType, input.runtimeId, input.externalSessionId, input.cwd, input.projectId ?? null, input.nativeTitle, input.status,
-          input.sourceAvailability, input.takeover ? 1 : 0, input.at, input.at,
+          input.sourceAvailability, clock.headSeq, clock.resetSeq, input.takeover ? 1 : 0, input.at, input.at,
         )
+        if (floorRow !== undefined) run('DELETE FROM seq_floors WHERE session_id = ?', input.sessionId)
         const session = requireSession(input.sessionId)
         publishSummary(session, input.at)
         return { session, created: true }
@@ -431,7 +487,16 @@ export function openSqliteStore(options: OpenStoreOptions): SyncStore {
         const moved: string[] = []
         for (const [sessionId, floor] of Object.entries(floors)) {
           const row = get('SELECT * FROM sessions WHERE session_id = ?', sessionId)
-          if (row === undefined) continue
+          if (row === undefined) {
+            // Not here yet (a native rescan after a reinstall recreates it under the same id): keep the floor
+            // for `create`, so the new clock never starts below what clients already saw.
+            applySeqFloor({ headSeq: 0, resetSeq: 0 }, floor) // validates it, as for a session that exists
+            run(
+              'INSERT INTO seq_floors(session_id, seq_floor) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET seq_floor = MAX(seq_floor, excluded.seq_floor)',
+              sessionId, floor,
+            )
+            continue
+          }
           const session = sessionFromRow(row)
           const decision = applySeqFloor(session.clock, floor)
           if (!decision.restamp) continue
@@ -571,6 +636,10 @@ export function openSqliteStore(options: OpenStoreOptions): SyncStore {
         } else if (input.userItem !== null) {
           commit = applyTimeline(input.sessionId, { upserts: [input.userItem], at: input.at })
         }
+        const receiptResult = input.receipt?.result ?? null
+        acceptReceipt(input.receipt, queue !== null && queueItem !== null
+          ? { ...(receiptResult ?? {}), ...queueRules.queuedDelivery(queue, queueItem.messageId, input.clientMessageId) }
+          : receiptResult, input.at)
         return { delivery: decision.delivery, duplicate: false, queue, queueItem, commit }
       })
     },
@@ -653,7 +722,7 @@ export function openSqliteStore(options: OpenStoreOptions): SyncStore {
     get(sessionId) {
       return getQueue(sessionId)
     },
-    apply(sessionId, op, at) {
+    apply(sessionId, op, at, receipt) {
       return tx(() => {
         const before = getQueue(sessionId)
         let next: SessionQueue
@@ -675,6 +744,7 @@ export function openSqliteStore(options: OpenStoreOptions): SyncStore {
           settleDeliveryForQueue(sessionId, op, before, at)
           putQueue(next)
         }
+        acceptReceipt(receipt, { ...(receipt?.result ?? {}), ...(queueRules.queueState(next) as unknown as Record<string, unknown>) }, at)
         return next
       })
     },
@@ -733,7 +803,7 @@ export function openSqliteStore(options: OpenStoreOptions): SyncStore {
       const row = get('SELECT state_json FROM planning_state WHERE session_id = ?', sessionId)
       return row === undefined ? null : parse<PlanningState>(row.state_json)
     },
-    save(state: PlanningState, document: PlanDocument | null) {
+    save(state: PlanningState, document: PlanDocument | null, receipt?: CommandReceipt | null) {
       return tx(() => {
         if (document !== null) {
           const existing = get('SELECT content_hash FROM plan_documents WHERE session_id = ? AND plan_id = ? AND revision = ?', state.sessionId, document.planId, document.revision)
@@ -752,7 +822,9 @@ export function openSqliteStore(options: OpenStoreOptions): SyncStore {
           state.sessionId, json(state), state.revision,
         )
         const session = patchSession(requireSession(state.sessionId), { planState: planStateSummary(state) })
-        return noTick(session, publishSummary(session, now()))
+        const at = now()
+        acceptReceipt(receipt, receipt?.result ?? null, at)
+        return noTick(session, publishSummary(session, at))
       })
     },
     document(sessionId, planId, revision) {
@@ -776,30 +848,18 @@ export function openSqliteStore(options: OpenStoreOptions): SyncStore {
       const row = get('SELECT state_json FROM goal_state WHERE session_id = ?', sessionId)
       return row === undefined ? null : parse<GoalState>(row.state_json)
     },
-    save(state: GoalState) {
+    save(state: GoalState, receipt?: CommandReceipt | null) {
       return tx(() => {
         run(
           'INSERT INTO goal_state(session_id, state_json, revision) VALUES (?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET state_json = excluded.state_json, revision = excluded.revision',
           state.sessionId, json(state), state.revision,
         )
         const session = patchSession(requireSession(state.sessionId), { goalState: goalStateSummary(state) })
-        return noTick(session, publishSummary(session, now()))
+        const at = now()
+        acceptReceipt(receipt, receipt?.result ?? null, at)
+        return noTick(session, publishSummary(session, at))
       })
     },
-  }
-
-  function commandFromRow(row: Row): CommandRecord {
-    return {
-      commandId: String(row.operation_id),
-      method: String(row.method),
-      sessionId: nullableString(row.session_id),
-      inputDigest: nullableString(row.input_digest),
-      outcome: String(row.outcome) as CommandRecord['outcome'],
-      result: row.result_json === null ? null : parse<Record<string, unknown>>(row.result_json),
-      error: row.error_json === null ? null : parse<CommandRecord['error']>(row.error_json),
-      createdAt: String(row.created_at),
-      updatedAt: String(row.updated_at),
-    }
   }
 
   const commands: Sync<CommandLog> = {
@@ -808,22 +868,7 @@ export function openSqliteStore(options: OpenStoreOptions): SyncStore {
       return row === undefined ? null : commandFromRow(row)
     },
     settle(record) {
-      tx(() => {
-        run(
-          `INSERT INTO operations(operation_id, method, session_id, input_digest, outcome, result_json, error_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(operation_id) DO UPDATE SET outcome = excluded.outcome, result_json = excluded.result_json, error_json = excluded.error_json, updated_at = excluded.updated_at`,
-          record.commandId, record.method, record.sessionId, record.inputDigest, record.outcome,
-          record.result === null ? null : json(record.result), record.error === null ? null : json(record.error), record.createdAt, record.updatedAt,
-        )
-        if (record.outcome !== 'unknown') {
-          appendOutbox('command.result', record.sessionId, {
-            commandId: record.commandId,
-            outcome: record.outcome,
-            ...(record.result !== null ? { r: record.result } : {}),
-            ...(record.error !== null ? { e: record.error } : {}),
-          }, record.updatedAt)
-        }
-      })
+      return tx(() => writeReceipt(record))
     },
   }
 

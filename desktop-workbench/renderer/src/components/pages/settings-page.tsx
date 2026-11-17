@@ -7,6 +7,7 @@ import {
   ChevronDown,
   Download,
   FolderOpen,
+  Info,
   Power,
   RotateCw,
   Settings,
@@ -79,6 +80,8 @@ import { normalizeAuthMe } from "@/features/auth/normalize-me"
 import type { AuthMe } from "@/features/auth/types"
 import { useDeviceSettings } from "@/features/dashboard/device-settings"
 import { useDesktopConnector } from "@/features/desktop/desktop-connector-context"
+import { externalConnectorMessageValues } from "@/features/desktop/local-ownership-context"
+import type { LocalExternalConnector } from "@/features/desktop/bridge"
 import {
   getDesktopWorkbenchBridge,
   type DesktopConnectorLog,
@@ -241,8 +244,55 @@ function MobileConnectionsTab({ token, userId }: { token: string; userId: string
   )
 }
 
+/**
+ * A newer Connector (CLI or DSH plugin) connects this computer instead of
+ * Desktop's own. Desktop cannot reach that Connector's control channel; what
+ * it shows comes from the shared lease record, and the device status from the Server.
+ */
+function ExternalConnectorSection({ external }: { external: LocalExternalConnector }) {
+  const t = useTranslations("localOwnership")
+  const { connectors } = useWorkspace()
+  const values = externalConnectorMessageValues(external)
+  const device = external.connectorId ? connectors.find((connector) => connector.id === external.connectorId) : undefined
+  const rows: Array<[string, React.ReactNode]> = [
+    [t("externalSource"), t("externalSourceValue", values)],
+    [t("externalVersion"), external.version ?? t("externalVersionUnknown")],
+    ...(external.pid ? [[t("externalPid"), <span key="pid" className="code-mono">{external.pid}</span>] as [string, React.ReactNode]] : []),
+    ...(external.connectorId ? [[t("externalDevice"), <span key="device" className="code-mono truncate">{external.connectorId}</span>] as [string, React.ReactNode]] : []),
+    [t("externalDeviceStatus"), device
+      ? t(device.status === "online" ? "externalOnline" : "externalOffline")
+      : t("externalStatusUnavailable")],
+  ]
+  return (
+    <section className="rounded-xl border border-border bg-card" role="status" aria-live="polite">
+      <div className="flex items-start gap-3 px-6 py-5">
+        <Info className="mt-0.5 size-4 shrink-0 text-blue-600" aria-hidden="true" />
+        <div className="min-w-0 space-y-1">
+          <h2 className="text-base font-semibold">{t("externalTitle")}</h2>
+          <p className="text-sm text-muted-foreground">
+            {t("externalSummary", values)}
+            {external.handedOver ? ` ${t("externalHandedOver")}` : ""}
+          </p>
+          <p className="text-sm text-muted-foreground">{t("externalUsable")}</p>
+          <p className="text-sm text-muted-foreground">{t("externalLocalUnavailable")}</p>
+        </div>
+      </div>
+      <Separator />
+      <div className="divide-y divide-border">
+        {rows.map(([label, value]) => (
+          <div key={label} className="flex min-w-0 items-center px-6 py-4">
+            <span className="w-36 shrink-0 text-sm text-muted-foreground">{label}</span>
+            <span className="min-w-0 truncate text-sm">{value}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
 function DesktopTab() {
   const t = useTranslations("pages.settings")
+  const tOwnership = useTranslations("localOwnership")
   const { connectors } = useWorkspace()
   const {
     supported,
@@ -261,7 +311,13 @@ function DesktopTab() {
     saveConnectorConfig: saveLocalConnectorConfig,
     factoryReset,
     openDataFolder,
+    external,
   } = useDesktopConnector()
+  // A newer Connector serves this computer: Desktop's own Connector actions wait until Desktop takes it back.
+  const localLocked = external !== null
+  const localLockedHint = localLocked
+    ? <p className="mt-1 text-xs text-muted-foreground">{tOwnership("externalActionUnavailable")}</p>
+    : null
   const [connectorConfigSaving, setConnectorConfigSaving] = React.useState(false)
   const [factoryResetOpen, setFactoryResetOpen] = React.useState(false)
   const [forceFactoryResetOpen, setForceFactoryResetOpen] = React.useState(false)
@@ -284,7 +340,9 @@ function DesktopTab() {
     connectorId && (state?.authFailed || state?.manualDisconnected),
   )
   const connectorIsRunning = Boolean(!needsReconnect && (state?.running || state?.status === "running"))
-  const statusKey = needsReconnect
+  const statusKey = localLocked
+    ? null
+    : needsReconnect
     ? "desktopDisconnected"
     : provisionError || connectionStatus === "error"
       ? "desktopConnectionError"
@@ -368,6 +426,7 @@ function DesktopTab() {
 
   return (
     <div className="flex flex-col gap-4">
+      {external ? <ExternalConnectorSection external={external} /> : null}
       <section className="rounded-xl border border-border bg-card">
         <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-5">
           <div className="min-w-0">
@@ -376,7 +435,9 @@ function DesktopTab() {
               <span
                 className={cn(
                   "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium",
-                  serverOnline
+                  localLocked
+                    ? "bg-blue-500/10 text-blue-600"
+                    : serverOnline
                     ? "bg-emerald-500/10 text-emerald-600"
                     : needsReconnect || provisionError || connectionStatus === "error"
                       ? "bg-destructive/10 text-destructive"
@@ -388,7 +449,9 @@ function DesktopTab() {
                 <span
                   className={cn(
                     "size-1.5 rounded-full",
-                    serverOnline
+                    localLocked
+                      ? "bg-blue-500"
+                      : serverOnline
                       ? "bg-emerald-500"
                       : needsReconnect || provisionError || connectionStatus === "error"
                         ? "bg-destructive"
@@ -397,25 +460,25 @@ function DesktopTab() {
                         : "bg-muted-foreground/60",
                   )}
                 />
-                {t(statusKey)}
+                {statusKey ? t(statusKey) : tOwnership("externalBadge")}
               </span>
             </div>
             <p className="mt-1 text-sm text-muted-foreground">{t("desktopDescription")}</p>
           </div>
           <div className="flex items-center gap-2">
-            {provisionError && !needsReconnect ? (
+            {!localLocked && provisionError && !needsReconnect ? (
               <Button type="button" size="sm" onClick={retryProvision} disabled={busy}>
                 {busy ? <Spinner /> : <RotateCw data-icon="inline-start" />}
                 {t("desktopRetryConnection")}
               </Button>
             ) : null}
-            {needsReconnect ? (
+            {!localLocked && needsReconnect ? (
               <Button type="button" size="sm" onClick={() => void reconnect()} disabled={busy}>
                 {busy ? <Spinner /> : <Power data-icon="inline-start" />}
                 {busy ? t("desktopReconnecting") : t("desktopReconnect")}
               </Button>
             ) : null}
-            {!needsReconnect && !provisionError && !connectorIsRunning && connectorId ? (
+            {!localLocked && !needsReconnect && !provisionError && !connectorIsRunning && connectorId ? (
               <Button type="button" size="sm" onClick={() => void start()} disabled={busy}>
                 {busy ? <Spinner /> : <Power data-icon="inline-start" />}
                 {t("desktopStartNow")}
@@ -452,6 +515,7 @@ function DesktopTab() {
         <div className="px-6 py-5">
           <h2 className="text-base font-semibold">{t("desktopAdvanced")}</h2>
           <p className="mt-0.5 text-sm text-muted-foreground">{t("desktopAdvancedDescription")}</p>
+          {localLockedHint}
         </div>
         <Separator />
         <FieldGroup className="gap-0 px-6 py-5">
@@ -469,7 +533,7 @@ function DesktopTab() {
                 if (mode === "system") void saveSettings({ connectorProxy: "" })
                 if (mode === "direct") void saveSettings({ connectorProxy: "direct" })
               }}
-              disabled={busy}
+              disabled={busy || localLocked}
             >
               <SelectTrigger className="min-w-44">
                 <SelectValue />
@@ -490,6 +554,7 @@ function DesktopTab() {
                 placeholder="http://127.0.0.1:7890"
                 aria-label={t("desktopConnectorProxyCustom")}
                 aria-invalid={proxyUrlInvalid}
+                disabled={localLocked}
                 onChange={(event) => setProxyUrl(event.currentTarget.value)}
                 onBlur={(event) => {
                   const value = event.currentTarget.value.trim()
@@ -508,6 +573,7 @@ function DesktopTab() {
         <div className="px-6 py-5">
           <h2 className="text-base font-semibold">{t("desktopConnectorConfig")}</h2>
           <p className="mt-0.5 text-sm text-muted-foreground">{t("desktopConnectorConfigDescription")}</p>
+          {localLockedHint}
         </div>
         <Separator />
         <FieldGroup className="px-6 py-5">
@@ -519,7 +585,7 @@ function DesktopTab() {
             <Select
               value={String(connectorConfigDraft.syncIntervalSeconds)}
               onValueChange={(value) => setConnectorConfigDraft((current) => ({ ...current, syncIntervalSeconds: Number(value) }))}
-              disabled={connectorConfigSaving || !connectorId}
+              disabled={connectorConfigSaving || !connectorId || localLocked}
             >
               <SelectTrigger className="min-w-32">
                 <SelectValue />
@@ -536,7 +602,7 @@ function DesktopTab() {
         </FieldGroup>
         <Separator />
         <div className="flex justify-end px-6 py-4">
-          <Button type="button" size="sm" onClick={() => void saveConnectorConfig()} disabled={connectorConfigSaving || !connectorId}>
+          <Button type="button" size="sm" onClick={() => void saveConnectorConfig()} disabled={connectorConfigSaving || !connectorId || localLocked}>
             {connectorConfigSaving ? <Spinner /> : <Settings data-icon="inline-start" />}
             {connectorConfigSaving
               ? t("saving")
@@ -550,6 +616,7 @@ function DesktopTab() {
           <div className="min-w-0">
             <h2 className="text-base font-semibold">{t("desktopMaintenance")}</h2>
             <p className="mt-0.5 text-sm text-muted-foreground">{t("desktopMaintenanceDescription")}</p>
+            {localLockedHint}
           </div>
           <div className="flex flex-wrap gap-2">
             <Button type="button" variant="outline" size="sm" onClick={() => void openDataFolder()}>
@@ -567,7 +634,7 @@ function DesktopTab() {
                 {t("desktopOpenLogsFolder")}
               </Button>
             ) : null}
-            {!needsReconnect && connectorId ? (
+            {!localLocked && !needsReconnect && connectorId ? (
               connectorIsRunning ? (
                 <>
                   <Button type="button" variant="outline" size="sm" onClick={() => void stop()} disabled={busy}>
@@ -595,7 +662,7 @@ function DesktopTab() {
                   setFactoryResetError(null)
                   setFactoryResetOpen(true)
                 }}
-                disabled={busy}
+                disabled={busy || localLocked}
               >
                 <Trash2 data-icon="inline-start" />
                 {t("desktopFactoryReset")}

@@ -54,12 +54,27 @@ export function sessionOfProcess(pid: number | null, roots: ReadonlyMap<number, 
 
 const LOCAL_URL = /\bhttps?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]):(\d{2,5})(?:[/?#][^\s'"<>)]*)?/giu
 
-/** Local URLs printed by a tool or terminal (`http://localhost:5173/`), by port. */
+/**
+ * A printed local URL without its query and fragment. Dev servers put access tokens there
+ * (`http://localhost:8888/?token=…`, `#access_token=…`), and the URL goes to the Server in `port.listening`.
+ */
+export function withoutQuery(url: string): string {
+  const cut = url.search(/[?#]/u)
+  return (cut < 0 ? url : url.slice(0, cut)).replace(/[.,;:]+$/u, '')
+}
+
+/** `scheme://host:port` of a local URL (no path, query or fragment); null when it is not one. */
+export function originOf(url: string): string | null {
+  const m = /^(https?):\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]):(\d{2,5})(?=$|[/?#])/iu.exec(url)
+  return m === null ? null : `${m[1]!.toLowerCase()}://${m[2]!.toLowerCase()}:${m[3]}`
+}
+
+/** Local URLs printed by a tool or terminal (`http://localhost:5173/`), by port, with query and fragment removed. */
 export function localUrlsIn(text: string): Map<number, string> {
   const urls = new Map<number, string>()
   for (const m of text.matchAll(LOCAL_URL)) {
     const port = Number(m[1])
-    if (port > 0 && port <= 65535 && !urls.has(port)) urls.set(port, m[0].replace(/[.,;:]+$/u, ''))
+    if (port > 0 && port <= 65535 && !urls.has(port)) urls.set(port, withoutQuery(m[0]))
   }
   return urls
 }
@@ -80,16 +95,41 @@ export interface SessionHints {
   readonly mentioned: ReadonlyMap<number, { sessionId: string; url: string }>
 }
 
-export function annotatePorts(ports: readonly ListeningPort[], hints: SessionHints, parents: ProcessParents): AnnotatedPort[] {
+/** The session a port's bindings belong to: one of its processes descends from a session root, or a session printed its URL. */
+export function sessionOfPort(port: number, pids: readonly (number | null)[], hints: SessionHints, parents: ProcessParents): string | null {
+  for (const pid of pids) {
+    const session = sessionOfProcess(pid, hints.roots, parents)
+    if (session !== null) return session
+  }
+  return hints.mentioned.get(port)?.sessionId ?? null
+}
+
+/**
+ * The `port.listening` entries for `ports`. `e2eeMode` is the link's mode: `port.listening` is a plaintext `Link/attach`
+ * event in both modes, so under `required` it carries only what 11-e2ee-noise.md §10 lets the Server see (the port and
+ * its session id); the process id and name and the printed URL stay on the device, and `url` is just the origin
+ * (`http://localhost:5173`), which says nothing the port number does not. In `off` mode the URL keeps its path but
+ * never its query or fragment.
+ */
+export function annotatePorts(
+  ports: readonly ListeningPort[],
+  hints: SessionHints,
+  parents: ProcessParents,
+  e2eeMode: 'off' | 'required' = 'off',
+): AnnotatedPort[] {
   return ports.map(port => {
     const mention = hints.mentioned.get(port.port)
-    const sessionId = sessionOfProcess(port.pid, hints.roots, parents) ?? mention?.sessionId ?? null
+    const sessionId = sessionOfPort(port.port, [port.pid], hints, parents)
+    const fallback = `http://localhost:${port.port}`
+    if (e2eeMode === 'required') {
+      return { port: port.port, pid: null, processName: null, sessionId, url: (mention === undefined ? null : originOf(mention.url)) ?? fallback }
+    }
     return {
       port: port.port,
       pid: port.pid,
       processName: port.process === '' ? null : port.process,
       sessionId,
-      url: mention?.url ?? `http://localhost:${port.port}`,
+      url: mention === undefined ? fallback : withoutQuery(mention.url),
     }
   })
 }

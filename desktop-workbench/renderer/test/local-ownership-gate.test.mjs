@@ -24,6 +24,7 @@ function fixture(initial, api, { connector, copyText = async () => {} } = {}) {
     useTranslations: () => key => key,
     getDesktopWorkbenchBridge: () => api ? { ownership: api, connector } : null,
     copyText,
+    LocalOwnershipContext: { Provider: "LocalOwnershipProvider" },
     // Errors thrown by the fixture's bridge come from this realm.
     Error,
   }
@@ -37,9 +38,16 @@ function fixture(initial, api, { connector, copyText = async () => {} } = {}) {
 }
 
 const settle = () => new Promise(resolve => setImmediate(resolve))
+/** The gate let the app through, handing its ownership state down. */
+const passedThrough = (element, state) => {
+  assert.equal(element?.type, "LocalOwnershipProvider")
+  assert.deepEqual(element.children, ["AUTH-AND-PROVISIONING"])
+  if (state) assert.deepEqual(element.props.value, state)
+  return true
+}
 const labels = h => h.elements.filter(e => e.type === "Button").map(b => b.children.at(-1))
 
-test("conflict blocks auth, cannot dismiss, and only offers quit and atomic recheck", async () => {
+test("a v2 or unknown Connector conflict blocks auth, cannot dismiss, and only offers quit and atomic recheck", async () => {
   let checks = 0, quits = 0, succeed = false
   const h = fixture({ status: "conflict" }, {
     quit: async () => { quits++ },
@@ -64,7 +72,7 @@ test("conflict blocks auth, cannot dismiss, and only offers quit and atomic rech
   succeed = true
   buttons[1].props.onClick()
   await new Promise(resolve => setImmediate(resolve))
-  assert.equal(h.render(), "AUTH-AND-PROVISIONING")
+  passedThrough(h.render(), { status: "owned" })
 })
 
 test("a late startup snapshot cannot overwrite a newer ownership event", async () => {
@@ -162,19 +170,21 @@ test("a conflict with detail quotes the occupying owner info and offers copying 
 })
 
 
-test("a newer Connector serving the machine explains itself and offers a recheck", async () => {
-  let checks = 0
-  const h = fixture({ status: "conflict", message: "这台电脑上已有更新版本的 Connector 在运行", recovery: { kind: "newerConnector" }, owner: { kind: "cli", pid: 9 } }, {
-    quit: async () => {},
-    recheck: async () => { checks++; return { status: "owned" } },
-  }, { connector: { openLogsFolder: async () => "" } })
-  h.render()
-  assert.deepEqual(h.elements.find(e => e.type === "AlertDialogTitle").children, ["newerTitle"])
-  assert.deepEqual(h.elements.find(e => e.type === "AlertDialogDescription").children, ["newerDescription"])
-  assert.equal(h.elements.some(e => e.type === "pre"), false)
-  assert.deepEqual(labels(h), ["openLogs", "quit", "recheck"])
-  h.elements.filter(e => e.type === "Button").at(-1).props.onClick()
+test("a newer Connector serving the machine does not block: the app gets its ownership through context", async () => {
+  const external = { kind: "dsh-plugin", pid: 9, version: "3.2.0", handedOver: false }
+  const state = { status: "external", message: "这台电脑上已有更新版本的 Connector 在运行", external }
+  let notify
+  const h = fixture(state, { getState: async () => state, onState: listener => { notify = listener; return () => {} } })
+  passedThrough(h.render(), state)
+  assert.equal(h.elements.some(e => e.type === "AlertDialog"), false)
+  assert.equal(h.elements.some(e => e.type === "Button"), false, "no quit or recheck to press")
+  // Desktop takes the machine back on its own: the same tree stays mounted, now owned.
+  h.mount()
   await settle()
-  assert.equal(checks, 1)
-  assert.equal(h.render(), "AUTH-AND-PROVISIONING")
+  notify({ status: "owned" })
+  passedThrough(h.render(), { status: "owned" })
+  // A v2 Connector found later still blocks.
+  notify({ status: "conflict", message: "Another Connector is running (cli, PID 5)." })
+  h.render()
+  assert.equal(h.elements.find(e => e.type === "AlertDialog")?.props.open, true)
 })

@@ -108,6 +108,32 @@ describe('sessions and clock', () => {
     expect(await store.sessions.applySeqFloors({ sess_1: 10 })).toEqual([])
     expect(await store.sessions.heads()).toEqual([{ sessionId: 'sess_1', headSeq: 1206, resetSeq: 1204 }])
   })
+
+  it('keeps the floor of a session it does not have yet and starts that session above it', async () => {
+    // A reinstall: the Server remembers sess_2 at 1203, the native rescan recreates it only after hello.
+    expect(await store.sessions.applySeqFloors({ sess_2: 900 })).toEqual([])
+    expect(await store.sessions.applySeqFloors({ sess_2: 1203 })).toEqual([])
+    expect(await store.sessions.applySeqFloors({ sess_2: 1000 })).toEqual([])
+    // The floor survives a restart before the rescan.
+    await store.close()
+    sync = openSqliteStore({ dataDir: dir, durability: 'normal', now })
+    store = inProcessStore(sync)
+    const { session } = await createSession('sess_2')
+    expect(session.clock).toEqual({ headSeq: 1204, resetSeq: 1204 })
+    const commit = await store.timeline.apply('sess_2', { upserts: [message('a', 'rebuilt', 1)], at: now() })
+    expect(commit.changed[0]?.updatedSeq).toBe(1205)
+    // A client at seq:1203 from the lost store is below the fence: it takes a snapshot.
+    expect((await store.timeline.changesSince('sess_2', 1203, 100, 0)).snapshotRequired).toBe(true)
+    const summaries = (await store.outbox.pending(0, 10)).filter(record => record.kind === 'session.summary' && record.sessionId === 'sess_2')
+    expect(summaries[0]?.payload.summary).toMatchObject({ headSeq: 1204 })
+    // Used once: the floor no longer applies to this session through `create`, only through the clock.
+    expect(await store.sessions.applySeqFloors({ sess_2: 1203 })).toEqual([])
+    const raw = new DatabaseSync(join(dir, 'store.sqlite'))
+    expect(raw.prepare('SELECT COUNT(*) AS n FROM seq_floors').get()).toEqual({ n: 0 })
+    raw.close()
+    // A session nobody gave a floor for still starts at 0.
+    expect((await createSession('sess_3')).session.clock).toEqual({ headSeq: 0, resetSeq: 0 })
+  })
 })
 
 describe('byte budget', () => {
@@ -202,6 +228,20 @@ describe('interactions, planning, goals, commands, outbox, kv', () => {
     expect(pending.at(-1)).toMatchObject({ kind: 'command.result', payload: { commandId: 'c1', outcome: 'accepted', r: { delivery: 'accepted' } } })
   })
 
+  it('commits a receipt with the effect, and a later settle keeps it', async () => {
+    await createSession()
+    const receipt = { commandId: 'c9', method: 'session.queue.clear', sessionId: 'sess_1', inputDigest: 'd9', createdAt: 't', result: null }
+    const queue = await store.queues.apply('sess_1', { kind: 'clear' }, 't', receipt)
+    expect(await store.commands.get('c9')).toMatchObject({ outcome: 'accepted', result: { sessionId: 'sess_1', revision: queue.revision, items: [] } })
+    // A failed effect rolls its receipt back with it.
+    await expect(store.queues.apply('sess_1', { kind: 'remove', messageId: 'nope' }, 't', { ...receipt, commandId: 'c10' })).rejects.toMatchObject({ code: 'queue_item_not_found' })
+    expect(await store.commands.get('c10')).toBeNull()
+    // The inbox settles afterwards (or a retry after a crash would): the committed receipt stands, queued once.
+    const settled = await store.commands.settle({ ...receipt, outcome: 'rejected', result: null, error: { code: 'late' }, updatedAt: 't' })
+    expect(settled).toMatchObject({ outcome: 'accepted', error: null })
+    expect((await store.outbox.pending(0, 50)).filter(record => record.kind === 'command.result').map(record => record.payload.commandId)).toEqual(['c9'])
+  })
+
   it('acknowledges the outbox cumulatively', async () => {
     const a = await store.outbox.append('usage.report', null, { n: 1 }, 't')
     const b = await store.outbox.append('usage.report', null, { n: 2 }, 't')
@@ -273,6 +313,37 @@ describe('worker thread', () => {
     } finally {
       await remote.close()
     }
+    store = inProcessStore(openSqliteStore({ dataDir: dir, now }))
+  })
+
+  it('fails every waiting and later call when the worker dies, and says so once', async () => {
+    await store.close()
+    const failures: Error[] = []
+    const remote = await openStoreWorker(
+      { dataDir: dir, durability: 'normal' },
+      { workerUrl: new URL('../support/dying-store-worker.ts', import.meta.url), execArgv: TS_WORKER_EXEC_ARGV, onUnavailable: error => failures.push(error) },
+    )
+    try {
+      expect(await remote.sessions.list()).toEqual([])
+      // The worker dies while this call waits for its answer.
+      const waiting = remote.kv.get('rti', '__die__')
+      await expect(waiting).rejects.toMatchObject({ name: 'StoreError', code: 'store_unavailable' })
+      await expect(remote.sessions.list()).rejects.toMatchObject({ code: 'store_unavailable' })
+      await expect(remote.commands.get('c1')).rejects.toMatchObject({ code: 'store_unavailable' })
+      expect(failures).toHaveLength(1)
+      expect(failures[0]).toMatchObject({ code: 'store_unavailable' })
+      expect(failures[0]?.message).toContain('code 7')
+    } finally {
+      await remote.close()
+    }
+    // Closing a healthy worker is not a failure.
+    const healthy = await openStoreWorker(
+      { dataDir: dir, durability: 'normal' },
+      { workerUrl: new URL('../../src/store/worker-entry.ts', import.meta.url), execArgv: TS_WORKER_EXEC_ARGV, onUnavailable: error => failures.push(error) },
+    )
+    await healthy.close()
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(failures).toHaveLength(1)
     store = inProcessStore(openSqliteStore({ dataDir: dir, now }))
   })
 })

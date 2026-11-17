@@ -28,15 +28,23 @@ export interface PortShareDecision {
 
 /**
  * Checks one preview request against the PortShare rules: the port must be listening now, reachable on loopback,
- * and the device must have room for another preview. The user confirmed the port by asking for the preview, which
- * is the only way the Server sends `Commands/previewOpen`. Error codes follow contracts/runtime-errors 1.1;
- * `details.reason` tells a closed port (`not_listening`) from one bound off loopback (`not_local`).
+ * belong to a session on this device, and the device must have room for another preview.
+ *
+ * `Commands/previewOpen` comes from the Server, which the device does not trust to pick ports: a compromised Server
+ * could otherwise expose any loopback service (a notebook server, a database console) through frps. So the device
+ * only forwards a port it associated with a session itself (09-port-preview.md §4.1, §5.1): its listening process
+ * descends from a session's Agent or AA terminal, or a session printed its local URL. `sessionOf` is that
+ * association for the port's bindings; null refuses the port.
+ *
+ * Error codes follow contracts/runtime-errors 1.1; `details.reason` tells a closed port (`not_listening`) from one
+ * bound off loopback (`not_local`) and one no session started or mentioned (`not_session`).
  */
 export function decidePortShare(
   port: number,
   listening: readonly ListeningPort[],
   openPreviews: number,
   alreadyOpen: boolean,
+  sessionOf: (bindings: readonly ListeningPort[]) => string | null,
 ): PortShareDecision {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new WorkspaceError('invalid_argument', `invalid port: ${port}`)
   const bindings = listening.filter(entry => entry.port === port)
@@ -44,6 +52,9 @@ export function decidePortShare(
   const localIP = loopbackTarget(bindings)
   if (localIP === null) {
     throw new WorkspaceError('preview_port_not_allowed', `port ${port} is not reachable on this computer's loopback address`, { port, reason: 'not_local' })
+  }
+  if (sessionOf(bindings) === null) {
+    throw new WorkspaceError('preview_port_not_allowed', `port ${port} was not started or reported by a session on this device`, { port, reason: 'not_session' })
   }
   if (!alreadyOpen && openPreviews >= MAX_OPEN_PREVIEWS) {
     throw new WorkspaceError('preview_limit_reached', `at most ${MAX_OPEN_PREVIEWS} previews can be open on one device`, { limit: MAX_OPEN_PREVIEWS })

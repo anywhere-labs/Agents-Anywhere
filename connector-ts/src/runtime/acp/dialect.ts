@@ -29,6 +29,8 @@ export interface ItemIdentity {
   userItemId(clientMessageId: string): string
   /** 历史整体替换前清空按位置计数的状态（Codex：替换后从头重放，位置要从头数）。 */
   reset?(): void
+  /** 回合结束（v2 `Projection.finish`）：下一条消息不再续到上一轮最后一条消息上。 */
+  finish?(): void
 }
 
 export interface SessionContext {

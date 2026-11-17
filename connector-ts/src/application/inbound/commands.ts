@@ -6,10 +6,21 @@ import { PlanningConflict, PlanningInvalid } from '../../domain/planning/index.j
 import type { CommandAck } from '../../generated/device-meshcall/v1_0/command-ack.js'
 import type { CommandCall } from '../../generated/device-meshcall/v1_0/command-call.js'
 import { UseCaseError, type AttachmentRef, type ConversationService } from '../conversation-service.js'
-import type { Clock, CommandRecord, ConversationStore, InteractionAnswer } from '../ports/index.js'
+import type { Clock, CommandReceipt, CommandRecord, ConversationStore, InteractionAnswer } from '../ports/index.js'
 
-/** A command handler returns its result body (`CommandAck.r`); throwing a coded error rejects the command. */
-export type CommandHandler = (payload: Record<string, unknown>, context: { commandId: string; inputDigest: string | null; actor: string }) => Promise<Record<string, unknown>>
+/**
+ * A command handler returns its result body (`CommandAck.r`); throwing a coded error rejects the command. A handler
+ * whose effect is a store write passes `receipt` to that write, so effect and receipt commit together.
+ */
+export type CommandHandler = (payload: Record<string, unknown>, context: CommandHandlerContext) => Promise<Record<string, unknown>>
+
+export interface CommandHandlerContext {
+  readonly commandId: string
+  readonly inputDigest: string | null
+  readonly actor: string
+  /** Always set by `CommandInbox`; absent when a handler is called directly (tests, tools). */
+  readonly receipt?: CommandReceipt
+}
 
 /** Business method name (`session.queue.sendNow`) → MeshCall method (`sessionQueueSendNow`), as the contract says. */
 export function commandRoute(method: string): string {
@@ -41,6 +52,13 @@ export function errorCode(error: unknown): { code: string; message: string; retr
  * digest returns the recorded ack without running anything; a different digest is a conflict. The ack is
  * `accepted` only after the use case's effect and the receipt are on disk. The device never re-executes a
  * command on its own; `Commands/status` only reads receipts.
+ *
+ * Commands whose effect is a local write (sending and creating messages, queue operations, planning and goal
+ * state) commit the receipt in that write's transaction (`CommandReceipt`), so a crash between the two cannot
+ * make a retry run the command a second time. Effects outside the store (a Runtime call: interrupt, select,
+ * steer, answering a notice, a planning or goal action) cannot share a transaction; a crash after such a call
+ * and before its write leaves the retry to run it again, and those use cases rely on the Runtime's or the
+ * natural key's idempotency (`responseId`, `clientMessageId`).
  */
 export class CommandInbox {
   private readonly handlers = new Map<string, { method: string; handler: CommandHandler }>()
@@ -91,7 +109,7 @@ export class CommandInbox {
       attachments: Array.isArray(p.attachments) ? (p.attachments as AttachmentRef[]) : [],
       ...(typeof p.takeover === 'boolean' ? { takeover: p.takeover } : {}),
     }, context)) }))
-    register('session.planning', async p => service.planning(text(p.sessionId, 'sessionId'), {
+    register('session.planning', async (p, context) => service.planning(text(p.sessionId, 'sessionId'), {
       command: text(p.command, 'command'),
       operationId: text(p.operationId, 'operationId'),
       ...(p.reviewId !== undefined ? { reviewId: optionalString(p.reviewId) } : {}),
@@ -101,26 +119,26 @@ export class CommandInbox {
       ...(typeof p.expectedRevision === 'number' ? { expectedRevision: p.expectedRevision } : {}),
       ...(p.epoch !== undefined ? { epoch: optionalString(p.epoch) } : {}),
       ...(p.feedback !== undefined ? { feedback: optionalString(p.feedback) } : {}),
-    }))
-    register('session.goal', async p => service.goal(text(p.sessionId, 'sessionId'), {
+    }, context.receipt))
+    register('session.goal', async (p, context) => service.goal(text(p.sessionId, 'sessionId'), {
       action: text(p.action, 'action') as 'set',
       expectedRevision: typeof p.expectedRevision === 'number' ? p.expectedRevision : -1,
       objective: optionalString(p.objective),
       operationId: text(p.operationId, 'operationId'),
-    }))
-    const queue = (kind: 'update' | 'remove' | 'retry' | 'sendNow') => async (p: Record<string, unknown>) => service.queueOp(text(p.sessionId, 'sessionId'), {
+    }, context.receipt))
+    const queue = (kind: 'update' | 'remove' | 'retry' | 'sendNow') => async (p: Record<string, unknown>, context: CommandHandlerContext) => service.queueOp(text(p.sessionId, 'sessionId'), {
       kind,
       messageId: text(p.messageId, 'messageId'),
       ...(kind === 'update' && typeof p.content === 'string' ? { content: p.content } : {}),
       ...(kind === 'update' && Array.isArray(p.attachments) ? { attachments: p.attachments as never } : {}),
-    } as never)
+    } as never, context.receipt)
     register('session.queue.update', queue('update'))
     register('session.queue.delete', queue('remove'))
     register('session.queue.retry', queue('retry'))
     register('session.queue.sendNow', queue('sendNow'))
-    register('session.queue.resume', async p => service.queueOp(text(p.sessionId, 'sessionId'), { kind: 'resume' }))
-    register('session.queue.reorder', async p => service.queueOp(text(p.sessionId, 'sessionId'), { kind: 'reorder', messageIds: Array.isArray(p.messageIds) ? p.messageIds.map(String) : [] }))
-    register('session.queue.clear', async p => service.queueOp(text(p.sessionId, 'sessionId'), { kind: 'clear' }))
+    register('session.queue.resume', async (p, context) => service.queueOp(text(p.sessionId, 'sessionId'), { kind: 'resume' }, context.receipt))
+    register('session.queue.reorder', async (p, context) => service.queueOp(text(p.sessionId, 'sessionId'), { kind: 'reorder', messageIds: Array.isArray(p.messageIds) ? p.messageIds.map(String) : [] }, context.receipt))
+    register('session.queue.clear', async (p, context) => service.queueOp(text(p.sessionId, 'sessionId'), { kind: 'clear' }, context.receipt))
     register('session.sync', async p => {
       const sessionId = text(p.sessionId, 'sessionId')
       const commit = await service.patchSession(sessionId, {
@@ -165,21 +183,24 @@ export class CommandInbox {
     const payload = (call.p ?? {}) as Record<string, unknown>
     const createdAt = this.clock.nowIso()
     const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : null
+    const receipt: CommandReceipt = { commandId: call.commandId, method, sessionId, inputDigest, createdAt, result: null }
     let record: CommandRecord
     try {
-      const result = await handler(payload, { commandId: call.commandId, inputDigest: call.inputDigest ?? null, actor })
+      const result = await handler(payload, { commandId: call.commandId, inputDigest: call.inputDigest ?? null, actor, receipt })
       record = { commandId: call.commandId, method, sessionId, inputDigest, outcome: 'accepted', result, error: null, createdAt, updatedAt: this.clock.nowIso() }
     } catch (error) {
       const coded = errorCode(error)
       if (coded.code === 'internal') {
-        // Not a business rejection: the effect may or may not have happened. Record nothing durable as
-        // accepted/rejected; the Server classifies the call failure as an unknown outcome.
+        // Not a business rejection. A receipt committed with the effect stands; otherwise the effect may or may not
+        // have happened: record nothing durable, and the Server classifies the call failure as an unknown outcome.
+        const committed = await this.store.commands.get(call.commandId)
+        if (committed !== null && committed.outcome !== 'unknown') return ackOf(committed)
         throw error
       }
       record = { commandId: call.commandId, method, sessionId, inputDigest, outcome: 'rejected', result: null, error: coded, createdAt, updatedAt: this.clock.nowIso() }
     }
-    await this.store.commands.settle(record)
-    return ackOf(record)
+    // A receipt already committed with the effect stands (settle returns it unchanged).
+    return ackOf(await this.store.commands.settle(record))
   }
 }
 

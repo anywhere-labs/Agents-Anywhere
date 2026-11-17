@@ -46,6 +46,7 @@ export function defaultIdentity(context: SessionContext): ItemIdentity {
   return {
     itemFor: update => projection.apply((verified ? { ...update, aaProjectionVerified: true } : update) as Parameters<AcpProjectionIdentity['apply']>[0]),
     userItemId: clientMessageId => acpFingerprint([context.sessionId, 'user_message_chunk', clientMessageId]),
+    finish: () => projection.finish(),
   }
 }
 
@@ -172,6 +173,17 @@ export class AcpRuntimeSession implements RuntimeSession {
     if (this.turn !== undefined) return { outcome: 'rejected', error: { code: 'session_busy', message: 'a turn is already running' } }
     // 正在交接写锁：明确拒绝（不会执行），上层换到新路由后重发。
     if (this.releasing) return { outcome: 'rejected', error: { code: 'runtime_route_switching', message: 'the session is being handed over to another route', retryable: true } }
+    // 先构造参数再占用回合：方言转换附件时可能同步抛错（DSH 读不到附件文件），这时 Runtime 什么都没收到，明确拒绝，会话保持空闲。
+    let params: JsonRecord
+    try {
+      params = {
+        sessionId: this.nativeSessionId,
+        prompt: (this.dialect.promptBlocks?.(input) ?? promptBlocks(input)) as JsonRecord[],
+        ...(this.dialect.promptParams?.(delivery) ?? {}),
+      }
+    } catch (error) {
+      return { outcome: 'rejected', error: this.dialect.classifyError?.(error) ?? runtimeError(error, 'invalid_argument') }
+    }
     const turnId = `turn_${randomUUID()}`
     let resolveAcceptance!: (acceptance: PromptAcceptance) => void
     const acceptance = new Promise<PromptAcceptance>(resolve => (resolveAcceptance = resolve))
@@ -183,11 +195,6 @@ export class AcpRuntimeSession implements RuntimeSession {
       type: 'message.completed', turnId, itemId: userItemId, role: 'user', text: input.text, clientMessageId: delivery.clientMessageId,
       ...(input.attachments?.length ? { attachments: input.attachments } : {}),
     })
-    const params: JsonRecord = {
-      sessionId: this.nativeSessionId,
-      prompt: (this.dialect.promptBlocks?.(input) ?? promptBlocks(input)) as JsonRecord[],
-      ...(this.dialect.promptParams?.(delivery) ?? {}),
-    }
     this.client.request('session/prompt', params).then(
       result => {
         this.accept(turn, userItemId)
@@ -271,34 +278,36 @@ export class AcpRuntimeSession implements RuntimeSession {
   async respond(interactionId: string, answer: InteractionAnswer): Promise<void> {
     const pending = this.interactions.get(interactionId)
     if (!pending) throw new JsonRpcError(-32602, `no pending interaction ${interactionId}`)
-    this.interactions.delete(interactionId)
     const turnId = this.turn?.turnId
+    // 先算出答复并校验（无效选项、方言抛错），全部通过才摘掉挂起的交互：校验失败时交互仍在，Agent 还在等，用户可以重答。
+    let result: unknown
     let after: (() => void) | undefined
+    let registerFollowUp: (() => void) | undefined
     if (pending.method === 'session/request_permission') {
       if (answer.kind === 'option') {
         if (!pending.options.some(o => o.optionId === answer.optionId)) throw new JsonRpcError(-32602, `option ${answer.optionId} was not offered`)
-        pending.resolve({ outcome: { outcome: 'selected', optionId: answer.optionId } })
+        result = { outcome: { outcome: 'selected', optionId: answer.optionId } }
       } else if (answer.kind === 'plan_review') {
         const decision = this.dialect.planReview?.(answer, pending.options, { ...(this.planModeBefore !== undefined ? { modeBeforePlan: this.planModeBefore } : {}) }) ?? genericPlanReview(answer, pending.options)
-        pending.resolve(decision.optionId === undefined ? { outcome: { outcome: 'cancelled' } } : { outcome: { outcome: 'selected', optionId: decision.optionId } })
+        result = decision.optionId === undefined ? { outcome: { outcome: 'cancelled' } } : { outcome: { outcome: 'selected', optionId: decision.optionId } }
         const then = decision.then
         if (then?.action === 'steer') {
           after = () => void this.steer?.({ text: then.text }, { deliveryId: `plan-feedback-${interactionId}`, clientMessageId: `plan-feedback-${interactionId}` })
         } else if (then?.action === 'prompt') {
-          // 现在就登记：当前回合结束（拒绝计划使它结束）后立刻发出。
-          void this.whenIdle().then(() => this.prompt({ text: then.text }, { deliveryId: `plan-feedback-${interactionId}`, clientMessageId: `plan-feedback-${interactionId}` }))
+          // 答复后立刻登记：当前回合结束（拒绝计划使它结束）后立刻发出。
+          registerFollowUp = () => void this.whenIdle().then(() => this.prompt({ text: then.text }, { deliveryId: `plan-feedback-${interactionId}`, clientMessageId: `plan-feedback-${interactionId}` }))
         } else if (then?.action === 'cancel') {
           after = () => void this.cancel(turnId)
         }
       } else {
-        pending.resolve({ outcome: { outcome: 'cancelled' } })
+        result = { outcome: { outcome: 'cancelled' } }
       }
-    } else if (pending.method === 'elicitation/create') {
-      if (answer.kind === 'form') pending.resolve({ action: answer.action, ...(answer.values ? { content: answer.values } : {}) })
-      else pending.resolve({ action: 'cancel' })
     } else {
-      pending.resolve(answer.kind === 'form' ? { action: answer.action, ...(answer.values ? { content: answer.values } : {}) } : { action: 'cancel' })
+      result = answer.kind === 'form' ? { action: answer.action, ...(answer.values ? { content: answer.values } : {}) } : { action: 'cancel' }
     }
+    this.interactions.delete(interactionId)
+    pending.resolve(result)
+    registerFollowUp?.()
     this.events.push({ type: 'interaction.resolved', ...(turnId ? { turnId } : {}), interactionId, resolution: 'answered', answeredBy: 'self' })
     if (after) setTimeout(after, 50)
   }
@@ -417,6 +426,7 @@ export class AcpRuntimeSession implements RuntimeSession {
     if (this.turn !== turn) return
     if (turn.quietTimer) clearTimeout(turn.quietTimer)
     this.turn = undefined
+    this.identity.finish?.()
     for (const [id, pending] of this.interactions) {
       pending.resolve(pending.method === 'session/request_permission' ? { outcome: { outcome: 'cancelled' } } : { action: 'cancel' })
       this.events.push({ type: 'interaction.resolved', turnId: turn.turnId, interactionId: id, resolution: 'expired' })

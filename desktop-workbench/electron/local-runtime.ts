@@ -7,26 +7,47 @@ export type RuntimeOwner = {
   instanceId: string; kind: string; pid: number; processStartedAt?: string;
   childPid?: number; childStartedAt?: string;
   connectorId?: string; serverUrl?: string; startedAt: string;
+  /** v3: the owner's Connector version (version arbitration, 04-connector.md §9.1). */
+  connectorVersion?: string;
 };
 export type LocalState = Record<string, unknown> & { version: 2; connectorIds: string[]; runtime?: RuntimeOwner };
 /**
  * What the gate can offer besides a recheck. `backendStopped`: the Desktop
- * backend process is gone and a recheck starts it again. `newerConnector`: a
- * newer Connector (CLI or DSH plugin) serves this computer, or took over from
- * Desktop's own; Desktop does not compete with it (v3 design 04-connector.md §9.1).
+ * backend process is gone and a recheck starts it again.
  */
 export type OwnershipRecovery =
-  | { kind: "backendStopped" }
-  | { kind: "newerConnector" };
+  | { kind: "backendStopped" };
+/**
+ * A newer Connector (CLI or DSH plugin) that serves this computer instead of
+ * Desktop's own (v3 design 04-connector.md §9.1, contracts/local-machine 2.0
+ * "版本交接"). Only what Desktop could learn without its control channel: the
+ * lease record and the handover rendezvous the owner publishes.
+ */
+export type ExternalConnector = {
+  /** `cli`, `dsh-plugin`, ...; empty when unknown. */
+  kind: string;
+  pid?: number;
+  /** The owner's Connector version; absent when it could not be read. */
+  version?: string;
+  /** The device the owner connects; absent when its record does not say. */
+  connectorId?: string;
+  serverUrl?: string;
+  /** Desktop's own Connector handed the machine over to it (rather than finding it at launch). */
+  handedOver: boolean;
+};
 /**
  * `checking` is the value before the first probe answers. An `error` carries
- * the underlying failure in `message`, which the renderer quotes.
+ * the underlying failure in `message`, which the renderer quotes. `external`:
+ * a newer Connector serves this computer; Desktop works through the Server
+ * and takes the machine back once that Connector exits. `conflict`: a v2 or
+ * unknown Connector holds the machine and Desktop cannot coexist with it.
  */
 export type OwnershipState = {
-  status: "owned" | "conflict" | "checking" | "error";
+  status: "owned" | "external" | "conflict" | "checking" | "error";
   message?: string;
   owner?: RuntimeOwner;
   recovery?: OwnershipRecovery;
+  external?: ExternalConnector;
 };
 export const localRuntimePath = (home = userInfo().homedir): string => path.join(home, ".agents-anywhere", "connector-runtime.json");
 
@@ -85,4 +106,40 @@ export function readMachineStateFile(file: string): LocalState {
     ...(state.desktop === undefined && (machine?.desktop || installation)
       ? { desktop: machine?.desktop ?? installation } : {}),
   };
+}
+
+/** The lease owner the shared record names; `undefined` when there is none, `null` when the record cannot be read. */
+export function readRuntimeOwner(home: string): RuntimeOwner | undefined | null {
+  try {
+    return readLocalState(localRuntimePath(home)).runtime;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The version a v3 owner publishes next to its handover key
+ * (`~/.agents-anywhere/router/<instanceId>.handover.json`, contracts/local-machine 2.0).
+ * Only the version is read; the key is not Desktop's to use.
+ */
+export function readHandoverVersion(home: string, instanceId: string): string | undefined {
+  if (!/^[A-Za-z0-9_.-]+$/.test(instanceId)) return undefined;
+  try {
+    const value: unknown = JSON.parse(fs.readFileSync(path.join(home, ".agents-anywhere", "router", `${instanceId}.handover.json`), "utf8"));
+    const version = object(value) ? value.connectorVersion : undefined;
+    return typeof version === "string" && version.trim() ? version.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Whether a process with this pid exists (a pid owned by another user counts). */
+export function processAlive(pid: number): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
 }
