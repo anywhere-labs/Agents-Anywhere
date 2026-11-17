@@ -2,8 +2,13 @@
 // Behaviour depends on the prompt text:
 //   contains "#slow": replies with some text, then waits for session/cancel (or 60 seconds);
 //   contains "#plan": sends a Markdown plan (plan_update), then replies;
+//   contains "#later": replies after 3 seconds (a turn that ends while the test has the link down);
 //   otherwise: replies "echo: <text> [model=<model> permission=<permission>] sessions-in-cwd=<session/new calls in that cwd>".
 // After session/new it reports the slash command catalog (available_commands_update).
+// When the session's directory holds `.e2e-slow-config` (a number of milliseconds), session/set_config_option answers
+// after that delay and appends `<configId>=<value>` to `.e2e-config-calls` there, so a test can count the calls.
+import { appendFileSync, existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 
 /** @param {Record<string, unknown>} message */
@@ -69,6 +74,7 @@ async function prompt(message) {
     send({ id: message.id, result: { stopReason: cancelled ? 'cancelled' : 'end_turn' } })
     return
   }
+  if (text.includes('#later')) await new Promise(resolve => setTimeout(resolve, 3000))
   if (text.includes('#plan')) {
     update(sessionId, { sessionUpdate: 'plan_update', plan: { type: 'markdown', planId: 'plan-e2e', content: '# E2E plan\n\n1. Read the code\n2. Fix the bug\n' } })
   }
@@ -97,12 +103,19 @@ createInterface({ input: process.stdin }).on('line', line => {
     }
     case 'session/load':
     case 'session/resume':
+      if (params.cwd) cwdOf.set(params.sessionId, String(params.cwd))
       send({ id: message.id, result: { configOptions: configOf(params.sessionId) } })
       announceCommands(params.sessionId)
       return
     case 'session/set_config_option': {
       const config = configOf(params.sessionId).map(option => (option.id === params.configId ? { ...option, currentValue: params.value } : option))
       configs.set(params.sessionId, config)
+      const marker = join(cwdOf.get(params.sessionId) ?? '.', '.e2e-slow-config')
+      if (existsSync(marker)) {
+        appendFileSync(join(cwdOf.get(params.sessionId) ?? '.', '.e2e-config-calls'), `${params.configId}=${params.value}\n`)
+        setTimeout(() => send({ id: message.id, result: { configOptions: config } }), Number(readFileSync(marker, 'utf8')) || 0)
+        return
+      }
       send({ id: message.id, result: { configOptions: config } })
       return
     }
