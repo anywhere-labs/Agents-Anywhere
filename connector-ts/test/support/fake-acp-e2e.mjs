@@ -4,7 +4,8 @@
 //   contains "#plan": sends a Markdown plan (plan_update), then replies;
 //   contains "#later": replies after 3 seconds (a turn that ends while the test has the link down);
 //   contains "#bulk <n>": reports n completed tool calls (one timeline item each), then replies;
-//   otherwise: replies "echo: <text> [model=<model> permission=<permission>] sessions-in-cwd=<session/new calls in that cwd>".
+//   otherwise: replies "echo: <text> [model=<model> permission=<permission>] sessions-in-cwd=<session/new calls in that cwd>",
+//   followed by " attachments=<n>" when the prompt carries n non-text blocks (it accepts images).
 // After session/new it reports the slash command catalog (available_commands_update).
 // When the session's directory holds `.e2e-slow-config` (a number of milliseconds), session/set_config_option answers
 // after that delay and appends `<configId>=<value>` to `.e2e-config-calls` there, so a test can count the calls.
@@ -58,10 +59,16 @@ function promptText(prompt) {
   return (Array.isArray(prompt) ? prompt : []).filter(block => block?.type === 'text').map(block => String(block.text)).join('\n')
 }
 
+/** @param {unknown} prompt */
+function attachmentCount(prompt) {
+  return (Array.isArray(prompt) ? prompt : []).filter(block => block?.type !== 'text').length
+}
+
 /** @param {Record<string, any>} message */
 async function prompt(message) {
   const { sessionId } = message.params
   const text = promptText(message.params.prompt)
+  const attachments = attachmentCount(message.params.prompt)
   if (text.includes('#slow')) {
     update(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'working slowly' } })
     const cancelled = await new Promise(resolve => {
@@ -86,7 +93,7 @@ async function prompt(message) {
   }
   const current = Object.fromEntries(configOf(sessionId).map(option => [option.id, option.currentValue]))
   const created = createdIn.get(cwdOf.get(sessionId) ?? '') ?? 0
-  update(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `echo: ${text} [model=${current.model} permission=${current.permission}] sessions-in-cwd=${created}` } })
+  update(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `echo: ${text} [model=${current.model} permission=${current.permission}] sessions-in-cwd=${created}${attachments > 0 ? ` attachments=${attachments}` : ''}` } })
   send({ id: message.id, result: { stopReason: 'end_turn' } })
 }
 
@@ -95,7 +102,7 @@ createInterface({ input: process.stdin }).on('line', line => {
   const params = message.params ?? {}
   switch (message.method) {
     case 'initialize':
-      send({ id: message.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true, promptCapabilities: {}, sessionCapabilities: { resume: {} } }, agentInfo: { name: 'fake-e2e', version: '1' }, authMethods: [] } })
+      send({ id: message.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true, promptCapabilities: { image: true }, sessionCapabilities: { resume: {} } }, agentInfo: { name: 'fake-e2e', version: '1' }, authMethods: [] } })
       return
     case 'session/new': {
       sessions += 1
