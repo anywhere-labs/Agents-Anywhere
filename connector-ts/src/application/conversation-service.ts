@@ -52,7 +52,7 @@ export class ConversationService implements SessionEventSink {
     this.plans = new PlanningService(this.kernel, this.bindings)
     this.goals = new GoalService(this.kernel, this.bindings)
     this.messages = new MessageService(this.kernel, this.bindings, this.deliveries, this.turns, this.queue, this.plans, this.goals)
-    this.controls = new SessionControls(this.kernel, this.bindings)
+    this.controls = new SessionControls(this.kernel, this.bindings, this.deliveries)
     this.interactions = new InteractionService(this.kernel, this.bindings, this.plans)
     this.recovery = new Recovery(this.kernel, this.deliveries, this.turns, this.queue, this.messages)
   }

@@ -389,6 +389,33 @@ describe('command receipts across a crash', () => {
     expect(await resultsOf('cm')).toHaveLength(1)
   })
 
+  it('steers with the attachments of session.steer, and rejects one that cannot be fetched', async () => {
+    const fetched: string[] = []
+    await service.close()
+    service = new ConversationService({
+      store, feed, live: { emit: (method, payload) => live.push({ method, payload }) }, runtimes, clock, ids, coalesceMs: 100,
+      attachments: async (_sessionId, ref) => {
+        if (ref.fileId === 'file_gone') throw Object.assign(new Error('gone'), { code: 'attachment_unavailable' })
+        fetched.push(ref.fileId)
+        return { kind: 'file', path: `/tmp/${ref.name}`, mimeType: ref.mediaType, name: ref.name }
+      },
+    })
+    await makeSession()
+    await service.binding('sess_1')
+    await store.sessions.update('sess_1', { status: 'running' })
+    const image = { fileId: 'file_1', name: 'shot.png', mediaType: 'image/png', size: 3 }
+    const inbox = new CommandInbox(store, clock, service)
+    const ack = await inbox.handle('sessionSteer', { commandId: 'cs', deadline: 'x', p: { sessionId: 'sess_1', clientMessageId: 'ms', content: 'look', attachments: [image] } })
+    expect(ack).toMatchObject({ outcome: 'accepted' })
+    expect(fetched).toEqual(['file_1'])
+    const steer = sessions[0]!.calls.find(call => call.method === 'steer')
+    expect(steer).toMatchObject({ input: { text: 'look', attachments: [{ kind: 'file', path: '/tmp/shot.png', mimeType: 'image/png', info: { fileId: 'file_1', name: 'shot.png' } }] } })
+    const gone = await inbox.handle('sessionSteer', { commandId: 'cg', deadline: 'x', p: { sessionId: 'sess_1', clientMessageId: 'mg', content: 'more', attachments: [{ ...image, fileId: 'file_gone' }] } })
+    expect(gone).toMatchObject({ outcome: 'rejected', e: { code: 'attachment_unavailable' } })
+    expect((await store.deliveries.get('sess_1', 'mg'))?.state).toBe('rejected')
+    expect(sessions[0]!.calls.filter(call => call.method === 'steer')).toHaveLength(1)
+  })
+
   it('replays a planning command without calling the Runtime again', async () => {
     await makeSession()
     await service.binding('sess_1')

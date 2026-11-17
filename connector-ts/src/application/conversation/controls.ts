@@ -1,14 +1,15 @@
 import { admitSteer, runtimeStateWire } from '../../domain/conversation/index.js'
 import { UseCaseError } from '../errors.js'
-import type { ConfigOption } from '../ports/index.js'
+import type { ConfigOption, PromptAttachment } from '../ports/index.js'
 import type { RuntimeBindings } from '../session/bindings.js'
+import type { DeliveryRecords } from '../session/deliveries.js'
 import type { SessionKernel } from '../session/kernel.js'
 import { digestOf, type CommandContext } from '../session/receipts.js'
 import type { SendMessageCommand } from './messages.js'
 
 /** What a client does to a running session besides sending: steer the turn, change selections, interrupt. */
 export class SessionControls {
-  public constructor(private readonly kernel: SessionKernel, private readonly bindings: RuntimeBindings) {}
+  public constructor(private readonly kernel: SessionKernel, private readonly bindings: RuntimeBindings, private readonly deliveries: DeliveryRecords) {}
 
   public async steer(command: SendMessageCommand, context: CommandContext): Promise<{ outcome: string }> {
     const kernel = this.kernel
@@ -18,13 +19,25 @@ export class SessionControls {
       const binding = await this.bindings.binding(command.sessionId)
       admitSteer({ status: session.status, steerSupported: binding.session.steer !== undefined })
       const at = deps.clock.nowIso()
+      const refs = command.attachments ?? []
       const received = await deps.store.deliveries.receive({
         sessionId: command.sessionId, clientMessageId: command.clientMessageId,
-        inputDigest: context.inputDigest ?? digestOf({ steer: command.content }), userItem: null, enqueue: null, commandId: context.commandId, at,
+        inputDigest: context.inputDigest ?? digestOf(refs.length > 0 ? { steer: command.content, attachments: refs } : { steer: command.content }),
+        userItem: null, enqueue: null, commandId: context.commandId, at,
       })
       if (received.duplicate) return { outcome: `duplicate:${received.delivery.state}` }
+      // Attachments first, as for a message: one that cannot be fetched is a rejection the Runtime never saw.
+      let attachments: PromptAttachment[]
+      try {
+        attachments = deps.attachments === undefined ? [] : await Promise.all(refs.map(ref => this.deliveries.resolveAttachment(command.sessionId, ref)))
+      } catch (error) {
+        const code = typeof (error as { code?: unknown })?.code === 'string' ? String((error as { code: string }).code) : 'attachment_unavailable'
+        await deps.store.deliveries.transition(command.sessionId, command.clientMessageId, 'rejected', { at: deps.clock.nowIso(), errorCode: code })
+        throw new UseCaseError(code, (error as Error)?.message ?? code)
+      }
       await deps.store.deliveries.transition(command.sessionId, command.clientMessageId, 'sending', { at })
-      const result = await binding.session.steer!({ text: command.content }, { deliveryId: command.clientMessageId, clientMessageId: command.clientMessageId })
+      const input = { text: command.content, ...(attachments.length > 0 ? { attachments } : {}) }
+      const result = await binding.session.steer!(input, { deliveryId: command.clientMessageId, clientMessageId: command.clientMessageId })
       if (result.outcome === 'injected' || result.outcome === 'started_new_turn') {
         await deps.store.deliveries.transition(command.sessionId, command.clientMessageId, 'started', { at: deps.clock.nowIso() })
       } else if (result.outcome === 'rejected' || result.outcome === 'prompt_required') {

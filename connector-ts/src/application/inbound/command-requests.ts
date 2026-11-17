@@ -117,10 +117,11 @@ export const REQUEST_PARSERS = {
       queue: queue === null ? null : oneOf(queue, QUEUE_MODES, () => 'queue must be auto, interrupt or never'),
     }
   },
-  'session.steer': (p): CommandRequest<'session.steer'> & { content: string } => ({
+  'session.steer': (p): CommandRequest<'session.steer'> & { content: string; attachments: CommandAttachmentRef[] } => ({
     sessionId: text(p.sessionId, 'sessionId'),
     clientMessageId: text(p.clientMessageId, 'clientMessageId'),
     content: typeof p.content === 'string' ? p.content : '',
+    attachments: attachments(p.attachments),
   }),
   'session.select': (p): SelectRequest => {
     const sessionId = text(p.sessionId, 'sessionId')

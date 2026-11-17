@@ -82,7 +82,7 @@ export class CommandInbox {
       attachments: p.attachments as AttachmentRef[],
       queue: p.queue,
     }, context)))
-    register('session.steer', async (p, context) => service.steer({ sessionId: p.sessionId, clientMessageId: p.clientMessageId, content: p.content }, context))
+    register('session.steer', async (p, context) => service.steer({ sessionId: p.sessionId, clientMessageId: p.clientMessageId, content: p.content, attachments: p.attachments as AttachmentRef[] }, context))
     // The Server sends v2 `session.selections.update` here: `{selections: {model: ..., permission: ...}}`. A
     // single `{optionId, value}` (the secure channel's route) is still accepted.
     register('session.select', async p => {
