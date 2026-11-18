@@ -2,8 +2,8 @@ name: CI
 
 # One workflow for every headless-checkable component. The `changes` job looks
 # at the changed paths and turns on only the jobs that can be affected,
-# including downstream consumers: the DSH plugin tests execute Connector and
-# Server code, and the Server tests import the Connector package.
+# including downstream consumers: the DSH plugin bundles and runs the TS
+# Connector, and the Server tests import the Connector package.
 
 on:
   pull_request:
@@ -115,17 +115,17 @@ jobs:
                   run_everything "shared file changed: $path"
                   ;;
                 dsh-bridge-next/*) plugin=true ;;
-                # Plugin integration tests run the Connector's DSH probe and the
-                # Server tests import the Connector package.
+                # The Server tests import the Connector package.
                 connector/scripts/verify-acp-runtime.py|connector/scripts/verify-acp-processes.py|connector/scripts/verify-acp-generic-boundary.py|connector/scripts/verify-pi-managed.py)
                   acp=true ;;
                 connector/scripts/verify-pi-native.py)
                   # Verified by the separate Pi compatibility workflow.
                   ;;
-                connector/*) connector=true; acp=true; server=true; plugin=true ;;
-                server/*) server=true; plugin=true ;;
-                # tests/test_v3_e2e.py runs the real TS Connector against the Server.
-                connector-ts/*) server=true ;;
+                connector/*) connector=true; acp=true; server=true ;;
+                server/*) server=true ;;
+                # tests/test_v3_e2e.py runs the real TS Connector against the Server;
+                # the plugin bundles it and its integration tests run it.
+                connector-ts/*) server=true; plugin=true ;;
                 web-next/*) web=true ;;
                 desktop-workbench/*) desktop=true ;;
               esac
@@ -143,25 +143,6 @@ jobs:
     if: needs.changes.outputs.plugin == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: agents_anywhere_test
-        ports:
-          - 5432:5432
-        options: >-
-          --tmpfs /var/lib/postgresql/data:rw
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      # The plugin's integration tests run the Connector's DSH probes, which build
-      # the Server in-process against a throwaway database (see server/tests/conftest.py).
-      AGENT_SERVER_TEST_DB_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/agents_anywhere_test
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -173,25 +154,26 @@ jobs:
         env:
           # Validate explicitly pinned DSH release candidates immediately after publication.
           YARN_NPM_MINIMAL_AGE_GATE: "0"
-      - name: Set up uv and Python
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - name: Install TS Connector dependencies
+        # The build bundles connector-ts into the plugin; integration tests run it from source.
+        uses: ./.github/actions/setup-yarn
         with:
-          version: ${{ env.UV_VERSION }}
-          python-version: ${{ env.PYTHON_VERSION }}
-          enable-cache: true
-          cache-dependency-glob: |
-            connector/pyproject.toml
-            server/pyproject.toml
-      - name: Prepare Python integration fixtures
+          project: connector-ts
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Set up Go for the MeshCall Router
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+          cache: false
+      - name: Build the MeshCall Router (pinned 9334405)
+        # The Connector the plugin launches needs it; without it those integration tests are skipped.
         run: |
-          uv sync --project connector
-          uv sync --project server
-          uv pip install --python server/.venv/bin/python --editable ./connector
+          git clone -q --filter=blob:none https://github.com/t4wefan/meshcall.git "$RUNNER_TEMP/meshcall"
+          git -C "$RUNNER_TEMP/meshcall" checkout -q 93344059ada65735c6cc08fdf3247ea9fb808d6b
+          (cd "$RUNNER_TEMP/meshcall/meshcall-router" && CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/bin/meshcall-router" ./cmd/meshcall-router)
+          echo "MESHCALL_ROUTER_BINARY=$RUNNER_TEMP/bin/meshcall-router" >> "$GITHUB_ENV"
       - name: Typecheck, build and test plugin
         working-directory: dsh-bridge-next
-        env:
-          # Nested Python probes reuse the prepared environments, without repeated resolution.
-          UV_NO_SYNC: "true"
         run: corepack yarn check
 
   connector:

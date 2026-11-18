@@ -72,10 +72,12 @@ uv run pytest -q
 ```
 
 ```bash
-# DSH 插件：集成测试会在进程内拉起 Connector 的 DSH 探针和 Server，需要上面同一个测试库变量
+# DSH 插件：构建会打包 connector-ts，集成测试从 connector-ts 源码拉起 Connector，
+# 需要 MeshCall Router（没有时这些测试跳过）
+(cd connector-ts && yarn install && node scripts/fetch-router.mjs)
 cd dsh-bridge-next
 corepack yarn install
-AGENT_SERVER_TEST_DB_URL=postgresql+asyncpg://agents_anywhere:agents_anywhere_dev_password@127.0.0.1:55432/agents_anywhere_test \
+MESHCALL_ROUTER_BINARY="$PWD/../connector-ts/router/$(node -p 'process.platform + "-" + process.arch')/meshcall-router" \
   corepack yarn check
 ```
 
@@ -101,7 +103,7 @@ Server 测试应使用隔离测试环境，不要把生产数据库 URL 带入�
 ### CI 入口与缓存
 
 `.github/workflows/ci.yml` 按路径选择 Connector、Server、DSH 插件、Web 和 Desktop
-检查。Connector 通用代码改动同时触发 Server、插件和三平台 ACP；Server 改动同时触发插件。
+检查。Connector 通用代码改动同时触发 Server 和三平台 ACP；`connector-ts/` 改动同时触发 Server 和插件。
 ACP/Pi 受管验证脚本仅触发三平台 ACP，原生 Pi 验证脚本由独立 Pi compatibility 工作流覆盖。
 `setup-yarn` 改动触发 Web、Desktop 和插件；`dsh-bridge.yml` 改动触发插件，
 `pi-compat.yml` 由自身的 PR 工作流验证。主 CI、未知工作流、其他公共 action 和契约改动仍触发全部检查。
@@ -109,7 +111,7 @@ ACP/Pi 受管验证脚本仅触发三平台 ACP，原生 Pi 验证脚本由独�
 公共 `setup-yarn` action 仅缓存下载归档，按项目、Node、平台及依赖声明区分，
 不缓存 `node_modules` 或 lockfile；缓存命中后仍执行安装，从当前清单解析依赖。
 Python 环境在检查前准备一次，Server 中预装当前 Connector，之后以 `--no-sync`
-运行检查；DSH 集成探针通过 `UV_NO_SYNC=true` 复用已准备的两个环境。
+运行检查。
 CI 的一次性 PostgreSQL 使用 tmpfs，减少每个用例清表的磁盘开销；不修改生产数据库
 配置。pytest 保留外层硬超时，并输出慢项及分阶段耗时。
 
@@ -128,7 +130,8 @@ Linux glibc 2.28+（arm64/x64）和 Windows x64，下载失败可从客户端重
 
 DSH 的 PR/push 检查统一在 CI 中执行。独立 `dsh-bridge.yml` 使用当前
 `dsh-bridge-next/`，仅负责手动验包和既有 `dsh-bridge-v<包版本>` release 发布：
-先完成类型、构建和测试，再用 `npm pack --ignore-scripts` 打包已验证的产物，
+先为六个平台构建并校验 MeshCall Router，以 `DSH_BRIDGE_ROUTER_TARGETS=all` 完成类型、构建和测试，
+再用 `npm pack --ignore-scripts` 打包已验证的产物，
 发布作业下载同一份归档，不重复安装、构建或触发 `prepack`。手动运行不会发布。
 
 ## 构建安装包

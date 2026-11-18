@@ -16,9 +16,6 @@ concurrency:
   cancel-in-progress: ${{ github.event_name != 'release' }}
 
 env:
-  UV_DEFAULT_INDEX: https://pypi.org/simple
-  UV_VERSION: 0.12.3
-  PYTHON_VERSION: "3.12"
   NODE_VERSION: 22.23.2
 
 jobs:
@@ -27,23 +24,6 @@ jobs:
     if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'dsh-bridge-v')
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: agents_anywhere_test
-        ports:
-          - 5432:5432
-        options: >-
-          --tmpfs /var/lib/postgresql/data:rw
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      AGENT_SERVER_TEST_DB_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/agents_anywhere_test
     defaults:
       run:
         working-directory: dsh-bridge-next
@@ -57,24 +37,28 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
         env:
           YARN_NPM_MINIMAL_AGE_GATE: "0"
-      - name: Set up uv and Python
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - name: Install TS Connector dependencies
+        # The build bundles connector-ts into the package.
+        uses: ./.github/actions/setup-yarn
         with:
-          version: ${{ env.UV_VERSION }}
-          python-version: ${{ env.PYTHON_VERSION }}
-          enable-cache: true
-          cache-dependency-glob: |
-            connector/pyproject.toml
-            server/pyproject.toml
-      - name: Prepare Python integration fixtures
-        working-directory: .
+          project: connector-ts
+          node-version: ${{ env.NODE_VERSION }}
+      # Any Go >= 1.21: the script pins the exact toolchain through GOTOOLCHAIN.
+      - name: Set up Go for the MeshCall Router
+        uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          cache: false
+      - name: Build the MeshCall Router for every platform
+        # Built from the pinned meshcall commit and checked against connector-ts/scripts/meshcall-router.json.
+        working-directory: connector-ts
         run: |
-          uv sync --project connector
-          uv sync --project server
-          uv pip install --python server/.venv/bin/python --editable ./connector
+          node scripts/fetch-router.mjs --all
+          echo "MESHCALL_ROUTER_BINARY=$PWD/router/linux-x64/meshcall-router" >> "$GITHUB_ENV"
       - name: Typecheck, build and test plugin
         env:
-          UV_NO_SYNC: "true"
+          # The package carries the Router of every platform; the build fails if one is missing.
+          DSH_BRIDGE_ROUTER_TARGETS: all
         run: corepack yarn check
       - name: Match release tag to package version
         if: github.event_name == 'release'
