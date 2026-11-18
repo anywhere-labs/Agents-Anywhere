@@ -310,6 +310,53 @@ def test_command_receipts_register_settle_and_replay(mesh_router: RouterProcess,
     asyncio.run(scenario())
 
 
+def test_a_command_the_device_confirms_first_goes_through_unchanged(mesh_router: RouterProcess, monkeypatch) -> None:
+    """Quitting the app that holds a session: the device answers ``confirmation_required`` with its plan, and the
+    follow-up names the plan in ``args``; each call is its own command with its own receipt."""
+
+    plan = {
+        "kind": "owner_release", "planId": "plan_1", "expiresAt": "2026-11-18T12:00:00.000Z", "appName": "Codex App",
+        "processCount": 1, "releasesOtherSessions": True, "gracePeriodMs": 5000,
+        "confirmArgs": ["--confirm", "plan_1"], "forceArgs": ["--confirm", "plan_1", "--force"],
+        "cancelArgs": ["--cancel", "plan_1"],
+    }
+
+    def answer(request: dict[str, Any]) -> Any:
+        args = (request["body"] or {}).get("args") or []
+        if not args:
+            return (200, {"command": "quit-codex-app", "ok": False, "code": "confirmation_required", "message": "sure?",
+                          "result": {"executionState": "completed", "confirmation": plan}, "session": None,
+                          "serverTime": "2026-11-18T10:00:00Z"})
+        return (200, {"command": "quit-codex-app", "ok": True, "code": None, "message": "done",
+                      "result": {"executionState": "completed", "status": "released"}, "session": None,
+                      "serverTime": "2026-11-18T10:00:01Z"})
+
+    async def scenario() -> None:
+        async with server(mesh_router, monkeypatch) as (app, client):
+            headers, _device_id, device = await _session(app, client)
+            state = device.state
+            try:
+                state.client_handler = answer
+                url = f"{BASE}/runtime/commands"
+                first = await client.post(url, json={"command": "quit-codex-app"}, headers=headers)
+                assert first.status_code == 200, first.text
+                assert first.json()["code"] == "confirmation_required"
+                assert first.json()["result"]["confirmation"] == plan
+                first_id = state.client_calls[-1]["command"]["commandId"]
+                confirmed = await client.post(
+                    url, json={"command": "quit-codex-app", "args": plan["forceArgs"]}, headers=headers
+                )
+                assert confirmed.status_code == 200, confirmed.text
+                assert confirmed.json()["ok"] is True and confirmed.json()["result"]["status"] == "released"
+                request = state.client_calls[-1]
+                assert request["body"]["args"] == ["--confirm", "plan_1", "--force"]
+                assert request["command"]["commandId"] != first_id
+            finally:
+                await device.stop()
+
+    asyncio.run(scenario())
+
+
 async def _known(state: Any, command_id: str) -> bool:
     return command_id in state.receipts
 

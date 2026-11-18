@@ -168,6 +168,7 @@ struct SessionChatView: View, Equatable {
             model.error = nil
             if !(await model.setTakeover(enabled)), let error = model.takeoverError { model.error = error }
         })
+        .modifier(CommandConfirmationAlert(model: model))
         .alert(String(localized: "继续任务"), isPresented: $confirmingNativeContinue) {
             Button(String(localized: "已退出 CLI，继续任务")) { Task { await model.continueNativeTask() } }
             Button(String(localized: "取消"), role: .cancel) {}

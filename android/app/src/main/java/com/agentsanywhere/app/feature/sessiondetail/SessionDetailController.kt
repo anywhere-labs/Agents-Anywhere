@@ -936,6 +936,7 @@ class SessionDetailController(
                     code = response.code,
                     message = response.message,
                     result = (response.result as? JSONObject).toMap(),
+                    command = request.command,
                 )
             }.getOrElse(RuntimeCommandOutcome::fromTransportFailure)
         }

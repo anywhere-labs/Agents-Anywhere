@@ -110,6 +110,8 @@ import com.agentsanywhere.app.feature.sessiondetail.hasPendingOptimisticSend
 import com.agentsanywhere.app.feature.sessiondetail.isFailedLocalSend
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeCommand
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeCommandBlock
+import com.agentsanywhere.app.feature.sessiondetail.RuntimeCommandConfirmation
+import com.agentsanywhere.app.feature.sessiondetail.RuntimeCommandOutcome
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeCommandExecutionState
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeCommandUi
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeNotice
@@ -269,6 +271,7 @@ private fun SessionDetailVisit(
     var goalMode by remember(sessionId,preparedSession?.localSessionId){mutableStateOf(false)}
     var goalBusy by remember(sessionId){mutableStateOf(false)}
     var goalReplacement by remember(sessionId){mutableStateOf<Pair<String,List<com.agentsanywhere.app.feature.sessiondetail.TimelineAttachment>>?>(null)}
+    var commandConfirmation by remember(sessionId) { mutableStateOf<RuntimeCommandConfirmation?>(null) }
     LaunchedEffect(sessionId) {
         val id=sessionId
         if(id!=null)while(isVisitActive()){controller.loadGoal(id).onSuccess{if(isVisitActive())goalState=it};delay(3000)}
@@ -1705,6 +1708,26 @@ private fun SessionDetailVisit(
             }
         }
 
+    fun showCommandOutcome(outcome: RuntimeCommandOutcome, onSuccess: () -> Unit = {}) {
+        val detail = outcome.message?.takeIf(String::isNotBlank)
+        when {
+            outcome.ok -> {
+                val title = context.getString(
+                    if (outcome.state == RuntimeCommandExecutionState.Completed) R.string.session_command_completed
+                    else R.string.session_command_accepted,
+                )
+                val summary = detail?.let { if (it.length > 200) it.take(200) + "…" else it }
+                showToast(listOfNotNull(title, summary).joinToString("\n"))
+                onSuccess()
+            }
+            outcome.state == RuntimeCommandExecutionState.Unknown -> showError(
+                listOfNotNull(context.getString(R.string.session_command_outcome_unknown), detail)
+                    .joinToString("\n"),
+            )
+            else -> showError(detail ?: context.getString(R.string.session_command_failed))
+        }
+    }
+
     /** `clearing` is the draft to clear on success; edits made meanwhile are kept. */
     fun runCommand(command: RuntimeCommand, raw: String, clearing: String = raw) {
         val id = sessionId ?: return
@@ -1737,24 +1760,37 @@ private fun SessionDetailVisit(
         scope.launch {
             val outcome = controller.executeCommand(id, request)
             state = state.copy(commandExecuting = false)
-            val detail = outcome.message?.takeIf(String::isNotBlank)
-            when {
-                outcome.ok -> {
-                    val title = context.getString(
-                        if (outcome.state == RuntimeCommandExecutionState.Completed) R.string.session_command_completed
-                        else R.string.session_command_accepted,
-                    )
-                    val summary = detail?.let { if (it.length > 200) it.take(200) + "…" else it }
-                    showToast(listOfNotNull(title, summary).joinToString("\n"))
-                    if (clearing.isNotEmpty() && draft == clearing) clearComposerDraft()
-                }
-                outcome.state == RuntimeCommandExecutionState.Unknown -> showError(
-                    listOfNotNull(context.getString(R.string.session_command_outcome_unknown), detail)
-                        .joinToString("\n"),
-                )
-                else -> showError(detail ?: context.getString(R.string.session_command_failed))
+            val confirmation = outcome.confirmation
+            if (confirmation != null) {
+                // The device waits for the user's decision; this is not a failure.
+                commandConfirmation = confirmation
+                if (clearing.isNotEmpty() && draft == clearing) clearComposerDraft()
+                return@launch
+            }
+            showCommandOutcome(outcome) {
+                if (clearing.isNotEmpty() && draft == clearing) clearComposerDraft()
             }
         }
+    }
+
+    fun confirmCommand(confirmation: RuntimeCommandConfirmation, force: Boolean) {
+        val id = sessionId ?: return
+        if (state.commandExecuting) return
+        commandConfirmation = null
+        state = state.copy(commandExecuting = true, actionError = null)
+        scope.launch {
+            val outcome = controller.executeCommand(id, confirmation.confirmRequest(force))
+            state = state.copy(commandExecuting = false)
+            showCommandOutcome(outcome)
+        }
+    }
+
+    fun cancelCommandConfirmation(confirmation: RuntimeCommandConfirmation) {
+        commandConfirmation = null
+        val id = sessionId ?: return
+        val request = confirmation.cancelRequest() ?: return
+        // Best effort: the plan also expires on the device.
+        scope.launch { controller.executeCommand(id, request) }
     }
 
     /** Suggestion tap: commands with arguments are completed into the draft, the rest run directly. */
@@ -2246,6 +2282,13 @@ private fun SessionDetailVisit(
                                 }
                                 SessionGoalPanel(if(goalUsable && takeoverEnabled)goalState else goalState?.copy(actions=emptyList()),goalBusy,onAction={action,objective->goalAction(action,objective)})
                                 if(goalMode) androidx.compose.material3.TextButton(onClick={goalMode=false}) {androidx.compose.material3.Text(stringResource(R.string.goal_exit_mode))}
+                                commandConfirmation?.let { confirmation ->
+                                    RuntimeCommandConfirmationDialog(
+                                        confirmation = confirmation,
+                                        onConfirm = { force -> confirmCommand(confirmation, force) },
+                                        onCancel = { cancelCommandConfirmation(confirmation) },
+                                    )
+                                }
                                 goalReplacement?.let { replacement ->
                                     androidx.compose.material3.AlertDialog(onDismissRequest={goalReplacement=null},title={androidx.compose.material3.Text(stringResource(R.string.goal_replace_title))},text={androidx.compose.material3.Text(replacement.first,maxLines=4)},confirmButton={androidx.compose.material3.TextButton(onClick={goalReplacement=null;goalAction("set",replacement.first,replacement.second,true)}){androidx.compose.material3.Text(stringResource(R.string.goal_replace))}},dismissButton={androidx.compose.material3.TextButton(onClick={goalReplacement=null}){androidx.compose.material3.Text(stringResource(R.string.goal_cancel))}})
                                 }

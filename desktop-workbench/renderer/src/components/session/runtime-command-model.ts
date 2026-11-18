@@ -122,3 +122,52 @@ export function commandTransportFailure(error: unknown, fallback: string): Comma
     result: null,
   }
 }
+
+/** A command the device runs only after the user confirms its plan (quitting the app that holds the session). */
+export type CommandConfirmation = {
+  kind: "owner_release"
+  planId: string
+  expiresAt: string | null
+  appName: string
+  processCount: number
+  releasesOtherSessions: boolean
+  gracePeriodMs: number
+  confirmArgs: string[]
+  forceArgs: string[]
+  cancelArgs: string[]
+}
+
+export type CommandConfirmationChoice = "confirm" | "force" | "cancel"
+
+function stringList(value: unknown): string[] | null {
+  return Array.isArray(value) && value.every(item => typeof item === "string") ? value as string[] : null
+}
+
+/** The plan of a `confirmation_required` answer; null for any other answer or a plan it cannot read. */
+export function commandConfirmation(response: Pick<SessionCommandResponse, "ok" | "code" | "result">): CommandConfirmation | null {
+  if (response.ok || response.code !== "confirmation_required") return null
+  const result = response.result && typeof response.result === "object" && !Array.isArray(response.result) ? response.result as Record<string, unknown> : {}
+  const raw = result.confirmation
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null
+  const value = raw as Record<string, unknown>
+  const confirmArgs = stringList(value.confirmArgs)
+  if (value.kind !== "owner_release" || typeof value.planId !== "string" || typeof value.appName !== "string" || !confirmArgs?.length) return null
+  return {
+    kind: "owner_release",
+    planId: value.planId,
+    expiresAt: typeof value.expiresAt === "string" ? value.expiresAt : null,
+    appName: value.appName,
+    processCount: typeof value.processCount === "number" ? value.processCount : 0,
+    releasesOtherSessions: value.releasesOtherSessions !== false,
+    gracePeriodMs: typeof value.gracePeriodMs === "number" ? value.gracePeriodMs : 0,
+    confirmArgs,
+    forceArgs: stringList(value.forceArgs) ?? [],
+    cancelArgs: stringList(value.cancelArgs) ?? [],
+  }
+}
+
+/** The arguments of the follow-up call for the user's choice; null when the plan offers no such step. */
+export function confirmationArgs(confirmation: CommandConfirmation, choice: CommandConfirmationChoice): string[] | null {
+  const args = choice === "confirm" ? confirmation.confirmArgs : choice === "force" ? confirmation.forceArgs : confirmation.cancelArgs
+  return args.length > 0 ? args : null
+}

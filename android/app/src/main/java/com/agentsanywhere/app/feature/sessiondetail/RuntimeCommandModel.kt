@@ -55,14 +55,87 @@ data class RuntimeCommandRequest(
 
 enum class RuntimeCommandExecutionState { Accepted, Completed, Unknown }
 
+/**
+ * A device-side plan that runs only after the user confirms it. The device
+ * answers the first call with code `confirmation_required`; the follow-up
+ * calls repeat the same command with the args the device listed.
+ */
+data class RuntimeCommandConfirmation(
+    val command: String,
+    val kind: String,
+    val planId: String,
+    val expiresAt: String?,
+    val appName: String,
+    val processCount: Int,
+    val releasesOtherSessions: Boolean,
+    val gracePeriodMs: Int,
+    val confirmArgs: List<String>,
+    val forceArgs: List<String>,
+    val cancelArgs: List<String>,
+) {
+    /** Whole seconds the app is given to exit on its own, rounded up. */
+    val gracePeriodSeconds: Int
+        get() = (gracePeriodMs + 999) / 1000
+
+    val canForce: Boolean
+        get() = forceArgs.isNotEmpty()
+
+    fun confirmRequest(force: Boolean): RuntimeCommandRequest = RuntimeCommandRequest(
+        command = command,
+        args = if (force && canForce) forceArgs else confirmArgs,
+        raw = "",
+    )
+
+    fun cancelRequest(): RuntimeCommandRequest? =
+        cancelArgs.takeIf { it.isNotEmpty() }?.let { RuntimeCommandRequest(command = command, args = it, raw = "") }
+
+    companion object {
+        const val CODE = "confirmation_required"
+        private val KINDS = setOf("owner_release")
+
+        /** Null unless [result] holds a confirmation this client knows how to present. */
+        fun parse(command: String, code: String?, result: Map<String, Any?>): RuntimeCommandConfirmation? {
+            if (code != CODE || command.isBlank()) return null
+            val confirmation = result["confirmation"] as? Map<*, *> ?: return null
+            val kind = confirmation["kind"] as? String ?: return null
+            if (kind !in KINDS) return null
+            val planId = (confirmation["planId"] as? String)?.takeIf(String::isNotBlank) ?: return null
+            val confirmArgs = confirmation["confirmArgs"].stringList().takeIf { it.isNotEmpty() } ?: return null
+            return RuntimeCommandConfirmation(
+                command = command,
+                kind = kind,
+                planId = planId,
+                expiresAt = confirmation["expiresAt"] as? String,
+                appName = (confirmation["appName"] as? String)?.takeIf(String::isNotBlank) ?: return null,
+                processCount = (confirmation["processCount"] as? Number)?.toInt() ?: 0,
+                releasesOtherSessions = confirmation["releasesOtherSessions"] == true,
+                gracePeriodMs = (confirmation["gracePeriodMs"] as? Number)?.toInt()?.coerceAtLeast(0) ?: 0,
+                confirmArgs = confirmArgs,
+                forceArgs = confirmation["forceArgs"].stringList(),
+                cancelArgs = confirmation["cancelArgs"].stringList(),
+            )
+        }
+
+        private fun Any?.stringList(): List<String> = (this as? List<*>)?.filterIsInstance<String>().orEmpty()
+    }
+}
+
 data class RuntimeCommandOutcome(
     val ok: Boolean,
     val state: RuntimeCommandExecutionState,
     val message: String?,
     val code: String?,
+    /** Set when the device asks the user to confirm before it runs the command. */
+    val confirmation: RuntimeCommandConfirmation? = null,
 ) {
     companion object {
-        fun fromResponse(ok: Boolean, code: String?, message: String?, result: Map<String, Any?>): RuntimeCommandOutcome {
+        fun fromResponse(
+            ok: Boolean,
+            code: String?,
+            message: String?,
+            result: Map<String, Any?>,
+            command: String = "",
+        ): RuntimeCommandOutcome {
             val state = when (result["executionState"]) {
                 "accepted" -> RuntimeCommandExecutionState.Accepted
                 "completed" -> RuntimeCommandExecutionState.Completed
@@ -79,6 +152,7 @@ data class RuntimeCommandOutcome(
                 state = state,
                 message = if (ok) text ?: message else message ?: text,
                 code = code,
+                confirmation = RuntimeCommandConfirmation.parse(command, code, result),
             )
         }
 

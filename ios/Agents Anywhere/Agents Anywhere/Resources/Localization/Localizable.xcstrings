@@ -15407,19 +15407,19 @@
         }
       }
     },
-    "在正在运行的 Codex 桌面应用中打开此会话，并从那里继续跟随。": {
+    "在这台电脑上正在运行的 Codex App 中打开此会话。": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Open this thread in the running Codex desktop app and follow it from there."
+            "value": "Open this session in the Codex App running on this computer."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "在正在运行的 Codex 桌面应用中打开此会话，并从那里继续跟随。"
+            "value": "在这台电脑上正在运行的 Codex App 中打开此会话。"
           }
         }
       }
@@ -22145,19 +22145,19 @@
         }
       }
     },
-    "退出 ChatGPT / Codex 桌面应用，让它的会话改由 Connector 自己的 app-server 运行。": {
+    "退出占用此会话的 Codex App，让 Agents Anywhere 接手（需要确认）。": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Stop the ChatGPT / Codex desktop app so its threads can run in the connector's own app-server."
+            "value": "Quit the Codex App holding this session so Agents Anywhere can take over (asks for confirmation)."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "退出 ChatGPT / Codex 桌面应用，让它的会话改由 Connector 自己的 app-server 运行。"
+            "value": "退出占用此会话的 Codex App，让 Agents Anywhere 接手（需要确认）。"
           }
         }
       }
@@ -26277,6 +26277,91 @@
           "stringUnit": {
             "state": "translated",
             "value": "要分享的内容太大，请只分享部分回复。"
+          }
+        }
+      }
+    },
+    "退出 %@？": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quit %@?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "退出 %@？"
+          }
+        }
+      }
+    },
+    "这会结束 %@（%lld 个进程）。它正在使用的所有会话都会被释放，App 里未保存的输入和正在运行的回合会中断。会先请求正常退出，最多等待 %lld 秒。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This ends %@ (%lld processes). Every session it has open is released, and unsaved input and running turns in the App are interrupted. It is asked to quit normally first, waiting up to %lld seconds."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这会结束 %@（%lld 个进程）。它正在使用的所有会话都会被释放，App 里未保存的输入和正在运行的回合会中断。会先请求正常退出，最多等待 %lld 秒。"
+          }
+        }
+      }
+    },
+    "退出后，发送下一条消息即可由 Agents Anywhere 接手这个会话。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "After it quits, send the next message to continue this session in Agents Anywhere."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "退出后，发送下一条消息即可由 Agents Anywhere 接手这个会话。"
+          }
+        }
+      }
+    },
+    "如果没有按时退出，强制结束": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Force it to quit if it does not exit in time"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "如果没有按时退出，强制结束"
+          }
+        }
+      }
+    },
+    "退出 %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quit %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "退出 %@"
           }
         }
       }

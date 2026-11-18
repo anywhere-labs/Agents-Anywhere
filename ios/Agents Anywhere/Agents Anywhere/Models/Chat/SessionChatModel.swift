@@ -53,6 +53,8 @@ final class SessionChatModel {
     /// Success is transient; failures stay until the user dismisses them.
     var commandSuccess: CommandFeedback?
     var commandFailure: CommandFeedback?
+    /// A command the device asked the user to confirm before it runs.
+    var pendingCommandConfirmation: PendingCommandConfirmation?
     /// Selector commands (model, permission, …) open the existing options sheet.
     private(set) var optionsRequest = 0
     @ObservationIgnored var onEditCreation: ((V2PendingMessage) -> Void)?
@@ -230,17 +232,44 @@ final class SessionChatModel {
             return
         }
         if case .selector? = command.ui { optionsRequest += 1; return }
+        await execute(request, clearing: source ?? raw)
+    }
+
+    /// Sends the confirmed follow-up with the device's confirm or force arguments.
+    func confirmCommand(_ pending: PendingCommandConfirmation, force: Bool) async {
+        guard !isRunningCommand, session.isValid else { return }
+        if pendingCommandConfirmation == pending { pendingCommandConfirmation = nil }
+        await execute(RuntimeCommandRequest(command: pending.command, args: pending.confirmation.args(force: force), raw: nil),
+            clearing: pending.source)
+    }
+
+    /// Tells the device to discard the plan; failures are ignored because the plan also expires.
+    func cancelCommand(_ pending: PendingCommandConfirmation) async {
+        if pendingCommandConfirmation == pending { pendingCommandConfirmation = nil }
+        guard session.isValid else { return }
+        _ = try? await repository.executeCommand(sessionId: session.id,
+            request: RuntimeCommandRequest(command: pending.command, args: pending.confirmation.cancelArgs, raw: nil))
+    }
+
+    private func execute(_ request: RuntimeCommandRequest, clearing source: String?) async {
         isRunningCommand = true
         commandFailure = nil
         defer { isRunningCommand = false }
         let outcome: RuntimeCommandOutcome
-        do { outcome = RuntimeCommandOutcome(try await repository.executeCommand(sessionId: session.id, request: request)) }
-        catch { outcome = RuntimeCommandOutcome(transportFailure: error) }
+        do {
+            let response = try await repository.executeCommand(sessionId: session.id, request: request)
+            if let confirmation = response.ownerReleaseConfirmation {
+                guard session.isValid else { return }
+                pendingCommandConfirmation = PendingCommandConfirmation(command: request.command, confirmation: confirmation, source: source)
+                return
+            }
+            outcome = RuntimeCommandOutcome(response)
+        } catch { outcome = RuntimeCommandOutcome(transportFailure: error) }
         guard session.isValid else { return }
         if outcome.ok {
             let message = outcome.message.map { $0.count > 200 ? String($0.prefix(200)) + "…" : $0 }
             commandSuccess = CommandFeedback(title: outcome.state == .completed ? String(localized: "指令已完成。") : String(localized: "指令已接受，后台任务可能仍在进行。"), message: message)
-            if let source = source ?? raw as String?, !source.isEmpty, session.composer.text == source { session.composer.text = ""; repository.draftDidChange(sessionID: session.id) }
+            if let source, !source.isEmpty, session.composer.text == source { session.composer.text = ""; repository.draftDidChange(sessionID: session.id) }
         } else if outcome.state == .unknown {
             commandFailure = CommandFeedback(title: String(localized: "指令结果尚不确定"),
                 message: [String(localized: "结果尚不确定，请先检查会话状态再决定是否重试。"), outcome.message].compactMap { $0 }.joined(separator: "\n"))
@@ -559,6 +588,14 @@ final class SessionChatModel {
         if let preview { session.attachmentPreviews.cache(preview, for: file) }
         return preview
     }
+}
+
+struct PendingCommandConfirmation: Identifiable, Equatable {
+    let command: String
+    let confirmation: V2OwnerReleaseConfirmation
+    /// The draft that started the command, cleared once the follow-up succeeds.
+    let source: String?
+    var id: String { confirmation.planId }
 }
 
 struct CommandFeedback: Identifiable, Equatable {

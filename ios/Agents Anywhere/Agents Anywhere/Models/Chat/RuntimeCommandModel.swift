@@ -42,7 +42,8 @@ enum RuntimeCommandBlock: Equatable {
 struct RuntimeCommandRequest: Equatable {
     let command: String
     let args: [String]
-    let raw: String
+    /// The typed draft; nil for follow-ups the client sends on its own.
+    let raw: String?
 }
 
 struct RuntimeCommandOutcome: Equatable {

@@ -126,4 +126,82 @@ class RuntimeCommandModelTest {
         assertEquals(RuntimeCommandExecutionState.Unknown, timeout.state)
         assertEquals("command_outcome_unknown", timeout.code)
     }
+
+    private fun confirmationResult(confirmation: Map<String, Any?>) = mapOf(
+        "executionState" to "completed",
+        "confirmation" to confirmation,
+    )
+
+    private val ownerRelease = mapOf(
+        "kind" to "owner_release",
+        "planId" to "plan-1",
+        "expiresAt" to "2026-11-18T10:00:00Z",
+        "appName" to "Codex App",
+        "processCount" to 3,
+        "releasesOtherSessions" to true,
+        "gracePeriodMs" to 10_500,
+        "confirmArgs" to listOf("confirm", "plan-1"),
+        "forceArgs" to listOf("confirm", "plan-1", "--force"),
+        "cancelArgs" to listOf("cancel", "plan-1"),
+    )
+
+    @Test
+    fun confirmationRequiredIsParsedInsteadOfShownAsFailure() {
+        val outcome = RuntimeCommandOutcome.fromResponse(
+            ok = false,
+            code = "confirmation_required",
+            message = "summary",
+            result = confirmationResult(ownerRelease),
+            command = "quit-codex-app",
+        )
+        val confirmation = outcome.confirmation!!
+        assertFalse(outcome.ok)
+        assertEquals("quit-codex-app", confirmation.command)
+        assertEquals("plan-1", confirmation.planId)
+        assertEquals("Codex App", confirmation.appName)
+        assertEquals(3, confirmation.processCount)
+        assertTrue(confirmation.releasesOtherSessions)
+        assertEquals(11, confirmation.gracePeriodSeconds)
+        assertEquals("2026-11-18T10:00:00Z", confirmation.expiresAt)
+        assertTrue(confirmation.canForce)
+    }
+
+    @Test
+    fun confirmationNeedsTheCodeAndAKnownPlan() {
+        val otherCode = RuntimeCommandOutcome.fromResponse(false, "app_not_running", "x", confirmationResult(ownerRelease), "quit-codex-app")
+        assertNull(otherCode.confirmation)
+        val notNeeded = RuntimeCommandOutcome.fromResponse(true, null, "x", mapOf("status" to "not_needed"), "quit-codex-app")
+        assertNull(notNeeded.confirmation)
+        assertNull(RuntimeCommandConfirmation.parse("quit-codex-app", "confirmation_required", mapOf("executionState" to "completed")))
+        assertNull(RuntimeCommandConfirmation.parse("quit-codex-app", "confirmation_required", confirmationResult(ownerRelease + ("kind" to "wizard"))))
+        assertNull(RuntimeCommandConfirmation.parse("quit-codex-app", "confirmation_required", confirmationResult(ownerRelease - "planId")))
+        assertNull(RuntimeCommandConfirmation.parse("quit-codex-app", "confirmation_required", confirmationResult(ownerRelease + ("confirmArgs" to emptyList<String>()))))
+        assertNull(RuntimeCommandConfirmation.parse("", "confirmation_required", confirmationResult(ownerRelease)))
+    }
+
+    @Test
+    fun confirmationFollowUpsRepeatTheCommandWithDeviceArgs() {
+        val confirmation = RuntimeCommandConfirmation.parse("quit-codex-app", "confirmation_required", confirmationResult(ownerRelease))!!
+        assertEquals(
+            RuntimeCommandRequest("quit-codex-app", listOf("confirm", "plan-1"), ""),
+            confirmation.confirmRequest(force = false),
+        )
+        assertEquals(
+            RuntimeCommandRequest("quit-codex-app", listOf("confirm", "plan-1", "--force"), ""),
+            confirmation.confirmRequest(force = true),
+        )
+        assertEquals(
+            RuntimeCommandRequest("quit-codex-app", listOf("cancel", "plan-1"), ""),
+            confirmation.cancelRequest(),
+        )
+
+        val noForce = RuntimeCommandConfirmation.parse(
+            "quit-codex-app",
+            "confirmation_required",
+            confirmationResult(ownerRelease - "forceArgs" - "cancelArgs"),
+        )!!
+        assertFalse(noForce.canForce)
+        assertEquals(listOf("confirm", "plan-1"), noForce.confirmRequest(force = true).args)
+        assertNull(noForce.cancelRequest())
+    }
 }

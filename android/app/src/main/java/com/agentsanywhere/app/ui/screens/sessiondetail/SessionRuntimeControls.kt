@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
@@ -58,6 +60,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeCommand
+import com.agentsanywhere.app.feature.sessiondetail.RuntimeCommandConfirmation
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeInputRequestDraft
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeInputRequestForm
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeInputRequestQuestion
@@ -681,11 +684,59 @@ internal fun localizedNoticeTitle(notice: RuntimeNotice): String {
     return notice.title
 }
 
+/** Asks the user to confirm a plan the device prepared; the facts come from the device, the text from this client. */
+@Composable
+internal fun RuntimeCommandConfirmationDialog(
+    confirmation: RuntimeCommandConfirmation,
+    onConfirm: (force: Boolean) -> Unit,
+    onCancel: () -> Unit,
+) {
+    val colors = LocalAAColors.current
+    var force by remember(confirmation.planId) { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = onCancel,
+        title = { Text(stringResource(R.string.session_command_quit_app_title, confirmation.appName)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    stringResource(
+                        R.string.session_command_quit_app_body,
+                        confirmation.appName,
+                        confirmation.processCount,
+                        confirmation.gracePeriodSeconds,
+                    ),
+                )
+                Text(stringResource(R.string.session_command_quit_app_after))
+                if (confirmation.canForce) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().noRippleClickable { force = !force },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(checked = force, onCheckedChange = { force = it })
+                        Text(stringResource(R.string.session_command_quit_app_force))
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(force) }) {
+                Text(
+                    stringResource(R.string.session_command_quit_app_confirm, confirmation.appName),
+                    color = colors.errorText,
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onCancel) { Text(stringResource(R.string.common_cancel)) }
+        },
+    )
+}
+
 /** AA's own commands carry translated text; native commands keep the runtime's text. */
 @Composable
 private fun localizedCommandText(command: RuntimeCommand): Pair<String, String?> = when (command.id) {
     "compact" -> stringResource(R.string.session_command_title_compact) to stringResource(R.string.session_command_description_compact)
-    "kill-chatgpt" -> stringResource(R.string.session_command_title_kill_chatgpt) to stringResource(R.string.session_command_description_kill_chatgpt)
+    "quit-codex-app" -> stringResource(R.string.session_command_title_quit_codex_app) to stringResource(R.string.session_command_description_quit_codex_app)
     "open-in-codex-app" -> stringResource(R.string.session_command_title_open_in_codex_app) to stringResource(R.string.session_command_description_open_in_codex_app)
     else -> command.title to command.description
 }

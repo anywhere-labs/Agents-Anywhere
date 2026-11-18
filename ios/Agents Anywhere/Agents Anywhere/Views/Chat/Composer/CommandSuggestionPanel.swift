@@ -90,8 +90,8 @@ struct CommandSuggestionPanel: View {
     private func localizedDescription(_ command: V2RuntimeCommand) -> String? {
         switch command.id {
         case "compact": String(localized: "压缩会话上下文。")
-        case "kill-chatgpt": String(localized: "退出 ChatGPT / Codex 桌面应用，让它的会话改由 Connector 自己的 app-server 运行。")
-        case "open-in-codex-app": String(localized: "在正在运行的 Codex 桌面应用中打开此会话，并从那里继续跟随。")
+        case "open-in-codex-app": String(localized: "在这台电脑上正在运行的 Codex App 中打开此会话。")
+        case "quit-codex-app": String(localized: "退出占用此会话的 Codex App，让 Agents Anywhere 接手（需要确认）。")
         default: command.description ?? (command.title == command.id ? nil : command.title)
         }
     }

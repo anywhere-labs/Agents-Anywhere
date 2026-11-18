@@ -38,6 +38,12 @@
 - 在工作设备安装并配置对应 CLI 后，可以在 Web、Desktop、Android 和 iOS 选择 Command Code、OpenCode、Google Antigravity、MiniMax Code、CodeBuddy Code 和 MiMo Code 新建会话，并按 Agent 支持的能力发送消息、处理审批、中断和恢复 AA 会话。（[#629](https://github.com/anywhere-labs/Agents-Anywhere/pull/629)）
 - Pi 会话现在支持 `/plan`，可以从首条任务开始规划、审阅和修改计划，并在同意后按原有工具权限继续执行。（[#631](https://github.com/anywhere-labs/Agents-Anywhere/pull/631)）
 
+### Codex 与 Claude
+
+- 连接 v3 Connector、装有 Codex App 的电脑上，Codex 会话的斜杠命令菜单可以用 `/open-in-codex-app` 在 Codex App 中打开这个会话，用 `/quit-codex-app` 退出占用会话的 Codex App 让 AA 接手：退出前会列出要结束的进程并请你确认，可以选择没有按时退出时强制结束，Web、Desktop、Android 和 iOS 都可以操作。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
+- 连接 v3 Connector 时，在 AA 新建的 Codex 线程默认立即出现在 Codex App 侧边栏（需要 codex-acp 支持），可以在 Codex 实例配置里关闭。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
+- 连接 v3 Connector 时，Codex 自动审查的结果在会话里显示为一条提示，写明审查的操作；拒绝或超时显示为警告，拒绝高风险操作会单独标出。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
+
 ### DSH 同步
 
 - 工作设备装有 DSH 时，可以用设备上配置的模型在 Agents Anywhere 新建 DSH 会话，并在桌面端和手机上继续同一会话。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）

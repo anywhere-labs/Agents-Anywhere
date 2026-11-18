@@ -59,7 +59,8 @@ import { createSessionController, type SessionController } from "@/components/se
 import { traceSessionSwitch } from "@/components/session/session-switch-performance"
 import { CAPABILITY, capabilityIsUsable, findCapability, portPreviewAvailable } from "@/components/session/capabilities"
 import { SessionComposer, type AttachedFile } from "@/components/session/session-composer"
-import { commandResult, commandTransportFailure, type CommandOutcome } from "@/components/session/runtime-command-model"
+import { commandConfirmation, commandResult, commandTransportFailure, confirmationArgs, type CommandConfirmation, type CommandConfirmationChoice, type CommandOutcome } from "@/components/session/runtime-command-model"
+import { CommandConfirmationDialog } from "@/components/session/command-confirmation-dialog"
 import { useRuntimeCommands } from "@/components/session/use-runtime-commands"
 import { SessionMessageQueue } from "@/components/session/session-message-queue"
 import { useSessionQueue } from "@/features/message-queue/use-session-queue"
@@ -337,6 +338,11 @@ function SessionDetailVisit({
   const [showScrollBottom, setShowScrollBottom] = React.useState(false)
   const [loadingOlder, setLoadingOlder] = React.useState(false)
   const [pendingTakeover, setPendingTakeover] = React.useState<boolean | null>(null)
+  const [pendingConfirmation, setPendingConfirmation] = React.useState<{ confirmation: CommandConfirmation; resolve: (choice: CommandConfirmationChoice) => void } | null>(null)
+  const pendingConfirmationRef = React.useRef(pendingConfirmation)
+  pendingConfirmationRef.current = pendingConfirmation
+  // Leaving the session answers an open confirmation with cancel.
+  React.useEffect(() => () => { pendingConfirmationRef.current?.resolve("cancel") }, [sessionId])
   const interactionTakeoverRef = React.useRef<{
     sessionId: string
     resolve: (confirmed: boolean) => void
@@ -1002,12 +1008,29 @@ function SessionDetailVisit({
         setState((current) => current?.session.id === sessionId ? { ...current, session: response.session! } : current)
         onSessionUpdated?.(response.session)
       }
+      const confirmation = commandConfirmation(response)
+      if (confirmation) return await confirmCommand(sessionId, command, confirmation)
       return commandResult(response)
     } catch (err) {
       return commandTransportFailure(err, tSession("commandFailed"))
     } finally {
       if (isCurrentRequest()) activeCommandRequestRef.current = null
     }
+  }
+
+  /** Shows the device's plan, then runs the step the user chose (cancelling tells the device to drop the plan). */
+  const confirmCommand = async (targetSessionId: string, command: string, confirmation: CommandConfirmation): Promise<CommandOutcome> => {
+    const choice = await new Promise<CommandConfirmationChoice>((resolve) => {
+      setPendingConfirmation({ confirmation, resolve })
+    })
+    setPendingConfirmation(null)
+    const args = confirmationArgs(confirmation, choice)
+    if (choice === "cancel") {
+      if (args) void dashboardApi.sendSessionCommand(token, targetSessionId, command, { args }).catch(() => undefined)
+      return { ok: true, state: "completed", code: null, message: tSession("commandConfirmationCancelled"), result: null }
+    }
+    if (!args) return { ok: false, state: "completed", code: "invalid_command", message: tSession("commandFailed"), result: null }
+    return commandResult(await dashboardApi.sendSessionCommand(token, targetSessionId, command, { args }))
   }
 
   const removeNoticeFromState = React.useCallback((noticeId: string) => {
@@ -1593,6 +1616,10 @@ function SessionDetailVisit({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <CommandConfirmationDialog
+        confirmation={pendingConfirmation?.confirmation ?? null}
+        onChoose={(choice) => pendingConfirmation?.resolve(choice)}
+      />
       <Dialog
         open={sourceErrorDialog !== null}
         onOpenChange={(open: boolean) => {
