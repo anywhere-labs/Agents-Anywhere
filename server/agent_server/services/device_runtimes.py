@@ -296,6 +296,8 @@ class DeviceRuntimeService:
         if status.get("event") == DEVICE_RUNTIME_TYPES_EVENT:
             await self.ingest_device_runtime_types(device_id, status)
             return
+        if isinstance(payload.get("sessionId"), str):
+            return
         if not isinstance(runtime_id, str) or not runtime_id:
             return
         capabilities = payload.get("capabilities")
@@ -304,8 +306,11 @@ class DeviceRuntimeService:
         instance = status.get("instance")
         if isinstance(instance, dict):
             await self._apply_device_instance(device_id, runtime_id, instance)
-        elif status.get("state") in {"ready", "degraded"}:
-            error = status.get("error") if status.get("state") == "degraded" else None
+        else:
+            state = status.get("state")
+            if not isinstance(state, str) or state not in {"ready", "degraded"}:
+                return
+            error = status.get("error") if state == "degraded" else None
             await self._apply_device_instance(
                 device_id, runtime_id, {"status": "running", "error": error if isinstance(error, dict) else None}
             )
