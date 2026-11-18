@@ -85,7 +85,7 @@ Python Connector 统一维护启动互斥、运行记录和本机 Connector ID �
 
 ## Desktop 安装信息与只读发现
 
-Desktop 每次主进程启动校验自身真实应用位置和可执行文件权限，只更新 `desktop`。开发模式记录 Electron、项目路径与启动参数；正式模式记录实际安装位置。安装信息相同则不重写。写入时保留 Python 的 `runtime`、`connectorIds` 和未知字段；不修改、补登记或修复 ID 历史。`onboarding` 与 `desktop` 属于同一写入方，使用同一个短期文件事务，只在完成引导时更新。
+Desktop 每次主进程启动校验自身真实应用位置和可执行文件权限，只更新 `desktop`。开发模式记录 Electron、项目路径与启动参数；正式模式记录实际安装位置。安装信息相同则不重写。这一步在准备 Connector 运行环境和检查启动互斥之前完成：插件只向能在记录里找到的 Desktop 让出 Connector，而首次启动准备运行环境可能要几分钟。记录要先由 Python 迁移（例如旧版扁平 PID 记录）而暂时写不进时，Desktop 在启动互斥检查之后再写一次。写入时保留 Python 的 `runtime`、`connectorIds` 和未知字段；不修改、补登记或修复 ID 历史。`onboarding` 与 `desktop` 属于同一写入方，使用同一个短期文件事务，只在完成引导时更新。
 
 插件读取安装信息用于判断管理入口，读取 ID 历史用于设备复用。读取不会创建文件、迁移旧文件、清除失效 PID 或修复内容。安装目标不存在时保留历史并允许原 Web 流程；损坏记录和权限错误明确报告。插件不读取也不写入 `onboarding`：它每次深链唤起 Desktop 都进入引导，是否跳过由 Desktop 自己判断。
 

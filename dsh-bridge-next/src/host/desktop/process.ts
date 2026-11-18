@@ -1,9 +1,14 @@
 import { execFile } from 'node:child_process'
 import { readFile, readdir, readlink } from 'node:fs/promises'
-import { basename } from 'node:path'
+import { basename, win32 } from 'node:path'
 import { promisify } from 'node:util'
+import { hasCode } from '../storage/files.js'
 
 const run = promisify(execFile)
+/** How long an identified main process is trusted by its PID alone before its image name is checked again. */
+const WINDOWS_REVERIFY_MS = 60_000
+/** A process the full query could not read may just be starting; it may also belong to another user. */
+const WINDOWS_UNREADABLE_RETRY_MS = 5_000
 const HELPER_ARGUMENT = /(?:^|\s)--type(?:=|\s)/
 const BACKEND_ARGUMENT = /[\\/]backend[\\/]index\.js(?=["'\s]|$)/i
 
@@ -14,6 +19,7 @@ export interface DesktopProcessTarget {
 }
 
 export interface DesktopProcessCandidate {
+  pid?: number
   executablePath?: string
   commandLine: string
   appImagePath?: string
@@ -68,11 +74,11 @@ async function macProcesses(): Promise<DesktopProcessCandidate[]> {
   return stdout.split('\n').filter(Boolean).map(commandLine => ({ commandLine }))
 }
 
-async function windowsProcesses(target: DesktopProcessTarget): Promise<DesktopProcessCandidate[]> {
-  const name = basename(target.executablePath.replaceAll('\\', '/')).replaceAll("'", "''")
+async function windowsProcesses(imageName: string): Promise<DesktopProcessCandidate[]> {
+  const name = imageName.replaceAll("'", "''")
   // A denied or unavailable CIM query also prints nothing; Stop makes it exit non-zero
   // instead, so an empty result can only mean that no process matched. The encoding line stays non-fatal.
-  const script = `[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $ErrorActionPreference = 'Stop'; @(Get-CimInstance Win32_Process -Filter "Name = '${name}'" | Select-Object ExecutablePath,CommandLine) | ConvertTo-Json -Compress`
+  const script = `[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $ErrorActionPreference = 'Stop'; @(Get-CimInstance Win32_Process -Filter "Name = '${name}'" | Select-Object ProcessId,ExecutablePath,CommandLine) | ConvertTo-Json -Compress`
   const encoded = Buffer.from(script, 'utf16le').toString('base64')
   const { stdout } = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], {
     timeout: 5_000, windowsHide: true, maxBuffer: 2 * 1024 * 1024,
@@ -90,9 +96,79 @@ export function parseWindowsProcesses(stdout: string): DesktopProcessCandidate[]
     if (!entry || typeof entry !== 'object') return []
     const value = entry as Record<string, unknown>
     return typeof value.ExecutablePath === 'string' && typeof value.CommandLine === 'string'
-      ? [{ executablePath: value.ExecutablePath, commandLine: value.CommandLine }] : []
+      ? [{ ...(typeof value.ProcessId === 'number' ? { pid: value.ProcessId } : {}), executablePath: value.ExecutablePath, commandLine: value.CommandLine }] : []
   })
 }
+
+async function windowsImagePids(imageName: string): Promise<number[]> {
+  const tasklist = win32.join(process.env['SystemRoot'] || 'C:\\Windows', 'System32', 'tasklist.exe')
+  const { stdout, stderr } = await run(tasklist, ['/NH', '/FO', 'CSV', '/FI', `IMAGENAME eq ${imageName}`], {
+    timeout: 5_000, windowsHide: true, maxBuffer: 1024 * 1024,
+  })
+  return parseTasklistPids(stdout, stderr)
+}
+
+/**
+ * Matches are quoted CSV rows on stdout. The notice printed when nothing matches is
+ * localized, so only its shape tells it apart; no output at all is not an answer.
+ */
+export function parseTasklistPids(stdout: string, stderr = ''): number[] {
+  if (!stdout.trim() && !stderr.trim()) throw new Error('tasklist printed nothing.')
+  return stdout.split(/\r?\n/).flatMap(line => {
+    const pid = /^"[^"]*","(\d+)"/.exec(line.trim())?.[1]
+    return pid ? [Number(pid)] : []
+  })
+}
+
+function processAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true } catch (error) { return hasCode(error, 'EPERM') }
+}
+
+export interface WindowsProcessQueries {
+  /** PIDs running an image: cheap enough for every poll, but blind to what each one is. */
+  imagePids(imageName: string): Promise<number[]>
+  /** The PowerShell query: expensive, and the only one that can tell Main from its helpers. */
+  candidates(imageName: string): Promise<DesktopProcessCandidate[]>
+  alive(pid: number): boolean
+}
+
+const systemWindowsQueries: WindowsProcessQueries = { imagePids: windowsImagePids, candidates: windowsProcesses, alive: processAlive }
+
+/**
+ * The plugin polls for as long as DSH runs, so PowerShell, the only query that tells
+ * Main from its helpers, stays off the polling path: a poll lists PIDs with tasklist
+ * or checks an identified main process by its PID, and PowerShell runs only for a
+ * process with Desktop's image name that is not identified yet. Without tasklist,
+ * every poll falls back to PowerShell.
+ */
+export function windowsDesktopProbe(queries: WindowsProcessQueries = systemWindowsQueries, now: () => number = Date.now) {
+  let main: { target: string; pid: number; checkedAt: number } | null = null
+  let others: { target: string; recheckAt: Map<number, number> } | null = null
+  return async (target: DesktopProcessTarget): Promise<boolean> => {
+    const key = JSON.stringify([target.executablePath, target.launchArgs, target.packaged])
+    const current = main?.target === key && queries.alive(main.pid) ? main : null
+    if (current && now() - current.checkedAt < WINDOWS_REVERIFY_MS) return true
+    main = null
+    const imageName = basename(target.executablePath.replaceAll('\\', '/'))
+    const pids = await queries.imagePids(imageName).catch(() => null)
+    // A PID another program reused would no longer run Desktop's image.
+    if (current && pids?.includes(current.pid)) { main = { ...current, checkedAt: now() }; return true }
+    if (pids?.length === 0) { others = null; return false }
+    const known = others?.target === key ? others.recheckAt : null
+    if (pids && known && pids.every(pid => (known.get(pid) ?? 0) > now())) return false
+    const candidates = await queries.candidates(imageName)
+    const found = candidates.find(candidate => matchesDesktopProcess(target, candidate, 'win32'))
+    if (found?.pid !== undefined) main = { target: key, pid: found.pid, checkedAt: now() }
+    const readable = new Set(candidates.map(candidate => candidate.pid))
+    others = found || !pids ? null : {
+      target: key,
+      recheckAt: new Map(pids.map(pid => [pid, now() + (readable.has(pid) ? WINDOWS_REVERIFY_MS : WINDOWS_UNREADABLE_RETRY_MS)])),
+    }
+    return Boolean(found)
+  }
+}
+
+const windowsDesktopRunning = windowsDesktopProbe()
 
 async function linuxProcesses(target: DesktopProcessTarget): Promise<DesktopProcessCandidate[]> {
   const processes: DesktopProcessCandidate[] = []
@@ -126,9 +202,9 @@ async function linuxProcesses(target: DesktopProcessTarget): Promise<DesktopProc
 
 /** A failed process query must not turn an installation record into proof of a live app. */
 export async function isDesktopRunning(target: DesktopProcessTarget, platform = process.platform): Promise<boolean> {
+  if (platform === 'win32') return windowsDesktopRunning(target)
   const processes = platform === 'darwin' ? await macProcesses()
-    : platform === 'win32' ? await windowsProcesses(target)
-      : platform === 'linux' ? await linuxProcesses(target) : []
+    : platform === 'linux' ? await linuxProcesses(target) : []
   return processes.some(candidate => {
     if (platform === 'darwin') {
       const path = target.executablePath

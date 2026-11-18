@@ -802,6 +802,7 @@ export class OnboardingManager {
   private refreshRole(): Promise<void> {
     if (this.disposed) return Promise.resolve()
     this.roleCheck ??= (async () => {
+      const startedAt = Date.now()
       const desktop = await this.detect()
       if (this.disposed) return
       this.desktop = desktop
@@ -813,7 +814,11 @@ export class OnboardingManager {
       this.mobile.clear()
       const shouldStopConnector = this.connector.running || Boolean(this.controller) || this.stage === 'starting'
       const wasActive = shouldStopConnector || Boolean(this.flow) || this.stage !== 'idle'
-      if (shouldStopConnector) await this.connector.stop()
+      if (shouldStopConnector) {
+        // Logged before the stop, which flushes it to the Connector's log as its last plugin entry.
+        this.diagnostics.log('info', 'onboarding.desktop_handoff', { status: desktop.status, detectMs: Date.now() - startedAt })
+        await this.connector.stop()
+      }
       const flow = this.flow
       this.flow = null
       if (flow) await flow.close()

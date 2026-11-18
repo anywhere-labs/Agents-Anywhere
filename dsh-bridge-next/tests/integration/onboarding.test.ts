@@ -2,7 +2,7 @@ import { ConnectorOwnershipError } from '../../src/host/connector/process.js'
 import { readOnboardingTarget, restoreOnboardingStep, saveOnboardingStep } from '../../../web-next/src/features/onboarding/flow.ts'
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mkdtemp, readdir, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -12,6 +12,9 @@ import type { ConnectorProcess, ConnectorState } from '../../src/host/connector/
 import { CLOUD_API_BASE_URL, type DesktopDetection } from '../../src/contracts/index.js'
 import { readJson, writeJson } from '../../src/host/storage/files.js'
 import { DEFAULT_CONNECTOR_SETTINGS } from '../../src/contracts/connector.js'
+import { detectDesktop } from '../../src/host/desktop/detect.js'
+import { localRuntimePath } from '../../src/host/desktop/local-runtime.js'
+import { windowsDesktopProbe, type DesktopProcessCandidate } from '../../src/host/desktop/process.js'
 
 class FakeApi extends AccountApi {
   registrations = 0
@@ -67,7 +70,7 @@ class FakeConnector implements ConnectorProcess {
   async resolveLogsPath() { return this.logsPath }
 }
 
-async function fixture() {
+async function fixture(options: { detect?: () => Promise<DesktopDetection>; rolePollIntervalMs?: number } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'aa-flow-'))
   const api = new FakeApi('https://api.example.test')
   const connector = new FakeConnector()
@@ -83,7 +86,9 @@ async function fixture() {
     apiBaseUrl: api.baseUrl,
   }, {
     systemLanguages: async () => ['en-US'],
-    api: base => base === api.baseUrl ? api : new FakeApi(base), connector, detect: async () => { detections++; return detection },
+    api: base => base === api.baseUrl ? api : new FakeApi(base), connector,
+    detect: async () => { detections++; return options.detect ? options.detect() : detection },
+    ...(options.rolePollIntervalMs ? { rolePollIntervalMs: options.rolePollIntervalMs } : {}),
     checkServer: async (base) => {
       checkedServers.push(base)
       if (healthFailures > 0) { healthFailures--; throw new Error('连接服务器超时，请检查地址和网络后重试。') }
@@ -757,6 +762,57 @@ test('Desktop exit restores an already authorized plugin Connector', { timeout: 
     await until(async () => h.connector.running)
     assert.equal((await h.manager.inspect()).desktop.status, 'absent')
   } finally { await h.close() }
+})
+
+test('Windows hands over on the first poll after Desktop publishes its installation, with PowerShell only for its new process', { timeout: 8000 }, async () => {
+  const home = await mkdtemp(join(tmpdir(), 'aa-handoff-'))
+  const executablePath = join(home, 'Agents Anywhere.exe')
+  await writeFile(executablePath, '')
+  const machine = { pids: [] as number[], candidates: [] as DesktopProcessCandidate[], fullQueries: 0, listings: 0 }
+  const probe = windowsDesktopProbe({
+    imagePids: async () => { machine.listings++; return machine.pids },
+    candidates: async () => { machine.fullQueries++; return machine.candidates },
+    alive: pid => machine.pids.includes(pid),
+  })
+  const record = () => writeJson(localRuntimePath(home), {
+    version: 2, connectorIds: [], legacyMachineMigrated: true, desktop: { platform: 'win32', executablePath, packaged: true },
+  })
+  const h = await fixture({ detect: () => detectDesktop(home, 'win32', probe), rolePollIntervalMs: 20 })
+  h.api.online = true
+  try {
+    await callback((await h.manager.begin()).url)
+    await until(async () => (await h.manager.inspect()).stage === 'ready')
+    // Desktop's process runs, but it has not published where it is installed.
+    machine.pids = [100]
+    machine.candidates = [{ pid: 100, executablePath, commandLine: `"${executablePath}"` }]
+    const before = h.detections
+    await until(async () => h.detections >= before + 5)
+    assert.equal(h.connector.running, true, 'without its installation record the plugin cannot recognize Desktop')
+    assert.equal(machine.listings, 0)
+
+    await record()
+    const published = Date.now()
+    await until(async () => !h.connector.running)
+    assert.ok(Date.now() - published < 1000, 'the next poll hands over')
+    assert.equal(machine.fullQueries, 1)
+    assert.equal((await h.manager.inspect()).desktop.status, 'installed')
+
+    const listed = machine.listings
+    const running = h.detections
+    await until(async () => h.detections >= running + 5)
+    assert.equal(machine.listings, listed, 'a running Desktop is followed by its PID alone')
+    assert.equal(machine.fullQueries, 1)
+
+    machine.pids = []
+    machine.candidates = []
+    await until(async () => h.connector.running)
+    const idle = h.detections
+    await until(async () => h.detections >= idle + 5)
+    assert.equal(machine.fullQueries, 1, 'an idle Desktop installation never starts PowerShell')
+  } finally {
+    await h.close()
+    await rm(home, { recursive: true, force: true })
+  }
 })
 
 test('failed device reconfiguration returns no browser destination and remains recoverable', async () => {
