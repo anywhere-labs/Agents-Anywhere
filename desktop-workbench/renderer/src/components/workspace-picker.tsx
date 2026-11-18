@@ -5,7 +5,6 @@ import {
   Folder,
   FolderOpen,
   ChevronDown,
-  Home,
   Plus,
   Check,
 } from "lucide-react"
@@ -41,7 +40,7 @@ type WorkspaceEntry = {
 
 export type WorkspaceSelection = WorkspaceEntry
 
-const HOME_RESOLVE_TIMEOUT_MS = 8_000
+const DEFAULT_WORKSPACE_TIMEOUT_MS = 8_000
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -77,31 +76,31 @@ export function WorkspacePicker({
     : connectors.find((c) => c.status === "online") ?? connectors[0]
   const activeConnectorId = activeConnector?.id
   const hasOnlineConnector = activeConnector?.status === "online"
-  const [homeResult, setHomeResult] = React.useState({ connectorId: "", path: "" })
-  const resolvedHomePath = homeResult.connectorId === activeConnectorId ? homeResult.path : ""
-  const [resolvingHomePath, setResolvingHomePath] = React.useState(false)
+  const [defaultResult, setDefaultResult] = React.useState({ connectorId: "", path: "" })
+  const defaultPath = defaultResult.connectorId === activeConnectorId ? defaultResult.path : ""
+  const [resolvingDefaultPath, setResolvingDefaultPath] = React.useState(false)
 
   React.useEffect(() => {
-    setHomeResult({ connectorId: activeConnectorId ?? "", path: "" })
+    setDefaultResult({ connectorId: activeConnectorId ?? "", path: "" })
     if (!authSession?.accessToken || !activeConnectorId || !hasOnlineConnector) {
-      setResolvingHomePath(false)
+      setResolvingDefaultPath(false)
       return
     }
     let cancelled = false
-    setResolvingHomePath(true)
+    setResolvingDefaultPath(true)
     withTimeout(
-      dashboardApi.connectorFsList(authSession.accessToken, activeConnectorId, { root: "~", path: "." }),
-      HOME_RESOLVE_TIMEOUT_MS,
+      dashboardApi.connectorFsList(authSession.accessToken, activeConnectorId, {}),
+      DEFAULT_WORKSPACE_TIMEOUT_MS,
     )
       .then((response) => {
         if (cancelled) return
-        setHomeResult({ connectorId: activeConnectorId, path: response.result.path || "~" })
+        setDefaultResult({ connectorId: activeConnectorId, path: response.result.path })
       })
       .catch(() => {
-        if (!cancelled) setHomeResult({ connectorId: activeConnectorId, path: "~" })
+        // Keep the directory unset until the device provides a usable default or the user selects one.
       })
       .finally(() => {
-        if (!cancelled) setResolvingHomePath(false)
+        if (!cancelled) setResolvingDefaultPath(false)
       })
     return () => {
       cancelled = true
@@ -111,7 +110,7 @@ export function WorkspacePicker({
   // Derive recent unique workspaces for the active connector from session CWDs.
   const recentWorkspaces = React.useMemo<WorkspaceEntry[]>(() => {
     if (!activeConnectorId) return []
-    const seen = new Set<string>(resolvedHomePath ? [workspacePathKey(resolvedHomePath, activeConnector?.deviceOs)] : [])
+    const seen = new Set<string>(defaultPath ? [workspacePathKey(defaultPath, activeConnector?.deviceOs)] : [])
     const result: WorkspaceEntry[] = []
     for (const s of sessions) {
       if (s.connectorId !== activeConnectorId) continue
@@ -129,7 +128,7 @@ export function WorkspacePicker({
       result.push({ label: workspaceName(project.workspacePath), path: project.workspacePath, connectorId: activeConnectorId })
     }
     return result
-  }, [activeConnectorId, activeConnector?.deviceOs, projects, resolvedHomePath, sessions])
+  }, [activeConnectorId, activeConnector?.deviceOs, projects, defaultPath, sessions])
 
   const availableProjects = React.useMemo(
     () => includeProjects
@@ -138,24 +137,24 @@ export function WorkspacePicker({
     [activeConnectorId, includeProjects, projects],
   )
 
-  const homeWorkspace: WorkspaceEntry = React.useMemo(() => {
-    const project = activeConnectorId && resolvedHomePath
-      ? findWorkspaceProject(availableProjects, activeConnectorId, resolvedHomePath, activeConnector?.deviceOs)
+  const defaultWorkspace: WorkspaceEntry = React.useMemo(() => {
+    const project = activeConnectorId && defaultPath
+      ? findWorkspaceProject(availableProjects, activeConnectorId, defaultPath, activeConnector?.deviceOs)
       : undefined
     if (project) {
       return { label: project.name, path: project.workspacePath, connectorId: project.connectorId, projectId: project.id }
     }
-    return { label: t("home"), path: resolvedHomePath, connectorId: activeConnectorId }
-  }, [activeConnectorId, activeConnector?.deviceOs, availableProjects, resolvedHomePath, t])
+    return { label: t("default"), path: defaultPath, connectorId: activeConnectorId }
+  }, [activeConnectorId, activeConnector?.deviceOs, availableProjects, defaultPath, t])
 
-  const [internalWorkspace, setInternalWorkspace] = React.useState<WorkspaceEntry>(homeWorkspace)
+  const [internalWorkspace, setInternalWorkspace] = React.useState<WorkspaceEntry>(defaultWorkspace)
   const [dialogOpen, setDialogOpen] = React.useState(false)
   const [hoveredProjectId, setHoveredProjectId] = React.useState<string | null>(null)
   const valueBelongsToActiveConnector =
     Boolean(value?.path) && value?.connectorId === activeConnectorId
   const workspace = valueBelongsToActiveConnector
     ? value!
-    : internalWorkspace.connectorId === activeConnectorId ? internalWorkspace : homeWorkspace
+    : internalWorkspace.connectorId === activeConnectorId ? internalWorkspace : defaultWorkspace
 
   const updateWorkspace = React.useCallback(
     (next: WorkspaceEntry) => {
@@ -167,22 +166,22 @@ export function WorkspacePicker({
 
   React.useEffect(() => {
     if (value?.connectorId && activeConnectorId && value.connectorId !== activeConnectorId) {
-      setInternalWorkspace({ label: t("home"), path: "", connectorId: activeConnectorId })
+      setInternalWorkspace({ label: t("default"), path: "", connectorId: activeConnectorId })
     }
-    if (!homeWorkspace.path) return
+    if (!defaultWorkspace.path) return
     if (!value?.path) {
-      setInternalWorkspace(homeWorkspace)
-      onChange?.(homeWorkspace)
+      setInternalWorkspace(defaultWorkspace)
+      onChange?.(defaultWorkspace)
     } else if (activeConnectorId && value.connectorId !== activeConnectorId) {
-      onChange?.(homeWorkspace)
+      onChange?.(defaultWorkspace)
     }
-  }, [activeConnectorId, homeWorkspace, onChange, value])
+  }, [activeConnectorId, defaultWorkspace, onChange, value])
 
   const selectedProject = includeProjects && activeConnectorId
     ? findWorkspaceProject(availableProjects, activeConnectorId, workspace.path, activeConnector?.deviceOs)
     : null
   const isProject = Boolean(selectedProject)
-  const isHome = Boolean(!isProject && homeWorkspace.path && workspace.path === homeWorkspace.path)
+  const isDefault = Boolean(!isProject && defaultWorkspace.path && workspace.path === defaultWorkspace.path)
 
   const workspaceMenuGroups = (
     <>
@@ -190,18 +189,18 @@ export function WorkspacePicker({
       <DropdownMenuGroup>
         <DropdownMenuItem
           className="gap-2.5"
-          disabled={!homeWorkspace.path}
-          onSelect={() => updateWorkspace(homeWorkspace)}
+          disabled={!defaultWorkspace.path}
+          onSelect={() => updateWorkspace(defaultWorkspace)}
         >
-          <Home />
+          <Folder />
           <div className="flex min-w-0 flex-1 flex-col">
-            <span>{t("home")}</span>
+            <span>{t("default")}</span>
             <span className="truncate code-mono text-xs text-muted-foreground">
-              {homeWorkspace.path || t("resolvingHome")}
+              {defaultWorkspace.path || (resolvingDefaultPath ? t("loading") : "")}
             </span>
           </div>
-          {resolvingHomePath ? <Spinner className="ml-auto shrink-0 text-muted-foreground" /> : null}
-          {isHome ? <Check className="ml-auto shrink-0" /> : null}
+          {resolvingDefaultPath ? <Spinner className="ml-auto shrink-0 text-muted-foreground" /> : null}
+          {isDefault ? <Check className="ml-auto shrink-0" /> : null}
         </DropdownMenuItem>
 
         <DropdownMenuItem className="gap-2.5" onSelect={() => setDialogOpen(true)}>
@@ -271,16 +270,14 @@ export function WorkspacePicker({
                 ? <FolderOpen className="size-4 shrink-0 text-muted-foreground" />
                 : <Folder className="size-4 shrink-0 text-muted-foreground" />}
               <span className="max-w-[45%] shrink-0 truncate font-medium">
-                {isHome
-                  ? t("home")
-                  : selectedProject?.name ?? (workspace.label || t("home"))}
+                {workspace.path ? selectedProject?.name ?? workspace.label : t("choosePath")}
               </span>
               {(selectedProject?.workspacePath ?? workspace.path) ? (
                 <span className="min-w-0 truncate code-mono text-xs text-muted-foreground">
                   {selectedProject?.workspacePath ?? workspace.path}
                 </span>
               ) : null}
-              {isHome && resolvingHomePath ? <Spinner className="size-3.5 shrink-0 text-muted-foreground" /> : null}
+              {!workspace.path && resolvingDefaultPath ? <Spinner className="size-3.5 shrink-0 text-muted-foreground" /> : null}
               <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
             </button>
           </DropdownMenuTrigger>
@@ -290,16 +287,16 @@ export function WorkspacePicker({
         <DropdownMenuContent align="start" className="w-80 max-w-[calc(100vw-2rem)]">
           {includeProjects ? (
             <>
-              {!homeWorkspace.projectId ? (
+              {!defaultWorkspace.projectId ? (
                 <>
                   <DropdownMenuGroup>
-                    <DropdownMenuItem disabled={!homeWorkspace.path} onSelect={() => updateWorkspace(homeWorkspace)}>
-                      <Home />
+                    <DropdownMenuItem disabled={!defaultWorkspace.path} onSelect={() => updateWorkspace(defaultWorkspace)}>
+                      <Folder />
                       <span className="flex min-w-0 flex-1 flex-col">
-                        <span>{t("home")}</span>
-                        <span className="truncate code-mono text-xs text-muted-foreground">{homeWorkspace.path || t("resolvingHome")}</span>
+                        <span>{t("default")}</span>
+                        <span className="truncate code-mono text-xs text-muted-foreground">{defaultWorkspace.path || (resolvingDefaultPath ? t("loading") : "")}</span>
                       </span>
-                      {isHome ? <Check /> : null}
+                      {isDefault ? <Check /> : null}
                     </DropdownMenuItem>
                   </DropdownMenuGroup>
                   <DropdownMenuSeparator />
@@ -362,7 +359,7 @@ export function WorkspacePicker({
         connectorId={activeConnector?.id ?? ""}
         connectorDeviceOs={activeConnector?.deviceOs}
         token={authSession?.accessToken}
-        initialPath={workspace.path || homeWorkspace.path || "~"}
+        initialPath={workspace.path || defaultWorkspace.path || "~"}
         onConfirm={(path) => {
           const label = workspaceName(path)
           updateWorkspace({ label, path, connectorId: activeConnectorId })

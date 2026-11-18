@@ -559,7 +559,7 @@ export class DashboardApi {
   connectorFsList(
     token: string,
     connectorId: string,
-    body: { root: string; path?: string | null },
+    body: { root?: string; path?: string | null },
   ): Promise<RpcResponse<FsListResult>> {
     return this.client.post<RpcResponse<FsListResult>>(
       `/connectors/${encodeURIComponent(connectorId)}/fs/list`,

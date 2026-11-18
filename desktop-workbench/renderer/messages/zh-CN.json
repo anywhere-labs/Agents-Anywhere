@@ -464,6 +464,8 @@
       "modelCatalogStarting": "正在启动 {agent}…",
       "modelCatalogLoading": "正在加载模型…",
       "modelCatalogLoadFailed": "模型加载失败",
+      "workspacePreparationExpired": "会话准备已过期",
+      "workspacePreparationFailed": "无法准备会话",
       "modelCatalogEmpty": "暂无可用模型",
       "recoveryConfigurationRequired": "草稿和附件已保留。请重新确认模型、权限及 Runtime 配置中的 Agent 模式后再发送。",
       "attachmentOnlyPrompt": "（无文字内容。）",

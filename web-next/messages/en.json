@@ -427,6 +427,8 @@
       "modelCatalogStarting": "Starting {agent}…",
       "modelCatalogLoading": "Loading models…",
       "modelCatalogLoadFailed": "Could not load models",
+      "workspacePreparationExpired": "Session preparation expired",
+      "workspacePreparationFailed": "Could not prepare the session",
       "modelCatalogEmpty": "No models available",
       "recoveryConfigurationRequired": "Your draft and attachments are retained. Review the model, permissions and Agent mode in Runtime settings before sending.",
       "attachmentOnlyPrompt": "(No text content.)",

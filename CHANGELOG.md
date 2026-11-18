@@ -27,6 +27,8 @@
 
 ### 会话创建与消息交付
 
+- Web 和 Desktop 新建会话时会选用设备允许访问的默认工作目录，主目录受限时可从允许的工作目录加载 Agent 配置。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
+- Web 和 Desktop 新建会话时，准备过期或模型加载失败会在模型控件旁显示原因和「重试」。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 连接 v3 Connector 的设备上，Codex、Claude、Hermes、通用 ACP Agent 等所有 Agent 的会话历史都会显示用户随消息发送的附件卡片，不再只有 Pi 会话显示，发送失败的消息也保留附件。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 连接 v3 Connector 的设备上，Agent 请求审批或提交计划审阅时，Web、Desktop、Android 和 iOS 不用刷新就能看到卡片，回答后的「处理中」、发送失败后重新可答和关闭状态也实时更新；开启端到端加密时，计划和目标状态同样实时更新。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 连接 v3 Connector 的设备上，在已有会话里输入 `/plan 任务` 会先进入规划模式再把任务发给 Agent，不再报错；进入规划模式失败或会话正忙时任务不会发出、草稿保留，同一次操作重试不会重复发送。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）

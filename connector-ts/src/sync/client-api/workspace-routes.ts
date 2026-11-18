@@ -132,6 +132,9 @@ export class WorkspaceRoutes {
     }
     switch (action) {
       case 'POST fs/list': {
+        if (!route.query.has('root') && body.root === undefined && body.path === undefined) {
+          return okBody(await this.call('fs.readDir', { defaultWorkspace: true }))
+        }
         const root = this.root(route)
         const raw = body.path === undefined || body.path === null ? '.' : body.path
         if (typeof raw !== 'string') throw invalid('path must be a string')

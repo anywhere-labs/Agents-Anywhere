@@ -23,7 +23,7 @@ import {
   workspaceRoot,
   type Params,
 } from './params.js'
-import type { RootPolicy } from './roots.js'
+import { expandHome, type RootPolicy } from './roots.js'
 
 export const WRITE_MAX_BYTES = 32 * 1024 * 1024
 export const DOWNLOAD_CHUNK_BYTES = 256 * 1024
@@ -161,8 +161,27 @@ export class FileOps {
     return entries
   }
 
+  /** The first usable directory in preference order, using the same checks as an explicit listing. */
+  private async readDefaultDir(): Promise<ReadDirResult> {
+    const home = expandHome('~')
+    const candidates = [home, ...await this.policy.roots()]
+    for (const root of new Set(candidates)) {
+      try {
+        const listing = await this.readDir({ root })
+        if (listing.targetType === 'directory' && listing.path === listing.targetPath) {
+          await access(listing.path, constants.X_OK).catch(error => { throw fsError(error, listing.path) })
+          return listing
+        }
+      } catch (error) {
+        if (!(error instanceof WorkspaceError) || !['permission_denied', 'not_found', 'invalid_argument'].includes(error.code)) throw error
+      }
+    }
+    return { path: '', entries: [], truncated: false, targetPath: '', targetType: 'missing' }
+  }
+
   /** `fs.readDir`: a directory listing, or the nearest existing parent of a missing or file target. */
   public async readDir(params: Params): Promise<ReadDirResult> {
+    if (params.defaultWorkspace === true) return this.readDefaultDir()
     const root = workspaceRoot(params)
     const rawPath = params.path
     if (this.platform === 'win32' && rawPath === '') {

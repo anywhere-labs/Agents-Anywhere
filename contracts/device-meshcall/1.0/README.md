@@ -65,6 +65,7 @@ v3 中 Server 与 Connector 之间的契约，取代 v2 的 `/api/v2/connector/w
 - `server {sessionId?, takeover?, attachments?, transfer?}`：Server 拥有的事实（建会话时分配的 `sessionId`、接管状态、附件记录、文件下载的中继位置）。设备以它为准；它只在 `Client/call` 上生效，加密通道里不存在。
 - 流项：第一项 `ClientCallHead {kind: "head", status, contentType, command?}`，`command {commandId, outcome, e?}` 用来结算 Server 的回执；之后是正文 `ClientCallChunk {kind: "chunk", seq, chunk, end}`，每块最多 512 KiB，整个回答最多 16 MiB。请求体超过 1 MiB 时 Server 在转发前回 413。
 - 设备返回的错误一律是 `{detail: {code, message}}`，AA 错误码到 HTTP 状态的映射在 `client-errors.json` 的 `deviceCodeStatus`（未列出的为 409）。
+- `POST /api/v2/connectors/{connector_id}/fs/list` 未传 `root` 和 `path` 时列出设备的默认工作目录。Connector 优先选择可访问的主目录，其次按允许目录的配置顺序选择第一个可访问的目录；没有可用目录时返回现有列表结构，`path` 和 `targetPath` 为空，`targetType` 为 `missing`。显式传入目录时仍按原规则校验。加密通道使用相同语义。
 
 **`Client/subscribe {stream: "terminal", terminalId, fromSeq}`**：流项是终端 WebSocket 消息原样：`replay`（scrollback，总是第一项，读者落后时再发）、`output`、`exit`。输入、调整大小与关闭是 `Client/call` 请求。会话流仍用 `Sessions/watch`。
 

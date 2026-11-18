@@ -798,10 +798,19 @@ export function TaskComposer() {
     : catalogsLoading || (!capabilitiesReady && !catalogFailure)
       ? t("modelCatalogLoading")
       : catalogFailure ? t("modelCatalogLoadFailed") : t("modelCatalogEmpty")
-  const preparationStopped = ["failed", "cancelled", "expired", "consumed"].includes(preparationPhase ?? "")
-  const preparationNeedsAttention = preparation.error || preparation.operation?.state.failure || preparationStopped
-    || preparation.operation?.state.interactions.some(request => request.status === "open")
-  const preparingWorkspace = needsPreparation && workspace?.path && !preparationNeedsAttention && preparationPhase !== "ready"
+  const preparationStopped = ["failed", "rejected", "cancelled", "expired", "consumed", "outcome_unknown"].includes(preparationPhase ?? "")
+  const preparationFailure = preparation.error ?? preparation.operation?.state.failure
+  const preparationHasInteraction = preparation.operation?.state.interactions.some(request => request.status === "open")
+  const preparingWorkspace = needsPreparation && workspace?.path && !preparationFailure
+    && !preparationStopped && !preparationHasInteraction && preparationPhase !== "ready"
+  const preparationExpired = preparationPhase === "expired"
+  const showPreparationIssue = needsPreparation && Boolean(preparationFailure || preparationStopped)
+  const showCatalogFailure = showCatalogStatus && Boolean(catalogFailure) && !catalogsLoading && !runtimeStarting
+  const workspaceLoadIssue = showPreparationIssue
+    ? preparationExpired
+      ? t("workspacePreparationExpired")
+      : errorText(preparationFailure, t("workspacePreparationFailed"))
+    : showCatalogFailure ? errorText(catalogFailure, t("modelCatalogLoadFailed")) : null
   const compactSelectors = composerWidth > 0 && composerWidth < 640
 
   const handleCreate = async () => {
@@ -1045,11 +1054,9 @@ export function TaskComposer() {
         </h1>
 
         <RuntimeCreationStatus />
-        {needsPreparation && preparationNeedsAttention ? (
+        {needsPreparation && preparationHasInteraction && preparation.operation ? (
           <div className="mb-4">
-            {preparation.operation ? <RuntimeWorkflowPanel operation={preparation.operation} pending={preparation.pending} error={preparation.error} onRespond={preparation.respond} onCancel={preparation.cancel} />
-              : <div role="alert" className="flex items-center gap-2 text-sm"><span>{errorText(preparation.error, tCommon("loadFailed"))}</span><Button variant="outline" size="sm" disabled={preparation.pending} onClick={preparation.retry}>{tCommon("retry")}</Button></div>}
-            {preparation.operation && (preparation.error || preparationStopped) ? <Button variant="outline" size="sm" disabled={preparation.pending} onClick={preparation.retry}>{tCommon("retry")}</Button> : null}
+            <RuntimeWorkflowPanel operation={preparation.operation} pending={preparation.pending} onRespond={preparation.respond} onCancel={preparation.cancel} />
           </div>
         ) : null}
         <div
@@ -1233,7 +1240,7 @@ export function TaskComposer() {
               </>
             )}
 
-            {showCatalogStatus ? (
+            {showCatalogStatus && !workspaceLoadIssue ? (
               <div className="flex min-w-0 items-center gap-1">
                 <span role="status" className="flex min-w-0 items-center gap-1.5 text-sm text-muted-foreground">
                   {runtimeStarting || catalogsLoading ? <Spinner aria-hidden="true" /> : null}
@@ -1260,10 +1267,30 @@ export function TaskComposer() {
               {creating ? <Loader2 className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
             </Button>
           </div>
-          {showCatalogStatus && catalogFailure && !runtimeStarting ? (
-            <p role="alert" className="px-5 pb-3 text-sm text-destructive">
-              {errorText(catalogFailure, t("modelCatalogLoadFailed"))}
-            </p>
+          {workspaceLoadIssue ? (
+            <div className="flex flex-wrap items-center gap-x-2 px-5 pb-3">
+              <p
+                role={showPreparationIssue && preparationExpired ? "status" : "alert"}
+                className={cn("min-w-0 max-w-full break-words text-sm", showPreparationIssue && preparationExpired ? "text-muted-foreground" : "text-destructive")}
+              >
+                {workspaceLoadIssue}
+              </p>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={catalogsLoading || preparation.pending}
+                onClick={showPreparationIssue ? preparation.retry : () => setCatalogRefreshKey((key) => key + 1)}
+              >
+                {tCommon("retry")}
+              </Button>
+              {showPreparationIssue && !preparationHasInteraction
+                && (preparation.operation?.state.canCancel || preparation.operation?.state.canCancelInitialization) ? (
+                  <Button type="button" variant="ghost" size="sm" disabled={preparation.pending} onClick={preparation.cancel}>
+                    {tCommon("cancel")}
+                  </Button>
+                ) : null}
+            </div>
           ) : null}
         </div>
 
