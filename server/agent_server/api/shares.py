@@ -86,7 +86,11 @@ async def _device_share(
             scope=payload.scope,
             item_ids=list(payload.itemIds) if payload.scope == "message" else [],
         )
-    except (DeviceReadTimeout, DeviceReadError) as exc:
+    except DeviceReadError as exc:
+        if exc.code == "share_too_large":
+            raise HTTPException(status_code=413, detail={"code": exc.code, "message": exc.message}) from exc
+        raise device_read_http_error(exc) from exc
+    except DeviceReadTimeout as exc:
         raise device_read_http_error(exc) from exc
     if exported is None:
         raise HTTPException(

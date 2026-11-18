@@ -5,7 +5,7 @@ import type { TunnelApi } from '../application/inbound/tunnel-api.js'
 import type { OutboxStore } from '../application/ports/index.js'
 import type { CommandCall } from '../generated/device-meshcall/v1_0/command-call.js'
 import { REGISTERED_SERVICES } from '../generated/device-meshcall/v1_0/e2ee-registration.js'
-import { outboxStream, scrubForE2ee, watchSession, type DeviceReaders, type OutboxStreamOptions, type WatchDeps } from '../sync/index.js'
+import { SHARE_DEFAULT_BUDGET, outboxStream, scrubForE2ee, shareChunks, watchSession, type DeviceReaders, type OutboxStreamOptions, type WatchDeps } from '../sync/index.js'
 import { defineService, type MethodDef } from '../mesh/index.js'
 import type { AttachHub } from './attach.js'
 import type { LocalBlob } from './blobs.js'
@@ -259,8 +259,39 @@ export class DeviceServices {
     })
     return [
       this.readBlobMethod(S, unimplemented),
-      unimplemented('exportShare'),
+      this.exportShareMethod(S),
     ]
+  }
+
+  /**
+   * `Store/exportShare` (06-protocols.md §5): the snapshot's items in chunks below the frame limit, then the file ids
+   * of the attachments it references that this device holds, which the Server copies through `Store/readBlob`.
+   */
+  private exportShareMethod(S: string): MethodDef {
+    const readers = this.deps.readers
+    const blobs = this.deps.blobs
+    const request = z.looseObject({
+      sessionId: z.string().min(1),
+      selection: z.looseObject({ scope: z.enum(['session', 'message']), itemIds: z.array(z.string().min(1)).max(500).optional() }),
+      byteBudget: z.number().int().min(4096).optional(),
+    })
+    return this.stream(S, 'exportShare', 'An immutable share snapshot: items in chunks, then the attachment file ids to copy.', async function* (raw) {
+      const sessionId = String(raw.sessionId)
+      const selection = raw.selection as { scope: 'session' | 'message'; itemIds?: string[] }
+      const itemIds = selection.itemIds ?? []
+      if (selection.scope === 'message' && itemIds.length === 0) throw new MeshCallError('invalid_argument', 'itemIds is required for a message share')
+      const exported = await readers.exportShare({
+        sessionId,
+        scope: selection.scope,
+        itemIds: selection.scope === 'message' ? itemIds : [],
+        byteBudget: typeof raw.byteBudget === 'number' ? raw.byteBudget : SHARE_DEFAULT_BUDGET,
+      })
+      // Only files this device can send: the Server would otherwise open a relay for each one that is not here.
+      const held = blobs === undefined
+        ? []
+        : (await Promise.all(exported.attachmentIds.map(async id => ((await blobs.find(sessionId, id)) !== null ? id : null)))).filter((id): id is string => id !== null)
+      yield* shareChunks(exported.items, held)
+    }, { request })
   }
 
   /**

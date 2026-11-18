@@ -140,6 +140,7 @@
     <string name="runtime_error_runtime_stopping">The runtime is shutting down.</string>
     <string name="runtime_error_session_not_ready">The session is not idle yet or needs to be recovered.</string>
     <string name="runtime_error_share_requires_online_device">The device must be online to create a share.</string>
+    <string name="runtime_error_share_too_large">This is too much to share at once. Share selected replies instead.</string>
     <string name="runtime_error_sync_backpressure">Too much sync work is pending. Restore the connection.</string>
     <string name="runtime_error_takeover_required">Allow the workbench to control this session first.</string>
     <string name="runtime_error_unsupported_acp_version">This executable only supports ACP v1.</string>

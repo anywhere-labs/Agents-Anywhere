@@ -2618,6 +2618,7 @@
     "runtime_stopping": "Runtime 正在关闭。",
     "session_not_ready": "会话尚未空闲或需要恢复。",
     "share_requires_online_device": "设备上线后才能创建分享。",
+    "share_too_large": "要分享的内容太大，请只分享部分回复。",
     "sync_backpressure": "同步积压已达到上限，请恢复连接。",
     "takeover_required": "请先授权工作台控制此会话。",
     "unsupported_acp_version": "该入口只启用了 ACP v1。",

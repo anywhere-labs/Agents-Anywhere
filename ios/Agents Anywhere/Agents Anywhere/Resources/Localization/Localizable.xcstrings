@@ -26263,6 +26263,23 @@
           }
         }
       }
+    },
+    "要分享的内容太大，请只分享部分回复。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This is too much to share at once. Share selected replies instead."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "要分享的内容太大，请只分享部分回复。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

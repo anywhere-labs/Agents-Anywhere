@@ -123,6 +123,8 @@ class FakeDeviceState:
         # ``blob_uploader(transfer, data)`` returns a concurrent future (the test's loop does the PUT).
         self.blobs: dict[str, tuple[bytes, str, str]] = {}
         self.blob_uploader: Callable[[dict[str, Any], bytes], Any] | None = None
+        # ``Store/exportShare`` fails with this application error code when set (``share_too_large``, say).
+        self.share_error: str | None = None
         self.attach_opened = threading.Event()
         self.outbox_opened = threading.Event()
         self.calls: list[str] = []
@@ -264,6 +266,8 @@ def _make_services(state: FakeDeviceState, *, mode: str = "off") -> list[object]
         ) -> AsyncIterator[StreamChunk]:
             """An immutable share snapshot."""
             state.calls.append("exportShare")
+            if state.share_error is not None:
+                raise MeshCallError(state.share_error, "the device refused the export", details={"source": "device"})
             items = state.session(sessionId).items
             if selection.get("scope") == "message":
                 wanted = set(selection.get("itemIds") or [])

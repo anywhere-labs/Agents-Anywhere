@@ -144,6 +144,15 @@ def test_share_is_exported_by_the_device(mesh_router: RouterProcess, monkeypatch
                     json={"scope": "message", "itemIds": ["tl_2"]},
                 )
                 assert reply.status_code == 422
+
+                # A selection the device refuses as too large is a 413 with its code.
+                device.state.share_error = "share_too_large"
+                too_large = await client.post(
+                    "/api/v2/sessions/sess_t1/shares", headers=headers, json={"scope": "session"}
+                )
+                assert too_large.status_code == 413, too_large.text
+                assert too_large.json()["detail"]["code"] == "share_too_large"
+                device.state.share_error = None
             finally:
                 await device.stop()
 

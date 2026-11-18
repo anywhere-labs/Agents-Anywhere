@@ -7,6 +7,7 @@ import type { ProtocolCapabilitySet } from '../generated/protocol/v1_2/capabilit
 import type { NoticeIn } from '../generated/device-meshcall/v1_0/runtime-notice-updated-event.js'
 import type { ProtocolEventEnvelope } from '../generated/device-meshcall/v1_0/changes-event.js'
 import { timelineEvents } from './client-shape.js'
+import { exportShare, type ShareExport, type ShareExportRequest } from './share.js'
 
 /** The request and the response (a stream's item) of a Server-initiated read, as device-meshcall 1.0 types them. */
 export type ReadRequest<M extends ReadMethod> = ReadPayloads[M]['request']
@@ -190,6 +191,12 @@ export class DeviceReaders {
     const page = await this.store.timeline.changesSince(request.sessionId, request.afterSeq, request.limit ?? 500, request.byteBudget ?? PAGE_BUDGET)
     if (page.snapshotRequired) return { events: [], toSeq: page.headSeq, resetSeq: page.resetSeq, complete: false, snapshotRequired: true }
     return { events: timelineEvents(request.sessionId, page.items, this.now()), toSeq: page.toSeq, resetSeq: page.resetSeq, complete: page.complete, snapshotRequired: false }
+  }
+
+  /** `Store/exportShare`: the immutable snapshot of a whole session or of selected items (`sync/share.ts`). */
+  public async exportShare(request: ShareExportRequest): Promise<ShareExport> {
+    await this.session(request.sessionId)
+    return exportShare({ store: this.store, history: this.history }, request)
   }
 
   /** The current interactions, replacing whatever a reconnecting client holds. */

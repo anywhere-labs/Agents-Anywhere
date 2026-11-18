@@ -37,6 +37,8 @@ HTTP 返回 `409`：
 
 WebSocket 在握手完成前以 `1008`（`e2ee_required`）关闭。拒绝发生在路由之前，CORS 头照常返回。
 
+创建分享（`POST /api/v2/sessions/{id}/shares`）同样返回 `409 e2ee_required`：加密模式下设备不注册 `Store/exportShare`，Server 拿不到明文快照。带密钥链接的密文分享（`/s/{shareId}#k=…`，格式见 e2ee 1.0 的「附件与分享」）尚未实现，所以加密模式下暂时不能新建分享；开启加密模式前创建的分享照常可读。
+
 唯一的例外是**已加密的附件上传**：`POST /api/v2/sessions/{id}/attachments` 带请求头 `x-aa-sealed: segments-v1` 时放行。上传内容是客户端用一次性密钥按 e2ee 1.0 分段加密后的密文，密钥只经安全通道交给设备。
 
 `PATCH /api/v2/sessions/{id}/meta` 仍可修改置顶、归档等状态，但请求体带明文 `title` 时同样返回 `409 e2ee_required`：加密模式下标题只能以客户端加密后的展示信封提交。

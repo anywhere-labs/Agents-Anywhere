@@ -558,6 +558,10 @@
       "zh-CN": "设备上线后才能创建分享。",
       "en": "The device must be online to create a share."
     },
+    "share_too_large": {
+      "zh-CN": "要分享的内容太大，请只分享部分回复。",
+      "en": "This is too much to share at once. Share selected replies instead."
+    },
     "sync_backpressure": {
       "zh-CN": "同步积压已达到上限，请恢复连接。",
       "en": "Too much sync work is pending. Restore the connection."

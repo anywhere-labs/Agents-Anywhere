@@ -261,7 +261,7 @@
       "model": "ExportShareRequest",
       "path": "schemas/export-share-request.schema.json",
       "pydanticMode": "validation",
-      "sha256": "b8d17584a94acc013a959dfe30b086119d55fe9ddad2d21a25a167de7f399c04",
+      "sha256": "bcf329285f25bf8d7e2d21f54dd35e8c2e0022e4e318af69641f910d039dce88",
       "slug": "export-share-request"
     },
     {
@@ -566,7 +566,7 @@
   "extras": [
     {
       "path": "device.meshcall.json",
-      "sha256": "999d7b6f56b22acb3fadde19213a2eacf2f85873635d7dffaae1da1419a68c9f"
+      "sha256": "d4896a26948625428007aadefc119c8349354830fc30c09fbba1c17e3cefa05b"
     },
     {
       "path": "mesh-errors.json",

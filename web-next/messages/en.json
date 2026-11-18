@@ -2618,6 +2618,7 @@
     "runtime_stopping": "The runtime is shutting down.",
     "session_not_ready": "The session is not idle yet or needs to be recovered.",
     "share_requires_online_device": "The device must be online to create a share.",
+    "share_too_large": "This is too much to share at once. Share selected replies instead.",
     "sync_backpressure": "Too much sync work is pending. Restore the connection.",
     "takeover_required": "Allow the workbench to control this session first.",
     "unsupported_acp_version": "This executable only supports ACP v1.",

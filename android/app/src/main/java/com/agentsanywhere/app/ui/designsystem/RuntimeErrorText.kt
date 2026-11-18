@@ -146,6 +146,7 @@ fun runtimeErrorRes(code: String?): Int? = when (code) {
     "runtime_stopping" -> R.string.runtime_error_runtime_stopping
     "session_not_ready" -> R.string.runtime_error_session_not_ready
     "share_requires_online_device" -> R.string.runtime_error_share_requires_online_device
+    "share_too_large" -> R.string.runtime_error_share_too_large
     "sync_backpressure" -> R.string.runtime_error_sync_backpressure
     "takeover_required" -> R.string.runtime_error_takeover_required
     "unsupported_acp_version" -> R.string.runtime_error_unsupported_acp_version

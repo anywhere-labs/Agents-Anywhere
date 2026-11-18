@@ -144,6 +144,7 @@ nonisolated enum RuntimeErrorText {
         case "runtime_stopping": String(localized: "Runtime 正在关闭。")
         case "session_not_ready": String(localized: "会话尚未空闲或需要恢复。")
         case "share_requires_online_device": String(localized: "设备上线后才能创建分享。")
+        case "share_too_large": String(localized: "要分享的内容太大，请只分享部分回复。")
         case "sync_backpressure": String(localized: "同步积压已达到上限，请恢复连接。")
         case "takeover_required": String(localized: "请先授权工作台控制此会话。")
         case "unsupported_acp_version": String(localized: "该入口只启用了 ACP v1。")
