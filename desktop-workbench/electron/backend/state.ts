@@ -55,7 +55,12 @@ export class BackendState {
   private closed = false;
   private initialized = false;
 
-  constructor(private readonly init: BackendInit, fetcher: BackendFetcher, desktopPid?: number) {
+  constructor(
+    private readonly init: BackendInit,
+    fetcher: BackendFetcher,
+    desktopPid?: number,
+    private readonly readEnvironment: () => Promise<NodeJS.ProcessEnv> = readShellEnvironment,
+  ) {
     this.server = { serverUrl: init.defaultServerUrl, apiNamespace: init.apiNamespace };
     this.machineState = new MachineStateStore(undefined, (message) => this.appendLog({ level: "WARNING", message }));
     this.settings = new DesktopSettingsStore(init.settingsPath, init.preferredLanguages);
@@ -120,7 +125,12 @@ export class BackendState {
     if (this.initialized) return;
     this.initialized = true;
     try {
-      const shellEnvironment = await readShellEnvironment().catch(() => ({} as NodeJS.ProcessEnv));
+      // The DSH plugin yields only to a Desktop it can find in this record, and the
+      // ownership probe below first waits for the Connector environment, which takes
+      // minutes on a first launch. A record only Python can migrate is retried after it.
+      const recorded = await this.recordInstallation().then(() => true, () => false);
+      if (this.closed) return;
+      const shellEnvironment = await this.readEnvironment().catch(() => ({} as NodeJS.ProcessEnv));
       if (Object.keys(shellEnvironment).length === 0) {
         // Without it, a GUI launch on macOS may not find codex or claude on PATH.
         this.appendLog({ level: "WARNING", message: "Could not read the login shell environment; the Connector starts with Desktop's own PATH." });
@@ -129,10 +139,12 @@ export class BackendState {
       this.connector.setShellEnvironment(shellEnvironment);
       // The supervisor logs a failed probe and reports it as the `error` state.
       await this.acquireOwnership().catch(() => undefined);
-      await this.recordInstallation().catch((error) => this.appendLog({
-        level: "ERROR",
-        message: `Could not record Desktop installation: ${errorMessage(error)}`,
-      }));
+      if (!recorded) {
+        await this.recordInstallation().catch((error) => this.appendLog({
+          level: "ERROR",
+          message: `Could not record Desktop installation: ${errorMessage(error)}`,
+        }));
+      }
       if (this.closed) return;
       const config = this.connector.loadPrivateConfig();
       if (config && !this.binding.get()) this.binding.adoptConfig(config);
@@ -337,8 +349,8 @@ export class BackendState {
     return this.connector.acquireOwnership();
   }
 
-  private recordInstallation(): Promise<void> {
-    return this.machineState.recordInstallation(desktopInstallation({
+  private async recordInstallation(): Promise<void> {
+    await this.machineState.recordInstallation(desktopInstallation({
       executablePath: this.init.desktopExecutablePath,
       appPath: this.init.desktopAppPath,
       packaged: this.init.packaged,
