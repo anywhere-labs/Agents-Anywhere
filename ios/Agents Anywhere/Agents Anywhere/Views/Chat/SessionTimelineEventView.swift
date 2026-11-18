@@ -60,9 +60,21 @@ struct SessionTimelineEventView: View {
     let cwd: String?
     let disclosures: TimelineDisclosureState
     let onFile: (String) -> Void
+    var blobs: SessionBlobStore?
+    var onOpenBlob: (V2AttachmentContent) -> Void = { _ in }
 
     var body: some View {
         let value = row.entry(cwd: cwd)
+        VStack(alignment: .leading, spacing: 4) {
+            event(value)
+            // Tool rows list their blob references inside the expanded details.
+            if value.kind != .tool, let blobs, !row.value.blobRefs.isEmpty {
+                TimelineBlobRefsView(item: row.value, blobs: blobs, onOpen: onOpenBlob).padding(.leading, 24)
+            }
+        }
+    }
+
+    @ViewBuilder private func event(_ value: TimelineEntryPresentation) -> some View {
         switch value.kind {
         case .reasoning:
             if row.text.isEmpty || TimelineText.inlineSummary(row.text) != nil {
@@ -82,9 +94,9 @@ struct SessionTimelineEventView: View {
                 Rectangle().fill(.quaternary).frame(height: 1)
             }.padding(.vertical, 8)
         case .tool:
-            if value.hasToolDetails {
+            if value.hasToolDetails || (blobs != nil && !row.value.blobRefs.isEmpty) {
                 TimelineFold(id: row.id, title: value.title, symbol: value.symbol, status: row.value.status, disclosures: disclosures) {
-                    TimelineToolDetails(row: row, cwd: cwd, onFile: onFile)
+                    TimelineToolDetails(row: row, cwd: cwd, onFile: onFile, blobs: blobs, onOpenBlob: onOpenBlob)
                 }
             } else { TimelineMarkerRow(title: value.title, symbol: value.symbol, status: row.value.status) }
         case .artifact:
@@ -146,17 +158,28 @@ private struct TimelineToolDetails: View {
     let row: ChatTimelineRowModel
     let cwd: String?
     let onFile: (String) -> Void
+    let blobs: SessionBlobStore?
+    let onOpenBlob: (V2AttachmentContent) -> Void
     var body: some View {
         let value = row.entry(cwd: cwd)
         let changes = value.changes
-        VStack(spacing: 0) {
-            if let command = value.command { TimelineCodePanel(label: String(localized: "Command"), code: command) }
-            if let input = value.input, input != .null && input != .object([:]) {
-                TimelineCodePanel(label: String(localized: "Input"), code: input.formattedJSON)
+        let pointer = value.outputPointer
+        // Once loaded, the full text behind the output preview replaces the preview.
+        let fullOutput = pointer.flatMap { blobs?.loadedText(for: row.value, at: $0) }
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(spacing: 0) {
+                if let command = value.command { TimelineCodePanel(label: String(localized: "Command"), code: command) }
+                if let input = value.input, input != .null && input != .object([:]) {
+                    TimelineCodePanel(label: String(localized: "Input"), code: input.formattedJSON)
+                }
+                ForEach(changes) { change in TimelineFileChangeView(change: change, onFile: onFile) }
+                if let output = fullOutput ?? value.output { TimelineCodePanel(label: String(localized: "Output"), code: output) }
+            }.clipShape(.rect(cornerRadius: 14))
+            if let blobs, !row.value.blobRefs.isEmpty {
+                TimelineBlobRefsView(item: row.value, blobs: blobs, onOpen: onOpenBlob,
+                                     shownInPlace: fullOutput == nil ? [] : Set(pointer.map { [$0] } ?? []))
             }
-            ForEach(changes) { change in TimelineFileChangeView(change: change, onFile: onFile) }
-            if let output = value.output { TimelineCodePanel(label: String(localized: "Output"), code: output) }
-        }.clipShape(.rect(cornerRadius: 14))
+        }
     }
 }
 

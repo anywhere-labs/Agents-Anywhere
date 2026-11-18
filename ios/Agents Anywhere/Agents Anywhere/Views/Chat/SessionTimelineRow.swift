@@ -22,12 +22,20 @@ struct SessionTimelineRow: View, Equatable {
             case let .message(message):
                 let files = chat.session.attachmentPreviews.resolve(message.attachments, clientID: row.value.source["clientMessageId"]?.stringValue)
                 if row.value.role == .user {
-                    UserMessageBubble(text: row.text, attachments: files, onAttachment: onAttachment, loadThumbnail: chat.thumbnail)
+                    VStack(alignment: .trailing, spacing: 8) {
+                        UserMessageBubble(text: row.text, attachments: files, onAttachment: onAttachment, loadThumbnail: chat.thumbnail)
+                        if !row.value.blobRefs.isEmpty {
+                            TimelineBlobRefsView(item: row.value, blobs: chat.blobs, onOpen: onAttachment).frame(maxWidth: 320)
+                        }
+                    }.frame(maxWidth: .infinity, alignment: .trailing)
                 } else {
                     VStack(alignment: .leading, spacing: 14) {
                         markdown
                         if !files.isEmpty {
                             ChatMessageAttachments(files: files, onOpen: onAttachment, loadThumbnail: chat.thumbnail, alignment: .leading)
+                        }
+                        if !row.value.blobRefs.isEmpty {
+                            TimelineBlobRefsView(item: row.value, blobs: chat.blobs, onOpen: onAttachment)
                         }
                         // Waiting feedback lives in the fixed header slot. An
                         // extra placeholder row would disappear on the first token.
@@ -40,7 +48,8 @@ struct SessionTimelineRow: View, Equatable {
                     }
                 }
             default:
-                SessionTimelineEventView(row: row, cwd: cwd, disclosures: disclosures, onFile: onFile)
+                SessionTimelineEventView(row: row, cwd: cwd, disclosures: disclosures, onFile: onFile,
+                    blobs: chat.blobs, onOpenBlob: onAttachment)
 
             }
         }

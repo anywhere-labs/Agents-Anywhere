@@ -22,6 +22,9 @@ enum V2BusinessError: LocalizedError {
     case workspaceFilesUnavailable(message: String)
     case workspaceEntryNotPreviewable
     case invalidWorkspacePreviewURL
+    case blobTooLarge(size: Int, limit: Int)
+    case blobIncomplete
+    case blobMalformed
 
     var errorDescription: String? {
         switch self {
@@ -67,6 +70,14 @@ enum V2BusinessError: LocalizedError {
             return String(localized: "This workspace item cannot be previewed.")
         case .invalidWorkspacePreviewURL:
             return String(localized: "The file preview URL is invalid.")
+        case let .blobTooLarge(size, limit):
+            let sizeText = ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)
+            let limitText = ByteCountFormatter.string(fromByteCount: Int64(limit), countStyle: .file)
+            return String(localized: "内容有 \(sizeText)，超过了可以在这里打开的 \(limitText)。")
+        case .blobIncomplete:
+            return String(localized: "内容没有读取完整，请重试。")
+        case .blobMalformed:
+            return String(localized: "设备返回的内容格式无效。")
         }
     }
 }

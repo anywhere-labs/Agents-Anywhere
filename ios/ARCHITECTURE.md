@@ -217,9 +217,24 @@ the keys, real names and media types stay in memory (a restart means sealing
 and uploading again) and travel inside the
 channel as `sealedAttachmentKeys` in the body of the message that references
 the files. Device files download chunk by chunk through the channel
-(`TunnelFileChunk`). Binary attachment downloads, file previews and renaming
+(`TunnelFileChunk`). Attachments of user messages are read from the device
+through the channel with `GET /sessions/{id}/blobs/{fileId}`, the same chunked
+route as timeline blobs (below). Download URLs, file previews and renaming
 (`displayUser` sealed with the directory key) are refused in encrypted routes
 until the Server supports them.
+
+## Timeline blobs
+
+On v3 devices large content fields of a timeline item live in the device's blob
+store; the item keeps a preview or placeholder and lists them in `blobRefs`
+(JSON pointer into `content`, `blobId`, size, media type). `V2AttachmentService`
+reads `GET /sessions/{id}/blobs/{ref}` in 4 MiB chunks until `eof`, checking
+offset and total size, and refuses blobs above the caller's limit before
+downloading them. The route is session content, so it goes through the secure
+channel in encrypted routes. `SessionBlobStore` (per chat model) loads a ref on
+request and keeps a bounded copy: text up to 4 MiB replaces the tool output
+preview or shows in a code panel, images up to 20 MiB show as a thumbnail that
+opens the full image, anything else or larger opens as a file (up to 64 MiB).
 
 Session lists and pages show the protocol 1.2 display envelopes
 (`displayDevice`, `displayUser`). `V2SessionDisplayResolver` (account scope) opens

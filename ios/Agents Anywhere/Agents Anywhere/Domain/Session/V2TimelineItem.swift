@@ -56,6 +56,9 @@ nonisolated struct V2TimelineItem: Decodable, Identifiable, Hashable {
     /// markers, or the joined reasoning summaries. Derived once per decode so
     /// presentation ticks never rescan every reply.
     let displayText: String
+    /// Protocol 1.2 `blobRefs`: content fields the device moved into its blob store.
+    /// Empty when the item has none (older devices omit the key).
+    let blobRefs: [V2TimelineBlobRef]
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -108,6 +111,7 @@ nonisolated struct V2TimelineItem: Decodable, Identifiable, Hashable {
         createdAt = raw["createdAt"]?.stringValue ?? ""
         updatedAt = raw["updatedAt"]?.stringValue ?? createdAt
         completedAt = raw["completedAt"]?.stringValue
+        blobRefs = V2TimelineBlobRef.list(raw["blobRefs"])
         let reasoning = type == .reasoning || type == .system && rawContent["kind"] == .string("reasoning")
         switch content {
         case let .message(value): displayText = TimelineText.message(value.text)

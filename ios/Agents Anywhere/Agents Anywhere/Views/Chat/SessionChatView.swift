@@ -338,13 +338,13 @@ struct SessionChatView: View, Equatable {
 
     private func openAttachment(_ file: V2AttachmentContent) {
         if file.readsFromDevice, let path = file.devicePath { sheet = .preview(SessionFileReference(path: path), root: file.root); return }
-        guard !isDownloading, let fileID = file.fileId else { return }
+        guard !isDownloading, file.fileId != nil else { return }
         isDownloading = true
         model.error = nil
         Task { @MainActor in
             defer { isDownloading = false }
             do {
-                let data = try await model.download(fileID)
+                let data = try await model.download(file)
                 guard session.isValid, sheet == nil else { return }
                 cleanPreview()
                 let directory = FileManager.default.temporaryDirectory.appendingPathComponent("aa-preview-\(UUID().uuidString)", isDirectory: true)

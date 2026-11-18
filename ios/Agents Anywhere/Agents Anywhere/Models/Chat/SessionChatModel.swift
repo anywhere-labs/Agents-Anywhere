@@ -63,10 +63,16 @@ final class SessionChatModel {
     @ObservationIgnored private let attachments: V2AttachmentService
     @ObservationIgnored private let workflowAPI: V2RuntimeWorkflowAPI?
     @ObservationIgnored private let files: V2WorkspaceFilesService?
+    /// Full content behind timeline `blobRefs`, loaded on request.
+    @ObservationIgnored let blobs: SessionBlobStore
 
     init(session: V2SessionModel, repository: V2SessionRepository, attachments: V2AttachmentService, files: V2WorkspaceFilesService? = nil, workflowAPI: V2RuntimeWorkflowAPI? = nil) {
         self.session = session; self.repository = repository; self.attachments = attachments
         self.files = files; self.workflowAPI = workflowAPI
+        let sessionID = session.id
+        blobs = SessionBlobStore { [attachments] blobRef, limit in
+            try await attachments.readSessionBlob(sessionId: sessionID, blobRef: blobRef, maxBytes: limit)
+        }
         // Cached history can still be expensive to project. prepareOpening()
         // performs that work after the page's navigation transition settles.
     }
@@ -566,6 +572,15 @@ final class SessionChatModel {
 
     func download(_ fileID: String) async throws -> Data {
         try await attachments.download(sessionId: session.id, fileId: fileID)
+    }
+
+    /// Bytes behind an attachment card or a timeline blob reference.
+    func download(_ file: V2AttachmentContent) async throws -> Data {
+        guard let id = file.fileId else { throw HTTPError.invalidResponse }
+        if file.isTimelineBlob {
+            return try await attachments.readSessionBlob(sessionId: session.id, blobRef: id, maxBytes: SessionBlobStore.fileLimit).data
+        }
+        return try await download(id)
     }
 
     func thumbnail(for file: V2AttachmentContent) async throws -> Data? {

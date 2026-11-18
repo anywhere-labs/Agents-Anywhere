@@ -22,6 +22,11 @@ struct TimelineEntryPresentation: Hashable {
         return TimelineText.first(raw["output"], raw["outputPreview"], raw["outputText"], raw["error"])
             ?? raw["output"].flatMap { $0 == .null ? nil : $0.formattedJSON }
     }
+    /// JSON pointer of the content field `output` reads its text from, if that field is a string.
+    var outputPointer: String? {
+        guard rawChanges.isEmpty else { return nil }
+        return ["output", "outputPreview", "outputText", "error"].first { raw[$0]?.stringValue?.isEmpty == false }.map { "/" + $0 }
+    }
     var hasToolDetails: Bool {
         command != nil || !rawChanges.isEmpty || input.map { $0 != .null && $0 != .object([:]) } == true
             || ["output", "outputPreview", "outputText", "error"].contains { key in
