@@ -14,9 +14,9 @@ export const CODEX_COMPANION_SETTINGS = {
   autoFollow: { title: '自动跟随 Codex App 正在使用的线程', default: true },
   deeplinkHandoff: { title: '打开被 Codex App 占用的线程时，让 App 接手（codex:// 链接）', default: true },
   announceNewThreads: {
-    title: '新建的线程立即出现在 Codex App 侧边栏（实验，需要 codex-acp 支持）',
+    title: '新建的线程立即出现在 Codex App 侧边栏（需要 codex-acp 支持）',
     description: '这样出现的新线程不会进入 Codex App 的项目分组。',
-    default: false,
+    default: true,
   },
 } as const satisfies Record<string, { title: string; description?: string; default: boolean }>
 
@@ -43,7 +43,7 @@ const BASE: AcpAgentDefinition = {
   // it when idle would lose the follow state.
   idleMs: 0,
   metadata: { localInstallation: true, nativeHistory: true, package: '@agentclientprotocol/codex-acp' },
-  dialect: context => codexDialect({ announceNewThreads: context.settings.announceNewThreads === true }),
+  dialect: context => codexDialect({ announceNewThreads: context.settings.announceNewThreads !== false }),
 }
 
 function codexConfigSchema(): ConfigSchema {

@@ -478,7 +478,7 @@ export class AcpRuntimeSession implements RuntimeSession {
 
   private translate(update: JsonRecord, replay = false): RuntimeEvent[] {
     const turnId = this.turn?.turnId
-    const state = { ...(turnId !== undefined ? { turnId } : {}), ...(this.turn ? { origin: this.turn.origin } : {}) }
+    const state = { ...(turnId !== undefined ? { turnId } : {}), ...(this.turn ? { origin: this.turn.origin } : {}), ...(replay ? { replay: true } : {}) }
     return this.dialect.translateUpdate?.(update, this.context, state) ?? translateUpdate(update, {
       identity: this.identity,
       ...(turnId !== undefined ? { turnId } : {}),

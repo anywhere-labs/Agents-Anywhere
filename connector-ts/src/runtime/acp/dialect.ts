@@ -67,6 +67,8 @@ export interface PlanReviewDecision {
 export interface TurnState {
   readonly turnId?: string
   readonly origin?: 'user' | 'autonomous' | 'external'
+  /** The update comes from history replay. */
+  readonly replay?: boolean
 }
 
 /**

@@ -52,6 +52,8 @@ export type CapabilityId =
   | 'session.list'
   | 'session.history.native'
   | 'runtime.attachment'
+  | 'runtime.app_open'
+  | 'runtime.owner_release'
   | 'catalog.model'
   | 'catalog.effort'
   | 'catalog.permission'
@@ -176,6 +178,12 @@ export interface RuntimeHandle {
    * whose Agent runs in another program (DSH) leaves it out.
    */
   agentProcesses?(): readonly AgentProcessInfo[]
+  /**
+   * The desktop app that shares this Runtime's native sessions (Codex: the Codex App). When present and capability
+   * `runtime.app_open` is supported, a native session can be opened in it; its commands also name how `ownerRelease`
+   * is offered to clients.
+   */
+  readonly nativeApp?: NativeAppPort
   stop(): Promise<void>
 }
 
@@ -185,6 +193,32 @@ export interface AgentProcessInfo {
   /** AA session ids (a prepared session's preparation id until it is adopted); empty when no session is open. */
   readonly sessionIds: readonly string[]
 }
+
+/**
+ * A desktop app that works on the same native sessions as the Runtime. Its actions are offered to clients as the
+ * Runtime's own slash commands (`commands`), listed only while the matching capability is supported.
+ */
+export interface NativeAppPort {
+  /** Display name (e.g. "Codex App"); capability parameters carry it as `appName`. */
+  readonly appName: string
+  readonly commands: {
+    /** Opens the native session in the app (capability `runtime.app_open`). */
+    readonly open: NativeAppCommandSpec
+    /** Quits the app through `ownerRelease` (capability `runtime.owner_release`). */
+    readonly release?: NativeAppCommandSpec
+  }
+  /** Shows the native session in the running app; never starts the app. */
+  open(ref: NativeSessionRef): Promise<NativeAppOpenOutcome>
+}
+
+export interface NativeAppCommandSpec {
+  readonly id: string
+  readonly aliases: readonly string[]
+  readonly title: string
+  readonly description: string
+}
+
+export type NativeAppOpenOutcome = { readonly status: 'opened' | 'app_not_running' | 'open_failed' | 'unsupported' }
 
 /**
  * Releasing an external holder, confirmed at the session level (in the same AA session that triggered it). When opening an existing session fails

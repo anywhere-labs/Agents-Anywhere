@@ -20,6 +20,7 @@
 // - Plan review: when a plan is complete codex-acp sends request_permission (`plan-review:<itemId>`,
 //   implement_plan / revise_plan). Rejecting ends the current turn and stays in plan mode, so revision feedback
 //   is sent as a new message after the turn ends.
+// - Automatic approval reviews (`guardian_assessment:` tool calls) become timeline notices (auto-review.ts).
 
 import type { ConfigOption, HistoryItem, NativeSessionRef, RuntimeEvent } from '../../../application/ports/runtime-session.js'
 import { codexModelSelectionId } from '../../../domain/identity/index.js'
@@ -28,6 +29,7 @@ import { asRecord, type AgentInfo, type JsonRecord } from '../../acp/client.js'
 import type { AcpDialect, PlanReviewDecision } from '../../acp/dialect.js'
 import { translateUpdate } from '../../acp/mapping.js'
 import { historyPage } from '../../companions/native-history/page.js'
+import { guardianReviewEvents } from './auto-review.js'
 import { GENERIC_CLIENT_CAPABILITIES } from '../generic/dialect.js'
 import { codexIdentity } from './identity.js'
 import { codexPermissionSelectionForMode } from './permissions.js'
@@ -78,8 +80,8 @@ export interface CodexDialectOptions {
   readonly openRoute?: (ref: NativeSessionRef) => 'auto' | 'plain'
   /**
    * Ask codex-acp to announce threads created by AA to the Codex App so they appear in its sidebar right away
-   * (`codexIpc.announceNewThreads`; requires codex-acp support, older codex-acp ignores it). Off by default:
-   * threads that appear this way are not put into a project group.
+   * (`codexIpc.announceNewThreads`; requires codex-acp support, older codex-acp ignores it). The Codex profile turns
+   * it on unless the instance switches it off; threads that appear this way are not put into a project group.
    */
   readonly announceNewThreads?: boolean
 }
@@ -112,6 +114,7 @@ export function codexDialect(options: CodexDialectOptions = {}): AcpDialect {
     interactionKind: (method, params) => (method === 'session/request_permission' && isPlanReview(params) ? 'plan_review' : undefined),
     planReview: (answer, options) => codexPlanReview(answer, options),
     goalMethod: () => CODEX_GOAL_METHOD,
+    translateUpdate: (update, context, turn) => guardianReviewEvents(update, context.nativeSessionId, turn),
     handleRequest: (method, params, session) => {
       if (method !== CODEX_HISTORY_RESET || params.phase !== 'begin' || typeof params.revision !== 'string') return undefined
       const revision = params.revision
@@ -135,7 +138,8 @@ export function codexDialect(options: CodexDialectOptions = {}): AcpDialect {
       const identity = codexIdentity({ sessionId: `history:${ref.nativeSessionId}`, nativeSessionId: ref.nativeSessionId, epoch: 'history', info })
       const items: HistoryItem[] = []
       for (const update of updates) {
-        for (const event of translateUpdate(update, { identity, replay: true, suppressUserEcho: false, config: [] })) {
+        const events = guardianReviewEvents(update, ref.nativeSessionId, { replay: true }) ?? translateUpdate(update, { identity, replay: true, suppressUserEcho: false, config: [] })
+        for (const event of events) {
           if (HISTORY_EVENTS.has(event.type)) items.push(event as HistoryItem)
         }
       }

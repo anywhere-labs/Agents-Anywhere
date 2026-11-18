@@ -11,6 +11,8 @@
 //     whether to go through the "quit the App" flow;
 // - quitting the App: the two-step flow in quit-app.ts, offered through the port's `ownerRelease`; confirmation
 //   happens in the AA session that triggered it (session layer);
+// - the port's `nativeApp`: open a thread in the running App on request, and name the commands clients see; both
+//   it and `ownerRelease` are declared only while the App is installed (app-install.ts);
 // - permissions of unloaded threads: rollout-settings.ts.
 // The companion layer never ends processes on its own, and never touches the App UI when the user has not opened a
 // session (the deeplink is used only when opening an existing thread).
@@ -22,6 +24,8 @@ import type {
   AgentProcessInfo,
   Catalogs,
   HistoryWindow,
+  NativeAppOpenOutcome,
+  NativeAppPort,
   NativeHistoryPage,
   NativeSessionPage,
   NativeSessionRef,
@@ -39,6 +43,7 @@ import { asRecord, type JsonRecord } from '../../acp/client.js'
 import { RuntimeFailure } from '../../acp/errors.js'
 import type { AcpRuntimeHandle } from '../../acp/handle.js'
 import { runtimeError, type AcpRuntimeSession } from '../../acp/session.js'
+import { codexAppInstalled } from './app-install.js'
 import { CodexAutoFollow, type AutoFollowOptions } from './auto-follow.js'
 import { deeplinkSupported, systemUrlOpener, threadDeeplink, type UrlOpener } from './deeplink.js'
 import { currentUid, desktopAppProcesses, systemProcessTable, systemSignaller, type ProcessSignaller, type ProcessTable } from './desktop-app.js'
@@ -63,6 +68,8 @@ export interface CodexCompanionOptions {
   readonly processes?: ProcessTable
   readonly signaller?: ProcessSignaller
   readonly uid?: number
+  /** Whether the Codex App is installed; defaults to looking at this machine (cached for a minute). */
+  readonly appInstalled?: () => boolean
   /** Time to wait after the deeplink for the App to register as owner, and the polling interval. */
   readonly handoffTimeoutMs?: number
   readonly handoffPollMs?: number
@@ -82,6 +89,11 @@ export function resolveCodexHome(settingsHome: unknown, env: NodeJS.ProcessEnv =
   return resolve(raw.startsWith('~/') || raw.startsWith('~\\') ? join(home, raw.slice(2)) : raw)
 }
 
+/** How long an installation check is reused before the machine is looked at again. */
+const INSTALL_CHECK_TTL_MS = 60_000
+const APP_NAME = 'Codex App'
+const APP_PARAMETERS = { appName: APP_NAME }
+
 export class CodexRuntimeHandle implements RuntimeHandle {
   readonly type: RuntimeType
   readonly instanceId: string
@@ -93,6 +105,7 @@ export class CodexRuntimeHandle implements RuntimeHandle {
   private readonly opener: UrlOpener
   private readonly processes: ProcessTable
   private readonly uid: number | undefined
+  private readonly appInstalled: () => boolean
 
   constructor(
     private readonly inner: AcpRuntimeHandle,
@@ -107,6 +120,7 @@ export class CodexRuntimeHandle implements RuntimeHandle {
     this.opener = options.opener ?? systemUrlOpener(this.platform)
     this.processes = options.processes ?? systemProcessTable(this.platform)
     this.uid = 'uid' in options ? options.uid : currentUid()
+    this.appInstalled = options.appInstalled ?? cachedInstallCheck(() => codexAppInstalled(this.platform, process.env, homedir()))
     this.quitter = new CodexAppQuitter({
       table: this.processes,
       signaller: options.signaller ?? systemSignaller(this.platform),
@@ -138,7 +152,35 @@ export class CodexRuntimeHandle implements RuntimeHandle {
 
   capabilities(): RuntimeCapabilities {
     const inner = this.inner.capabilities()
-    return { ...inner, items: [...inner.items.filter(c => c.id !== 'runtime.owner_release'), { id: 'runtime.owner_release', supported: this.quitter.supported }] }
+    const installed = this.appInstalled()
+    return {
+      ...inner,
+      items: [
+        ...inner.items.filter(c => c.id !== 'runtime.owner_release' && c.id !== 'runtime.app_open'),
+        { id: 'runtime.owner_release', supported: installed && this.quitter.supported, parameters: APP_PARAMETERS },
+        { id: 'runtime.app_open', supported: installed && deeplinkSupported(this.platform), parameters: APP_PARAMETERS },
+      ],
+    }
+  }
+
+  /** The Codex App as the port's native app: opening a thread in it, and the commands clients know both actions by. */
+  readonly nativeApp: NativeAppPort = {
+    appName: APP_NAME,
+    commands: {
+      open: {
+        id: 'open-in-codex-app',
+        aliases: ['open-in-codex', 'codex-app'],
+        title: 'Open in Codex App',
+        description: 'Open this thread in the Codex App running on this computer.',
+      },
+      release: {
+        id: 'quit-codex-app',
+        aliases: ['kill-chatgpt', 'kill-codex-app', 'quit-chatgpt'],
+        title: 'Quit Codex App',
+        description: 'Quit the Codex App holding this thread so Agents Anywhere can take over (asks for confirmation).',
+      },
+    },
+    open: ref => this.openInCodexApp(ref.nativeSessionId),
   }
 
   /** The port's "release the external holder": quits the Codex App holding the thread (two steps, confirmed by the session layer). */
@@ -196,7 +238,7 @@ export class CodexRuntimeHandle implements RuntimeHandle {
           ownership: evidence.inspection.ownership,
           writerLock: evidence.inspection.writerLock?.state ?? null,
           handoff: evidence.handoff ?? null,
-          ownerRelease: this.quitter.supported ? 'available' : 'unavailable',
+          ownerRelease: this.quitter.supported && this.appInstalled() ? 'available' : 'unavailable',
         },
       })
     } finally {
@@ -266,6 +308,22 @@ export class CodexRuntimeHandle implements RuntimeHandle {
     }
   }
 
+  /**
+   * Shows a thread in the running Codex App (`codex://threads/<id>`) when the user asks for it. Never launches the
+   * App; when the process table cannot be read the link is opened anyway and the system decides.
+   */
+  async openInCodexApp(threadId: string): Promise<NativeAppOpenOutcome> {
+    if (!deeplinkSupported(this.platform)) return { status: 'unsupported' }
+    let url: string
+    try {
+      url = threadDeeplink(threadId)
+    } catch {
+      return { status: 'unsupported' }
+    }
+    if ((await this.codexAppRunning()) === false) return { status: 'app_not_running' }
+    return { status: (await this.opener(url)) ? 'opened' : 'open_failed' }
+  }
+
   /** Quitting the Codex App, step one: draft the plan without sending signals. The plan must be shown to the user as is. */
   prepareQuitCodexApp(threadIds: readonly string[]): Promise<QuitPrepareResult> {
     return this.quitter.prepare(threadIds)
@@ -316,6 +374,15 @@ export class CodexRuntimeHandle implements RuntimeHandle {
       await close()
     }
     return session
+  }
+}
+
+/** Reuses `check`'s answer for INSTALL_CHECK_TTL_MS. */
+function cachedInstallCheck(check: () => boolean, now: () => number = Date.now): () => boolean {
+  let cached: { readonly value: boolean; readonly at: number } | undefined
+  return () => {
+    if (cached === undefined || now() - cached.at >= INSTALL_CHECK_TTL_MS) cached = { value: check(), at: now() }
+    return cached.value
   }
 }
 

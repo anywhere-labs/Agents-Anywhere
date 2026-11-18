@@ -8,7 +8,7 @@ import { expect } from 'vitest'
 
 import { CommandInbox } from '../../src/application/inbound/index.js'
 import { ConversationService } from '../../src/application/index.js'
-import type { Catalogs, ConfigChange, ConfigOption, ConfigResult, RuntimeCapabilities, RuntimeHandle, RuntimeHandles, SessionCapabilities } from '../../src/application/ports/index.js'
+import type { Catalogs, ConfigChange, NativeAppCommandsApi, ConfigOption, ConfigResult, RuntimeCapabilities, RuntimeHandle, RuntimeHandles, SessionCapabilities } from '../../src/application/ports/index.js'
 import type { TunnelApiResponse, TunnelCallContext } from '../../src/application/inbound/tunnel-api.js'
 import { capabilitySet } from '../../src/application/runtimes/capabilities.js'
 import { uploadPreparedDownload } from '../../src/link/index.js'
@@ -93,7 +93,7 @@ export const settle = async (ms = 60): Promise<void> => {
   await new Promise(resolve => setTimeout(resolve, ms))
 }
 
-export async function testDevice(options: { platform?: NodeJS.Platform } = {}): Promise<TestDevice> {
+export async function testDevice(options: { platform?: NodeJS.Platform; nativeApps?: NativeAppCommandsApi } = {}): Promise<TestDevice> {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'aa-client-')))
   const root = join(base, 'workspace')
   mkdirSync(join(root, 'notes'), { recursive: true })
@@ -155,6 +155,7 @@ export async function testDevice(options: { platform?: NodeJS.Platform } = {}): 
     workspace: methods,
     newId: ids.newId,
     commands: sessionId => commands.get(sessionId),
+    ...(options.nativeApps !== undefined ? { nativeApps: options.nativeApps } : {}),
     runtimes: { catalogs: async runtimeId => (runtimeId === RUNTIME ? { runtimeType: 'opencode', catalogs: catalogs() as Record<string, unknown> } : null) },
     transferUpload: async params => {
       uploads.push(params)

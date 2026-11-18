@@ -1,5 +1,6 @@
 // Codex companion layer (04 §5.2): auto-follow, deeplink handover, quitting the App, permissions of unloaded threads, Windows write lock fallback.
 
+export { codexAppInstalled, systemInstallProbe, type InstallProbe } from './app-install.js'
 export { CodexAutoFollow, type AutoFollowOptions } from './auto-follow.js'
 export { deeplinkSupported, openerCommand, systemUrlOpener, threadDeeplink, type UrlOpener } from './deeplink.js'
 export {

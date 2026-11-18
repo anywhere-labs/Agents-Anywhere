@@ -232,6 +232,35 @@ describe('slash commands', () => {
   })
 })
 
+describe('native app commands', () => {
+  it('lists the app\'s commands after the catalog and runs them on the device with the Server\'s takeover switch', async () => {
+    await device.close()
+    const calls: unknown[] = []
+    device = await testDevice({
+      nativeApps: {
+        list: async () => [{ id: 'open-in-desk', title: 'Open in Desk App', description: 'Open it there.', aliases: ['desk'] }],
+        execute: async (sessionId, command, args, context) => {
+          calls.push({ sessionId, command, args, context })
+          return command === 'open-in-desk' ? { ok: false, code: 'confirmation_required', message: 'sure?', result: { executionState: 'completed', confirmation: { planId: 'p1' } } } : null
+        },
+      },
+    })
+    device.commands.observe('runtime.status', { runtimeId: 'rti_1', sessionId: S, status: { event: 'commands.updated', commands: [{ name: 'review' }] } })
+    await device.start(S)
+    const listed = (await device.request('GET', at('/runtime/commands'))).body as { commands: Record<string, unknown>[] }
+    expect(listed.commands.map(item => item.id)).toEqual(['review', 'open-in-desk'])
+    expect(listed.commands[1]).toMatchObject({ aliases: ['desk'], acceptsArgs: false, argsSchema: null, metadata: { ui: { kind: 'execute', acceptsMultiline: false } } })
+    expect((listed.commands[1]!.metadata as { ui: { allowedStatuses: string[] } }).ui.allowedStatuses).toContain('running')
+    expect(((await device.request('GET', at('/runtime/commands?query=desk'))).body as { commands: { id: string }[] }).commands.map(item => item.id)).toEqual(['open-in-desk'])
+    expect(((await device.request('GET', at('/runtime/commands?limit=1'))).body as { commands: { id: string }[] }).commands.map(item => item.id)).toEqual(['review'])
+    const ran = await device.request('POST', at('/runtime/commands'), { command: 'open-in-desk', args: ['--confirm', 'p1'] }, { server: { takeover: true } })
+    expect(ran.body).toMatchObject({ command: 'open-in-desk', ok: false, code: 'confirmation_required', message: 'sure?', result: { confirmation: { planId: 'p1' } }, session: null })
+    expect(calls).toEqual([{ sessionId: S, command: 'open-in-desk', args: ['--confirm', 'p1'], context: { takeover: true } }])
+    // Anything else is still a Runtime command sent as a message.
+    expect((await device.request('POST', at('/runtime/commands'), { command: 'review', operationId: 'op_r' })).body).toMatchObject({ ok: true, result: { executionState: 'accepted' } })
+  })
+})
+
 describe('files and shell', () => {
   it('resolves paths against the root like the Server', async () => {
     const listed = await device.request('POST', `/connectors/${DEVICE}/fs/list`, { root: join(device.root, 'notes'), path: '..' })

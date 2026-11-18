@@ -12,13 +12,14 @@
 import { randomBytes } from 'node:crypto'
 
 import { CREATE_AND_START_METHOD, type CommandInbox } from '../application/inbound/commands.js'
+import type { NativeAppCommandsApi } from '../application/ports/index.js'
 import type { ChannelCaller, TunnelApi, TunnelApiRequest, TunnelApiResponse, TunnelCallContext, TunnelSubscription } from '../application/inbound/tunnel-api.js'
 import type { Clock, ConversationStore } from '../application/ports/index.js'
 import { eventCursor, type Session } from '../domain/conversation/index.js'
 import type { AttachmentRef } from '../generated/device-meshcall/v1_0/client-call-request.js'
 import type { CommandAck } from '../generated/device-meshcall/v1_0/command-ack.js'
 import type { CommandCall } from '../generated/device-meshcall/v1_0/command-call.js'
-import { commandText, commandViews, slashResult, type SessionCommand } from './client-api/commands.js'
+import { appCommandViews, commandText, commandViews, slashResult, type SessionCommand } from './client-api/commands.js'
 import { TunnelHttpError, conflict, errorBody, int, invalid, notFound, okBody, parse, record, statusOf, text, type Route } from './client-api/http.js'
 import { NOTICE_GONE_CODES, capabilityUsable, findCapability, noticeAnswerInput, parsePlanCommand, sessionSourceError, unsupportedMediaType } from './client-api/rules.js'
 import { capabilitySetView, goalView, modelCatalogView, noticeView, permissionCatalogView, planningView, runtimeStateView } from './client-api/views.js'
@@ -102,6 +103,8 @@ export interface DeviceTunnelApiDeps {
   readonly newId?: (prefix: string) => string
   /** The slash commands a session's Runtime reported last (`SessionCommandCatalog.get`). */
   readonly commands?: (sessionId: string) => readonly SessionCommand[]
+  /** The session's native desktop app, offered as slash commands next to the Runtime's own. */
+  readonly nativeApps?: NativeAppCommandsApi
   /** Runtime instances' own catalogs (`connectors/{id}/runtimes/{r}/catalogs/*`). */
   readonly runtimes?: RuntimeCatalogs
   /** `fs.uploadPreparedDownload` of the device link: the bytes of `POST fs/read` go to the Server's relay. */
@@ -587,6 +590,7 @@ export class DeviceTunnelApi implements TunnelApi {
 
   // -------------------------------------------------------------------------------------- slash commands
 
+  /** `GET runtime/commands`: the Runtime's catalog, then the commands of the session's native desktop app. */
   private async listCommands(sessionId: string, call: Call, route: Route): Promise<TunnelApiResponse> {
     const session = await this.requireSession(sessionId)
     await this.requireCapability(session, call, 'session.commands')
@@ -594,12 +598,14 @@ export class DeviceTunnelApi implements TunnelApi {
     if (query !== null && query.length > 4096) throw invalid('query is too long')
     const limit = int(route.query.get('limit'), 100, 1, 1000)
     const catalog = this.deps.commands?.(sessionId) ?? []
-    return { status: 200, body: { commands: commandViews(catalog, query, limit), serverTime: this.now() } }
+    const appCommands = (await this.deps.nativeApps?.list(sessionId)) ?? []
+    return { status: 200, body: { commands: [...commandViews(catalog, query, limit), ...appCommandViews(appCommands, query)].slice(0, limit), serverTime: this.now() } }
   }
 
   /**
-   * `POST runtime/commands`: `/plan` runs the planning command; any other command must be in the session's catalog
-   * and is sent as the message `/<command> <args>`. A failure is a result with `ok: false`, not an HTTP error.
+   * `POST runtime/commands`: `/plan` runs the planning command; a command of the session's native desktop app runs
+   * on the device (`nativeApps`); any other command must be in the session's catalog and is sent as the message
+   * `/<command> <args>`. A failure is a result with `ok: false`, not an HTTP error.
    */
   private async executeCommand(caller: ChannelCaller, call: Call, sessionId: string, body: Record<string, unknown>): Promise<TunnelApiResponse> {
     const session = await this.requireSession(sessionId)
@@ -629,6 +635,8 @@ export class DeviceTunnelApi implements TunnelApi {
       return answer(slashResult('plan', ok, text(planning.code), text(planning.message), { planning, executionState, retryable: false }))
     }
     await this.requireCapability(session, call, 'session.commands')
+    const app = await this.deps.nativeApps?.execute(sessionId, command, args, { takeover: this.takeover(session, call) })
+    if (app != null) return answer(slashResult(command, app.ok, app.code, app.message, app.result))
     const catalog = this.deps.commands?.(sessionId) ?? []
     const name = command.replace(/^\//u, '')
     if (!catalog.some(item => item.name === name)) return answer(slashResult(name, false, 'command_unavailable', COMMAND_UNAVAILABLE, { executionState: 'completed' }))

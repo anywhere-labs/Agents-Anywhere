@@ -384,7 +384,7 @@ describe('Codex companion handle', () => {
     return agent
   }
 
-  function companion(agent: FakeAcpAgent, options: { platform?: NodeJS.Platform; app?: boolean; locks?: FakeLocks; codexHome?: string } = {}) {
+  function companion(agent: FakeAcpAgent, options: { platform?: NodeJS.Platform; app?: boolean; installed?: boolean; opens?: boolean; locks?: FakeLocks; codexHome?: string } = {}) {
     const routes = new Map<string, CodexOpenRoute>()
     const dialect = codexDialect({ openRoute: ref => routes.get(ref.nativeSessionId) ?? 'auto' })
     const inner = new AcpRuntimeHandle({ type: 'codex', instanceId: 'i1', dialect, connect: peerConnection(agent.clientPeer, dialect) })
@@ -397,7 +397,8 @@ describe('Codex companion handle', () => {
       uid: 501,
       processes,
       signaller: processes,
-      opener: async url => { opened.push(url); return true },
+      opener: async url => { opened.push(url); return options.opens !== false },
+      appInstalled: () => options.installed !== false,
       locks: options.locks ?? new FakeLocks(),
       handoffTimeoutMs: 200,
       handoffPollMs: 1,
@@ -474,6 +475,34 @@ describe('Codex companion handle', () => {
     expect(await gone.handle.ownerRelease.prepare({ nativeSessionId: T1 }, { sessionId: 'aa_9' })).toEqual({ status: 'unavailable', reason: 'owner_not_running' })
   })
 
+  it('declares the App actions only while the App is installed, and names them as commands', async () => {
+    const installed = companion(codexAgent(() => follow))
+    const item = (handle: CodexRuntimeHandle, id: string) => handle.capabilities().items.find(c => c.id === id)
+    expect(item(installed.handle, 'runtime.app_open')).toEqual({ id: 'runtime.app_open', supported: true, parameters: { appName: 'Codex App' } })
+    expect(item(installed.handle, 'runtime.owner_release')).toEqual({ id: 'runtime.owner_release', supported: true, parameters: { appName: 'Codex App' } })
+    expect(installed.handle.nativeApp.commands.open.id).toBe('open-in-codex-app')
+    expect(installed.handle.nativeApp.commands.release?.aliases).toContain('kill-chatgpt')
+    const blocked = codexAgent(() => blockedHeld)
+    blocked.peer.onRequest('session/resume', () => { throw new JsonRpcError(-32603, 'codex_owner_unavailable') })
+    const missing = companion(blocked, { installed: false })
+    expect(item(missing.handle, 'runtime.app_open')?.supported).toBe(false)
+    expect(item(missing.handle, 'runtime.owner_release')?.supported).toBe(false)
+    const error = await missing.handle.open({ kind: 'existing', ref: { nativeSessionId: T1 } }, { sessionId: 'aa_1', replay: 'none' }).catch(e => e)
+    expect((error as RuntimeFailure).error.details).toMatchObject({ ownerRelease: 'unavailable' })
+  })
+
+  it('opens a thread in the running App on request, never starting the App', async () => {
+    const running = companion(codexAgent(() => follow))
+    expect(await running.handle.nativeApp.open({ nativeSessionId: T1 })).toEqual({ status: 'opened' })
+    expect(running.opened).toEqual([`codex://threads/${T1}`])
+    const stopped = companion(codexAgent(() => follow), { app: false })
+    expect(await stopped.handle.nativeApp.open({ nativeSessionId: T1 })).toEqual({ status: 'app_not_running' })
+    expect(stopped.opened).toEqual([])
+    const refused = companion(codexAgent(() => follow), { opens: false })
+    expect(await refused.handle.nativeApp.open({ nativeSessionId: T1 })).toEqual({ status: 'open_failed' })
+    expect(await running.handle.nativeApp.open({ nativeSessionId: 'not-a-thread' })).toEqual({ status: 'unsupported' })
+  })
+
   it('fills the permission of threads that are not open from their rollout', async () => {
     const home = mkdtempSync(join(tmpdir(), 'aa-codex-list-'))
     const created = threadCreatedAt(T1)!
@@ -513,7 +542,7 @@ describe('Codex profile wiring for companions', () => {
   it('adds boolean companion switches to the instance schema with safe defaults', () => {
     expect(() => checkDefinition(CODEX)).not.toThrow()
     const schema = CODEX.configSchema!
-    expect(schema.defaults).toEqual({ autoFollow: true, deeplinkHandoff: true, announceNewThreads: false })
+    expect(schema.defaults).toEqual({ autoFollow: true, deeplinkHandoff: true, announceNewThreads: true })
     expect(validateSettings(schema.schema, { autoFollow: false, codexHome: '~/.codex' })).toBeUndefined()
     expect(validateSettings(schema.schema, { autoFollow: 'yes' })).toBeDefined()
     expect(resolveCodexHome('~/x', {}, '/home/u')).toBe('/home/u/x')
@@ -521,9 +550,12 @@ describe('Codex profile wiring for companions', () => {
     expect(resolveCodexHome(undefined, {}, '/home/u')).toBe('/home/u/.codex')
   })
 
-  it('asks codex-acp to announce new threads only when switched on', () => {
+  it('asks codex-acp to announce new threads unless the instance switches it off', () => {
     expect(codexDialect().initializeMeta?.()).toEqual({ codexIpc: { approvals: true, settings: true, historyReplacement: true } })
     expect(codexDialect({ announceNewThreads: true }).initializeMeta?.()).toMatchObject({ codexIpc: { announceNewThreads: true } })
+    const meta = (settings: Json) => CODEX.dialect({ settings } as never).initializeMeta?.()
+    expect(meta({})).toMatchObject({ codexIpc: { announceNewThreads: true } })
+    expect(meta({ announceNewThreads: false })).toEqual({ codexIpc: { approvals: true, settings: true, historyReplacement: true } })
   })
 
   it('hides image attachments until codex-acp passes local image links to Codex', () => {

@@ -1,6 +1,7 @@
 // ported from Agents-Anywhere v2 server/agent_server/infra/device_link.py @4c8012369 (command_views, command_text, _slash_result, _COMMAND_UI)
 // ported from Agents-Anywhere v2 server/agent_server/api/sessions.py @4c8012369 (_unknown_command_result)
 
+import type { NativeAppCommandView } from '../../application/ports/index.js'
 import type { EventMethod, LiveEvent, LiveEventPayloads } from '../../application/ports/index.js'
 
 /** One slash command as the Runtime reported it (`commands.updated`). */
@@ -87,6 +88,29 @@ export function commandViews(catalog: readonly SessionCommand[], query: string |
     })
   }
   return views.slice(0, Math.max(0, limit))
+}
+
+/** A native app's actions run at once, take no arguments and are offered whatever the session's status. */
+const APP_COMMAND_UI = { kind: 'execute', acceptsMultiline: false, allowedStatuses: ['idle', 'error', 'running', 'waiting', 'waiting_approval', 'blocked', 'unknown'] }
+
+/** `GET runtime/commands` items for the session's native desktop app commands, filtered by `query`. */
+export function appCommandViews(commands: readonly NativeAppCommandView[], query: string | null = null): Record<string, unknown>[] {
+  const needle = query === null || query === '' ? null : query.toLowerCase()
+  return commands
+    .filter(item => needle === null || [item.id, item.title, item.description, ...item.aliases].join(' ').toLowerCase().includes(needle))
+    .map(item => ({
+      id: item.id,
+      title: item.title,
+      description: item.description,
+      aliases: [...item.aliases],
+      category: null,
+      scope: 'session',
+      enabled: true,
+      disabledReason: null,
+      acceptsArgs: false,
+      argsSchema: null,
+      metadata: { ui: { ...APP_COMMAND_UI, allowedStatuses: [...APP_COMMAND_UI.allowedStatuses] } },
+    }))
 }
 
 const RAW_COMMAND = /^\s*\/([^\s]+)([\s\S]*)$/u

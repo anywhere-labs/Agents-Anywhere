@@ -42,7 +42,7 @@ export class CodexProvider implements RuntimeProvider {
     const routes = new Map<string, CodexOpenRoute>()
     const definition = {
       ...CODEX,
-      dialect: () => codexDialect({ announceNewThreads: settings.announceNewThreads === true, openRoute: ref => routes.get(ref.nativeSessionId) ?? 'auto' }),
+      dialect: () => codexDialect({ announceNewThreads: settings.announceNewThreads !== false, openRoute: ref => routes.get(ref.nativeSessionId) ?? 'auto' }),
     }
     const inner = await new AcpAgentProvider(definition, this.options).start(instance)
     const handle = new CodexRuntimeHandle(inner, routes, {

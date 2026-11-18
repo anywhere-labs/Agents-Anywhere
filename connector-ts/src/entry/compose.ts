@@ -5,6 +5,7 @@ import { isAbsolute, join } from 'node:path'
 import { CommandInbox, runtimeControlCommands, type CommandHandlers } from '../application/inbound/index.js'
 import {
   ConversationService,
+  NativeAppCommands,
   NativeHistory,
   PreparationService,
   RuntimeCatalogMemory,
@@ -295,6 +296,13 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
           facts: sessionFacts,
           newId: ids.newId,
           commands: sessionId => sessionCommands.get(sessionId),
+          nativeApps: new NativeAppCommands({
+            session: async sessionId => {
+              const session = await store.sessions.get(sessionId)
+              return session === null ? null : { runtimeId: session.runtimeId, externalSessionId: session.externalSessionId, cwd: session.cwd }
+            },
+            handle: async runtimeId => (await runtimes.started(runtimeId)) ?? null,
+          }),
           runtimes: instanceCatalogs(runtimes, catalogMemory),
           transferUpload: preparedDownloadUpload(workspaceService),
           platform: process.platform,
