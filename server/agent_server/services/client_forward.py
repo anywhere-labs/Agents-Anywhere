@@ -32,6 +32,7 @@ from typing import Any
 from loguru import logger
 from pydantic import BaseModel, ValidationError
 
+from agent_server.core.agent_collab import agent_actor
 from agent_server.core.client_routes import (
     CLIENT_ERROR_RULES,
     CLIENT_MESH_CASES,
@@ -121,6 +122,14 @@ def client_input_digest(route_id: str, body: Any) -> str:
     """The receipt digest of a forwarded command: the route and the body the device gets."""
 
     return input_digest(route_id, body if isinstance(body, dict) else {"body": body})
+
+
+def caller_actor(caller: ClientCaller) -> str:
+    """The receipt's ``actor``: ``user``, or the supervisor session an Agent acts for."""
+
+    if caller.agent is None:
+        return "user"
+    return agent_actor(caller.agent.deviceId, caller.agent.sessionId)
 
 
 def generated_command_id() -> str:
@@ -372,6 +381,7 @@ class ClientForwarder:
                 kind=route.id,
                 input_digest=client_input_digest(route.id, body),
                 session_id=session_id,
+                actor=caller_actor(caller),
             )
             if not created:
                 receipt = await self._replayable(receipt, route=route, device_id=device_id, body=body)

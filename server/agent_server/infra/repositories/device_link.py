@@ -51,6 +51,7 @@ def _receipt_view(row: Any) -> dict[str, Any]:
         "updatedAt": row["updated_at"],
         "expiresAt": row["expires_at"],
         "origin": row["origin"],
+        "actor": row.get("actor") or "user",
     }
 
 
@@ -287,8 +288,11 @@ class DeviceLinkRepositoryMixin:
         input_digest: str | None,
         payload: dict[str, Any] | None,
         origin: str = "server",
+        actor: str = "user",
     ) -> tuple[dict[str, Any], bool]:
         """Insert a ``pending`` receipt; returns ``(receipt, created)``. An existing one is returned as is.
+
+        ``actor``: who sent it, ``user`` or ``agent:<deviceId>/<sessionId>`` (``core.agent_collab.agent_actor``).
 
         ``payload`` is kept only for deferrable commands (``receipt_payload``); replays compare ``input_digest``.
         A ``sealed`` command id is unique across users: when another user holds it, their receipt is returned
@@ -310,6 +314,7 @@ class DeviceLinkRepositoryMixin:
             "updated_at": now.isoformat(),
             "expires_at": (now + COMMAND_RECEIPT_TTL).isoformat(),
             "origin": origin,
+            "actor": actor,
         }
         insert = pg_insert(device_commands).values(**row)
         # A sealed id may collide on the partial unique index as well as on the primary key.

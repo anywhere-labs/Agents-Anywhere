@@ -22,6 +22,7 @@ from agent_server.infra.db import retired_device_runtimes as retired_runtimes_t
 from agent_server.infra.db import sessions as sessions_t
 from agent_server.infra.db.engine import read_connection
 from agent_server.infra.repositories.channel_reconciliation import channel_connection
+from agent_server.infra.repositories.collab import end_collab_for_sessions
 
 _CONTROL_V2_DESCRIPTOR_KEY = "__runtimeControlV2Descriptor"
 
@@ -542,6 +543,7 @@ class DeviceRuntimeRepositoryMixin:
             if result.rowcount == 0:
                 raise KeyError(runtime_id)
             session_ids = list((await conn.execute(session_query)).scalars())
+            await end_collab_for_sessions(conn, session_ids)
             # Timeline, active runs and shares cascade from sessions; projects can be
             # shared by other instances.
             await conn.execute(

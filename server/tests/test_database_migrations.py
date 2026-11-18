@@ -1028,9 +1028,9 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(tmp_path,
     )
 
 
-def test_current_schema_version_is_v2_66() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_66"
-    assert CURRENT_SCHEMA_VERSION == "2.66"
+def test_current_schema_version_is_v2_67() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_67"
+    assert CURRENT_SCHEMA_VERSION == "2.67"
 
 
 def test_v2_57_starts_the_seq_ceiling_above_v2_sequences(fresh_database_url) -> None:
@@ -3044,5 +3044,36 @@ def test_v2_66_drops_channel_device_gates(fresh_database_url) -> None:
     engine = create_engine(_sync_url(url))
     try:
         assert not inspect(engine).has_table("channel_device_gates")
+    finally:
+        engine.dispose()
+
+
+def test_v2_67_adds_agent_collaboration_storage(fresh_database_url) -> None:
+    url = fresh_database_url
+    upgrade_database(db_url=url, revision="v2_67")
+    engine = create_engine(_sync_url(url))
+    try:
+        inspector = inspect(engine)
+        assert inspector.has_table("agent_delegations") and inspector.has_table("collab_edges")
+        assert {"origin_kind", "origin_session_id", "origin_device_id", "origin_depth"} <= {
+            column["name"] for column in inspector.get_columns("sessions")
+        }
+        actor = next(column for column in inspector.get_columns("device_commands") if column["name"] == "actor")
+        assert actor["nullable"] is False and "user" in str(actor["default"])
+        assert "agent_collaboration" in {column["name"] for column in inspector.get_columns("users")}
+        with engine.begin() as connection:
+            connection.execute(text("DROP TABLE alembic_version"))
+    finally:
+        engine.dispose()
+    assert asyncio.run(classify_database(url)) == UnversionedDatabase("v2", "v2_67")
+
+    command.stamp(_alembic_config(url), "v2_67")
+    command.downgrade(_alembic_config(url), "v2_66")
+    engine = create_engine(_sync_url(url))
+    try:
+        inspector = inspect(engine)
+        assert not inspector.has_table("agent_delegations") and not inspector.has_table("collab_edges")
+        assert "origin_kind" not in {column["name"] for column in inspector.get_columns("sessions")}
+        assert "actor" not in {column["name"] for column in inspector.get_columns("device_commands")}
     finally:
         engine.dispose()

@@ -37,7 +37,7 @@ from pydantic import (
 
 from agent_server.core.client_routes import CLIENT_CALL_ROUTE_IDS, MAX_CHUNK_BYTES
 from agent_server.core.device_runtime import RuntimeTypeDescriptor
-from agent_server.core.device_settings import ConnectorDeviceSettings
+from agent_server.core.device_settings import DeviceSettingsPayload
 from agent_server.core.goal.models import (
     GoalRequest,
     GoalResponse,
@@ -376,7 +376,8 @@ class ChannelSwitchCommand(RuntimeApplyCommand):
 
 class DesiredState(DeviceModel):
     runtimes: list[RuntimeApplyCommand] = Field(default_factory=list)
-    #: The stored device settings as they are (``ConnectorDeviceSettings``; unknown keys pass through).
+    #: The stored device settings as they are (``DeviceSettingsPayload``: the device's own settings and the account's
+    #: ``agentCollaboration``; unknown keys pass through).
     deviceSettings: dict[str, Any] = Field(default_factory=dict)
     channelSwitches: list[ChannelSwitchCommand] = Field(default_factory=list)
 
@@ -1202,9 +1203,10 @@ class RuntimeApplyResult(DeviceModel):
 
 
 class DeviceSettingsApplyCommand(DeviceModel):
-    """``device.settings.apply``: the whole settings object, as ``LinkWelcome.desired`` has it."""
+    """``device.settings.apply``: the whole settings object, as ``LinkWelcome.desired`` has it (the device's own
+    settings and the account's ``agentCollaboration``)."""
 
-    settings: ConnectorDeviceSettings
+    settings: DeviceSettingsPayload
 
 
 class DeviceSettingsApplyResult(DeviceModel):

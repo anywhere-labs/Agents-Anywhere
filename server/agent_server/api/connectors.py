@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from agent_server.api.connector_common import require_owned_connector
 from agent_server.api.device_link import get_device_link_service
@@ -23,9 +24,11 @@ from agent_server.core.models import (
 from agent_server.core.protocol import ProtocolCapabilitiesResponse
 from agent_server.core.utc import utc_now
 from agent_server.deps import (
+    agent_principal,
     current_user_id,
     get_connector_presence,
     get_device_commands,
+    get_e2ee_settings,
     get_session_runtime_state_cache,
     get_store,
     get_timeline_broker,
@@ -53,15 +56,27 @@ router = APIRouter(prefix="/connectors", tags=["connectors"])
 
 @router.get("", response_model=ConnectorListResponse)
 async def list_connectors(
+    request: Request,
     user_id: str = Depends(current_user_id),
     store: Store = Depends(get_store),
     manager: ConnectorPresenceRegistry = Depends(get_connector_presence),
 ) -> ConnectorListResponse:
-    connectors = await store.list_connectors(user_id=user_id)
-    return ConnectorListResponse(
-        connectors=await with_effective_connector_statuses(manager, connectors),
-        serverTime=utc_now(),
-    )
+    connectors = await with_effective_connector_statuses(manager, await store.list_connectors(user_id=user_id))
+    principal = agent_principal(request)
+    if principal is not None:
+        # A delegated Agent sees the devices its delegation reaches, and only what it needs to pick one.
+        mode = get_e2ee_settings(request).mode
+        return JSONResponse(  # type: ignore[return-value]
+            {
+                "connectors": [
+                    {"id": item.id, "name": item.name, "online": item.status == "online", "e2eeMode": mode}
+                    for item in connectors
+                    if principal.may_reach(item.id)
+                ],
+                "serverTime": utc_now(),
+            }
+        )
+    return ConnectorListResponse(connectors=connectors, serverTime=utc_now())
 
 
 @router.post("", response_model=ConnectorCreateResponse)
