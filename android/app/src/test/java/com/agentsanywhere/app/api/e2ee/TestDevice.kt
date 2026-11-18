@@ -189,9 +189,14 @@ class TestDevice(
                             JSONObject().put("session", JSONObject().put("id", "sess_created").put("connectorId", deviceId))
                         message.getString("method") == "GET" && path.substringAfterLast('/') in attachments &&
                             path.contains("/attachments/") -> attachment(path.substringAfterLast('/'))
+                        message.getString("method") == "GET" && path.contains("/blobs/") -> blobChunk(path)
                         else -> JSONObject().put("method", message.getString("method")).put("path", path).put("echo", message.opt("body"))
                     }
-                    val status = if (path == "/api/v2/missing") 404 else 200
+                    val status = when {
+                        path == "/api/v2/missing" -> 404
+                        path.contains("/blobs/") && (body as? JSONObject)?.has("detail") == true -> 404
+                        else -> 200
+                    }
                     transport!!.sendMessage(JSONObject().put("kind", "response").put("id", message.getString("id")).put("status", status).put("body", body))
                 }
                 "subscribe" -> {
@@ -209,6 +214,39 @@ class TestDevice(
                 "close" -> closed = true
             }
         }
+    }
+
+    /** Blobs served by `GET /sessions/{id}/blobs/{ref}`; attachments are served there too by `fileId`. */
+    val blobs = mutableMapOf<String, ByteArray>()
+
+    /** Largest chunk the blob route answers. */
+    var blobChunkLimit = 4 * 1024 * 1024
+
+    /** Simulates a device without the blob route (it answers 404 without a blob code). */
+    var blobsRouteMissing = false
+
+    /** Every `offset` asked for on the blob route. */
+    val blobReads = mutableListOf<Long>()
+
+    private fun blobChunk(path: String): JSONObject {
+        if (blobsRouteMissing) return JSONObject().put("detail", JSONObject().put("code", "not_found").put("message", "Not found"))
+        val ref = java.net.URLDecoder.decode(path.substringAfter("/blobs/").substringBefore('?'), "UTF-8")
+        val bytes = blobs[ref] ?: attachments[ref]
+            ?: return JSONObject().put("detail", JSONObject().put("code", "blob_not_found").put("message", "No such blob"))
+        val query = path.substringAfter('?').split('&').associate { it.substringBefore('=') to it.substringAfter('=') }
+        val offset = query["offset"]?.toLong() ?: 0L
+        val length = minOf(query["length"]?.toInt() ?: blobChunkLimit, blobChunkLimit)
+        val end = minOf(bytes.size.toLong(), offset + length).toInt()
+        blobReads += offset
+        return JSONObject()
+            .put("blobRef", ref)
+            .put("name", ref)
+            .put("mediaType", "application/octet-stream")
+            .put("encoding", "base64")
+            .put("data", java.util.Base64.getEncoder().encodeToString(bytes.copyOfRange(offset.toInt(), end)))
+            .put("offset", offset)
+            .put("size", bytes.size)
+            .put("eof", end == bytes.size)
     }
 
     /** 会话附件（`GET /sessions/{id}/attachments/{fileId}` 的回答，与普通模式同一形状）。 */

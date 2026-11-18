@@ -1,9 +1,11 @@
 package com.agentsanywhere.app.feature.sessiondetail
 
+import com.agentsanywhere.app.api.ApiException
 import com.agentsanywhere.app.api.AttachmentTransferException
 import com.agentsanywhere.app.api.AttachmentTransferFailure
 import com.agentsanywhere.app.api.RemoteAttachmentRef
 import com.agentsanywhere.app.api.RemoteUploadedAttachment
+import com.agentsanywhere.app.api.SessionBlobErrors
 import com.agentsanywhere.app.api.SessionsApi
 import com.agentsanywhere.app.api.UploadFilePart
 import java.io.File
@@ -55,12 +57,24 @@ internal class SessionAttachmentTransfer(
         )
     }
 
+    /**
+     * The bytes of an attachment. An encrypted session's attachment is read from its device through the
+     * blob route (the device holds the uploaded file); a device without that route answers 404 for it and
+     * is asked through the attachment route instead. Other sessions read it from the Server.
+     */
     fun download(
         serverUrl: String,
         accessToken: String,
         sessionId: String,
         attachment: TimelineAttachment,
     ): DownloadedAttachment {
+        if (sessionsApi.isEncryptedSession(serverUrl, accessToken, sessionId)) {
+            try {
+                return downloadFromDevice(serverUrl, accessToken, sessionId, attachment)
+            } catch (error: ApiException) {
+                if (error.statusCode != 404 || error.errorCode == SessionBlobErrors.NOT_FOUND) throw error
+            }
+        }
         val downloaded = sessionsApi.downloadSessionAttachment(serverUrl, accessToken, sessionId, attachment.fileId)
         return DownloadedAttachment(
             fileId = downloaded.fileId,
@@ -71,7 +85,45 @@ internal class SessionAttachmentTransfer(
             bytes = downloaded.bytes,
         )
     }
+
+    private fun downloadFromDevice(
+        serverUrl: String,
+        accessToken: String,
+        sessionId: String,
+        attachment: TimelineAttachment,
+    ): DownloadedAttachment {
+        val blob = try {
+            sessionsApi.readSessionBlob(serverUrl, accessToken, sessionId, attachment.fileId, MAX_ATTACHMENT_BLOB_BYTES)
+        } catch (error: ApiException) {
+            if (error.errorCode == SessionBlobErrors.INCOMPLETE) {
+                throw AttachmentTransferException(AttachmentTransferFailure.SizeMismatch, attachment.name, error)
+            }
+            if (error.errorCode == SessionBlobErrors.UNREADABLE) {
+                throw AttachmentTransferException(AttachmentTransferFailure.InvalidBase64, attachment.name, error)
+            }
+            throw error
+        }
+        if (attachment.size > 0 && blob.size != attachment.size) {
+            throw AttachmentTransferException(AttachmentTransferFailure.SizeMismatch, attachment.name)
+        }
+        val digest = sha256(blob.bytes)
+        val expected = attachment.sha256?.lowercase()?.takeIf { it.length == 64 }
+        if (expected != null && expected != digest) {
+            throw AttachmentTransferException(AttachmentTransferFailure.Sha256Mismatch, attachment.name)
+        }
+        return DownloadedAttachment(
+            fileId = attachment.fileId,
+            name = attachment.name.ifBlank { blob.name },
+            mediaType = attachment.mediaType.ifBlank { blob.mediaType },
+            size = blob.size,
+            sha256 = digest,
+            bytes = blob.bytes,
+        )
+    }
 }
+
+/** Largest attachment read from a device, the same cap as a download from the Server. */
+private const val MAX_ATTACHMENT_BLOB_BYTES = 25L * 1024L * 1024L
 
 internal fun verifyUploadedAttachments(
     uploaded: List<RemoteUploadedAttachment>,

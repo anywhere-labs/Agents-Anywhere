@@ -331,6 +331,56 @@ class E2eeFilesTest {
     }
 
     @Test
+    fun attachmentImagesAreReadFromTheDeviceBlobRouteInChunks() {
+        val image = ByteArray(2500) { (it * 7).toByte() }
+        device.attachments["file_img"] = image
+        device.blobChunkLimit = 1000
+        val transfer = SessionAttachmentTransfer(SessionsApi(apiClient))
+        val sha = E2eeFormats.hex(NoiseCrypto.sha256(image))
+        val downloaded = transfer.download(
+            serverUrl, "token", "sess_paired",
+            TimelineAttachment("file_img", "a.png", "image/png", image.size.toLong(), sha256 = sha),
+        )
+        assertArrayEquals(image, downloaded.bytes)
+        assertEquals(listOf(0L, 1000L, 2000L), device.blobReads)
+        assertTrue(device.requests.none { it.getString("path").contains("/attachments/") })
+        assertTrue(serverRequests.isEmpty())
+    }
+
+    @Test
+    fun aDeviceWithoutTheBlobRouteIsAskedThroughTheAttachmentRoute() {
+        val image = ByteArray(64) { it.toByte() }
+        device.attachments["file_img"] = image
+        device.blobsRouteMissing = true
+        val transfer = SessionAttachmentTransfer(SessionsApi(apiClient))
+        val downloaded = transfer.download(serverUrl, "token", "sess_paired", TimelineAttachment("file_img", "a.png", "image/png", 64))
+        assertArrayEquals(image, downloaded.bytes)
+        assertTrue(device.requests.any { it.getString("path").endsWith("/attachments/file_img") })
+        device.blobsRouteMissing = false
+        // Once the device answers blob_not_found the attachment route is not tried.
+        try {
+            transfer.download(serverUrl, "token", "sess_paired", TimelineAttachment("file_gone", "b.png", "image/png", 1))
+            fail("expected blob_not_found")
+        } catch (error: ApiException) {
+            assertEquals("blob_not_found", error.errorCode)
+        }
+        assertTrue(device.requests.none { it.getString("path").endsWith("/attachments/file_gone") })
+        assertTrue(serverRequests.isEmpty())
+    }
+
+    @Test
+    fun timelineBlobsAreReadThroughTheChannel() {
+        val text = "full output\n".repeat(200).toByteArray()
+        device.blobs["blob_" + "a".repeat(64)] = text
+        device.blobChunkLimit = 512
+        val blob = SessionsApi(apiClient).readSessionBlob(serverUrl, "token", "sess_paired", "blob_" + "a".repeat(64))
+        assertArrayEquals(text, blob.bytes)
+        assertEquals(text.size.toLong(), blob.size)
+        assertTrue(device.requests.all { !it.getString("path").contains("/blobs/") || it.getString("path").startsWith("/api/v2/sessions/sess_paired/blobs/") })
+        assertTrue(serverRequests.isEmpty())
+    }
+
+    @Test
     fun logoutForgetsSessionsKeysAndChannels() {
         SessionsApi(apiClient).uploadSessionAttachments(serverUrl, "token", "sess_paired", listOf(UploadFilePart("a", "text/plain", ByteArray(5))))
         assertNotNull(router.sealedKeys.keyFor("file_1", "dev_paired"))

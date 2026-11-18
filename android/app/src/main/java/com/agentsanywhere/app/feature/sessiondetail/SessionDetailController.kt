@@ -133,6 +133,10 @@ class SessionDetailController(
 
     private val optimisticStore = SessionOptimisticMessageStore()
     private val attachmentTransfer = SessionAttachmentTransfer(sessionsApi)
+    private val blobLoader = SessionBlobLoader(read = { sessionId, blobId, maxBytes ->
+        val auth = authSession()
+        sessionsApi.readSessionBlob(auth.serverUrl, auth.accessToken, sessionId, blobId, maxBytes)
+    })
 
     suspend fun submitPlanning(sessionId: String, command: PlanningCommand, attachments: List<TimelineAttachment>) =
         executePlanning(sessionId, JSONObject().put("command", command.command).put("content", command.content)
@@ -803,6 +807,21 @@ class SessionDetailController(
                 val auth = authSession()
                 attachmentTransfer.imageRequestLoading(auth.serverUrl, auth.accessToken, sessionId, attachment, cacheDir)
             }
+        }
+    }
+
+    /** A blob of this session already loaded in this process, if any. */
+    fun cachedBlob(sessionId: String, blobId: String): LoadedBlob? = blobLoader.cached(sessionId, blobId)
+
+    /** Loads a device blob of a timeline item: text in memory, images and other media into [cacheDir]. */
+    suspend fun loadBlob(
+        sessionId: String,
+        ref: TimelineBlobRef,
+        cacheDir: java.io.File,
+    ): Result<LoadedBlob> {
+        return withContext(Dispatchers.IO) {
+            runCatching { blobLoader.load(sessionId, ref, cacheDir) }
+                .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
         }
     }
 

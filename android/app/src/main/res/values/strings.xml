@@ -871,4 +871,17 @@
     <string name="port_preview_error_failed">Couldn\'t set up the preview. Try again later.</string>
     <string name="port_preview_error_preview_unavailable">The device\'s preview tunnel is unavailable. Try again later.</string>
     <string name="port_preview_error_connector_offline">The device is offline. Preview is available once it\'s back.</string>
+    <string name="session_blob_stored_on_device">Kept on the device</string>
+    <string name="session_blob_image">Image</string>
+    <string name="session_blob_show_full_text">Show full content</string>
+    <string name="session_blob_load_image">Load image</string>
+    <string name="session_blob_open_file">Open</string>
+    <string name="session_blob_loading">Loading…</string>
+    <string name="session_blob_full_text_title">Full content</string>
+    <string name="session_blob_error_not_found">This content is no longer on the device.</string>
+    <string name="session_blob_error_offline">The device is offline. Try again once it\'s back.</string>
+    <string name="session_blob_error_too_large">This content is too large to open here.</string>
+    <string name="session_blob_error_incomplete">The device sent incomplete content. Try again.</string>
+    <string name="session_blob_error_generic">Couldn\'t load this content.</string>
+    <string name="session_blob_open_failed">No app can open this file.</string>
 </resources>

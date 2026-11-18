@@ -59,5 +59,6 @@ internal fun RemoteTimelineItem.toProtocolJson(): JSONObject = JSONObject()
     .put("createdAt", createdAt)
     .putNullable("updatedAt", updatedAt)
     .put("contentHash", contentHash)
+    .apply { if (blobRefs.isNotEmpty()) put("blobRefs", blobRefs.toBlobRefsJson()) }
 
 private fun JSONObject.putNullable(name: String, value: Any?): JSONObject = put(name, value ?: JSONObject.NULL)

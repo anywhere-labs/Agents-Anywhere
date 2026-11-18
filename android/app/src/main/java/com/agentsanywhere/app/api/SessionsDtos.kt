@@ -245,6 +245,36 @@ data class RemoteTimelineItem(
     val createdAt: String,
     val updatedAt: String?,
     val contentHash: String = "",
+    /** Large fields of [content] that the device moved to its blob store (protocol 1.2 `blobRefs`). */
+    val blobRefs: List<RemoteBlobRef> = emptyList(),
+)
+
+/** One `TimelineItem.blobRefs[]` entry: [path] is an RFC 6901 pointer into the item's `content`. */
+data class RemoteBlobRef(
+    val path: String,
+    val blobId: String,
+    val bytes: Long,
+    val mediaType: String?,
+)
+
+/** The full bytes of a device blob or attachment read through `GET /sessions/{id}/blobs/{ref}`. */
+class RemoteSessionBlob(
+    val blobRef: String,
+    val name: String,
+    val mediaType: String,
+    val size: Long,
+    val bytes: ByteArray,
+)
+
+/** One chunk answered by `GET /sessions/{id}/blobs/{ref}`. */
+data class RemoteBlobChunk(
+    val blobRef: String,
+    val name: String,
+    val mediaType: String,
+    val data: ByteArray,
+    val offset: Long,
+    val size: Long,
+    val eof: Boolean,
 )
 
 data class RemoteRpcResponse(

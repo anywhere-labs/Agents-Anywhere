@@ -27,7 +27,10 @@ private fun RemoteTimelineItem.toTimelineMessages(): List<TimelineMessage> {
         "system" -> listOf(toSystemMessage())
         else -> listOf(toDiagnosticMessage())
     }
-    return messages.map { it.copy(createdAt = createdAt, sourceRole = role) }
+    val refs = timelineBlobRefs()
+    return messages.mapIndexed { index, message ->
+        message.copy(createdAt = createdAt, sourceRole = role, blobRefs = if (index == 0) refs else emptyList())
+    }
 }
 
 internal fun mergeRemoteTimelineItems(
@@ -86,7 +89,7 @@ private fun mergeStreamedMessage(
     if (orderSeq != oldOrder.orderSeq || orderSeq != old.orderSeq) return null
     // Equal-order neighbours need the full updatedSeq/id tie breaker.
     if (messages.getOrNull(rowIndex - 1)?.orderSeq == orderSeq || messages.getOrNull(rowIndex + 1)?.orderSeq == orderSeq) return null
-    val next = item.toMessageOrNull()?.copy(orderSeq = orderSeq) ?: return null
+    val next = item.toMessageOrNull()?.copy(orderSeq = orderSeq, blobRefs = item.timelineBlobRefs()) ?: return null
     if (next.sourceRuntime != old.sourceRuntime || next.sourceItemType != old.sourceItemType ||
         next.sourceReplacedBy != old.sourceReplacedBy
     ) return null

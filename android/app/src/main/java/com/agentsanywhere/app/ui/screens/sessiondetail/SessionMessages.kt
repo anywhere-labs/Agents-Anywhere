@@ -444,7 +444,8 @@ internal fun MessageList(
             }
     }
 
-    CompositionLocalProvider(LocalTimelineReading provides reading) {
+    val blobAccess = remember(sessionId, controller) { TimelineBlobAccess(sessionId, controller) }
+    CompositionLocalProvider(LocalTimelineReading provides reading, LocalTimelineBlobAccess provides blobAccess) {
         Box(Modifier.fillMaxSize()) {
             SessionSelectionContainer(modifier = Modifier.fillMaxSize()) {
                 LazyColumn(
@@ -1252,10 +1253,13 @@ private fun TimelineMessageRow(
         return
     }
     when (message.kind) {
-        TimelineMessageKind.Reasoning -> ReasoningSection(
-            message = message,
-            darkMode = darkMode,
-        )
+        TimelineMessageKind.Reasoning -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            ReasoningSection(
+                message = message,
+                darkMode = darkMode,
+            )
+            TimelineBlobRefs(refs = message.blobRefs, darkMode = darkMode, modifier = Modifier.padding(horizontal = 4.dp))
+        }
         TimelineMessageKind.AgentCall -> if (interaction == null) {
             AgentCallMarkerRow(message = message, darkMode = darkMode)
         } else {
@@ -1290,7 +1294,10 @@ private fun TimelineMessageRow(
         TimelineMessageKind.Marker,
         TimelineMessageKind.Error,
         TimelineMessageKind.Diagnostic,
-        TimelineMessageKind.System -> ToolPlaceholder(message, darkMode, onCopyMessage)
+        TimelineMessageKind.System -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            ToolPlaceholder(message, darkMode, onCopyMessage)
+            TimelineBlobRefs(refs = message.blobRefs, darkMode = darkMode, modifier = Modifier.padding(horizontal = 4.dp))
+        }
         TimelineMessageKind.Text -> when (message.author) {
             MessageAuthor.User -> UserBubble(
                 message,
@@ -1338,6 +1345,7 @@ private fun AgentMessageContent(
             AgentMarkdownText(message.text, darkMode, onOpenFile = onOpenFile)
             GeneratedFileCards(markdown = message.text, onOpenFile = onOpenFile)
         }
+        TimelineBlobRefs(refs = message.blobRefs, darkMode = darkMode)
         UserAttachmentStrip(
             attachments = message.attachments,
             darkMode = darkMode,
@@ -1361,6 +1369,7 @@ private fun PlatformMessageContent(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (message.text.isNotBlank()) ToolPlaceholder(message, darkMode)
+        TimelineBlobRefs(refs = message.blobRefs, darkMode = darkMode)
         UserAttachmentStrip(
             attachments = message.attachments,
             darkMode = darkMode,
@@ -1467,6 +1476,7 @@ private fun UserBubble(
                         }
                     }
                 }
+                DisableSelection { TimelineBlobRefs(refs = message.blobRefs, darkMode = darkMode) }
                 if (message.isFailedLocalSend) {
                     DisableSelection {
                         FailedSendMarker(onClick = { onFailedMessage(message) })
@@ -1647,7 +1657,8 @@ private fun UserFileAttachmentCard(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = formatBytes(attachment.size),
+                // Attachments recorded without a size show their media type instead.
+                text = if (attachment.size > 0) formatBytes(attachment.size) else attachment.mediaType,
                 color = colors.muted,
                 fontSize = 11.sp,
                 maxLines = 1,
@@ -1763,7 +1774,7 @@ private fun ToolActivityCard(
         message.kind == TimelineMessageKind.FileChange ||
         (message.kind == TimelineMessageKind.ToolCall && message.hasToolCallDetail) ||
         (message.kind == TimelineMessageKind.Artifact && message.rawContent.isNotBlank())
-    val expandable = hasDetail || interaction != null
+    val expandable = hasDetail || interaction != null || message.blobRefs.isNotEmpty()
     val active = message.status in setOf("pending", "running", "waiting_approval")
     val failed = message.status in setOf("failed", "cancelled", "interrupted")
     val haptic = LocalHapticFeedback.current
@@ -1855,6 +1866,7 @@ private fun ToolActivityCard(
                     )
                 }
             }
+            TimelineBlobRefs(refs = message.blobRefs, darkMode = darkMode)
             interaction?.let { notice ->
                 RuntimeNoticeCard(
                     notice = notice,

@@ -593,6 +593,26 @@ class SessionsApi(
     fun isEncryptedSession(serverUrl: String, authorizationToken: String, sessionId: String): Boolean =
         client.gate?.isEncryptedSession(serverUrl, authorizationToken, sessionId) ?: false
 
+    /**
+     * Reads a whole device blob (a `blobRefs[].blobId`, or the `fileId` of a user-message attachment)
+     * chunk by chunk. The path is session content, so an encrypted session's reads go through its
+     * device's secure channel like every other session read. Throws [ApiException] with
+     * [SessionBlobErrors.TOO_LARGE] when the blob is larger than [maxBytes].
+     */
+    fun readSessionBlob(
+        serverUrl: String,
+        authorizationToken: String,
+        sessionId: String,
+        blobRef: String,
+        maxBytes: Long = SessionBlobLimits.DEFAULT_MAX_BYTES,
+    ): RemoteSessionBlob = readBlobChunks(blobRef, maxBytes) { offset ->
+        client.getJson(
+            serverUrl = serverUrl,
+            path = "/sessions/${sessionId.urlEncode()}/blobs/${blobRef.urlEncode()}?offset=$offset&length=${SessionBlobLimits.CHUNK_BYTES}",
+            authorizationToken = authorizationToken,
+        )
+    }
+
     fun attachmentOpenUrl(
         serverUrl: String,
         sessionId: String,
@@ -1116,6 +1136,7 @@ class SessionsApi(
             createdAt = optString("createdAt", ""),
             updatedAt = optNullableString("updatedAt"),
             contentHash = optString("contentHash", ""),
+            blobRefs = optJSONArray("blobRefs").toBlobRefs(),
         )
     }
 

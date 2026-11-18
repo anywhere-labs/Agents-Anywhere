@@ -869,4 +869,17 @@
     <string name="port_preview_error_failed">无法建立预览，请稍后重试。</string>
     <string name="port_preview_error_preview_unavailable">设备上的预览通道暂时不可用，请稍后重试。</string>
     <string name="port_preview_error_connector_offline">设备离线，上线后才能预览。</string>
+    <string name="session_blob_stored_on_device">保存在设备上</string>
+    <string name="session_blob_image">图片</string>
+    <string name="session_blob_show_full_text">查看完整内容</string>
+    <string name="session_blob_load_image">加载图片</string>
+    <string name="session_blob_open_file">打开</string>
+    <string name="session_blob_loading">正在加载…</string>
+    <string name="session_blob_full_text_title">完整内容</string>
+    <string name="session_blob_error_not_found">设备上已经没有这份内容。</string>
+    <string name="session_blob_error_offline">设备离线，上线后再试。</string>
+    <string name="session_blob_error_too_large">内容太大，无法在这里打开。</string>
+    <string name="session_blob_error_incomplete">设备发来的内容不完整，请重试。</string>
+    <string name="session_blob_error_generic">无法加载这份内容。</string>
+    <string name="session_blob_open_failed">没有可以打开这个文件的应用。</string>
 </resources>

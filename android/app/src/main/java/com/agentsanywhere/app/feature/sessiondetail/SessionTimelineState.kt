@@ -84,6 +84,8 @@ data class TimelineMessage(
     val agentCall: TimelineAgentCall? = null,
     val rawContent: String = "",
     val workspaceImages: List<String> = emptyList(),
+    /** Large fields of the source item kept on the device; set on the first row of the item only. */
+    val blobRefs: List<TimelineBlobRef> = emptyList(),
     val orderSeq: Int = 0,
     val revision: Int = 1,
     val updatedSeq: Int = 0,
