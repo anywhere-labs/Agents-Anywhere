@@ -18,11 +18,11 @@
  */
 import { resolve } from 'node:path'
 import type { Capability, Catalogs, CommandResult, ConfigChange, ConfigResult, DeliveryRef, HistoryWindow, InteractionAnswer,
-  NativeHistoryPage, NativeSessionPage, NativeSessionRef, OpenOptions, OpenTarget, PromptAcceptance, PromptInput, RuntimeCapabilities,
+  NativeHistoryPage, NativeSessionPage, NativeSessionRef, NewSessionSpec, OpenOptions, OpenTarget, PrepareOptions, PreparedSession, PromptAcceptance, PromptInput, RuntimeCapabilities,
   RuntimeError, RuntimeEvent, RuntimeHandle, RuntimeHandleEvent, RuntimeSession, SteerResult } from '../../../application/ports/runtime-session.js'
 import { asRecord } from '../../acp/client.js'
 import { RuntimeFailure } from '../../acp/errors.js'
-import { AcpRuntimeHandle, type ConnectionFactory } from '../../acp/handle.js'
+import { AcpRuntimeHandle, WORKSPACE_PREPARATION_CAPABILITIES, type ConnectionFactory } from '../../acp/handle.js'
 import { JsonRpcError } from '../../acp/jsonrpc.js'
 import { EventQueue } from '../../acp/queue.js'
 import { createDirectSession } from './direct/create.js'
@@ -149,9 +149,21 @@ export class DshRuntime implements RuntimeHandle {
       throw new RuntimeFailure({ code: 'runtime_unavailable', retryable: true,
         message: '没有可用的 DSH：在这台设备上安装 DSH，或打开装有 Agents Anywhere 插件的 DSH Desktop。' })
     }
-    this.directHandle ??= new AcpRuntimeHandle({ type: 'dsh', instanceId: this.instanceId, dialect: dshDirectDialect(),
-      connect: this.options.direct, nativeInventory: true })
+    if (this.directHandle === undefined) {
+      const handle = new AcpRuntimeHandle({ type: 'dsh', instanceId: this.instanceId, dialect: dshDirectDialect(),
+        connect: this.options.direct, nativeInventory: true, workspacePreparation: true })
+      this.directHandle = handle
+      void this.publishDirectEvents(handle)
+    }
     return this.directHandle
+  }
+
+  private async publishDirectEvents(handle: AcpRuntimeHandle): Promise<void> {
+    for await (const event of handle.events) {
+      if (this.directHandle !== handle || this.activeRoute !== 'direct') continue
+      if (event.type === 'capabilities.changed') this.capabilitiesChanged()
+      if (event.type === 'catalogs.changed') this.events.push(event)
+    }
   }
 
   private activeHandle(): AcpRuntimeHandle | undefined {
@@ -161,6 +173,11 @@ export class DshRuntime implements RuntimeHandle {
   capabilities(): RuntimeCapabilities {
     const host = this.hosts.at(-1)
     const items: Capability[] = [...(this.activeHandle()?.capabilities().items ?? [])]
+    if (!host && this.options.direct) {
+      if (!this.directHandle) items.push(...WORKSPACE_PREPARATION_CAPABILITIES)
+      // An existing conversation can start a stopped direct ACP process by sending a text prompt.
+      if (!items.some(item => item.id === 'session.send_message')) items.push({ id: 'session.send_message', supported: true })
+    }
     items.push({ id: 'runtime.route', supported: true, parameters: host
       ? { route: 'plugin', hostInstance: host.hello.hostInstance, hostKind: host.hello.hostKind, dshVersion: host.hello.dshVersion }
       : { route: 'direct', available: this.options.direct !== undefined } })
@@ -168,6 +185,26 @@ export class DshRuntime implements RuntimeHandle {
   }
 
   async catalogs(sessionId?: string): Promise<Catalogs> { return (await this.activeHandle()?.catalogs(sessionId)) ?? {} }
+
+  async prepare(spec: NewSessionSpec, options: PrepareOptions): Promise<PreparedSession> {
+    await this.handover
+    if (this.hosts.length) throw new RuntimeFailure({ code: 'workflow_unsupported', message: 'DSH plugin sessions do not prepare workspaces.' })
+    // DSH exposes its model options only after session/new. Reuse that native session for the first turn.
+    const prepared = await this.direct().prepare(spec, options)
+    return {
+      ...prepared,
+      get configOptions() { return prepared.configOptions },
+      async adopt(sessionId, frozen) {
+        const session = await prepared.adopt(sessionId, frozen)
+        const prompt = session.prompt.bind(session)
+        session.prompt = (input, delivery) => {
+          const problem = directPromptProblem(input)
+          return problem === undefined ? prompt(input, delivery) : Promise.resolve({ outcome: 'rejected', error: problem })
+        }
+        return session
+      },
+    }
+  }
 
   async listNativeSessions(cursor?: string): Promise<NativeSessionPage> {
     const host = this.hosts.at(-1)
@@ -183,7 +220,7 @@ export class DshRuntime implements RuntimeHandle {
 
   async open(target: OpenTarget, options: OpenOptions): Promise<DshSession> {
     await this.handover
-    const cwd = target.kind === 'new' ? target.spec.cwd : target.ref.locator
+    const cwd = target.kind === 'new' ? target.spec.cwd : (target.ref.locator ?? target.ref.cwd)
     const opened = await this.openOn(target, options)
     const session = new DshSession(this, options.sessionId, cwd, opened.inner, opened.route, this.options.moveLimit ?? 3)
     this.sessions.add(session)
@@ -215,7 +252,7 @@ export class DshRuntime implements RuntimeHandle {
         throw error
       }
     }
-    if (target.kind === 'existing') return attach(target.ref.nativeSessionId, target.ref.locator)
+    if (target.kind === 'existing') return attach(target.ref.nativeSessionId, target.ref.locator ?? target.ref.cwd)
     const ids = this.options.ids
     if (!ids) return handle.open(target, options)
     const { session } = await createDirectSession({

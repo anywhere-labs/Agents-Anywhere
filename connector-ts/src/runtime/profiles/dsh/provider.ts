@@ -3,11 +3,13 @@
  * ACP, started on demand) and every plugin host the Connector's local socket hands it
  * (`DshRuntime.attachHost`).
  */
+import type { InstanceConfigSchema, JsonObject, ModelGatewayConfig, ProviderFacts, RuntimeInstanceConfig, RuntimeProvider } from '../../../application/ports/runtime-session.js'
 import { processConnection, type ConnectionFactory } from '../../acp/handle.js'
+import { fail } from '../../acp/errors.js'
 import { dshDirectDialect } from './direct/dialect.js'
 import { dshEnvironment, resolveDshLaunch, systemProbe, type DshLaunchPlan, type LaunchProbe } from './launcher.js'
 import { DshRuntime } from './runtime.js'
-import { dshHomeOf, type DshSessionIds } from './session-ids.js'
+import { canonicalPath, dshHomeOf, type DshSessionIds } from './session-ids.js'
 
 export interface DshProviderFacts {
   installed: boolean
@@ -52,6 +54,56 @@ export interface DshProviderDeps {
   connect?: (plan: DshLaunchPlan, env: NodeJS.ProcessEnv) => ConnectionFactory
 }
 
+const INSTANCE_SCHEMA: InstanceConfigSchema = {
+  schema: {
+    type: 'object',
+    properties: { dshHome: { type: 'string', title: 'DSH 数据目录', maxLength: 4096 } },
+  },
+  uiSchema: { order: ['dshHome'], fields: { dshHome: { component: 'path' } } },
+}
+
+/** The device registry exposes DSH configuration; executable selection stays local to the Connector. */
+export function dshProvider(deps: DshProviderDeps = {}): RuntimeProvider {
+  const direct = new DshProvider(deps)
+  const validateSettings = (settings: JsonObject, gateway?: ModelGatewayConfig): JsonObject => {
+    if (gateway !== undefined) fail('model_gateway_unsupported', 'DSH model connections are configured in the local DSH profile.')
+    if (settings.dshHome !== undefined && (typeof settings.dshHome !== 'string' || settings.dshHome.length > 4096)) {
+      fail('invalid_config', 'dshHome must be a path of at most 4096 characters.')
+    }
+    const config = typeof settings.dshHome === 'string' && settings.dshHome.trim() ? { dshHome: settings.dshHome.trim() } : {}
+    try {
+      dshHomeOf(config, deps.env)
+    } catch {
+      fail('invalid_config', 'dshHome must be an absolute path.')
+    }
+    return { ...config, allowNpx: false }
+  }
+  return {
+    type: 'dsh',
+    instanceSchema: () => INSTANCE_SCHEMA,
+    validateSettings,
+    async discover(): Promise<ProviderFacts> {
+      const facts = await direct.discover({ allowNpx: false })
+      return {
+        type: 'dsh',
+        displayName: 'DSH',
+        installed: facts.installed,
+        ...(facts.version !== undefined ? { agentVersion: facts.version } : {}),
+        problems: facts.installed ? [] : [{ code: 'runtime_unavailable', message: 'Install DSH on the work device to use it in Agents Anywhere.' }],
+        configSchema: INSTANCE_SCHEMA.schema,
+        instancePolicy: 'single',
+        processScope: 'shared',
+      }
+    },
+    async start(instance: RuntimeInstanceConfig): Promise<DshRuntime> {
+      const settings = validateSettings(instance.settings, instance.modelGateway)
+      const runtime = await direct.start({ runtimeId: instance.instanceId, settings })
+      if (!runtime.canMove) fail('runtime_unavailable', 'DSH could not be started on the work device.')
+      return runtime
+    },
+  }
+}
+
 export class DshProvider {
   readonly type = 'dsh' as const
   constructor(private readonly deps: DshProviderDeps = {}) {}
@@ -80,10 +132,12 @@ export class DshProvider {
     const settings = parseDshSettings(instance.settings)
     let plan: DshLaunchPlan | undefined
     try { plan = await resolveDshLaunch(this.launchOptions(settings), this.deps.probe ?? systemProbe(this.deps.env)) } catch { plan = undefined }
-    const env = dshEnvironment(this.deps.env ?? process.env, { ...(settings.dshHome ? { dshHome: settings.dshHome } : {}), ...(settings.model ? { model: settings.model } : {}) })
+    const baseEnv = this.deps.env ?? process.env
+    const dshHome = dshHomeOf(settings, baseEnv)
+    const env = dshEnvironment(baseEnv, { ...(settings.dshHome ? { dshHome: await canonicalPath(dshHome) } : {}), ...(settings.model ? { model: settings.model } : {}) })
     const direct = plan && this.deps.connect ? this.deps.connect(plan, env) : plan ? processConnection({ command: plan.command, args: plan.args, cwd: this.deps.cwd ?? process.cwd(), env }, dshDirectDialect(),
       { initializeTimeoutMs: plan.source === 'npx' ? 180_000 : 30_000 }) : undefined
     return new DshRuntime({ instanceId: instance.runtimeId, ...(direct ? { direct } : {}), ...(instance.ids ? { ids: instance.ids } : {}),
-      dshHome: dshHomeOf(settings, this.deps.env ?? process.env) })
+      dshHome })
   }
 }

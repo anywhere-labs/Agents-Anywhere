@@ -324,6 +324,14 @@ export class NativeHistory {
   public async scan(runtimeId: string, scanId: string): Promise<{ sessions: number; complete: boolean }> {
     const handle = await this.deps.runtimes.handle(runtimeId)
     if (handle === null) return { sessions: 0, complete: false }
+    // DSH generates its own IDs and skips open sessions in session/list. Reuse the Conversation already bound
+    // to a native ID, even across Connector restarts, and keep bound sessions in a complete inventory.
+    const dshSessions = handle.type === 'dsh'
+      ? (await this.deps.store.sessions.list()).filter(session => session.runtimeType === 'dsh' && session.externalSessionId !== null)
+      : []
+    const knownDshSessions = dshSessions.filter(session => session.runtimeId === runtimeId)
+    const dshIds = new Map(knownDshSessions.map(session => [session.externalSessionId, session.sessionId]))
+    const otherDshIds = new Set(dshSessions.filter(session => session.runtimeId !== runtimeId).map(session => session.externalSessionId))
     const facts: SummaryFacts[] = []
     let complete = true
     let cursor: string | undefined
@@ -339,7 +347,10 @@ export class NativeHistory {
       }
       for (const summary of page.sessions) {
         try {
-          const session = await this.discover(handle, runtimeId, summary)
+          const knownSessionId = dshIds.get(summary.nativeSessionId)
+          // The implicit legacy instance can share the named instance's DSH home.
+          if (knownSessionId === undefined && otherDshIds.has(summary.nativeSessionId)) continue
+          const session = await this.discover(handle, runtimeId, summary, knownSessionId)
           if (seen.has(session.sessionId)) continue
           seen.add(session.sessionId)
           facts.push(summarize(session, await this.deps.store.timeline.latest(session.sessionId)))
@@ -350,6 +361,11 @@ export class NativeHistory {
       }
       cursor = page.nextCursor
     } while (cursor !== undefined)
+    for (const session of knownDshSessions) {
+      if (!seen.has(session.sessionId) && this.deps.isBound?.(session.sessionId) === true) {
+        facts.push(summarize(session, await this.deps.store.timeline.latest(session.sessionId)))
+      }
+    }
     const at = this.deps.clock.nowIso()
     for (let start = 0; start < facts.length || start === 0; start += 100) {
       const batch = facts.slice(start, start + 100)
@@ -360,8 +376,8 @@ export class NativeHistory {
     return { sessions: facts.length, complete }
   }
 
-  private async discover(handle: RuntimeHandle, runtimeId: string, summary: NativeSessionSummary): Promise<Session> {
-    const sessionId = this.deps.sessionIdFor(handle, runtimeId, summary)
+  private async discover(handle: RuntimeHandle, runtimeId: string, summary: NativeSessionSummary, knownSessionId?: string): Promise<Session> {
+    const sessionId = knownSessionId ?? this.deps.sessionIdFor(handle, runtimeId, summary)
     const availability = summary.archived === true ? 'archived' : 'available'
     const at = this.deps.clock.nowIso()
     let { session } = await this.deps.store.sessions.create({

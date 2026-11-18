@@ -240,14 +240,19 @@ describe('DSH route switching and write-lock handoff (04 §5.6)', () => {
 
   test('hosts the Connector cannot use are refused and reported; the direct route keeps serving', async () => {
     const { runtime, disk } = setup()
-    const reports: unknown[] = []
-    void (async () => { for await (const event of runtime.events) reports.push(event) })()
+    const reports: string[] = []
+    void (async () => {
+      for await (const event of runtime.events) {
+        if (event.type === 'status' && event.error) reports.push(event.error.code)
+      }
+    })()
     expect(runtime.attachHost(fakeHost(disk, { dshVersion: '0.3.0' }).route)).toMatchObject({ code: 'agent_version_unsupported' })
     expect(runtime.attachHost(fakeHost(disk, { dshHome: '/other/.dsh' }).route)).toMatchObject({ code: 'dsh_home_mismatch' })
     expect(hostProblem({ hostInstance: 'h', hostKind: 'web', dshVersion: '0.2.2', pluginVersion: '3.1.0', dshHome: '/home/u/.dsh' }, '/home/u/.dsh')).toBeUndefined()
     expect(runtime.activeRoute).toBe('direct')
     expect((await runtime.open(existing('cold-1'), { sessionId: 'sess_c', replay: 'none' })).routeKind).toBe('direct')
     await until(() => reports.length === 2, 'refusals reported')
+    expect(reports).toEqual(['agent_version_unsupported', 'dsh_home_mismatch'])
   })
 
   test('several hosts: the newest serves; one that holds the lock elsewhere passes the session to the other; a reload replaces its host', async () => {

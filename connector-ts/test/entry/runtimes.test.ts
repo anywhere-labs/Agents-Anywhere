@@ -118,7 +118,7 @@ describe('native session ids keep the v2 rules', () => {
     expect(nativeSessionId('dev_1', legacy('opencode'), { nativeSessionId: 'o1' })).toMatch(/^acp_native_[0-9a-f]{40}$/u)
   })
 
-  it('ships every B profile', () => {
-    expect(builtinProviders({ log }).map(provider => provider.type)).toEqual(['codex', 'claude', 'pi', 'hermes', 'opencode', 'antigravity', 'codebuddy', 'commandcode', 'mimo', 'minimax'])
+  it('ships the built-in Runtime profiles', () => {
+    expect(builtinProviders({ log }).map(provider => provider.type)).toEqual(['codex', 'claude', 'pi', 'dsh', 'hermes', 'opencode', 'antigravity', 'codebuddy', 'commandcode', 'mimo', 'minimax'])
   })
 })
