@@ -184,6 +184,23 @@ describe('Codex selections and catalogs (v2 selection ids)', () => {
     expect(catalogs.permissions?.permissions?.[2]?.metadata).toMatchObject({ i18n: { labelKey: 'dashboard.new.permissionModes.fullAccess.label' } })
   })
 
+  it('has no models before a session opens, then tells the Connector once what the models are', async () => {
+    const agent = codexAgent()
+    const dialect = codexDialect()
+    const handle = new AcpRuntimeHandle({ type: 'codex', instanceId: 'i1', dialect, connect: peerConnection(agent.clientPeer, dialect), permissionCatalog: codexPermissionCatalog })
+    const runtimeEvents: { type: string; catalogs?: { models?: unknown } }[] = []
+    void (async () => {
+      for await (const event of handle.events) runtimeEvents.push(event as (typeof runtimeEvents)[number])
+    })()
+    expect((await handle.catalogs()).models).toBeUndefined()
+    await handle.open({ kind: 'new', spec: { cwd: '/w' } }, { sessionId: 'aa_x1', replay: 'none' })
+    await handle.open({ kind: 'new', spec: { cwd: '/w' } }, { sessionId: 'aa_x2', replay: 'none' })
+    await tick(10)
+    const changed = runtimeEvents.filter(event => event.type === 'catalogs.changed')
+    expect(changed).toHaveLength(1)
+    expect(changed[0]!.catalogs?.models).toEqual((await handle.catalogs()).models)
+  })
+
   it('applies v2 model and permission selection ids at creation', async () => {
     const { session } = await open(codexAgent(), {
       model: codexModelSelectionId('gpt-5.5-mini', 'high'),

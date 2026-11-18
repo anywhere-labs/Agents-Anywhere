@@ -141,6 +141,8 @@ export class AcpRuntimeHandle implements RuntimeHandle {
   private readonly sessions = new Map<AcpConnection, Set<AcpRuntimeSession>>()
   private info: AgentInfo | undefined
   private lastConfig: readonly ConfigOption[] = []
+  /** The model catalog last announced in `catalogs.changed`. */
+  private announcedModels: string | null = null
 
   constructor(private readonly options: AcpHandleOptions) {
     this.type = options.type
@@ -305,7 +307,22 @@ export class AcpRuntimeHandle implements RuntimeHandle {
     }
     if (replayed.length) session.replay(replayed)
     if (target.kind === 'new' && target.spec.selections) await this.applySelections(session, target.spec.selections)
+    this.announceCatalogs()
     return session
+  }
+
+  /**
+   * Instance-level catalogs exist only once a session has been opened: tell the Connector when the models they list
+   * change, so it can keep them for the new-session page after a restart.
+   */
+  private announceCatalogs(): void {
+    void this.catalogs().then(catalogs => {
+      if (catalogs.models === undefined) return
+      const models = JSON.stringify(catalogs.models)
+      if (models === this.announcedModels) return
+      this.announcedModels = models
+      this.events.push({ type: 'catalogs.changed', catalogs })
+    }, () => undefined)
   }
 
   /**

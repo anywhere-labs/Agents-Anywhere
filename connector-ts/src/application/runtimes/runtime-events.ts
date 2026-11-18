@@ -1,6 +1,7 @@
 import type { NativeHistory } from '../history.js'
 import type { ConversationStore, IdSource, LiveEvents, Log, RuntimeHandle, RuntimeHandleEvent } from '../ports/index.js'
 import { capabilitySet } from './capabilities.js'
+import type { RuntimeCatalogMemory } from './catalog-memory.js'
 import { nativeSessionId, type RuntimeInstanceSpec } from './instances.js'
 
 /** Native session changes arrive in bursts (a CLI writes many records); one scan per quiet second. */
@@ -56,6 +57,8 @@ export interface RuntimeEventContext {
   /** Opens a Conversation's Runtime session (the session engine's binding). */
   readonly conversations: { binding(sessionId: string): Promise<unknown> }
   readonly store: Pick<ConversationStore, 'sessions'>
+  /** Keeps the last catalogs of each instance across restarts. */
+  readonly catalogMemory?: RuntimeCatalogMemory
   readonly connectorId: string
   readonly log: Log
 }
@@ -71,6 +74,7 @@ export function runtimeEvent(context: RuntimeEventContext): void {
       live.emit('runtime.status', { runtimeId: spec.runtimeId, status: { event: 'capabilities.changed' }, capabilities: capabilitySet(event.capabilities, { runtime: spec.runtimeType, sessionId: null }) })
       return
     case 'catalogs.changed':
+      void context.catalogMemory?.remember(spec, event.catalogs as Record<string, unknown>)
       live.emit('runtime.status', { runtimeId: spec.runtimeId, status: { event: 'catalogs.changed', catalogs: event.catalogs as Record<string, unknown> } })
       return
     case 'native_sessions.changed':

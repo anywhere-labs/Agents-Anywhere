@@ -7,6 +7,7 @@ import {
   ConversationService,
   NativeHistory,
   PreparationService,
+  RuntimeCatalogMemory,
   RuntimeRegistry,
   RuntimeScans,
   UsageMeter,
@@ -145,6 +146,7 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
         log,
         onEvent: (spec, handle, event) => onRuntimeEvent(spec, handle, event),
       })
+      const catalogMemory = new RuntimeCatalogMemory(store.kv, log)
       let service: ConversationService | null = null
       // Platform activity counters, reported to the Server through the outbox (`usage.report`).
       const usage = new UsageMeter({
@@ -208,7 +210,7 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
         })
         service = conversation
         usage.start()
-        onRuntimeEvent = (spec, handle, event) => runtimeEvent({ spec, handle, event, live, scans, conversations: conversation, store, connectorId: settings.connectorId, log })
+        onRuntimeEvent = (spec, handle, event) => runtimeEvent({ spec, handle, event, live, scans, conversations: conversation, store, catalogMemory, connectorId: settings.connectorId, log })
         const facts: RuntimeFacts = {
           sessionCapabilities: async sessionId => {
             const session = await store.sessions.get(sessionId)
@@ -293,7 +295,7 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
           facts: sessionFacts,
           newId: ids.newId,
           commands: sessionId => sessionCommands.get(sessionId),
-          runtimes: instanceCatalogs(runtimes),
+          runtimes: instanceCatalogs(runtimes, catalogMemory),
           transferUpload: preparedDownloadUpload(workspaceService),
           platform: process.platform,
         })

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import type { RuntimeInstanceSpec } from '../../src/application/index.js'
+import { RuntimeCatalogMemory, type RuntimeInstanceSpec } from '../../src/application/index.js'
+import type { RuntimeKv } from '../../src/application/ports/index.js'
 import type { RuntimeHandle } from '../../src/application/ports/index.js'
 import { instanceCatalogs, preparedDownloadUpload } from '../../src/entry/client-api.js'
 import type { BlobTransfer, UploadFile } from '../../src/link/index.js'
@@ -26,6 +27,30 @@ describe('client API dependencies of the composition root', () => {
     expect(await catalogs.catalogs('rt_off')).toEqual({ runtimeType: 'opencode', catalogs: null })
     expect(await catalogs.catalogs('rt_none')).toBeNull()
     expect(await instanceCatalogs(registry({ rt_on: handle }, true)).catalogs('rt_on')).toEqual({ runtimeType: 'opencode', catalogs: null })
+  })
+
+  it('instance catalogs: an Agent with no open session (after a restart) answers the models it last listed, while its spec is unchanged', async () => {
+    const rows = new Map<string, unknown>()
+    const kv: RuntimeKv = {
+      get: async (runtimeId, key) => rows.get(`${runtimeId}/${key}`) ?? null,
+      set: async (runtimeId, key, value) => void rows.set(`${runtimeId}/${key}`, JSON.parse(JSON.stringify(value))),
+      delete: async (runtimeId, key) => void rows.delete(`${runtimeId}/${key}`),
+    }
+    const permissions = { runtime: 'codex', revision: 1, permissions: [{ id: 'auto', displayName: 'Auto', selectionId: 'auto' }] }
+    let live: Record<string, unknown> = { models, selections: { model: 'm1' } }
+    let settings: Record<string, unknown> = {}
+    const registry: Parameters<typeof instanceCatalogs>[0] = {
+      spec: runtimeId => ({ runtimeId, runtimeType: 'codex', settings, sourceKey: null, enabled: true }) as RuntimeInstanceSpec,
+      started: () => Promise.resolve({ catalogs: async () => live } as unknown as RuntimeHandle),
+    }
+    const catalogs = instanceCatalogs(registry, new RuntimeCatalogMemory(kv))
+    expect(await catalogs.catalogs('codex')).toEqual({ runtimeType: 'codex', catalogs: { models, selections: { model: 'm1' } } })
+    // Restarted: the Agent lists permissions only, the models come from what it listed before.
+    live = { permissions }
+    expect(await catalogs.catalogs('codex')).toEqual({ runtimeType: 'codex', catalogs: { models, permissions, selections: { model: 'm1' } } })
+    // Another configuration may offer other models: nothing is filled in.
+    settings = { cliPath: '/other/codex' }
+    expect(await catalogs.catalogs('codex')).toEqual({ runtimeType: 'codex', catalogs: { permissions } })
   })
 
   it('transfer upload: the prepared file goes to the relay path the Server named, in the background', async () => {
