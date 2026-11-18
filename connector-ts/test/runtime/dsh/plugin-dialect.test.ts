@@ -5,7 +5,7 @@ import { describe, expect, test } from 'vitest'
 import type { AgentInfo, JsonRecord } from '../../../src/runtime/acp/client.js'
 import type { SessionContext } from '../../../src/runtime/acp/dialect.js'
 import { JsonRpcError } from '../../../src/runtime/acp/jsonrpc.js'
-import { dshPluginDialect, featuresOf, promptBlocks } from '../../../src/runtime/profiles/dsh/plugin/dialect.js'
+import { dshPluginDialect, featuresOf, isTurnFailureCard, promptBlocks } from '../../../src/runtime/profiles/dsh/plugin/dialect.js'
 
 const info = (features: JsonRecord = {}): AgentInfo => ({ protocolVersion: 1, agentCapabilities: { loadSession: true, promptCapabilities: { image: true } },
   agentInfo: { name: 'dsh' }, authMethods: [], meta: { dsh: { features } } })
@@ -54,6 +54,49 @@ describe('the DSH plugin dialect (contracts/dsh-bridge/3.0)', () => {
     expect(dialect.translateUpdate!(info({ writer: 'host' }), context('s'), {})).toEqual([{ type: 'writer.changed', writer: { holder: 'self' } }])
     expect(dialect.translateUpdate!(info({ turnEvent: { kind: 'started' } }), context('s'), {})).toEqual([])
     expect(dialect.translateUpdate!(info({}), context('s'), {})).toBeUndefined()
+  })
+
+  test('a failed turn event opens a card that offers "continue" only when the plugin and DSH both can; replays open nothing', () => {
+    const dialect = dshPluginDialect()
+    const ended = (extra: JsonRecord = {}) => ({ sessionUpdate: 'session_info_update', _meta: { dsh: { turnEvent: { sessionId: 'native-1', phase: 'ended', turn: 3, seq: 42,
+      requestIds: [], stopReason: 'end_turn', reason: { kind: 'error', message: '429 rate limited' }, continuable: true, ...extra } } } })
+    const live = { ...context('s'), info: info({ continue: true }) }
+    expect(dialect.translateUpdate!(ended(), live, { turnId: 't1' })).toEqual([{
+      type: 'interaction.opened', turnId: 't1', interactionId: 'dsh_turn_failed_42', kind: 'execution_error', title: 'DSH 本轮执行失败', body: '429 rate limited',
+      options: [{ id: 'continue', label: '继续', kind: 'other' }],
+      context: { kind: 'execution_error', outcome: 'failed', turnEndReason: 'error', error: { message: '429 rate limited' } },
+      metadata: { source: 'dsh.turn.failed', turnEndSeq: 42 },
+    }])
+    // Without the plugin feature, or when DSH would not continue, the card has no action.
+    expect(dialect.translateUpdate!(ended(), context('s'), {})).toMatchObject([{ interactionId: 'dsh_turn_failed_42' }])
+    expect((dialect.translateUpdate!(ended(), context('s'), {})![0] as { options?: unknown }).options).toBeUndefined()
+    expect((dialect.translateUpdate!(ended({ continuable: false }), live, {})![0] as { options?: unknown }).options).toBeUndefined()
+    expect((dialect.translateUpdate!(ended({ reason: { kind: 'error' } }), live, {})![0] as { body?: string }).body).toBe('本轮执行失败，没有生成回复。')
+    expect(dialect.translateUpdate!(ended(), live, { replay: true })).toEqual([])
+    expect(dialect.translateUpdate!(ended({ reason: { kind: 'completed' } }), live, {})).toEqual([])
+    expect(isTurnFailureCard('dsh_turn_failed_42')).toBe(true)
+    expect(isTurnFailureCard('dsh_turn_failed_042')).toBe(false)
+    expect(isTurnFailureCard('interaction_1')).toBe(false)
+  })
+
+  test('"continue" calls _dsh/session/continue; unavailable closes the card, an error answer keeps it, a lost answer throws', async () => {
+    const dialect = dshPluginDialect()
+    const calls: { method: string, params: JsonRecord }[] = []
+    const emitted: unknown[] = []
+    const card = (answer: (params: JsonRecord) => unknown) => ({ nativeSessionId: 'native-1', emit: (event: unknown) => emitted.push(event),
+      request: async (method: string, params: JsonRecord) => { calls.push({ method, params }); return answer(params) } })
+    const go = { kind: 'option' as const, optionId: 'continue' }
+    expect(dialect.respondCard!('interaction_1', go, card(() => ({})))).toBeUndefined()
+    expect(await dialect.respondCard!('dsh_turn_failed_42', go, card(() => ({ outcome: 'accepted' })))).toBeUndefined()
+    expect(calls).toEqual([{ method: '_dsh/session/continue', params: { sessionId: 'native-1', turnEndSeq: 42 } }])
+    expect(emitted).toEqual([{ type: 'interaction.resolved', interactionId: 'dsh_turn_failed_42', resolution: 'answered', answeredBy: 'self' }])
+    expect(await dialect.respondCard!('dsh_turn_failed_42', go, card(() => ({ outcome: 'unavailable' }))))
+      .toEqual({ refused: { code: 'dsh_continue_unavailable', message: '这一轮已无法继续生成，请重新发送消息。' }, closes: true })
+    expect(await dialect.respondCard!('dsh_turn_failed_42', go, card(() => { throw new JsonRpcError(-32000, 'gone', { code: 'session_not_found' }) })))
+      .toEqual({ refused: { code: 'session_not_found', message: 'gone' }, closes: false })
+    await expect(dialect.respondCard!('dsh_turn_failed_42', go, card(() => { throw new Error('connection closed') }))).rejects.toThrow('connection closed')
+    expect(await dialect.respondCard!('dsh_turn_failed_42', { kind: 'option', optionId: 'other' }, card(() => ({}))))
+      .toMatchObject({ refused: { code: 'invalid_argument' }, closes: false })
   })
 
   test('new sessions need AA\'s native ID; prompts carry the request ID; errors map to port codes', () => {

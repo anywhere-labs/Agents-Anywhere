@@ -70,7 +70,9 @@ export function preparedSession(session: PreparableSession, options: PreparedOpt
     },
     catalogs: options.catalogs,
     events: session.events,
-    respond: (interactionId, answer) => session.respond(interactionId, answer),
+    respond: async (interactionId, answer) => {
+      await session.respond(interactionId, answer)
+    },
     check(frozen): RuntimeError | null {
       try {
         creationChanges(session.configOptions, frozen, options.codec)

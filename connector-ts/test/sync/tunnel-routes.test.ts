@@ -193,6 +193,24 @@ describe('notice answers', () => {
     expect(device.sessions[0]!.calls.find(call => call.method === 'respond')).toMatchObject({ answer: { kind: 'form', action: 'accept', values: { path: '/x', name: 'v', approvalSource: { kind: 'tool', id: 'b' } } } })
   })
 
+  it('lists a failed-turn card and answers its action as an option; a Runtime refusal is ok: false and closes the card', async () => {
+    await device.start(S)
+    await device.request('POST', at('/runtime/messages'), { content: 'ask', clientMessageId: 'cm_card' })
+    await device.runTurn('ask')
+    device.sessions[0]!.emit({ type: 'interaction.opened', interactionId: 'dsh_turn_failed_42', kind: 'execution_error', title: 'DSH 本轮执行失败', body: 'boom',
+      options: [{ id: 'continue', label: '继续', kind: 'other' }], context: { kind: 'execution_error', outcome: 'failed' }, metadata: { turnEndSeq: 42 } })
+    await settle()
+    const listed = (await device.request('GET', at('/runtime/notices'))).body as { notices: Record<string, unknown>[] }
+    expect(listed.notices).toMatchObject([{ noticeId: 'dsh_turn_failed_42', interactionType: 'execution_error', severity: 'error', status: 'open', blocking: null,
+      responseRequired: false, message: 'boom', actions: [{ actionId: 'continue', label: '继续', style: 'primary' }] }])
+    device.sessions[0]!.nextRespond = { refused: { code: 'dsh_continue_unavailable', message: '这一轮已无法继续生成，请重新发送消息。' }, closes: true }
+    const answered = await device.request('POST', at('/runtime/notices/dsh_turn_failed_42/respond'), { actionId: 'continue' })
+    expect(answered.status, JSON.stringify(answered.body)).toBe(200)
+    expect(answered.body).toMatchObject({ ok: false, error: { code: 'dsh_continue_unavailable', message: '这一轮已无法继续生成，请重新发送消息。' } })
+    expect(device.sessions[0]!.calls.find(call => call.method === 'respond')).toMatchObject({ interactionId: 'dsh_turn_failed_42', answer: { kind: 'option', optionId: 'continue' } })
+    expect(((await device.request('GET', at('/runtime/notices'))).body as { notices: unknown[] }).notices).toEqual([])
+  })
+
   it('answers a notice that is gone with ok: false, and needs the approval capability', async () => {
     await device.start(S)
     expect((await device.request('POST', at('/runtime/notices/nope/respond'), { actionId: 'allow' })).body).toEqual({ ok: false, result: null, error: { code: 'interaction_not_found', message: 'interaction not found' } })

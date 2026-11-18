@@ -938,7 +938,13 @@ class RespondNoticeCommand(SessionCommand):
 
 
 class RespondNoticeResult(DeviceModel):
+    """``ok: false`` with ``code``/``message``: the Runtime declined the answer and nothing ran (``status`` says
+    whether the notice is still open or expired)."""
+
     status: NonEmpty
+    ok: bool | None = None
+    code: str | None = None
+    message: str | None = None
 
 
 class SelectCommand(SessionCommand):

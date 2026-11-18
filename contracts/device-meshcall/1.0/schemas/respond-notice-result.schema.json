@@ -1,7 +1,44 @@
 {
   "$id": "urn:agents-anywhere:device-meshcall:1.0:respond-notice-result",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "``ok: false`` with ``code``/``message``: the Runtime declined the answer and nothing ran (``status`` says\nwhether the notice is still open or expired).",
   "properties": {
+    "code": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Code"
+    },
+    "message": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Message"
+    },
+    "ok": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Ok"
+    },
     "status": {
       "minLength": 1,
       "title": "Status",

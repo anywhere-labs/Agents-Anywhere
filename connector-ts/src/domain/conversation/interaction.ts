@@ -82,3 +82,26 @@ export function isActive(interaction: Interaction): boolean {
 export function closedByTurnEnd(interactions: readonly Interaction[]): Interaction[] {
   return interactions.filter(interaction => interaction.blocking && isActive(interaction))
 }
+
+/**
+ * Which interactions a new turn closes: active execution-error cards about an earlier turn. A card opened during
+ * `turnId` itself (it failed fast and its start was reported late) stays.
+ */
+export function closedByTurnStart(interactions: readonly Interaction[], turnId: string): Interaction[] {
+  return interactions.filter(interaction => interaction.kind === 'execution_error' && !interaction.blocking && isActive(interaction)
+    && cardTurnId(interaction) !== turnId)
+}
+
+/** The turn a card was opened in (`metadata.turnId` of its notice), when it was opened during one. */
+function cardTurnId(interaction: Interaction): unknown {
+  const metadata = interaction.payload.metadata
+  return metadata !== null && typeof metadata === 'object' ? (metadata as Readonly<Record<string, unknown>>).turnId : undefined
+}
+
+/**
+ * What a Connector restart does to an interaction: a blocking one expires (its Runtime request is gone); a card
+ * about a finished turn stays, open again if an answer was in flight, since its Runtime still decides on it.
+ */
+export function afterRestart(interaction: Interaction, at: string): Interaction {
+  return interaction.blocking ? expire(interaction, 'connector_restarted', at) : reopen(interaction)
+}

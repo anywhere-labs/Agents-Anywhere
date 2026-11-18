@@ -275,6 +275,39 @@ describe('DSH route switching and write-lock handoff (04 §5.6)', () => {
   })
 })
 
+describe('DSH failed turns (contracts/dsh-bridge/3.0 §7)', () => {
+  test('a failed turn leaves a card; "continue" runs DSH\'s continuation once; a stale card is closed; the direct route keeps it', async () => {
+    const { runtime, disk } = setup()
+    const host = fakeHost(disk)
+    runtime.attachHost(host.route)
+    const session = await runtime.open({ kind: 'new', spec: { cwd: '/w', preferredNativeSessionId: 'aa_1_fail' } }, { sessionId: 'sess_f', replay: 'none' })
+    const events = collect(session)
+    expect((await session.prompt({ text: 'this fails' }, delivery('f1'))).outcome).toBe('accepted')
+    await until(() => events.some(event => event.type === 'interaction.opened'), 'failure card opened')
+    const card = events.find(event => event.type === 'interaction.opened') as Extract<RuntimeEvent, { type: 'interaction.opened' }>
+    expect(card).toMatchObject({ kind: 'execution_error', title: 'DSH 本轮执行失败', body: 'upstream unavailable',
+      options: [{ id: 'continue', label: '继续' }], metadata: { source: 'dsh.turn.failed', turnEndSeq: host.fake.continuable.get('aa_1_fail') } })
+    await until(() => events.some(event => event.type === 'turn.ended'), 'failed turn ended')
+
+    expect(await session.respond(card.interactionId, { kind: 'option', optionId: 'continue' })).toBeUndefined()
+    expect(host.fake.continued).toEqual([{ sessionId: 'aa_1_fail', turnEndSeq: card.metadata!.turnEndSeq }])
+    expect(events).toContainEqual(expect.objectContaining({ type: 'interaction.resolved', interactionId: card.interactionId, resolution: 'answered' }))
+    // The continuation is DSH's own turn: its reply streams in with no new user message.
+    await until(() => completed(events).includes('continued'), 'continuation replied')
+    expect(events.filter(event => event.type === 'message.completed' && event.role === 'user')).toHaveLength(1)
+    // DSH no longer continues that turn: the card closes with the reason.
+    expect(await session.respond(card.interactionId, { kind: 'option', optionId: 'continue' }))
+      .toEqual({ refused: { code: 'dsh_continue_unavailable', message: '这一轮已无法继续生成，请重新发送消息。' }, closes: true })
+    expect(await session.respond(card.interactionId, { kind: 'cancelled' })).toMatchObject({ refused: { code: 'invalid_argument' }, closes: false })
+
+    // The host goes away: the direct route cannot continue, and keeps the card for when a host returns.
+    host.disconnect()
+    await until(() => session.routeKind === 'direct', 'back on the direct route')
+    expect(await session.respond(card.interactionId, { kind: 'option', optionId: 'continue' })).toMatchObject({ refused: { code: 'dsh_continue_unavailable' }, closes: false })
+    await runtime.stop()
+  })
+})
+
 describe('DSH launch resolution', () => {
   const probe = (files: Record<string, string | undefined>, path: Record<string, string>): LaunchProbe => ({
     which: async name => path[name],

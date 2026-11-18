@@ -10,14 +10,16 @@
  *   message with that `requestId`, so both land on the item the engine wrote (`userItemId`).
  * - Writer changes ride `session_info_update` (`_meta.dsh.writer`, §9).
  * - Plan reviews arrive as `session/request_permission` with `_meta.dsh.planningReview` (§10).
+ * - A failed turn (`turnEvent.reason.kind == "error"`, §7) leaves a non-blocking card; its "continue" action is
+ *   `_dsh/session/continue`.
  */
 import { readFileSync, statSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
-import type { Capability, HistoryItem, InteractionKind, NewSessionSpec, PromptInput, RuntimeError, RuntimeEvent,
-  WriterState } from '../../../../application/ports/runtime-session.js'
+import type { Capability, HistoryItem, InteractionAnswer, InteractionKind, InteractionRefusal, NewSessionSpec, PromptInput, RuntimeError,
+  RuntimeEvent, WriterState } from '../../../../application/ports/runtime-session.js'
 import { negotiatedCapabilities } from '../../../acp/capabilities.js'
 import { asRecord, type AgentInfo, type JsonRecord } from '../../../acp/client.js'
-import type { AcpDialect, ItemIdentity, SessionContext } from '../../../acp/dialect.js'
+import type { AcpDialect, DialectCardSession, ItemIdentity, SessionContext } from '../../../acp/dialect.js'
 import { JsonRpcError } from '../../../acp/jsonrpc.js'
 import { contentText, translateUpdate as genericTranslate } from '../../../acp/mapping.js'
 import { defaultIdentity } from '../../../acp/session.js'
@@ -118,13 +120,14 @@ export function dshPluginDialect(): AcpDialect {
     promptBlocks: (input: PromptInput) => promptBlocks(input),
     steer: 'extension',
     echoesUserPrompt: true,
-    translateUpdate(update, context) {
+    translateUpdate(update, context, turn) {
       const meta = dshMeta(update)
       if (update.sessionUpdate === 'session_info_update') {
         const writer = writerState(meta.writer)
         if (writer) return [{ type: 'writer.changed', writer }]
-        // Turn boundaries (§7) are the engine's: it owns AA's turns and infers external ones.
-        if (meta.turnEvent !== undefined) return []
+        // Turn boundaries (§7) are the engine's: it owns AA's turns and infers external ones. A failed
+        // turn leaves a card behind, live only (a replayed failure is history).
+        if (meta.turnEvent !== undefined) return turn.replay === true ? [] : turnFailureCard(asRecord(meta.turnEvent), featuresOf(context.info), turn.turnId)
         return undefined
       }
       if (update.sessionUpdate !== 'agent_message_chunk' && update.sessionUpdate !== 'agent_thought_chunk') return undefined
@@ -147,6 +150,10 @@ export function dshPluginDialect(): AcpDialect {
         return events
       }
       return undefined
+    },
+    respondCard: (interactionId, answer, session) => {
+      const seq = turnFailureSeq(interactionId)
+      return seq === undefined ? undefined : continueTurn(seq, interactionId, answer, session, dialect)
     },
     interactionKind: (method, params): InteractionKind | undefined => {
       if (method === 'session/request_permission' && dshMeta(params).planningReview !== undefined) return 'plan_review'
@@ -172,7 +179,7 @@ export function dshPluginDialect(): AcpDialect {
       const ids = identity(context)
       const items: HistoryItem[] = []
       for (const update of updates) {
-        const events = dialect.translateUpdate!(update, context, {})
+        const events = dialect.translateUpdate!(update, context, { replay: true })
           ?? genericTranslate(update, { identity: ids, replay: true, suppressUserEcho: false, config: [] })
         for (const event of events) {
           if (event.type === 'message.delta' || event.type === 'message.completed' || event.type === 'tool.started'
@@ -184,6 +191,74 @@ export function dshPluginDialect(): AcpDialect {
     },
   }
   return dialect
+}
+
+/** Card action that asks DSH to continue a failed turn without resending the message (§7). */
+export const CONTINUE_ACTION = 'continue'
+const CONTINUE_METHOD = '_dsh/session/continue'
+const CARD_PREFIX = 'dsh_turn_failed_'
+
+/** The failure card of the turn whose `turn/end` has native seq `seq`; one per turn, the same on every route. */
+export function turnFailureCardId(seq: number): string { return `${CARD_PREFIX}${seq}` }
+
+function turnFailureSeq(interactionId: string): number | undefined {
+  if (!interactionId.startsWith(CARD_PREFIX)) return undefined
+  const seq = Number(interactionId.slice(CARD_PREFIX.length))
+  return Number.isSafeInteger(seq) && seq >= 0 && turnFailureCardId(seq) === interactionId ? seq : undefined
+}
+
+export function isTurnFailureCard(interactionId: string): boolean { return turnFailureSeq(interactionId) !== undefined }
+
+/**
+ * The card a failed DSH turn leaves (`turnEvent.reason.kind == "error"`). It offers "continue" only when the
+ * plugin can continue turns (`features.continue`) and DSH would continue this one (`continuable`).
+ */
+export function turnFailureCard(turnEvent: JsonRecord, features: DshFeatures, turnId?: string): RuntimeEvent[] {
+  if (turnEvent.phase !== 'ended') return []
+  const reason = asRecord(turnEvent.reason)
+  const seq = turnEvent.seq
+  if (reason.kind !== 'error' || typeof seq !== 'number' || !Number.isSafeInteger(seq) || seq < 0) return []
+  const message = typeof reason.message === 'string' && reason.message.trim() ? reason.message : undefined
+  const continuable = features.continue && turnEvent.continuable === true
+  return [{
+    type: 'interaction.opened',
+    ...(turnId !== undefined ? { turnId } : {}),
+    interactionId: turnFailureCardId(seq),
+    kind: 'execution_error',
+    title: 'DSH 本轮执行失败',
+    body: message ?? '本轮执行失败，没有生成回复。',
+    ...(continuable ? { options: [{ id: CONTINUE_ACTION, label: '继续', kind: 'other' as const }] } : {}),
+    context: { kind: 'execution_error', outcome: 'failed', turnEndReason: 'error', ...(message !== undefined ? { error: { message } } : {}) },
+    metadata: { source: 'dsh.turn.failed', turnEndSeq: seq },
+  }]
+}
+
+const CONTINUE_UNAVAILABLE: InteractionRefusal = {
+  refused: { code: 'dsh_continue_unavailable', message: '这一轮已无法继续生成，请重新发送消息。' },
+  closes: true,
+}
+
+/**
+ * "Continue" on a failure card: `_dsh/session/continue`. The plugin derives the request identity from the
+ * session and seq, so answering twice runs the turn once; `unavailable` (a newer turn, DSH refuses) closes the card.
+ */
+async function continueTurn(seq: number, interactionId: string, answer: InteractionAnswer, session: DialectCardSession,
+  dialect: AcpDialect): Promise<InteractionRefusal | undefined> {
+  if (answer.kind !== 'option' || answer.optionId !== CONTINUE_ACTION) {
+    return { refused: { code: 'invalid_argument', message: 'This card only offers to continue the turn.' }, closes: false }
+  }
+  let result: JsonRecord
+  try {
+    result = asRecord(await session.request(CONTINUE_METHOD, { sessionId: session.nativeSessionId, turnEndSeq: seq }))
+  } catch (error) {
+    // An error answer is definite; a timeout or a dropped connection leaves the outcome unknown.
+    if (!(error instanceof JsonRpcError)) throw error
+    if (error.code === -32601) return { refused: { code: 'runtime_unsupported', message: 'This DSH plugin cannot continue a failed turn.' }, closes: true }
+    return { refused: dialect.classifyError?.(error) ?? { code: 'runtime_operation_failed', message: error.message }, closes: false }
+  }
+  if (result.outcome !== 'accepted') return CONTINUE_UNAVAILABLE
+  session.emit({ type: 'interaction.resolved', interactionId, resolution: 'answered', answeredBy: 'self' })
+  return undefined
 }
 
 /** What the plugin would refuse in this input, checked before it is sent (B opens the turn first). */

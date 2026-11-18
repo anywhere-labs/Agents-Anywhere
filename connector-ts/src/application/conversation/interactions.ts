@@ -1,7 +1,8 @@
 import { interaction as interactionRules } from '../../domain/conversation/index.js'
+import type { RespondNoticeResult } from '../../generated/device-meshcall/v1_0/respond-notice-result.js'
 import type { NoticeIn } from '../../generated/device-meshcall/v1_0/runtime-notice-updated-event.js'
 import type { PlanningService } from '../planning/planning-service.js'
-import type { RuntimeEvent, RuntimeSession } from '../ports/index.js'
+import type { InteractionRefusal, RuntimeEvent, RuntimeSession } from '../ports/index.js'
 import type { RuntimeBindings } from '../session/bindings.js'
 import type { SessionKernel } from '../session/kernel.js'
 
@@ -13,26 +14,39 @@ export class InteractionService {
     private readonly planning: PlanningService,
   ) {}
 
-  /** `session.respondNotice`: first answer wins; forwarding failure reopens the interaction. */
-  public async respondNotice(sessionId: string, noticeId: string, responseId: string, answer: Parameters<RuntimeSession['respond']>[1]): Promise<{ status: string }> {
+  /**
+   * `session.respondNotice`: first answer wins; forwarding failure reopens the interaction. A Runtime refusal is a
+   * result with `ok: false` (the client shows its message); a refusal that `closes` expires the interaction.
+   */
+  public async respondNotice(sessionId: string, noticeId: string, responseId: string, answer: Parameters<RuntimeSession['respond']>[1]): Promise<RespondNoticeResult> {
     const store = this.kernel.deps.store
     const decision = await store.interactions.respond(sessionId, noticeId, responseId)
     if (decision.kind === 'duplicate') return { status: decision.interaction.state }
     // Every surface sees the answer is being handled, and the card opens again if forwarding fails.
     this.kernel.emitNotice(decision.interaction)
+    let refusal: InteractionRefusal | void
     try {
       const binding = await this.bindings.binding(sessionId)
-      await binding.session.respond(noticeId, answer)
+      refusal = await binding.session.respond(noticeId, answer)
     } catch (error) {
       const reopened = interactionRules.reopen(decision.interaction)
       await store.interactions.save(reopened)
       this.kernel.emitNotice(reopened)
       throw error
     }
+    if (refusal) {
+      const next = refusal.closes
+        ? interactionRules.expire(decision.interaction, refusal.refused.code, this.kernel.deps.clock.nowIso())
+        : interactionRules.reopen(decision.interaction)
+      await store.interactions.save(next)
+      this.kernel.emitNotice(next)
+      return { status: next.state, ok: false, code: refusal.refused.code, message: refusal.refused.message }
+    }
     return { status: 'responding' }
   }
 
   public async onInteractionOpened(sessionId: string, event: Extract<RuntimeEvent, { type: 'interaction.opened' }>): Promise<void> {
+    if (event.kind === 'execution_error') return this.onCardOpened(sessionId, event)
     const deps = this.kernel.deps
     const at = deps.clock.nowIso()
     if (event.kind === 'plan_review' && event.plan !== undefined) {
@@ -62,6 +76,35 @@ export class InteractionService {
       const commit = await this.kernel.patchSession(sessionId, { status: 'waiting_approval' })
       this.kernel.countUsage(commit.session, 'approval.requested')
     }
+    deps.live.emit('runtime.notice.updated', { sessionId, notice })
+  }
+
+  /**
+   * A card about a turn that already ended (protocol `execution_error` notice): it does not block the session and
+   * needs no answer; its actions are optional. The same card reported again keeps its state.
+   */
+  private async onCardOpened(sessionId: string, event: Extract<RuntimeEvent, { type: 'interaction.opened' }>): Promise<void> {
+    const deps = this.kernel.deps
+    const existing = await deps.store.interactions.get(sessionId, event.interactionId)
+    if (existing !== null && interactionRules.isActive(existing)) return
+    const at = deps.clock.nowIso()
+    const notice: NoticeIn = {
+      noticeId: event.interactionId,
+      sessionId,
+      type: 'interaction',
+      interactionType: 'execution_error',
+      title: event.title,
+      ...(event.body !== undefined ? { message: event.body } : {}),
+      severity: 'error',
+      status: 'open',
+      responseRequired: false,
+      createdAt: at,
+      actions: (event.options ?? []).map(option => ({ actionId: option.id, label: option.label, style: 'primary' })),
+      context: { ...(event.context ?? {}) },
+      metadata: { ...(event.metadata ?? {}), ...(event.turnId !== undefined ? { turnId: event.turnId } : {}) },
+      blocking: null,
+    }
+    await deps.store.interactions.save(interactionRules.open({ sessionId, noticeId: event.interactionId, kind: 'execution_error', blocking: false, payload: notice, at }))
     deps.live.emit('runtime.notice.updated', { sessionId, notice })
   }
 

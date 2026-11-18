@@ -1158,6 +1158,7 @@
       "interactionsPending": "{count} pending",
       "inputRequestOther": "Other",
       "inputRequestSubmit": "Submit",
+      "continueFailedTurn": "Continue",
       "toolRan": "Ran {command}",
       "toolCommandFallback": "command",
       "toolChangedFile": "Changed {path}",
