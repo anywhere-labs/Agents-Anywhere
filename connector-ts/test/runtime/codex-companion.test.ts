@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { RuntimeHandleEvent } from '../../src/application/ports/runtime-session.js'
 import { codexPermissionSelectionId } from '../../src/domain/identity/index.js'
@@ -255,6 +255,10 @@ describe('Quitting the Codex App (two steps, explicit consent)', () => {
 })
 
 describe('Codex auto-follow', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   function setup(answers: (id: string, call: number) => CodexInspection) {
     const locks = new FakeLocks()
     const calls = new Map<string, number>()
@@ -292,21 +296,26 @@ describe('Codex auto-follow', () => {
   })
 
   it('retries a new thread whose owner registers after the lock appears (bounded)', async () => {
+    vi.useFakeTimers()
     const { locks, calls, suggested, auto } = setup((_id, call) => (call < 3 ? blockedHeld : follow))
     locks.entries = [{ threadId: T1, mtimeMs: 1 }]
     await auto.scan()
-    for (let i = 0; i < 20 && suggested.length === 0; i += 1) await tick(5)
+    // Each retry is a timer that leads to a scan: run them, and the ones they schedule, until none is left.
+    await vi.runAllTimersAsync()
     expect(suggested).toEqual([`${T1}:external_owner`])
     expect(calls.get(T1)).toBe(3)
     auto.stop()
   })
 
   it('stops retrying after the bound and does not touch threads AA already has open', async () => {
+    vi.useFakeTimers()
     const { locks, calls, suggested, attached, auto } = setup(() => blockedHeld)
     locks.entries = [{ threadId: T1, mtimeMs: 1 }, { threadId: T2, mtimeMs: 1 }]
     attached.add(T2)
     await auto.scan()
-    await tick(40)
+    // Runs every retry until none is scheduled; retries that never stopped would exhaust the loop limit instead.
+    await vi.runAllTimersAsync()
+    expect(vi.getTimerCount()).toBe(0)
     expect(calls.get(T1)).toBe(3) // 1 call + 2 retries
     expect(calls.get(T2)).toBeUndefined()
     expect(suggested).toEqual([])
@@ -314,12 +323,14 @@ describe('Codex auto-follow', () => {
   })
 
   it('rescans when the lock directory changes', async () => {
+    vi.useFakeTimers()
     const { locks, suggested, auto } = setup(() => follow)
     auto.start()
-    await tick(10)
+    // The first scan runs at once; the change is debounced by 1 ms. The 30 s poll never fires here.
+    await vi.advanceTimersByTimeAsync(0)
     locks.entries = [{ threadId: T1, mtimeMs: 1 }]
     locks.onChange?.()
-    await tick(20)
+    await vi.advanceTimersByTimeAsync(1)
     expect(suggested).toEqual([`${T1}:external_owner`])
     auto.stop()
   })
