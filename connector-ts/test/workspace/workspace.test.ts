@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   AttachmentCache,
   FileOps,
+  MAX_SHELL_TASKS,
   PortWatcher,
   RootPolicy,
   ShellOps,
@@ -159,7 +160,7 @@ describe('downloads', () => {
 })
 
 describe('shell', () => {
-  const shell = (notify: (method: string, params: Record<string, unknown>) => void = () => undefined) => new ShellOps(new RootPolicy({ roots: [home] }), notify)
+  const shell = (retainMs?: number) => new ShellOps(new RootPolicy({ roots: [home] }), retainMs === undefined ? {} : { retainMs })
 
   it('runs a command and returns its output', async () => {
     const result = await shell().exec({ root: home, cwd: 'project', command: 'pwd; echo err 1>&2; exit 3', timeoutMs: 10_000 })
@@ -181,27 +182,79 @@ describe('shell', () => {
     await expect(shell().exec({ root: home, cwd: '.', command: 'true', timeoutMs: 0 })).rejects.toMatchObject({ code: 'invalid_argument' })
   })
 
-  it('runs background tasks and cancels them', async () => {
-    const events: { method: string; params: Record<string, unknown> }[] = []
-    const ops = shell((method, params) => events.push({ method, params }))
-    await ops.taskStart({ root: home, cwd: '.', taskId: 't1', sessionId: 's1', command: 'echo done', timeoutMs: 10_000 })
-    await expect.poll(() => events.find(e => e.method === 'shell.task.completed')).toBeTruthy()
-    expect(events.map(e => e.method)).toEqual(['shell.task.started', 'shell.task.completed'])
-    expect(events[1]!.params).toMatchObject({ taskId: 't1', status: 'completed', result: { stdout: 'done\n', exitCode: 0 } })
-
-    events.length = 0
-    await ops.taskStart({ root: home, cwd: '.', taskId: 't2', sessionId: 's1', command: 'sleep 30', timeoutMs: 60_000 })
-    // A task id still running is refused (a finished one may be reused, so this needs a task that lasts).
-    await expect(ops.taskStart({ root: home, cwd: '.', taskId: 't2', sessionId: 's1', command: 'true', timeoutMs: 10_000 })).rejects.toMatchObject({ code: 'invalid_argument' })
-    expect(await ops.taskCancel({ taskId: 't2', sessionId: 's1' })).toEqual({ taskId: 't2', sessionId: 's1', cancelled: true })
-    expect(await ops.taskCancel({ taskId: 't2', sessionId: 's1' })).toMatchObject({ cancelled: false })
-    await expect.poll(() => events.length).toBe(2)
-    expect(events.map(e => [e.method, e.params.status])).toEqual([['shell.task.started', 'running'], ['shell.task.completed', 'cancelled']])
+  it('runs a background task and answers the wait with its output once it ends', async () => {
+    const ops = shell()
+    const started = await ops.taskStart({ root: home, cwd: 'project', taskId: 't1', sessionId: 's1', command: 'sleep 0.3; echo done; exit 4', timeoutMs: 10_000 })
+    expect(started).toEqual({ taskId: 't1', sessionId: 's1', command: 'sleep 0.3; echo done; exit 4', cwd: join(home, 'project'), timeoutMs: 10_000, status: 'running', result: null, error: null })
+    const waited = await ops.taskWait({ taskId: 't1', sessionId: 's1', timeoutMs: 10_000 })
+    expect(waited).toMatchObject({ taskId: 't1', status: 'completed', error: null, result: { stdout: 'done\n', exitCode: 4, timedOut: false } })
+    // The wait took the task: a second one finds nothing, and the id may be used again.
+    await expect(ops.taskWait({ taskId: 't1', sessionId: 's1', timeoutMs: 100 })).rejects.toMatchObject({ code: 'shell_task_not_found' })
+    await ops.taskStart({ root: home, cwd: '.', taskId: 't1', sessionId: 's1', command: 'true', timeoutMs: 10_000 })
     await ops.close()
   })
 
+  it('keeps an ended task for a later wait, then forgets it', async () => {
+    const ops = shell(300)
+    await ops.taskStart({ root: home, cwd: '.', taskId: 'kept', sessionId: 's1', command: 'echo early', timeoutMs: 10_000 })
+    await new Promise(resolve => setTimeout(resolve, 150))
+    expect(await ops.taskWait({ taskId: 'kept', sessionId: 's1', timeoutMs: 10 })).toMatchObject({ status: 'completed', result: { stdout: 'early\n' } })
+    await ops.taskStart({ root: home, cwd: '.', taskId: 'gone', sessionId: 's1', command: 'true', timeoutMs: 10_000 })
+    await new Promise(resolve => setTimeout(resolve, 600))
+    await expect(ops.taskWait({ taskId: 'gone', sessionId: 's1', timeoutMs: 10 })).rejects.toMatchObject({ code: 'shell_task_not_found' })
+  })
+
+  it('cancels a running task; the wait reports it cancelled', async () => {
+    const ops = shell()
+    await ops.taskStart({ root: home, cwd: '.', taskId: 't2', sessionId: 's1', command: 'sleep 30', timeoutMs: 60_000 })
+    // A task id still in use is refused.
+    await expect(ops.taskStart({ root: home, cwd: '.', taskId: 't2', sessionId: 's1', command: 'true', timeoutMs: 10_000 })).rejects.toMatchObject({ code: 'invalid_argument' })
+    // Another scope does not see it.
+    await expect(ops.taskCancel({ taskId: 't2', sessionId: 's2' })).rejects.toMatchObject({ code: 'shell_task_not_found' })
+    const waiting = ops.taskWait({ taskId: 't2', sessionId: 's1', timeoutMs: 20_000 })
+    const startedAt = Date.now()
+    expect(await ops.taskCancel({ taskId: 't2', sessionId: 's1' })).toMatchObject({ taskId: 't2', status: 'cancelled', cancelled: true })
+    expect(Date.now() - startedAt).toBeLessThan(5000)
+    expect(await waiting).toMatchObject({ taskId: 't2', status: 'cancelled', result: null })
+    await expect(ops.taskCancel({ taskId: 'nope', sessionId: 's1' })).rejects.toMatchObject({ code: 'shell_task_not_found' })
+    await ops.close()
+  })
+
+  it('answers a cancel of an ended task as it ended', async () => {
+    const ops = shell()
+    await ops.taskStart({ root: home, cwd: '.', taskId: 't3', sessionId: 's1', command: 'echo ok', timeoutMs: 10_000 })
+    await new Promise(resolve => setTimeout(resolve, 200))
+    expect(await ops.taskCancel({ taskId: 't3', sessionId: 's1' })).toMatchObject({ status: 'completed', cancelled: false, result: { stdout: 'ok\n' } })
+    await ops.close()
+  })
+
+  it('kills the task when a wait times out', async () => {
+    const ops = shell()
+    const marker = join(home, 'abandoned-marker')
+    await ops.taskStart({ root: home, cwd: '.', taskId: 't4', sessionId: 's1', command: `sleep 1; touch ${JSON.stringify(marker)}`, timeoutMs: 60_000 })
+    await expect(ops.taskWait({ taskId: 't4', sessionId: 's1', timeoutMs: 100 })).rejects.toMatchObject({ code: 'shell_task_wait_timeout' })
+    await expect(ops.taskWait({ taskId: 't4', sessionId: 's1', timeoutMs: 100 })).rejects.toMatchObject({ code: 'shell_task_not_found' })
+    await new Promise(resolve => setTimeout(resolve, 1500))
+    expect(() => statSync(marker)).toThrow()
+  })
+
+  it('reports a task that ran out of its own timeout as completed and timed out', async () => {
+    const ops = shell()
+    await ops.taskStart({ root: home, cwd: '.', taskId: 't5', sessionId: 's1', command: 'sleep 30', timeoutMs: 200 })
+    expect(await ops.taskWait({ taskId: 't5', sessionId: 's1', timeoutMs: 10_000 })).toMatchObject({ status: 'completed', result: { timedOut: true } })
+  })
+
+  it('refuses tasks beyond the limit and kills every task on close', async () => {
+    const ops = shell()
+    for (let i = 0; i < MAX_SHELL_TASKS; i += 1) await ops.taskStart({ root: home, cwd: '.', taskId: `many${i}`, sessionId: 's1', command: 'sleep 30', timeoutMs: 60_000 })
+    await expect(ops.taskStart({ root: home, cwd: '.', taskId: 'one-more', sessionId: 's1', command: 'true', timeoutMs: 10_000 })).rejects.toMatchObject({ code: 'resource_exhausted' })
+    const waiting = ops.taskWait({ taskId: 'many0', sessionId: 's1', timeoutMs: 20_000 })
+    await ops.close()
+    expect(await waiting).toMatchObject({ status: 'cancelled' })
+  })
+
   it('exposes the v2 method names', () => {
-    expect(Object.keys(workspaceMethods(files(), shell())).sort()).toEqual(['fs.prepareDownload', 'fs.readDir', 'fs.readRange', 'fs.readText', 'fs.writeFile', 'shell.exec', 'shell.task.cancel', 'shell.task.start'])
+    expect(Object.keys(workspaceMethods(files(), shell())).sort()).toEqual(['fs.prepareDownload', 'fs.readDir', 'fs.readRange', 'fs.readText', 'fs.writeFile', 'shell.exec', 'shell.task.cancel', 'shell.task.start', 'shell.task.wait'])
   })
 })
 

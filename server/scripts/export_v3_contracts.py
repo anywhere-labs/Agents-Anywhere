@@ -466,7 +466,8 @@ def render_client_routes() -> dict[str, Any]:
         "families": [{"id": f.id, "prefix": f.prefix, "bare": f.bare} for f in cr.ROUTE_FAMILIES],
         "commandIdFields": list(cr.COMMAND_ID_FIELDS),
         "generatedCommandId": cr.GENERATED_COMMAND_ID,
-        "timeoutSeconds": {"read": None, "command": cr.COMMAND_TIMEOUT_SECONDS, "create": cr.CREATE_TIMEOUT_SECONDS},
+        "timeoutSeconds": {"read": None, "command": cr.COMMAND_TIMEOUT_SECONDS, "create": cr.CREATE_TIMEOUT_SECONDS,
+                           "long": cr.LONG_TIMEOUT_SECONDS},
         "limits": {
             "maxRequestBodyBytes": cr.MAX_REQUEST_BODY_BYTES,
             "maxChunkBytes": cr.MAX_CHUNK_BYTES,

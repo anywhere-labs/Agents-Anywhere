@@ -38,6 +38,7 @@ from agent_server.core.client_routes import (
     COMMAND_ID_FIELDS,
     CREATE_TIMEOUT_SECONDS,
     GENERATED_COMMAND_ID,
+    LONG_TIMEOUT_SECONDS,
     MAX_CHUNK_BYTES,
     MAX_REQUEST_BODY_BYTES,
     MAX_RESPONSE_BYTES,
@@ -252,6 +253,8 @@ class ClientForwarder:
     def timeout(self, route: ClientRoute) -> float:
         if route.timeout == "create":
             return CREATE_TIMEOUT_SECONDS
+        if route.timeout == "long":
+            return LONG_TIMEOUT_SECONDS
         if route.timeout == "command":
             return self._mesh.settings.command_timeout_seconds
         return self._mesh.settings.read_timeout_seconds

@@ -1236,7 +1236,7 @@
       "owner": "device",
       "path": "/api/v2/connectors/{connector_id}/shell/exec",
       "sealedUpload": false,
-      "timeout": "command",
+      "timeout": "long",
       "via": "call",
       "writesCommandId": false
     },
@@ -1253,7 +1253,7 @@
       "path": "/api/v2/connectors/{connector_id}/shell/tasks",
       "sealedUpload": false,
       "timeout": "command",
-      "via": "unsupported",
+      "via": "call",
       "writesCommandId": false
     },
     {
@@ -1262,14 +1262,30 @@
       "e2ee": "channel",
       "forward": null,
       "id": "connector.shell.tasks.wait",
-      "kind": "read",
+      "kind": "stream",
       "method": "GET",
       "offline": false,
       "owner": "device",
       "path": "/api/v2/connectors/{connector_id}/shell/tasks/{task_id}/wait",
       "sealedUpload": false,
-      "timeout": "read",
-      "via": "unsupported",
+      "timeout": "long",
+      "via": "call",
+      "writesCommandId": false
+    },
+    {
+      "commandId": null,
+      "decorate": [],
+      "e2ee": "channel",
+      "forward": null,
+      "id": "connector.shell.tasks.cancel",
+      "kind": "command",
+      "method": "POST",
+      "offline": false,
+      "owner": "device",
+      "path": "/api/v2/connectors/{connector_id}/shell/tasks/{task_id}/cancel",
+      "sealedUpload": false,
+      "timeout": "command",
+      "via": "call",
       "writesCommandId": false
     },
     {
@@ -1518,6 +1534,7 @@
   "timeoutSeconds": {
     "command": 30.0,
     "create": 60.0,
+    "long": 310.0,
     "read": null
   }
 }

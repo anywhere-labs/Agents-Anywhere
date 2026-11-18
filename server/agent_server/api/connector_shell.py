@@ -1,30 +1,29 @@
-"""Device shell (``/connectors/{id}/shell/*``). ``exec`` goes to the device with ``Client/call``.
+"""Device shell (``/connectors/{id}/shell/*``): ``exec`` and background tasks, answered by the device with
+``Client/call``.
 
-Shell tasks reported their completion with a v2 notification that has no carrier on v3: they answer 409
-``shell_tasks_unsupported``, and v2 Connectors 409 ``device_upgrade_required``.
+A task runs on the device; ``wait`` holds the call until the task ends (its output and exit code) or ``timeoutMs``
+passes, which kills the task and answers 408 ``shell_task_wait_timeout``. A task is taken by the first ``wait`` that
+sees it end. v2 Connectors answer 409 ``device_upgrade_required``.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 
-from agent_server.api.client_forward import forward_connector, owned_device
+from agent_server.api.client_forward import forward_connector
+from agent_server.core.client_routes import MAX_HOLD_MS
 from agent_server.core.models import (
     RpcResponsePayload,
     ShellExecRequest,
+    ShellTaskCancelResponse,
     ShellTaskStartResponse,
     ShellTaskWaitResponse,
 )
 from agent_server.deps import current_user_id
 
 router = APIRouter(prefix="/connectors", tags=["connector-shell"])
-
-SHELL_TASKS_UNSUPPORTED = {
-    "code": "shell_tasks_unsupported",
-    "message": "Shell tasks are not available on this device; use shell/exec.",
-}
 
 
 @router.post("/{connector_id}/shell/exec", response_model=RpcResponsePayload)
@@ -48,8 +47,10 @@ async def connector_shell_task_start(
     root: str = Query(..., min_length=1),
     user_id: str = Depends(current_user_id),
 ) -> Any:
-    await owned_device(request, user_id=user_id, connector_id=connector_id)
-    raise HTTPException(status_code=409, detail=SHELL_TASKS_UNSUPPORTED)
+    return await forward_connector(
+        request, "connector.shell.tasks.start", user_id=user_id, connector_id=connector_id,
+        response_model=ShellTaskStartResponse,
+    )
 
 
 @router.get(
@@ -60,8 +61,23 @@ async def connector_shell_task_wait(
     request: Request,
     connector_id: str,
     task_id: str,
-    timeoutMs: int = Query(default=120_000, ge=1, le=300_000),
+    timeoutMs: int = Query(default=120_000, ge=1, le=MAX_HOLD_MS),
     user_id: str = Depends(current_user_id),
 ) -> Any:
-    await owned_device(request, user_id=user_id, connector_id=connector_id)
-    raise HTTPException(status_code=409, detail=SHELL_TASKS_UNSUPPORTED)
+    return await forward_connector(
+        request, "connector.shell.tasks.wait", user_id=user_id, connector_id=connector_id,
+        response_model=ShellTaskWaitResponse, query={"timeoutMs": str(timeoutMs)},
+    )
+
+
+@router.post("/{connector_id}/shell/tasks/{task_id}/cancel", response_model=ShellTaskCancelResponse)
+async def connector_shell_task_cancel(
+    request: Request,
+    connector_id: str,
+    task_id: str,
+    user_id: str = Depends(current_user_id),
+) -> Any:
+    return await forward_connector(
+        request, "connector.shell.tasks.cancel", user_id=user_id, connector_id=connector_id,
+        response_model=ShellTaskCancelResponse,
+    )

@@ -229,6 +229,7 @@ export class DeviceTunnelApi implements TunnelApi {
       ...(deps.runtimes !== undefined ? { runtimes: deps.runtimes } : {}),
       platform: deps.platform ?? process.platform,
       newTerminalId: () => `trm_${randomBytes(18).toString('base64url')}`,
+      newShellTaskId: () => `sht_${randomBytes(12).toString('base64url')}`,
     })
   }
 

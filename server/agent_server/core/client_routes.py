@@ -42,8 +42,9 @@ RouteKind = Literal["read", "command", "critical", "stream"]
 #: * ``unsupported``: v3 has no carrier; the Server answers 409.
 RouteCarrier = Literal["call", "subscribe", "watch", "blob", "share", "workflow", "server", "unsupported"]
 #: ``read``: the Server's ``read_timeout_seconds``; ``command``: ``COMMAND_TIMEOUT_SECONDS``;
-#: ``create``: ``CREATE_TIMEOUT_SECONDS``.
-RouteTimeout = Literal["read", "command", "create"]
+#: ``create``: ``CREATE_TIMEOUT_SECONDS``; ``long``: ``LONG_TIMEOUT_SECONDS``, for routes that hold the call open
+#: for as long as the request's own ``timeoutMs`` (at most ``MAX_HOLD_MS``) allows.
+RouteTimeout = Literal["read", "command", "create", "long"]
 #: ``channel``: ``required`` mode refuses the plaintext route (it carries content); ``plain``: allowed.
 RouteE2ee = Literal["channel", "plain"]
 
@@ -54,6 +55,10 @@ WORKFLOWS = f"{API}/runtime-workflows"
 
 COMMAND_TIMEOUT_SECONDS = 30.0
 CREATE_TIMEOUT_SECONDS = 60.0
+#: Longest ``timeoutMs`` a client may give a route that holds the call (``shell/exec``, a shell task's ``wait``).
+MAX_HOLD_MS = 300_000
+#: ``MAX_HOLD_MS`` and the time the device takes to stop a process tree once the hold ends.
+LONG_TIMEOUT_SECONDS = MAX_HOLD_MS / 1000 + 10.0
 #: The Server refuses a larger request body with 413 before forwarding it (attachments are uploaded apart).
 MAX_REQUEST_BODY_BYTES = 1024 * 1024
 #: Largest ``StreamChunk.chunk`` of a ``Client/call`` answer (UTF-8 bytes).
@@ -232,10 +237,12 @@ CLIENT_ROUTES: tuple[ClientRoute, ...] = (
     _route("connector.terminalsV1.stream", "WS", f"{CONNECTOR}/terminals/{{terminal_id}}/stream", "device", "stream",
            "subscribe"),
     # -- device shell ---------------------------------------------------------------------------------------------
-    _command("connector.shell.exec", "POST", f"{CONNECTOR}/shell/exec", None),
-    _command("connector.shell.tasks.start", "POST", f"{CONNECTOR}/shell/tasks", None, via="unsupported"),
-    _route("connector.shell.tasks.wait", "GET", f"{CONNECTOR}/shell/tasks/{{task_id}}/wait", "device", "read",
-           "unsupported"),
+    _command("connector.shell.exec", "POST", f"{CONNECTOR}/shell/exec", None, timeout="long"),
+    _command("connector.shell.tasks.start", "POST", f"{CONNECTOR}/shell/tasks", None),
+    # A long poll: it waits on the stream lane so held waits never crowd out the device's reads.
+    _route("connector.shell.tasks.wait", "GET", f"{CONNECTOR}/shell/tasks/{{task_id}}/wait", "device", "stream",
+           timeout="long"),
+    _command("connector.shell.tasks.cancel", "POST", f"{CONNECTOR}/shell/tasks/{{task_id}}/cancel", None),
     # -- runtime catalogs of a device instance (model configuration, allowed in plaintext) ------------------------
     _read("connector.runtime.catalogs.model", f"{CONNECTOR}/runtimes/{{runtime_id}}/catalogs/model",
           decorate=("channelCatalog",), e2ee="plain"),

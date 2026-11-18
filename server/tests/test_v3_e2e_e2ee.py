@@ -284,6 +284,7 @@ def test_device_registers_no_plaintext_service_and_the_server_refuses_plaintext(
         ("POST", "/sessions/create-and-start", {**body, "connectorId": env.connector_id, "runtime": RUNTIME_TYPE}),
         ("POST", f"{env.dev}/fs/list", {"root": str(env.device.workspace), "path": ""}),
         ("POST", f"{env.dev}/terminals-v2?root={env.device.workspace}", {"cols": 80, "rows": 24}),
+        ("POST", f"{env.dev}/shell/tasks?root={env.device.workspace}", {"command": "true", "timeoutMs": 1000}),
     ):
         refused = api.call(method, path, json=payload, expect=None)
         assert refused.status_code in {403, 409}, (path, refused.status_code, refused.text)
@@ -376,6 +377,24 @@ def test_files_read_and_write(secure: Secure) -> None:
     assert text["content"] == content, text
     chunk = client.ok("GET", f"{dev}/fs/read?root={root}&path={name}&offset=0&length=1024")
     assert base64.b64decode(chunk["data"]).decode() == content and chunk["eof"] is True, chunk
+
+
+def test_shell_tasks_through_the_channel(secure: Secure) -> None:
+    client = secure.client
+    root = str(secure.env.device.workspace)
+    tasks = f"/api/v2/connectors/{secure.device_id}/shell/tasks"
+    marker = secure.canary("shell")
+    started = client.ok("POST", f"{tasks}?root={root}", {"command": f"sleep 1; echo {marker}", "timeoutMs": 30_000})
+    assert started["status"] == "running", started
+    done = client.ok("GET", f"{tasks}/{started['taskId']}/wait?timeoutMs=20000")
+    assert (done["status"], done["result"]["stdout"], done["result"]["exitCode"]) == ("completed", f"{marker}\n", 0)
+    slow = client.ok("POST", f"{tasks}?root={root}", {"command": "sleep 30", "timeoutMs": 60_000})
+    cancelled = client.ok("POST", f"{tasks}/{slow['taskId']}/cancel")
+    assert (cancelled["status"], cancelled["cancelled"]) == ("cancelled", True), cancelled
+    status, _answer = client.request("GET", f"{tasks}/{slow['taskId']}/wait?timeoutMs=10")
+    assert status == 200
+    status, _answer = client.request("GET", f"{tasks}/{slow['taskId']}/wait?timeoutMs=10")
+    assert status == 404
 
 
 def test_terminal_through_the_channel(secure: Secure) -> None:

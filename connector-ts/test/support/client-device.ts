@@ -142,7 +142,8 @@ export async function testDevice(options: { platform?: NodeJS.Platform } = {}): 
   const files = new FileOps(policy, options.platform ?? 'linux')
   const spawn: SpawnPty = () => new FakePty()
   const terminals = new Terminals({ policy, spawn, platform: 'linux', env: { SHELL: '/bin/sh', PATH: process.env.PATH ?? '/usr/bin:/bin' } })
-  const methods = workspaceMethods(files, new ShellOps(policy), terminals)
+  const shell = new ShellOps(policy)
+  const methods = workspaceMethods(files, shell, terminals)
   const inbox = new CommandInbox(store, clock, service)
   const tunnel = new DeviceTunnelApi({
     deviceId: DEVICE,
@@ -196,6 +197,7 @@ export async function testDevice(options: { platform?: NodeJS.Platform } = {}): 
     },
     close: async () => {
       terminals.shutdown()
+      await shell.close()
       await store.close()
       rmSync(base, { recursive: true, force: true })
     },

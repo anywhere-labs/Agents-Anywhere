@@ -281,6 +281,8 @@ describe.skipIf(binary === null)('aa.device.v1.Client over a real Router', () =>
     expect(callClass(CLIENT_SERVICE, 'call', { route: 'session.runtime.notices.respond', method: 'POST', path: sessionPath('s1', 'runtime/notices/n1/respond') })).toBe('critical')
     expect(callClass(CLIENT_SERVICE, 'call', { route: 'session.runtime.messages', method: 'POST', path: sessionPath('s1', 'runtime/messages') })).toBe('command')
     expect(callClass(CLIENT_SERVICE, 'call', { route: 'session.snapshot', method: 'GET', path: sessionPath('s1', 'snapshot') })).toBe('read')
+    // A shell task's wait is held open for up to its timeout: it waits on the stream lane, not among the reads.
+    expect(callClass(CLIENT_SERVICE, 'call', { route: 'connector.shell.tasks.wait', method: 'GET', path: '/api/v2/connectors/d1/shell/tasks/sht_1/wait' })).toBe('stream')
     expect(callClass(CLIENT_SERVICE, 'subscribe')).toBe('stream')
   }, 30_000)
 

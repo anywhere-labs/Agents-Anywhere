@@ -24,6 +24,7 @@ import base64
 import contextlib
 import json
 import os
+import shlex
 import uuid
 from collections.abc import Iterator
 from typing import Any
@@ -300,6 +301,38 @@ def test_files_read_write_and_download(e2e: E2E) -> None:
     download = _wait(lambda: (r := api.call("GET", read["downloadUrl"].removeprefix("/api/v2"), expect=None))
                      .status_code == 200 and r, 30, 0.2, "the download")
     assert download.content == payload
+
+
+def test_shell_tasks_start_wait_and_cancel(e2e: E2E) -> None:
+    api = e2e.api
+    root = {"root": str(e2e.device.workspace)}
+    tasks = f"{e2e.dev}/shell/tasks"
+    # Outlasts the Server's read timeout (10 s): a wait holds the call for as long as the task runs.
+    late = api.post(tasks, {"command": "sleep 11; echo late", "timeoutMs": 60_000}, params=root)
+
+    started = api.post(tasks, {"command": "sleep 1; echo done", "timeoutMs": 30_000}, params=root)
+    assert started["status"] == "running" and started["taskId"].startswith("sht_"), started
+    done = api.get(f"{tasks}/{started['taskId']}/wait", params={"timeoutMs": 20_000})
+    assert done["status"] == "completed", done
+    assert (done["result"]["stdout"], done["result"]["exitCode"]) == ("done\n", 0), done
+    # The wait took the task.
+    api.call("GET", f"{tasks}/{started['taskId']}/wait", expect=404)
+
+    marker = e2e.device.workspace / "cancelled-marker"
+    slow = api.post(tasks, {"command": f"sleep 2; touch {shlex.quote(str(marker))}", "timeoutMs": 60_000},
+                    params=root)
+    cancelled = api.post(f"{tasks}/{slow['taskId']}/cancel")
+    assert (cancelled["status"], cancelled["cancelled"]) == ("cancelled", True), cancelled
+    assert api.get(f"{tasks}/{slow['taskId']}/wait")["status"] == "cancelled"
+    api.call("POST", f"{tasks}/{slow['taskId']}/cancel", expect=404)
+
+    stuck = api.post(tasks, {"command": "sleep 30", "timeoutMs": 60_000}, params=root)
+    timed_out = api.call("GET", f"{tasks}/{stuck['taskId']}/wait", params={"timeoutMs": 200}, expect=408)
+    assert timed_out.json()["detail"]["code"] == "shell_task_wait_timeout", timed_out.text
+
+    finished = api.get(f"{tasks}/{late['taskId']}/wait", params={"timeoutMs": 20_000})
+    assert finished["result"]["stdout"] == "late\n", finished
+    assert not marker.exists()
 
 
 def test_terminal_create_stream_write_resize_close(e2e: E2E) -> None:

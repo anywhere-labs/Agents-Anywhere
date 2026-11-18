@@ -140,6 +140,7 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
       const policy = new RootPolicy({ roots: options.workspaceRoots ?? rootsFromEnv() })
       const files = new FileOps(policy)
       const terminals = await openTerminals(policy, options.terminals !== false, log)
+      const shell = new ShellOps(policy)
       let trust: DeviceTrust | null = null
       try {
         const egress = await egressFor(settings, signal, options.log)
@@ -220,7 +221,7 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
         const inbox = new CommandInbox(store, clock, conversation, { ...control, ...(options.commands ?? {}) }, prepared)
         const readers = new DeviceReaders(store, clock.nowIso, facts, history, prepared)
         const watch = { store, feed, now: clock.nowIso }
-        const workspace = workspaceMethods(files, new ShellOps(policy), terminals ?? undefined)
+        const workspace = workspaceMethods(files, shell, terminals ?? undefined)
         // Terminal readers of `Client/subscribe` and the prepared-download upload behind `POST fs/read`.
         const workspaceService: WorkspaceServiceDeps = {
           ...(terminals !== null ? { terminals } : {}),
@@ -312,6 +313,7 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
         await preparations?.close().catch(() => undefined)
         await service?.close().catch(() => undefined)
         terminals?.shutdown()
+        await shell.close().catch(() => undefined)
         await runtimes.close().catch(() => undefined)
         track?.store(null)
         await store.close().catch(() => undefined)

@@ -248,6 +248,40 @@ describe('files and shell', () => {
     expect(detail(missing.body).code).toBe('not_found')
   })
 
+  it('runs background shell tasks: start, wait for the output, cancel, and the wait timeout', async () => {
+    const tasks = `/connectors/${DEVICE}/shell/tasks`
+    const root = `?root=${encodeURIComponent(device.root)}`
+    const started = await device.request('POST', `${tasks}${root}`, { command: 'sleep 0.2; echo done; exit 3', cwd: 'notes', timeoutMs: 10_000 })
+    expect(started.status).toBe(200)
+    const view = started.body as { taskId: string }
+    expect(view.taskId).toMatch(/^sht_/u)
+    expect(started.body).toMatchObject({ sessionId: `browse_${DEVICE}`, command: 'sleep 0.2; echo done; exit 3', cwd: join(device.root, 'notes'), timeoutMs: 10_000, status: 'running', result: null, error: null, serverTime: expect.any(String) })
+    const waited = await device.request('GET', `${tasks}/${view.taskId}/wait?timeoutMs=10000`)
+    expect(waited.status).toBe(200)
+    expect(waited.body).toMatchObject({ taskId: view.taskId, status: 'completed', result: { stdout: 'done\n', exitCode: 3, timedOut: false }, serverTime: expect.any(String) })
+    // The wait took the task.
+    const again = await device.request('GET', `${tasks}/${view.taskId}/wait?timeoutMs=10`)
+    expect([again.status, detail(again.body).code]).toEqual([404, 'shell_task_not_found'])
+
+    const slow = (await device.request('POST', `${tasks}${root}`, { command: 'sleep 30', timeoutMs: 60_000 })).body as { taskId: string }
+    const waiting = device.request('GET', `${tasks}/${slow.taskId}/wait`)
+    const cancelled = await device.request('POST', `${tasks}/${slow.taskId}/cancel`)
+    expect(cancelled.body).toMatchObject({ taskId: slow.taskId, status: 'cancelled', cancelled: true })
+    expect((await waiting).body).toMatchObject({ taskId: slow.taskId, status: 'cancelled' })
+    expect((await device.request('POST', `${tasks}/sht_none/cancel`)).status).toBe(404)
+
+    const stuck = (await device.request('POST', `${tasks}${root}`, { command: 'sleep 30', timeoutMs: 60_000 })).body as { taskId: string }
+    const timedOut = await device.request('GET', `${tasks}/${stuck.taskId}/wait?timeoutMs=100`)
+    expect([timedOut.status, detail(timedOut.body).code]).toEqual([408, 'shell_task_wait_timeout'])
+    expect((await device.request('POST', `${tasks}/${stuck.taskId}/cancel`)).status).toBe(404)
+
+    expect((await device.request('POST', `${tasks}${root}`, { command: 'true', timeoutMs: 300_001 })).status).toBe(422)
+    expect((await device.request('POST', tasks, { command: 'true', timeoutMs: 1000 })).status).toBe(422)
+    expect((await device.request('GET', `${tasks}/x/wait?timeoutMs=0`)).status).toBe(422)
+    const badCwd = await device.request('POST', `${tasks}${root}`, { command: 'true', cwd: 'nope', timeoutMs: 1000 })
+    expect([badCwd.status, detail(badCwd.body).code]).toEqual([502, 'not_found'])
+  })
+
   it('lists the drives for an empty path on Windows', async () => {
     const windows = await testDevice({ platform: 'win32' })
     try {

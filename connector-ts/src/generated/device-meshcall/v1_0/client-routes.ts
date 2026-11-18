@@ -1191,7 +1191,7 @@ export const CLIENT_ROUTES = [
     "owner": "device",
     "path": "/api/v2/connectors/{connector_id}/shell/exec",
     "sealedUpload": false,
-    "timeout": "command",
+    "timeout": "long",
     "via": "call",
     "writesCommandId": false
   },
@@ -1208,7 +1208,7 @@ export const CLIENT_ROUTES = [
     "path": "/api/v2/connectors/{connector_id}/shell/tasks",
     "sealedUpload": false,
     "timeout": "command",
-    "via": "unsupported",
+    "via": "call",
     "writesCommandId": false
   },
   {
@@ -1217,14 +1217,30 @@ export const CLIENT_ROUTES = [
     "e2ee": "channel",
     "forward": null,
     "id": "connector.shell.tasks.wait",
-    "kind": "read",
+    "kind": "stream",
     "method": "GET",
     "offline": false,
     "owner": "device",
     "path": "/api/v2/connectors/{connector_id}/shell/tasks/{task_id}/wait",
     "sealedUpload": false,
-    "timeout": "read",
-    "via": "unsupported",
+    "timeout": "long",
+    "via": "call",
+    "writesCommandId": false
+  },
+  {
+    "commandId": null,
+    "decorate": [],
+    "e2ee": "channel",
+    "forward": null,
+    "id": "connector.shell.tasks.cancel",
+    "kind": "command",
+    "method": "POST",
+    "offline": false,
+    "owner": "device",
+    "path": "/api/v2/connectors/{connector_id}/shell/tasks/{task_id}/cancel",
+    "sealedUpload": false,
+    "timeout": "command",
+    "via": "call",
     "writesCommandId": false
   },
   {
@@ -1522,6 +1538,7 @@ export const GENERATED_COMMAND_ID = "commandId"
 export const TIMEOUT_SECONDS = {
   "command": 30,
   "create": 60,
+  "long": 310,
   "read": null
 } as const
 

@@ -1,5 +1,5 @@
 // ported from Agents-Anywhere v2 server/agent_server/api/connector_files.py @4c8012369 (connector_fs_list, connector_fs_read, connector_fs_read_text, connector_fs_write, connector_fs_preview_read_text, connector_fs_preview_read)
-// ported from Agents-Anywhere v2 server/agent_server/api/connector_shell.py @4c8012369 (connector_shell_exec)
+// ported from Agents-Anywhere v2 server/agent_server/api/connector_shell.py @4c8012369 (connector_shell_exec, connector_shell_task_start, connector_shell_task_wait)
 // ported from Agents-Anywhere v2 server/agent_server/api/connector_terminal.py @4c8012369 (connector_terminal_create_v2, connector_terminal_list_v2, connector_terminal_rename_v2, connector_terminal_set_persistence_v2, connector_terminal_close_v2, connector_terminal_resize_v2, connector_terminal_write_v2, connector_terminal_snapshot_v2)
 // ported from Agents-Anywhere v2 server/agent_server/services/terminal.py @4c8012369 (TerminalService.create_for_connector, list_for_connector, rename_for_connector, close_for_connector, resize_for_connector)
 // ported from Agents-Anywhere v2 server/agent_server/api/connector_runtimes.py @4c8012369 (get_connector_runtime_model_catalog, get_connector_runtime_permission_catalog, get_connector_runtime_commands)
@@ -43,6 +43,8 @@ export interface WorkspaceRouteDeps {
   /** The platform the workspace runs on (an empty path lists the drives on Windows). */
   readonly platform: NodeJS.Platform
   readonly newTerminalId: () => string
+  /** Ids of background shell tasks (`sht_…`). */
+  readonly newShellTaskId: () => string
 }
 
 /** Where a terminal route works: the scope its terminals belong to and the root relative paths start from. */
@@ -62,6 +64,12 @@ function pick(value: unknown, keys: readonly string[]): Record<string, unknown> 
 
 const terminalGone = (): TunnelHttpError => new TunnelHttpError(404, 'terminal_not_found', 'terminal not found')
 
+/** Longest `timeoutMs` of `shell/exec`, a shell task and its `wait` (`MAX_HOLD_MS` of the route table). */
+const MAX_SHELL_TIMEOUT_MS = 300_000
+const DEFAULT_WAIT_MS = 120_000
+/** Statuses of a shell task's own failures; any other workspace failure is a 502. */
+const SHELL_TASK_STATUS: Readonly<Record<string, number>> = { shell_task_not_found: 404, shell_task_wait_timeout: 408, resource_exhausted: 503 }
+
 /**
  * The device routes (`connectors/{id}/…`, the preview reads and the session terminals): files, shell, terminals and
  * Runtime catalogs. Paths are resolved against the root the client chose, like the Server did; a workspace failure
@@ -72,10 +80,10 @@ export class WorkspaceRoutes {
 
   public constructor(private readonly deps: WorkspaceRouteDeps) {}
 
-  private async call(method: string, params: Record<string, unknown>, scope = browseScope(this.deps.deviceId)): Promise<unknown> {
+  private async call(method: string, params: Record<string, unknown>, scope = browseScope(this.deps.deviceId), keep: Readonly<Record<string, number>> = {}): Promise<unknown> {
     const handler = this.deps.workspace?.[method]
     if (handler === undefined) throw new TunnelHttpError(501, 'not_implemented', `${method} is not available on this device`)
-    return withStatus(502, () => handler({ sessionId: scope, ...params }))
+    return withStatus(502, () => handler({ sessionId: scope, ...params }), keep)
   }
 
   /** A terminal call whose missing terminal is a 404, as the Server's relay answered. */
@@ -159,21 +167,43 @@ export class WorkspaceRoutes {
           }),
         }
       }
-      case 'POST shell/exec': {
-        const root = this.root(route)
-        const command = text(body.command)
-        if (command === null) throw invalid('command is required')
-        if (typeof body.timeoutMs !== 'number' || !Number.isInteger(body.timeoutMs) || body.timeoutMs < 1 || body.timeoutMs > 300_000) throw invalid('timeoutMs must be an integer in [1, 300000]')
-        return okBody(await this.call('shell.exec', { root, cwd: this.resolve(root, text(body.cwd) ?? '.'), command, timeoutMs: body.timeoutMs }))
+      case 'POST shell/exec':
+        return okBody(await this.call('shell.exec', this.shellCommand(route)))
+      case 'POST shell/tasks': {
+        const task = await this.call('shell.task.start', { ...this.shellCommand(route), taskId: this.deps.newShellTaskId() }, undefined, SHELL_TASK_STATUS)
+        return { status: 200, body: { ...record(task), serverTime: this.deps.now() } }
       }
       default:
         break
+    }
+    if (rest[0] === 'shell' && rest[1] === 'tasks' && rest.length === 4) {
+      const taskId = rest[2]!
+      if (route.method === 'GET' && rest[3] === 'wait') {
+        const timeoutMs = int(route.query.get('timeoutMs'), DEFAULT_WAIT_MS, 1, MAX_SHELL_TIMEOUT_MS)
+        const task = await this.call('shell.task.wait', { taskId, timeoutMs }, undefined, SHELL_TASK_STATUS)
+        return { status: 200, body: { ...record(task), serverTime: this.deps.now() } }
+      }
+      if (route.method === 'POST' && rest[3] === 'cancel') {
+        const task = await this.call('shell.task.cancel', { taskId }, undefined, SHELL_TASK_STATUS)
+        return { status: 200, body: { ...record(task), serverTime: this.deps.now() } }
+      }
     }
     const scope: TerminalScope = { scope: browseScope(this.deps.deviceId), root: route.query.get('root') ?? text(body.root) }
     if (rest[0] === 'terminals-v2') return this.terminalsV2(route, rest.slice(1), scope)
     if (rest[0] === 'terminals') return this.terminalsV1(route, rest.slice(1), scope)
     if (rest[0] === 'runtimes' && rest.length >= 3 && route.method === 'GET') return this.runtimeCatalog(rest[1]!, rest.slice(2).join('/'))
     throw notFound(`${route.method} connectors/{id}/${rest.join('/')} is not served by this device`)
+  }
+
+  /** The command of `shell/exec` and `shell/tasks` (`ShellExecRequest`), its cwd resolved against the root. */
+  private shellCommand(route: Route): Record<string, unknown> {
+    const root = this.root(route)
+    const body = route.body
+    const command = text(body.command)
+    if (command === null) throw invalid('command is required')
+    const timeoutMs = body.timeoutMs
+    if (typeof timeoutMs !== 'number' || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_SHELL_TIMEOUT_MS) throw invalid(`timeoutMs must be an integer in [1, ${MAX_SHELL_TIMEOUT_MS}]`)
+    return { root, cwd: this.resolve(root, text(body.cwd) ?? '.'), command, timeoutMs }
   }
 
   /** `sessions/{id}/terminals*` (v1): terminals scoped to the session, rooted at its working directory. */

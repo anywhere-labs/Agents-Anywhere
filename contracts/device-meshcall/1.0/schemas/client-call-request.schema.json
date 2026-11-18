@@ -375,6 +375,9 @@
         "connector.terminalsV1.rename",
         "connector.terminalsV1.resize",
         "connector.shell.exec",
+        "connector.shell.tasks.start",
+        "connector.shell.tasks.wait",
+        "connector.shell.tasks.cancel",
         "connector.runtime.catalogs.model",
         "connector.runtime.catalogs.permission",
         "connector.runtime.commands"

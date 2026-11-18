@@ -12,7 +12,7 @@ export { MAX_DIR_ENTRIES, MAX_OUTPUT_CHARS, MAX_READ_TEXT_BYTES, type Params } f
 export * from './preview/index.js'
 export { PortWatcher, listeningPorts, mergeByPort, parseLsof, parseNetstat, parseProcNetTcp, parseTasklist, type ListeningPort } from './ports.js'
 export { RootPolicy, expandHome, realPathOf, rootsFromEnv, type RootPolicyOptions } from './roots.js'
-export { ShellOps, type Notify, type ShellResult } from './shell.js'
+export { MAX_SHELL_TASKS, SHELL_TASK_RETAIN_MS, ShellOps, type ShellOpsOptions, type ShellResult, type ShellTaskStatus, type ShellTaskView } from './shell.js'
 
 export type WorkspaceHandler = (params: Params) => Promise<unknown>
 
@@ -40,6 +40,7 @@ export function workspaceMethods(files: FileOps, shell: ShellOps, terminals?: Te
     'fs.readRange': params => files.readRange(params),
     'shell.exec': params => shell.exec(params),
     'shell.task.start': params => shell.taskStart(params),
+    'shell.task.wait': params => shell.taskWait(params),
     'shell.task.cancel': params => shell.taskCancel(params),
   }
 }

@@ -1424,6 +1424,12 @@ class ShellTaskWaitResponse(BaseModel):
     serverTime: str
 
 
+class ShellTaskCancelResponse(ShellTaskWaitResponse):
+    """The task after the cancel; ``cancelled`` is false when it had already ended."""
+
+    cancelled: bool
+
+
 class TerminalView(BaseModel):
     terminalId: str
     sessionId: str

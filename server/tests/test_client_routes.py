@@ -106,6 +106,18 @@ def test_client_call_routes_are_the_route_enum() -> None:
         assert cr.ROUTES_BY_ID[route_id].command_id is not None
 
 
+def test_held_shell_routes_outlast_their_longest_timeout() -> None:
+    """``shell/exec`` and a shell task's ``wait`` hold the call for up to the request's ``timeoutMs``."""
+
+    for route_id in ("connector.shell.exec", "connector.shell.tasks.wait"):
+        route = cr.ROUTES_BY_ID[route_id]
+        assert route.via == "call" and route.timeout == "long"
+    assert cr.LONG_TIMEOUT_SECONDS > cr.MAX_HOLD_MS / 1000
+    assert cr.ROUTES_BY_ID["connector.shell.tasks.wait"].kind == "stream"
+    for route_id in ("connector.shell.tasks.start", "connector.shell.tasks.cancel"):
+        assert cr.ROUTES_BY_ID[route_id].via == "call"
+
+
 def test_matching_a_request() -> None:
     route = cr.match_route("post", "/api/v2/sessions/s1/runtime/notices/n1/respond")
     assert route is not None and route.id == "session.runtime.notices.respond"

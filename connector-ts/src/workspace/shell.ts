@@ -1,14 +1,13 @@
-// `shell.exec`, `shell.task.start`, `shell.task.cancel`: the command runs through the platform shell in its own
-// process group (Unix) or process tree (Windows), stdin closed, output capped at 64,000 characters per stream,
-// killed on timeout (TERM, then KILL after 2 s; `taskkill /T /F` on Windows).
+// `shell.exec` and the background tasks `shell.task.start` / `shell.task.wait` / `shell.task.cancel`: the command runs
+// through the platform shell in its own process group (Unix) or process tree (Windows), stdin closed, output capped
+// at 64,000 characters per stream, killed on timeout (TERM, then KILL after 2 s; `taskkill /T /F` on Windows).
+// A task's end stays on the device until a `shell.task.wait` takes it or `retainMs` passes.
 import { spawn, type ChildProcess } from 'node:child_process'
 import { stat } from 'node:fs/promises'
 
 import { WorkspaceError, invalid } from './errors.js'
 import { decodeOutput, requiredInt, requiredString, resolvePath, workspaceRoot, type Params } from './params.js'
 import type { RootPolicy } from './roots.js'
-
-export type Notify = (method: string, params: Record<string, unknown>) => void
 
 export interface ShellResult {
   cwd: string
@@ -22,21 +21,56 @@ export interface ShellResult {
   stderrTruncated: boolean
 }
 
+/** `abandoned`: a `shell.task.wait` timed out and killed the task. */
+export type ShellTaskStatus = 'running' | 'completed' | 'failed' | 'cancelled' | 'abandoned'
+
+/** A background task as `shell.task.*` answer it (the 2.x `ShellTaskWaitResponse` without `serverTime`). */
+export interface ShellTaskView {
+  taskId: string
+  sessionId: string
+  command: string
+  cwd: string
+  timeoutMs: number
+  status: ShellTaskStatus
+  result: ShellResult | null
+  error: { code: string; message: string } | null
+}
+
 interface Running {
   readonly child: ChildProcess
   readonly done: Promise<{ exitCode: number | null; stdout: Buffer; stderr: Buffer }>
 }
 
+interface Task {
+  readonly view: ShellTaskView
+  running?: Running
+  /** Resolves once `view.status` is final. */
+  readonly ended: Promise<void>
+  readonly end: () => void
+  expiry?: NodeJS.Timeout
+}
+
+export interface ShellOpsOptions {
+  readonly platform?: NodeJS.Platform
+  /** How long an ended task waits to be taken by `shell.task.wait`; default 5 minutes. */
+  readonly retainMs?: number
+}
+
+export const SHELL_TASK_RETAIN_MS = 5 * 60_000
+/** Running and unclaimed tasks one device keeps at once. */
+export const MAX_SHELL_TASKS = 64
+
 const KILL_GRACE_MS = 2000
 
 export class ShellOps {
-  private readonly tasks = new Map<string, { cancelled: boolean; running?: Running }>()
+  private readonly tasks = new Map<string, Task>()
+  private readonly platform: NodeJS.Platform
+  private readonly retainMs: number
 
-  public constructor(
-    private readonly policy: RootPolicy,
-    private readonly notify: Notify = () => undefined,
-    private readonly platform: NodeJS.Platform = process.platform,
-  ) {}
+  public constructor(private readonly policy: RootPolicy, options: ShellOpsOptions = {}) {
+    this.platform = options.platform ?? process.platform
+    this.retainMs = options.retainMs ?? SHELL_TASK_RETAIN_MS
+  }
 
   private async cwdOf(params: Params): Promise<string> {
     const cwd = resolvePath(workspaceRoot(params), requiredString(params, 'cwd'))
@@ -133,53 +167,103 @@ export class ShellOps {
     return this.run(cwd, command, timeoutMs)
   }
 
-  /** `shell.task.start`: runs in the background; `shell.task.started` now, `shell.task.completed` at the end. */
-  public async taskStart(params: Params): Promise<{ taskId: string; sessionId: string; status: 'running' }> {
+  /** `shell.task.start`: runs the command in the background and answers at once with the running task. */
+  public async taskStart(params: Params): Promise<ShellTaskView> {
     const cwd = await this.cwdOf(params)
     const taskId = requiredString(params, 'taskId')
     const sessionId = requiredString(params, 'sessionId')
     const command = requiredString(params, 'command')
     const timeoutMs = positiveTimeout(params)
     if (this.tasks.has(taskId)) throw invalid(`shell task already exists: ${taskId}`)
-    const record: { cancelled: boolean; running?: Running } = { cancelled: false }
-    this.tasks.set(taskId, record)
-    void this.run(cwd, command, timeoutMs, running => {
-      record.running = running
-    }).then(
-      result => {
-        if (!record.cancelled) this.notify('shell.task.completed', { taskId, sessionId, status: 'completed', result })
-      },
-      (error: unknown) => {
-        if (!record.cancelled) {
-          this.notify('shell.task.completed', { taskId, sessionId, status: 'failed', error: { code: (error as { code?: string }).code ?? 'shell_failed', message: (error as Error).message } })
-        }
-      },
-    ).finally(() => {
-      if (this.tasks.get(taskId) === record) this.tasks.delete(taskId)
+    if (this.tasks.size >= MAX_SHELL_TASKS) throw new WorkspaceError('resource_exhausted', `at most ${MAX_SHELL_TASKS} shell tasks at once`, { reason: 'shell_tasks' })
+    let end = (): void => undefined
+    const ended = new Promise<void>(resolve => {
+      end = resolve
     })
-    this.notify('shell.task.started', { taskId, sessionId, status: 'running' })
-    return { taskId, sessionId, status: 'running' }
+    const task: Task = { view: { taskId, sessionId, command, cwd, timeoutMs, status: 'running', result: null, error: null }, ended, end }
+    this.tasks.set(taskId, task)
+    void this.run(cwd, command, timeoutMs, running => {
+      task.running = running
+    }).then(
+      result => this.settle(task, 'completed', result, null),
+      (error: unknown) => this.settle(task, 'failed', null, { code: (error as { code?: string }).code ?? 'shell_failed', message: (error as Error).message }),
+    )
+    return { ...task.view }
   }
 
-  /** `shell.task.cancel`: kills the task's process tree; `cancelled: false` when it already ended. */
-  public async taskCancel(params: Params): Promise<{ taskId: string; sessionId: string; cancelled: boolean }> {
+  /**
+   * `shell.task.wait`: the task once it ended, taken off the device (a second wait finds nothing). A task still
+   * running after `timeoutMs` is killed and the wait fails with `shell_task_wait_timeout`, as 2.x did.
+   */
+  public async taskWait(params: Params): Promise<ShellTaskView> {
+    const task = this.taskOf(params)
+    const timeoutMs = positiveTimeout(params)
+    if (task.view.status === 'running') {
+      let timer: NodeJS.Timeout | undefined
+      const timedOut = await Promise.race([
+        task.ended.then(() => false),
+        new Promise<boolean>(resolve => {
+          timer = setTimeout(() => resolve(true), timeoutMs)
+        }),
+      ])
+      clearTimeout(timer)
+      if (timedOut && task.view.status === 'running') {
+        await this.stop(task, 'abandoned')
+        throw new WorkspaceError('shell_task_wait_timeout', 'shell task wait timed out', { taskId: task.view.taskId })
+      }
+    }
+    this.forget(task)
+    return { ...task.view }
+  }
+
+  /** `shell.task.cancel`: kills a running task's process tree; an ended task is answered as it ended. */
+  public async taskCancel(params: Params): Promise<ShellTaskView & { cancelled: boolean }> {
+    const task = this.taskOf(params)
+    if (task.view.status !== 'running') return { ...task.view, cancelled: false }
+    await this.stop(task, 'cancelled')
+    return { ...task.view, cancelled: true }
+  }
+
+  /** The task of `taskId` in the caller's `sessionId`; another scope's task is not found either. */
+  private taskOf(params: Params): Task {
     const taskId = requiredString(params, 'taskId')
     const sessionId = requiredString(params, 'sessionId')
-    const record = this.tasks.get(taskId)
-    if (record === undefined) return { taskId, sessionId, cancelled: false }
-    record.cancelled = true
-    this.tasks.delete(taskId)
-    await this.terminate(record.running)
-    this.notify('shell.task.completed', { taskId, sessionId, status: 'cancelled' })
-    return { taskId, sessionId, cancelled: true }
+    const task = this.tasks.get(taskId)
+    if (task === undefined || task.view.sessionId !== sessionId) throw new WorkspaceError('shell_task_not_found', 'shell task not found', { taskId })
+    return task
+  }
+
+  private settle(task: Task, status: ShellTaskStatus, result: ShellResult | null, error: ShellTaskView['error']): void {
+    if (task.view.status !== 'running') return
+    task.view.status = status
+    task.view.result = result
+    task.view.error = error
+    task.end()
+    if (this.tasks.get(task.view.taskId) === task) {
+      task.expiry = setTimeout(() => this.forget(task), this.retainMs)
+      task.expiry.unref()
+    }
+  }
+
+  private async stop(task: Task, status: 'cancelled' | 'abandoned'): Promise<void> {
+    this.settle(task, status, null, null)
+    if (status === 'abandoned') this.forget(task)
+    await this.terminate(task.running)
+  }
+
+  private forget(task: Task): void {
+    clearTimeout(task.expiry)
+    if (this.tasks.get(task.view.taskId) === task) this.tasks.delete(task.view.taskId)
   }
 
   /** Kills every background task (shutdown). */
   public async close(): Promise<void> {
-    const records = [...this.tasks.values()]
-    this.tasks.clear()
-    for (const record of records) record.cancelled = true
-    await Promise.all(records.map(record => this.terminate(record.running)))
+    const tasks = [...this.tasks.values()]
+    for (const task of tasks) {
+      this.settle(task, 'cancelled', null, null)
+      this.forget(task)
+    }
+    await Promise.all(tasks.map(task => this.terminate(task.running)))
   }
 }
 

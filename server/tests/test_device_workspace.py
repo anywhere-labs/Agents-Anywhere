@@ -76,6 +76,17 @@ def test_files_terminals_shell_reach_a_v3_device_through_client_call(
                     return 200, {"ok": True, "result": {"terminals": [{"terminalId": terminal_id}]}}
                 if route == "connector.shell.exec":
                     return 200, {"ok": True, "result": {"exitCode": 0, "stdout": "hi\n", "stderr": ""}}
+                if route.startswith("connector.shell.tasks."):
+                    task = {"taskId": "sht_1", "sessionId": f"browse_{device_id}", "command": "sleep 1", "cwd": ROOT,
+                            "timeoutMs": 5000, "status": "running", "result": None, "error": None,
+                            "serverTime": "2026-01-01T00:00:00Z"}
+                    if route.endswith(".wait"):
+                        if request["query"]["timeoutMs"] == "1":
+                            return 408, {"detail": {"code": "shell_task_wait_timeout", "message": "timed out"}}
+                        return 200, {**task, "status": "completed", "result": {"exitCode": 0, "stdout": "done\n"}}
+                    if route.endswith(".cancel"):
+                        return 200, {**task, "status": "cancelled", "cancelled": True}
+                    return 200, task
                 if route == "connector.fs.list" and body.get("path") == "bogus":
                     return 200, {"entries": []}
                 return 200, {"ok": True, "result": {"route": route}}
@@ -100,6 +111,10 @@ def test_files_terminals_shell_reach_a_v3_device_through_client_call(
                     ("connector.terminals.snapshot", "GET", f"{term}/snapshot", {"fromSeq": "0"}, None),
                     ("connector.shell.exec", "POST", f"{base}/shell/exec", {"root": ROOT},
                      {"command": "echo hi", "timeoutMs": 5000}),
+                    ("connector.shell.tasks.start", "POST", f"{base}/shell/tasks", {"root": ROOT},
+                     {"command": "sleep 1", "timeoutMs": 5000}),
+                    ("connector.shell.tasks.wait", "GET", f"{base}/shell/tasks/sht_1/wait", {"timeoutMs": "3000"}, None),
+                    ("connector.shell.tasks.cancel", "POST", f"{base}/shell/tasks/sht_1/cancel", {}, None),
                     ("connector.terminals.close", "DELETE", term, {}, None),
                 ]
                 answers: dict[str, Any] = {}
@@ -114,6 +129,17 @@ def test_files_terminals_shell_reach_a_v3_device_through_client_call(
                 assert answers["connector.fs.readText"]["content"] == "hello\n"
                 assert answers["connector.terminals.create"]["result"] == {"terminalId": terminal_id, "root": ROOT}
                 assert answers["connector.shell.exec"]["result"]["stdout"] == "hi\n"
+                assert answers["connector.shell.tasks.start"]["status"] == "running"
+                assert answers["connector.shell.tasks.wait"]["result"]["stdout"] == "done\n"
+                assert answers["connector.shell.tasks.cancel"]["cancelled"] is True
+                # The wait's default timeout reaches the device; the device's own status passes through.
+                waited = await client.get(f"{base}/shell/tasks/sht_1/wait", headers=headers)
+                assert waited.status_code == 200 and state.client_calls[-1]["query"] == {"timeoutMs": "120000"}
+                timed_out = await client.get(f"{base}/shell/tasks/sht_1/wait?timeoutMs=1", headers=headers)
+                assert timed_out.status_code == 408, timed_out.text
+                assert timed_out.json()["detail"]["code"] == "shell_task_wait_timeout"
+                over = await client.get(f"{base}/shell/tasks/sht_1/wait?timeoutMs=300001", headers=headers)
+                assert over.status_code == 422
 
                 # A download: the Server allocates the transfer, the device uploads to it, the client reads it.
                 read = await client.post(f"{base}/fs/read?root={ROOT}", headers=headers, json={"path": "notes/a.txt"})
@@ -135,12 +161,8 @@ def test_files_terminals_shell_reach_a_v3_device_through_client_call(
                 invalid = await client.post(f"{base}/fs/list?root={ROOT}", headers=headers, json={"path": "bogus"})
                 assert invalid.status_code == 502 and invalid.json()["detail"]["code"] == "device_response_invalid"
 
-                # Shell tasks report completion by notification, which v3 has no carrier for: not offered.
-                calls = len(state.client_calls)
-                task = await client.post(f"{base}/shell/tasks?root={ROOT}", headers=headers,
-                                         json={"command": "sleep 1", "timeoutMs": 5000})
-                assert task.status_code >= 400
                 # Another user's device is not found and never asked.
+                calls = len(state.client_calls)
                 stranger = await _stranger(app)
                 denied = await client.post(f"{base}/fs/list?root={ROOT}", headers=stranger, json={"path": "."})
                 assert denied.status_code == 404, denied.text
