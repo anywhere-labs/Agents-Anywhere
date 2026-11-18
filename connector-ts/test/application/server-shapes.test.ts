@@ -206,6 +206,9 @@ describe('what the device answers the Server', () => {
       plan: { planId: 'native_plan_1', revision: 1, title: 'Plan', markdown: '# Plan\n\n- step one', contentHash: 'sha256:0' },
     })
     await settle()
+    // The review is answered through the planning state; its native options are never shown as a notice.
+    expect(live.filter(entry => entry.method === 'runtime.notice.updated')).toEqual([])
+    expect((await readers.notices({ sessionId: SID })).notices).toEqual([])
     shape('event.planning', lastStatus('planning.state.updated'))
     shape('state.planning', await readers.sessionState({ sessionId: SID, part: 'planning' }))
     const list = await readers.planDocument({ sessionId: SID })

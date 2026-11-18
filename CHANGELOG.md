@@ -76,6 +76,7 @@
 
 ### Web 与 Desktop 界面
 
+- Claude 退出规划模式时，会话里只显示计划审阅面板，不再同时弹出一张列着原生选项的审批卡片；审批卡片的选项较长时会换行显示，标题不再被挤成竖排。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 多个窗口或设备同时打开同一个会话时，关掉其中一个不再让其他窗口读取会话失败。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 会话所在的设备离线时，已经看过的消息仍然保留，输入框上方提示「设备离线」并说明显示的是本机缓存；从没打开过的会话显示「设备离线，上线后查看」；设备重新上线后自动补齐离线期间的新消息。（[#667](https://github.com/anywhere-labs/Agents-Anywhere/pull/667)）
 - 看过的会话会保存在本机，刷新页面或重新打开 Desktop 后能立即显示，设备离线时也能看；退出登录时清除本机保存的内容，切换账号时清除其他账号的内容。在共享电脑上可以在 Web 登录页勾选「不在此设备保存会话内容」。（[#677](https://github.com/anywhere-labs/Agents-Anywhere/pull/677)）

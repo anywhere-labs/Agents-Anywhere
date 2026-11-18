@@ -85,7 +85,7 @@ export function InteractionCard({
   }
 
   const actionButtons = (
-    <div className="flex flex-wrap gap-2 md:justify-end md:flex-nowrap">
+    <div className="flex min-w-0 flex-wrap justify-end gap-2">
       {notice.actions.map((action) => {
         const submitDisabled = inputRequest?.action.actionId === action.actionId
           && !inputRequestIsComplete(inputRequest, inputDrafts)
@@ -95,7 +95,7 @@ export function InteractionCard({
             type="button"
             variant={action.style === "primary" ? "default" : "outline"}
             size="sm"
-            className="whitespace-nowrap"
+            className="h-auto min-h-7 max-w-full shrink py-1 text-left whitespace-normal wrap-break-word"
             disabled={disabled || submitDisabled}
             onClick={() => respond(action)}
           >
@@ -117,8 +117,8 @@ export function InteractionCard({
     )}>
       <div className="flex flex-col gap-3">
         {!inputRequest ? (
-          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-            <div className="flex min-w-0 gap-2">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="flex min-w-48 flex-1 gap-2">
               <Icon className={cn(
                 "mt-0.5 size-4 shrink-0",
                 notice.severity === "error" ? "text-destructive" : "text-muted-foreground",

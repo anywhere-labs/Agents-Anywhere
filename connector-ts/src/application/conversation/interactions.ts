@@ -31,6 +31,12 @@ export class InteractionService {
   public async onInteractionOpened(sessionId: string, event: Extract<RuntimeEvent, { type: 'interaction.opened' }>): Promise<void> {
     const deps = this.kernel.deps
     const at = deps.clock.nowIso()
+    if (event.kind === 'plan_review' && event.plan !== undefined) {
+      // A plan review with its plan is answered through the planning state (`session.planning`), never as a notice:
+      // the native options (e.g. Claude's ExitPlanMode modes) are chosen by the Runtime dialect, not the client.
+      await this.planning.onPlanReview(sessionId, { noticeId: event.interactionId, planId: event.plan.planId, markdown: event.plan.markdown, turnId: event.turnId ?? null, at })
+      return
+    }
     const notice: NoticeIn = {
       noticeId: event.interactionId,
       sessionId,
@@ -48,9 +54,6 @@ export class InteractionService {
     }
     const interaction = interactionRules.open({ sessionId, noticeId: event.interactionId, kind: event.kind === 'approval' ? 'approval' : event.kind === 'plan_review' ? 'confirmation' : 'input_request', blocking: true, payload: notice, at })
     await deps.store.interactions.save(interaction)
-    if (event.kind === 'plan_review' && event.plan !== undefined) {
-      await this.planning.onPlanReview(sessionId, { noticeId: event.interactionId, planId: event.plan.planId, markdown: event.plan.markdown, turnId: event.turnId ?? null, at })
-    }
     if (event.kind === 'approval') {
       const commit = await this.kernel.patchSession(sessionId, { status: 'waiting_approval' })
       this.kernel.countUsage(commit.session, 'approval.requested')
