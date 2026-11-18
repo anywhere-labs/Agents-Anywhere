@@ -38,7 +38,8 @@
                 "desktop",
                 "android",
                 "ios",
-                "cli"
+                "cli",
+                "agent"
               ],
               "type": "string"
             },

@@ -1,0 +1,33 @@
+{
+  "$id": "urn:agents-anywhere:e2ee:1.0:peer-pin-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "``POST /e2ee/v1/peers/pin`` (served by the supervisor's device): a trusted client that pinned the target\ndevice's key hands it over, so the collaboration client can open a KK channel to it.",
+  "properties": {
+    "deviceId": {
+      "minLength": 1,
+      "title": "Deviceid",
+      "type": "string"
+    },
+    "deviceIdentityPub": {
+      "description": "32 bytes, base64url without padding",
+      "pattern": "^[A-Za-z0-9_-]{43}$",
+      "title": "Deviceidentitypub",
+      "type": "string"
+    },
+    "label": {
+      "default": "",
+      "title": "Label",
+      "type": "string"
+    }
+  },
+  "required": [
+    "deviceId",
+    "deviceIdentityPub"
+  ],
+  "title": "PeerPinRequest",
+  "type": "object",
+  "x-contract": "e2ee",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

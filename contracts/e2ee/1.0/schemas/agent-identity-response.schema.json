@@ -1,0 +1,33 @@
+{
+  "$id": "urn:agents-anywhere:e2ee:1.0:agent-identity-response",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "``GET /e2ee/v1/agent-identity`` (served by the supervisor's device): the public key its collaboration\nclient uses to open channels to other devices. A trusted client relays it to the target device's\n``trust/approve`` with ``platform: \"agent\"``.",
+  "properties": {
+    "deviceId": {
+      "minLength": 1,
+      "title": "Deviceid",
+      "type": "string"
+    },
+    "identityPub": {
+      "description": "32 bytes, base64url without padding",
+      "pattern": "^[A-Za-z0-9_-]{43}$",
+      "title": "Identitypub",
+      "type": "string"
+    },
+    "label": {
+      "title": "Label",
+      "type": "string"
+    }
+  },
+  "required": [
+    "deviceId",
+    "identityPub",
+    "label"
+  ],
+  "title": "AgentIdentityResponse",
+  "type": "object",
+  "x-contract": "e2ee",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

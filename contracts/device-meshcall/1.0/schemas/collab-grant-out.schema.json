@@ -1,0 +1,42 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:collab-grant-out",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "``collab.grant.changed``: a collaboration grant issued or revoked for a supervisor session; the Server\nrevokes the delegation tokens of a revoked grant.",
+  "properties": {
+    "at": {
+      "minLength": 1,
+      "title": "At",
+      "type": "string"
+    },
+    "grantId": {
+      "minLength": 1,
+      "title": "Grantid",
+      "type": "string"
+    },
+    "state": {
+      "enum": [
+        "active",
+        "revoked"
+      ],
+      "title": "State",
+      "type": "string"
+    },
+    "supervisorSessionId": {
+      "minLength": 1,
+      "title": "Supervisorsessionid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "grantId",
+    "supervisorSessionId",
+    "state",
+    "at"
+  ],
+  "title": "CollabGrantOut",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

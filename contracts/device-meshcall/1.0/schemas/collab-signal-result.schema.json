@@ -1,0 +1,20 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:collab-signal-result",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "accepted": {
+      "minimum": 0,
+      "title": "Accepted",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "accepted"
+  ],
+  "title": "CollabSignalResult",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

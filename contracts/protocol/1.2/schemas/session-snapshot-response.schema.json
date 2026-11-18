@@ -976,6 +976,47 @@
       "title": "ProtocolTimelineSnapshotV12",
       "type": "object"
     },
+    "SessionOrigin": {
+      "description": "Who created a session when it was not a person: an Agent working through the collaboration tools\n(docs/agent-collaboration.md). Only ids and the depth, never content; immutable once reported.",
+      "properties": {
+        "byDeviceId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bydeviceid"
+        },
+        "bySessionId": {
+          "minLength": 1,
+          "title": "Bysessionid",
+          "type": "string"
+        },
+        "depth": {
+          "maximum": 8,
+          "minimum": 1,
+          "title": "Depth",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "agent",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "bySessionId",
+        "byDeviceId",
+        "depth"
+      ],
+      "title": "SessionOrigin",
+      "type": "object"
+    },
     "SessionQueueAttachment": {
       "properties": {
         "fileId": {
@@ -1430,6 +1471,17 @@
           "title": "Latestturnendseq",
           "type": "integer"
         },
+        "origin": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionOrigin"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "pinned": {
           "default": false,
           "title": "Pinned",
@@ -1566,6 +1618,22 @@
           "title": "Status",
           "type": "string"
         },
+        "supervised": {
+          "description": "edges where this session is the supervisor",
+          "items": {
+            "$ref": "#/$defs/SupervisionEdge"
+          },
+          "title": "Supervised",
+          "type": "array"
+        },
+        "supervisors": {
+          "description": "edges where this session is the target",
+          "items": {
+            "$ref": "#/$defs/SupervisionEdge"
+          },
+          "title": "Supervisors",
+          "type": "array"
+        },
         "takeover": {
           "title": "Takeover",
           "type": "boolean"
@@ -1607,6 +1675,52 @@
         "updatedSeq"
       ],
       "title": "SessionViewV12",
+      "type": "object"
+    },
+    "SupervisionEdge": {
+      "description": "One supervision edge as the session directory keeps it: who watches whom, and its state.",
+      "properties": {
+        "createdBy": {
+          "enum": [
+            "human",
+            "agent"
+          ],
+          "title": "Createdby",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "active",
+            "paused",
+            "ended"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "supervisionId": {
+          "minLength": 1,
+          "title": "Supervisionid",
+          "type": "string"
+        },
+        "supervisorSessionId": {
+          "minLength": 1,
+          "title": "Supervisorsessionid",
+          "type": "string"
+        },
+        "targetSessionId": {
+          "minLength": 1,
+          "title": "Targetsessionid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "supervisionId",
+        "supervisorSessionId",
+        "targetSessionId",
+        "state",
+        "createdBy"
+      ],
+      "title": "SupervisionEdge",
       "type": "object"
     },
     "TimelineBlobRef": {

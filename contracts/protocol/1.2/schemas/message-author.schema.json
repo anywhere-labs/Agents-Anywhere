@@ -1,0 +1,64 @@
+{
+  "$id": "urn:agents-anywhere:protocol:1.2:message-author",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "``content.author`` of a user message that a person did not type: an Agent acting through the\ncollaboration tools, or a supervision wake (a digest the device sent to the supervisor).",
+  "properties": {
+    "deviceId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Deviceid"
+    },
+    "kind": {
+      "enum": [
+        "agent",
+        "supervision"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "sessionId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "the supervisor session the Agent acts for",
+      "title": "Sessionid"
+    },
+    "supervisionId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Supervisionid"
+    }
+  },
+  "required": [
+    "kind",
+    "sessionId",
+    "deviceId",
+    "supervisionId"
+  ],
+  "title": "MessageAuthor",
+  "type": "object",
+  "x-contract": "protocol",
+  "x-direction": "egress",
+  "x-protocol-version": "1.2",
+  "x-pydantic-mode": "serialization"
+}

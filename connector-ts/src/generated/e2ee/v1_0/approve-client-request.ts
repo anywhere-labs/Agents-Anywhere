@@ -6,7 +6,7 @@
  */
 export type Clientidentitypub = string
 export type Label = string
-export type Platform = ("web" | "desktop" | "android" | "ios" | "cli") | null
+export type Platform = ("web" | "desktop" | "android" | "ios" | "cli" | "agent") | null
 
 /**
  * ``POST /e2ee/v1/trust/approve``: an authorised client asks the device to trust another

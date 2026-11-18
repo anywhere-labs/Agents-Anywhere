@@ -15,6 +15,21 @@
       },
       "route": "aa.device.v1.Commands/channelSwitch"
     },
+    "collab.signal": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "CollabSignalCommand",
+        "slug": "collab-signal-command",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "CollabSignalResult",
+        "slug": "collab-signal-result",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Commands/collabSignal"
+    },
     "device.settings.apply": {
       "request": {
         "contract": "device-meshcall",
@@ -518,6 +533,18 @@
       "contract": "device-meshcall",
       "model": "AttachmentConsumedOut",
       "slug": "attachment-consumed-out",
+      "version": "1.0"
+    },
+    "collab.grant.changed": {
+      "contract": "device-meshcall",
+      "model": "CollabGrantOut",
+      "slug": "collab-grant-out",
+      "version": "1.0"
+    },
+    "collab.supervision.changed": {
+      "contract": "device-meshcall",
+      "model": "CollabSupervisionOut",
+      "slug": "collab-supervision-out",
       "version": "1.0"
     },
     "command.result": {

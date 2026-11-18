@@ -12,7 +12,7 @@ export type Grantedat = string
 export type Grantedby = "qr" | "approval" | "local"
 export type Identitypubfingerprint = string
 export type Label = string
-export type Platform = ("web" | "desktop" | "android" | "ios" | "cli") | null
+export type Platform = ("web" | "desktop" | "android" | "ios" | "cli" | "agent") | null
 export type Revokedat = string | null
 export type Grants = ClientGrantView[]
 

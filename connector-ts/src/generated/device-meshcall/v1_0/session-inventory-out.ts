@@ -21,6 +21,10 @@ export type Status = string | null
 export type Time = string | null
 export type Type = string
 export type Latestturnendseq = number | null
+export type Bydeviceid = string | null
+export type Bysessionid = string
+export type Depth = number
+export type Kind = "agent"
 export type Planstate = "none" | "planning" | "awaiting_review"
 export type Projectid = string | null
 export type Resetseq = number
@@ -51,6 +55,7 @@ export interface SessionSummary {
   lastActivityAt?: Lastactivityat
   latestItem?: LatestItemFacts | null
   latestTurnEndSeq?: Latestturnendseq
+  origin?: SessionOrigin | null
   planState?: Planstate
   projectId?: Projectid
   resetSeq: Resetseq
@@ -84,5 +89,16 @@ export interface LatestItemFacts {
   status?: Status
   time?: Time
   type: Type
+  [k: string]: unknown
+}
+/**
+ * Who created a session when it was not a person: an Agent working through the collaboration tools
+ * (docs/agent-collaboration.md). Only ids and the depth, never content; immutable once reported.
+ */
+export interface SessionOrigin {
+  byDeviceId?: Bydeviceid
+  bySessionId: Bysessionid
+  depth: Depth
+  kind: Kind
   [k: string]: unknown
 }

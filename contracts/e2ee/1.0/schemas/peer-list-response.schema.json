@@ -1,0 +1,52 @@
+{
+  "$defs": {
+    "PeerView": {
+      "properties": {
+        "deviceId": {
+          "minLength": 1,
+          "title": "Deviceid",
+          "type": "string"
+        },
+        "identityPubFingerprint": {
+          "minLength": 1,
+          "title": "Identitypubfingerprint",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "pinnedAt": {
+          "title": "Pinnedat",
+          "type": "string"
+        }
+      },
+      "required": [
+        "deviceId",
+        "identityPubFingerprint",
+        "label",
+        "pinnedAt"
+      ],
+      "title": "PeerView",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:e2ee:1.0:peer-list-response",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "``GET /e2ee/v1/peers`` / response of ``POST /e2ee/v1/peers/pin``: devices the collaboration client pinned.",
+  "properties": {
+    "peers": {
+      "items": {
+        "$ref": "#/$defs/PeerView"
+      },
+      "title": "Peers",
+      "type": "array"
+    }
+  },
+  "title": "PeerListResponse",
+  "type": "object",
+  "x-contract": "e2ee",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

@@ -1,0 +1,64 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:collab-supervision-out",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "``collab.supervision.changed``: a supervision edge the supervisor's device created or changed. Ids and\nstate only; triggers, authority and digests stay on the device.",
+  "properties": {
+    "at": {
+      "minLength": 1,
+      "title": "At",
+      "type": "string"
+    },
+    "createdBy": {
+      "enum": [
+        "human",
+        "agent"
+      ],
+      "title": "Createdby",
+      "type": "string"
+    },
+    "state": {
+      "enum": [
+        "active",
+        "paused",
+        "ended"
+      ],
+      "title": "State",
+      "type": "string"
+    },
+    "supervisionId": {
+      "minLength": 1,
+      "title": "Supervisionid",
+      "type": "string"
+    },
+    "supervisorSessionId": {
+      "minLength": 1,
+      "title": "Supervisorsessionid",
+      "type": "string"
+    },
+    "targetDeviceId": {
+      "minLength": 1,
+      "title": "Targetdeviceid",
+      "type": "string"
+    },
+    "targetSessionId": {
+      "minLength": 1,
+      "title": "Targetsessionid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "supervisionId",
+    "supervisorSessionId",
+    "targetSessionId",
+    "targetDeviceId",
+    "state",
+    "createdBy",
+    "at"
+  ],
+  "title": "CollabSupervisionOut",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

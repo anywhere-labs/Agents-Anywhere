@@ -125,7 +125,7 @@
       "model": "ProtocolSessionSnapshotResponseV12",
       "path": "schemas/session-snapshot-response.schema.json",
       "pydanticMode": "serialization",
-      "sha256": "9a21f53dbaa92c2ab0bb06d47ef43978693ddd64a0d37232e793f14dcfe3357a",
+      "sha256": "502a9d63d0a7f33067f92f4bae5fbe8dba7aec1f50a4a2f172025416450e896c",
       "slug": "session-snapshot-response"
     },
     {
@@ -199,6 +199,22 @@
       "pydanticMode": "serialization",
       "sha256": "a596da292ba55557914042b245464288240933c31bed927611d5d82dd0857413",
       "slug": "session-blob-chunk"
+    },
+    {
+      "direction": "egress",
+      "model": "MessageAuthor",
+      "path": "schemas/message-author.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "edc167bd4d73e212db2cea3b6f1eac393a664815e2ac1485db854e6a4b526ad8",
+      "slug": "message-author"
+    },
+    {
+      "direction": "egress",
+      "model": "SupervisionEdge",
+      "path": "schemas/supervision-edge.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "4b522727854fa378bce495d14b30af76244c3fdfc60241079be752c02a9a6a02",
+      "slug": "supervision-edge"
     }
   ],
   "contract": "protocol",

@@ -1,0 +1,136 @@
+{
+  "$defs": {
+    "CollabTargetSignal": {
+      "description": "A supervised session's directory-level change, forwarded to the supervisor's device. Scheduling fields\nonly (plaintext in both modes).",
+      "properties": {
+        "at": {
+          "minLength": 1,
+          "title": "At",
+          "type": "string"
+        },
+        "deviceOnline": {
+          "default": true,
+          "title": "Deviceonline",
+          "type": "boolean"
+        },
+        "goalState": {
+          "default": "none",
+          "enum": [
+            "none",
+            "active",
+            "paused",
+            "completed"
+          ],
+          "title": "Goalstate",
+          "type": "string"
+        },
+        "headSeq": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Headseq",
+          "type": "integer"
+        },
+        "latestTurnEndSeq": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Latestturnendseq"
+        },
+        "planState": {
+          "default": "none",
+          "enum": [
+            "none",
+            "planning",
+            "awaiting_review"
+          ],
+          "title": "Planstate",
+          "type": "string"
+        },
+        "resetSeq": {
+          "default": 0,
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Resetseq",
+          "type": "integer"
+        },
+        "status": {
+          "enum": [
+            "idle",
+            "pending",
+            "running",
+            "waiting",
+            "waiting_approval",
+            "blocked",
+            "stopping",
+            "error",
+            "unknown"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "supervisionId": {
+          "minLength": 1,
+          "title": "Supervisionid",
+          "type": "string"
+        },
+        "supervisorSessionId": {
+          "minLength": 1,
+          "title": "Supervisorsessionid",
+          "type": "string"
+        },
+        "targetDeviceId": {
+          "minLength": 1,
+          "title": "Targetdeviceid",
+          "type": "string"
+        },
+        "targetSessionId": {
+          "minLength": 1,
+          "title": "Targetsessionid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "supervisionId",
+        "supervisorSessionId",
+        "targetSessionId",
+        "targetDeviceId",
+        "status",
+        "headSeq",
+        "at"
+      ],
+      "title": "CollabTargetSignal",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:collab-signal-command",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "``collab.signal``: target signals for supervisions this device holds. Lossy and idempotent: a later\nsignal for the same target supersedes an earlier one.",
+  "properties": {
+    "signals": {
+      "items": {
+        "$ref": "#/$defs/CollabTargetSignal"
+      },
+      "maxItems": 100,
+      "minItems": 1,
+      "title": "Signals",
+      "type": "array"
+    }
+  },
+  "required": [
+    "signals"
+  ],
+  "title": "CollabSignalCommand",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

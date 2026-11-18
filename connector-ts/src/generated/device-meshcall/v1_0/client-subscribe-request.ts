@@ -1,6 +1,9 @@
 /* eslint-disable */
 /** Generated from contracts/device-meshcall/1.0 artifact client-subscribe-request. Do not edit; run `yarn contracts:generate`. */
 
+export type Deviceid = string
+export type Grantid = string
+export type Sessionid = string
 export type Clientid = string | null
 export type Platform = string | null
 export type Userid = string
@@ -23,8 +26,18 @@ export interface ClientSubscribeRequest {
  * Who sent the request, as the Server authenticated it.
  */
 export interface ClientCaller {
+  agent?: AgentCaller | null
   clientId?: Clientid
   platform?: Platform
   userId: Userid
+  [k: string]: unknown
+}
+/**
+ * The supervisor session a delegated request acts for (``ClientCaller.agent``).
+ */
+export interface AgentCaller {
+  deviceId: Deviceid
+  grantId: Grantid
+  sessionId: Sessionid
   [k: string]: unknown
 }

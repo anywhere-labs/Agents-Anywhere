@@ -70,7 +70,9 @@ ClientId = Annotated[str, Field(pattern=CLIENT_ID_PATTERN, description="client_i
 ChannelId = Annotated[str, Field(pattern=CHANNEL_ID_PATTERN)]
 
 NoiseHandshakePattern = Literal["XXpsk0", "KK"]
-ClientPlatform = Literal["web", "desktop", "android", "ios", "cli"]
+#: ``agent``: another device's collaboration client identity (an Agent on that device acting for a supervisor
+#: session, docs/agent-collaboration.md); granted only through ``POST /e2ee/v1/trust/approve``.
+ClientPlatform = Literal["web", "desktop", "android", "ios", "cli", "agent"]
 
 
 def _omit_default_additional_properties(schema: dict[str, Any]) -> None:
@@ -261,6 +263,38 @@ class RevokeClientRequest(E2eeModel):
     clientId: ClientId
 
 
+class AgentIdentityResponse(E2eeModel):
+    """``GET /e2ee/v1/agent-identity`` (served by the supervisor's device): the public key its collaboration
+    client uses to open channels to other devices. A trusted client relays it to the target device's
+    ``trust/approve`` with ``platform: "agent"``."""
+
+    deviceId: NonEmpty
+    identityPub: Key32
+    label: str
+
+
+class PeerPinRequest(E2eeModel):
+    """``POST /e2ee/v1/peers/pin`` (served by the supervisor's device): a trusted client that pinned the target
+    device's key hands it over, so the collaboration client can open a KK channel to it."""
+
+    deviceId: NonEmpty
+    deviceIdentityPub: Key32
+    label: str = ""
+
+
+class PeerView(E2eeModel):
+    deviceId: NonEmpty
+    identityPubFingerprint: NonEmpty
+    label: str
+    pinnedAt: str
+
+
+class PeerListResponse(E2eeModel):
+    """``GET /e2ee/v1/peers`` / response of ``POST /e2ee/v1/peers/pin``: devices the collaboration client pinned."""
+
+    peers: list[PeerView] = Field(default_factory=list)
+
+
 class TrustListResponse(E2eeModel):
     """``GET /e2ee/v1/trust``."""
 
@@ -275,6 +309,9 @@ TRUST_ROUTES: dict[str, tuple[type[BaseModel] | None, type[BaseModel]]] = {
     "POST /e2ee/v1/trust/approve": (ApproveClientRequest, ClientGrantView),
     "POST /e2ee/v1/trust/revoke": (RevokeClientRequest, TrustListResponse),
     "GET /e2ee/v1/directory-key": (None, DirectoryKeyGrant),
+    "GET /e2ee/v1/agent-identity": (None, AgentIdentityResponse),
+    "GET /e2ee/v1/peers": (None, PeerListResponse),
+    "POST /e2ee/v1/peers/pin": (PeerPinRequest, PeerListResponse),
 }
 
 # TunnelEvent.event["type"] for channel-level pushes.

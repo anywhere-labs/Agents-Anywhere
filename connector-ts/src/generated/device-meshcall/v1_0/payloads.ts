@@ -9,6 +9,10 @@ import type { ChannelSwitchCommand } from "./channel-switch-command.js"
 import type { ClientCallItem } from "./client-call-item.js"
 import type { ClientCallRequest } from "./client-call-request.js"
 import type { ClientSubscribeRequest } from "./client-subscribe-request.js"
+import type { CollabGrantOut } from "./collab-grant-out.js"
+import type { CollabSignalCommand } from "./collab-signal-command.js"
+import type { CollabSignalResult } from "./collab-signal-result.js"
+import type { CollabSupervisionOut } from "./collab-supervision-out.js"
 import type { CommandResultOut } from "./command-result-out.js"
 import type { CommandStatusRequest } from "./command-status-request.js"
 import type { CommandStatusResponse } from "./command-status-response.js"
@@ -75,6 +79,7 @@ import type { WorkspacePrepareCommand } from "./workspace-prepare-command.js"
 /** `CommandCall.p` (request) and `CommandAck.r` (response) of every `aa.device.v1.Commands/*` method. */
 export interface CommandPayloads {
   "channel.switch": { request: ChannelSwitchCommand; response: RuntimeApplyResult }
+  "collab.signal": { request: CollabSignalCommand; response: CollabSignalResult }
   "device.settings.apply": { request: DeviceSettingsApplyCommand; response: DeviceSettingsApplyResult }
   "preview.close": { request: PreviewCloseCommand; response: PreviewCloseResult }
   "preview.open": { request: PreviewOpenCommand; response: PreviewOpenResult }
@@ -132,6 +137,8 @@ export interface EventPayloads {
 /** `OutboxItem.p` by `OutboxItem.m`. */
 export interface OutboxPayloads {
   "attachment.consumed": AttachmentConsumedOut
+  "collab.grant.changed": CollabGrantOut
+  "collab.supervision.changed": CollabSupervisionOut
   "command.result": CommandResultOut
   "session.inventory": SessionInventoryOut
   "session.summary": SessionSummaryOut
@@ -146,6 +153,7 @@ export type OutboxMethod = keyof OutboxPayloads
 /** Business method -> MeshCall `service/method`. */
 export const COMMAND_ROUTES = {
   "channel.switch": "aa.device.v1.Commands/channelSwitch",
+  "collab.signal": "aa.device.v1.Commands/collabSignal",
   "device.settings.apply": "aa.device.v1.Commands/deviceSettingsApply",
   "preview.close": "aa.device.v1.Commands/previewClose",
   "preview.open": "aa.device.v1.Commands/previewOpen",

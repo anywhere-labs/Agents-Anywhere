@@ -242,6 +242,24 @@ export const REQUEST_PARSERS = {
   'device.settings.apply': checkedBy<CommandRequest<'device.settings.apply'>>(),
   'preview.open': checkedBy<CommandRequest<'preview.open'>>(),
   'preview.close': checkedBy<CommandRequest<'preview.close'>>(),
+  'collab.signal': (p): CommandRequest<'collab.signal'> => {
+    if (!Array.isArray(p.signals) || p.signals.length === 0) throw invalid('signals is required')
+    return { signals: p.signals.map((entry, index) => {
+      const signal = object(entry, `signals[${index}]`)
+      const headSeq = optionalNumber(signal.headSeq)
+      if (headSeq === undefined || !Number.isSafeInteger(headSeq) || headSeq < 0) throw invalid(`signals[${index}].headSeq is required`)
+      return {
+        ...(signal as unknown as CommandRequest<'collab.signal'>['signals'][number]),
+        supervisionId: text(signal.supervisionId, 'supervisionId'),
+        supervisorSessionId: text(signal.supervisorSessionId, 'supervisorSessionId'),
+        targetSessionId: text(signal.targetSessionId, 'targetSessionId'),
+        targetDeviceId: text(signal.targetDeviceId, 'targetDeviceId'),
+        status: text(signal.status, 'status') as CommandRequest<'collab.signal'>['signals'][number]['status'],
+        headSeq,
+        at: text(signal.at, 'at'),
+      }
+    }) as CommandRequest<'collab.signal'>['signals'] }
+  },
 } satisfies { readonly [M in CommandMethod]: (payload: Record<string, unknown>) => CommandRequest<M> }
 
 /** The request a handler of `M` receives: the parser's output. */

@@ -13,6 +13,9 @@ Only additions. Old clients ignore the new fields:
 * Queue state ``deviceOffline``.
 * ``TimelineItem.blobRefs``: fields the device moved to its local blob store; clients read them with
   ``GET /sessions/{id}/blobs/{blobRef}`` (``SessionBlobChunk``).
+* Agent collaboration: ``SessionView.origin`` (an Agent created the session), ``supervisors`` /
+  ``supervised`` (supervision edges, ids and state only), and ``content.author`` on user messages an
+  Agent or a supervision wake sent (``MessageAuthor``).
 """
 
 from __future__ import annotations
@@ -25,6 +28,8 @@ from agent_server.core.device_meshcall import (
     DisplayEnvelope,
     GoalStateValue,
     PlanStateValue,
+    SessionOrigin,
+    SupervisionState,
 )
 from agent_server.core.message_queue import SessionQueueState
 from agent_server.core.models import TimelineItem
@@ -44,11 +49,34 @@ HistorySource = Literal["live", "unavailable"]
 CATCHUP_REQUIRED_EVENT = "session.catchup_required"
 
 
+class SupervisionEdge(ProtocolWireModel):
+    """One supervision edge as the session directory keeps it: who watches whom, and its state."""
+
+    supervisionId: str = Field(min_length=1)
+    supervisorSessionId: str = Field(min_length=1)
+    targetSessionId: str = Field(min_length=1)
+    state: SupervisionState
+    createdBy: Literal["human", "agent"]
+
+
+class MessageAuthor(ProtocolWireModel):
+    """``content.author`` of a user message that a person did not type: an Agent acting through the
+    collaboration tools, or a supervision wake (a digest the device sent to the supervisor)."""
+
+    kind: Literal["agent", "supervision"]
+    sessionId: str | None = Field(default=None, description="the supervisor session the Agent acts for")
+    deviceId: str | None = None
+    supervisionId: str | None = None
+
+
 class SessionViewV12(SessionView):
     displayDevice: DisplayEnvelope | None = None
     displayUser: DisplayEnvelope | None = None
     planState: PlanStateValue = "none"
     goalState: GoalStateValue = "none"
+    origin: SessionOrigin | None = None
+    supervisors: list[SupervisionEdge] = Field(default_factory=list, description="edges where this session is the target")
+    supervised: list[SupervisionEdge] = Field(default_factory=list, description="edges where this session is the supervisor")
 
 
 class TimelineBlobRef(ProtocolWireModel):

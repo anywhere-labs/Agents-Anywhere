@@ -29,7 +29,7 @@
       "model": "PairingClientHello",
       "path": "schemas/pairing-client-hello.schema.json",
       "pydanticMode": "validation",
-      "sha256": "9c2fe4124e3415af2957b7a3cc02f0e4b0181c78c773a78c38d5b57f0c59bd08",
+      "sha256": "9c8839721e04f7b596f4cb7d0bd5297cb30b7ca6d8969f46414b0bb8cc0d6852",
       "slug": "pairing-client-hello"
     },
     {
@@ -69,7 +69,7 @@
       "model": "ClientGrantView",
       "path": "schemas/client-grant-view.schema.json",
       "pydanticMode": "validation",
-      "sha256": "be4175eca5e6f74727109c8b113a0ac08afcdeaf63c1479abb0905da13e4295f",
+      "sha256": "e5c82b31d24b4fc17bddb7bb8e1468f60079bcbfb7652e6dc35b33e0c00c5fbc",
       "slug": "client-grant-view"
     },
     {
@@ -77,7 +77,7 @@
       "model": "ApproveClientRequest",
       "path": "schemas/approve-client-request.schema.json",
       "pydanticMode": "validation",
-      "sha256": "455f86b531b4c17c91ffedaa4d1e17ea7a6247be54da9d5c9be450e7abc10ccf",
+      "sha256": "68ce9c550bc9d4aca495c8813d0c5f1388113b06d7a832ab849fa742b22547ad",
       "slug": "approve-client-request"
     },
     {
@@ -93,8 +93,32 @@
       "model": "TrustListResponse",
       "path": "schemas/trust-list-response.schema.json",
       "pydanticMode": "validation",
-      "sha256": "589b4d76e0621630e3b282242567264f2035fd7ca5418925df2e7c78d4119e9d",
+      "sha256": "98e15c7e259208fecac5d1aca5a2f8a3fb66a2aa35ef5ae19a66eb270f6de646",
       "slug": "trust-list-response"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "AgentIdentityResponse",
+      "path": "schemas/agent-identity-response.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "694070626b227ff464cf7b702fd5a19ac458995bcd6ea15d7464761badf8dbb1",
+      "slug": "agent-identity-response"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "PeerPinRequest",
+      "path": "schemas/peer-pin-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "9d9e7b7ea1c873053b4f4202652cef2b66d7ef0ba52fc57844c41c7eaf2da656",
+      "slug": "peer-pin-request"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "PeerListResponse",
+      "path": "schemas/peer-list-response.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "730a4afd7da9d9f2abb153e8b9098d27933da8be3e2eae09c056498caf4778f9",
+      "slug": "peer-list-response"
     },
     {
       "direction": "bidirectional",

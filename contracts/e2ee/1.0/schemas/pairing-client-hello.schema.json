@@ -25,7 +25,8 @@
         "desktop",
         "android",
         "ios",
-        "cli"
+        "cli",
+        "agent"
       ],
       "title": "Platform",
       "type": "string"
