@@ -63,7 +63,7 @@
 - 第一次启动不再下载 Python 和依赖，也不会再停在「正在准备运行环境」；设置页的「运行环境」改为只设置「Connector 网络」。（[#748](https://github.com/anywhere-labs/Agents-Anywhere/pull/748)）
 - Desktop 安装包自带端口预览需要的 frp 客户端：会话里 Agent 或终端启动的本机服务（包括启动它的命令已经结束、或只在输出里打印过地址的服务）可以直接从其他设备预览，端口停止监听后对应的预览会自动关闭。（[#749](https://github.com/anywhere-labs/Agents-Anywhere/pull/749)、[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 这台电脑上已有更新版本的 Connector（命令行或 DSH 插件）在运行时，Desktop 会让它继续连接服务器并在侧栏和设置页说明原因，界面照常可用，只有本机连接相关的操作暂不可用，对方退出后自动接回，不再报「已有其他 Connector 在运行」；更新版本的 Connector 启动时，Desktop 内置的 Connector 会自动交接给它。（[#748](https://github.com/anywhere-labs/Agents-Anywhere/pull/748)、[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
-- Desktop 安装包自带 Pi 运行环境，第一次启动只需在本地复制，不再下载 Node 和 npm 依赖；准备失败时也不再停在启动页、点「重试」也进不去，Pi 会在第一次使用时再次准备并在会话里提示错误。（[#657](https://github.com/anywhere-labs/Agents-Anywhere/pull/657)）
+- Desktop 安装包自带 Pi 运行环境，第一次启动只需在本地复制，无需下载 Node 和 npm 依赖；修复遗漏 Pi 启动资源导致内置 Connector 无法启动的问题，Pi 运行环境准备失败时可在首次使用时重试并查看错误。（[#657](https://github.com/anywhere-labs/Agents-Anywhere/pull/657)、[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 
 ### 本机连接
 

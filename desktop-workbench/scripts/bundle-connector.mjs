@@ -16,6 +16,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { copyBundleRuntimeFiles } from "../../connector-ts/scripts/bundle-runtime-files.mjs";
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // `connector-entry/` imports the Connector by relative path, so the source is always the sibling checkout.
@@ -57,5 +58,6 @@ await esbuild.build({
   // Bundled CommonJS dependencies still call `require`.
   banner: { js: 'import { createRequire as __aaCreateRequire } from "node:module"; const require = __aaCreateRequire(import.meta.url);' },
 });
+copyBundleRuntimeFiles(CONNECTOR_ROOT, OUTPUT_DIR);
 await writeFile(join(OUTPUT_DIR, "package.json"), `${JSON.stringify({ type: "module", connector: connectorPackage.version }, null, 2)}\n`);
 console.log(`Bundled the Connector from ${CONNECTOR_ROOT} into ${OUTPUT_DIR}`);
