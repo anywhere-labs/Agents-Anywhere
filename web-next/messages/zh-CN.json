@@ -1229,7 +1229,24 @@
       "blobKindText": "完整输出",
       "blobKindImage": "图片",
       "blobKindAudio": "音频",
-      "blobKindFile": "数据"
+      "blobKindFile": "数据",
+      "collabToolTitle": "协作 · {action}",
+      "collabTools": {
+        "aa_targets": "列出目标",
+        "aa_spawn": "新建会话",
+        "aa_send": "发消息",
+        "aa_steer": "纠偏",
+        "aa_interrupt": "打断",
+        "aa_status": "查看状态",
+        "aa_read": "查看进展",
+        "aa_wait": "等待",
+        "aa_respond": "代答审批",
+        "aa_plan_review": "审阅计划",
+        "aa_supervise": "开始监督",
+        "aa_unsupervise": "停止监督",
+        "aa_escalate": "交给人决定",
+        "aa_close": "关闭会话"
+      }
     },
     "sessionStatus": {
       "idle": "空闲",
@@ -2003,7 +2020,8 @@
       "modelConfigsTitle": "模型网关",
       "modelsGroup": "模型",
       "channelSwitchTitle": "网关切换",
-      "secureConnections": "安全连接"
+      "secureConnections": "安全连接",
+      "agentCollaboration": "Agent 协作"
     },
     "team": {
       "title": "团队",
@@ -2752,6 +2770,153 @@
       "copy": "复制",
       "copied": "已复制指纹。",
       "copyFailed": "无法复制指纹。"
+    }
+  },
+  "collab": {
+    "createdBy": "由 {title} 创建",
+    "supervisedBy": "被 {title} 监督",
+    "supervisedByState": "被 {title} 监督（{state}）",
+    "originTooltip": "这个会话是 {title} 的 Agent 创建的。",
+    "supervisorTooltip": "{title} 的 Agent 在监督这个会话。",
+    "unknownSession": "会话 {id}",
+    "state": {
+      "active": "监督中",
+      "paused": "已暂停",
+      "ended": "已结束"
+    },
+    "indicator": {
+      "createdByAgent": "由 Agent 创建",
+      "supervised": "被监督中"
+    },
+    "author": {
+      "sentByAgent": "由 {title} 的 Agent 发送",
+      "sentByAgentUnknown": "由另一个会话的 Agent 发送"
+    },
+    "supervisionNotice": {
+      "title": "监督通知",
+      "about": "关于 {title}",
+      "expand": "展开",
+      "collapse": "收起"
+    },
+    "escalation": {
+      "title": "需要你决定",
+      "from": "来自 {title}",
+      "target": "涉及 {title}",
+      "context": "背景"
+    },
+    "openSession": "打开会话",
+    "panel": {
+      "button": "协作",
+      "title": "协作",
+      "description": "此会话的 Agent 可以新建、驱动和监督账号里的其他会话。你可以随时暂停或结束监督。",
+      "deviceUnavailable": "设备暂时无法提供协作信息，下面只列出服务器记录的监督关系。",
+      "notAvailable": "此会话没有开启 Agent 协作。可以在「设置 → Agent 协作」里为它的 Runtime 实例开启。",
+      "grant": "Agent 最多同时管理 {children} 个会话，最多 {depth} 层，每小时最多被唤醒 {wakes} 次。",
+      "grantCrossDevice": "允许访问账号里的其他设备。",
+      "supervisedTitle": "正在监督的会话",
+      "noSupervised": "还没有监督任何会话。",
+      "createdByAgent": "Agent 发起",
+      "createdByHuman": "你发起",
+      "pausedReason": "暂停原因：{reason}",
+      "lastWake": "上次唤醒：{time}",
+      "pause": "暂停",
+      "resume": "继续",
+      "end": "结束",
+      "endTitle": "结束对 {title} 的监督？",
+      "endDescription": "结束后，此会话的 Agent 不会再收到这个会话的进展，也不能再代你操作它。需要时可以重新开始监督。",
+      "cancel": "取消",
+      "authorityTitle": "允许代你做的事",
+      "authorityHint": "这些权限不会超过监督会话自身的权限模式。",
+      "triggersTitle": "什么时候唤醒监督会话",
+      "detailUnavailable": "设备在线后才能查看和修改权限与唤醒时机。",
+      "actionsTitle": "最近的操作",
+      "noActions": "还没有操作。",
+      "outcome": {
+        "pending": "进行中",
+        "accepted": "已执行",
+        "rejected": "被拒绝",
+        "unknown": "结果未知"
+      },
+      "superviseOther": "让此会话监督…",
+      "pickerTitle": "选择要监督的会话",
+      "pickerDescription": "此会话的 Agent 会在对方回合结束、需要审批等时候收到通知。",
+      "pickerPlaceholder": "搜索会话",
+      "pickerEmpty": "没有可以监督的会话。",
+      "started": "已开始监督 {title}。",
+      "failed": "操作没有成功：{error}",
+      "refresh": "刷新",
+      "loading": "正在读取…"
+    },
+    "verbs": {
+      "targets": "列出目标",
+      "spawn": "新建会话",
+      "send": "发消息",
+      "steer": "纠偏",
+      "interrupt": "打断",
+      "status": "查看状态",
+      "read": "查看进展",
+      "wait": "等待",
+      "respond": "代答审批",
+      "review_plan": "审阅计划",
+      "supervise": "开始监督",
+      "unsupervise": "停止监督",
+      "escalate": "交给人决定",
+      "close": "关闭会话"
+    },
+    "authority": {
+      "steer": "纠偏",
+      "interrupt": "打断",
+      "respondApproval": "代答审批",
+      "reviewPlan": "审阅计划",
+      "close": "关闭自己创建的会话"
+    },
+    "triggers": {
+      "turn_end": "回合结束",
+      "turn_failed": "回合失败",
+      "notice_opened": "需要审批",
+      "plan_proposed": "计划待审阅",
+      "goal_changed": "目标变化",
+      "stalled": "长时间没进展"
+    },
+    "settings": {
+      "title": "Agent 协作",
+      "description": "开启后，Agent 可以在同一账号的设备上新建、驱动和监督其他会话。默认全部关闭。",
+      "enabled": "允许 Agent 协作",
+      "enabledDescription": "账号总开关。关闭时，任何 Runtime 实例都不能使用协作工具。",
+      "crossDevice": "允许跨设备",
+      "crossDeviceDescription": "允许 Agent 访问账号里的其他设备上的会话。",
+      "instancesTitle": "Runtime 实例",
+      "instancesDescription": "只列出支持协作工具的 Runtime 实例。每个实例单独开启，并选择它的 Agent 可以代你做的事。",
+      "authorityHint": "这些权限不会超过监督会话自身的权限模式：例如只读模式的会话不能改动其他会话，每次都要询问的会话不能代答审批。",
+      "noInstances": "还没有支持 Agent 协作的 Runtime 实例。",
+      "instanceEnabled": "开启",
+      "instanceCrossDevice": "跨设备",
+      "deviceOffline": "设备离线",
+      "loadFailed": "无法读取 Agent 协作设置：{error}",
+      "saveFailed": "保存失败：{error}",
+      "saved": "已保存。"
+    },
+    "agentAccess": {
+      "title": "设备之间的 Agent 访问",
+      "description": "加密模式下，一台设备上的 Agent 要访问另一台设备，需要你用这个已经与两台设备配对的客户端为它担保。目标设备会在本机请你确认。",
+      "needTwo": "至少要与两台设备配对后才能设置。",
+      "source": "Agent 所在设备",
+      "target": "要访问的设备",
+      "allow": "允许设备 {source} 上的 Agent 访问设备 {target}",
+      "allowButton": "允许访问",
+      "agentLabel": "{device} 的 Agent",
+      "step": {
+        "identity": "正在读取 {source} 的 Agent 身份…",
+        "approve": "请在 {target} 上确认…",
+        "pin": "正在把 {target} 的密钥交给 {source}…"
+      },
+      "done": "{source} 上的 Agent 现在可以访问 {target}。",
+      "failed": "没有完成：{error}",
+      "peersTitle": "{device} 上的 Agent 可以访问",
+      "noPeers": "还没有可以访问的设备。",
+      "peersFailed": "无法读取：{error}",
+      "pinnedAt": "添加于 {time}",
+      "sameDevice": "请选择两台不同的设备。"
     }
   }
 }

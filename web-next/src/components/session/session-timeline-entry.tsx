@@ -26,6 +26,8 @@ import { extractAttachments, stripInjectedAttachmentMentions } from "@/features/
 import { MessageAttachments } from "@/components/session/message-attachments"
 import { CollapsibleUserMessage } from "@/components/session/collapsible-user-message"
 import { TimelineBlobs, hasTimelineBlobs } from "@/components/session/timeline-blobs"
+import { AgentAuthorLabel, CollabEscalationCard, CollabToolSessionLink, SupervisionNoticeCard } from "@/components/session/collab-timeline"
+import { collabEscalationOf, collabToolOf, messageAuthorOf } from "@/features/collab/model"
 
 const MarkdownText = dynamic(() => import("../markdown-text").then((mod) => ({ default: mod.MarkdownText })), { ssr: false })
 const INLINE_REASONING_SUMMARY_MAX_CHARS = 80
@@ -63,8 +65,9 @@ export function TimelineEntry({
     return <TimelineEntryContextMenu item={item}>{entry}</TimelineEntryContextMenu>
   }
   if (item.type === "tool" || isFileChangeArtifact(item)) {
+    const collabTool = collabToolOf(item)
     entry = (
-      <div className={cn(nestedAgentCall && isNestedAgentCall(item) && "ml-5 border-l border-border/60 pl-3")}>
+      <div className={cn(nestedAgentCall && isNestedAgentCall(item) && "ml-5 border-l border-border/60 pl-3", collabTool && "flex min-w-0 flex-col gap-1")}>
         <ToolCard
           item={item}
           token={token}
@@ -77,6 +80,7 @@ export function TimelineEntry({
           onRespondInteraction={onRespondInteraction}
           readOnly={readOnly}
         />
+        {collabTool && !readOnly ? <CollabToolSessionLink call={collabTool} /> : null}
       </div>
     )
     return <TimelineEntryContextMenu item={item}>{entry}</TimelineEntryContextMenu>
@@ -189,6 +193,7 @@ function MessageCard({
   const message = stripInjectedAttachmentMentions(messageText(item))
   const text = hasAttachments && message.trim() === tNew("attachmentOnlyPrompt") ? "" : message
   const showUserStatus = isUser && item.status === "failed"
+  const author = messageAuthorOf(item)
   const blobs = !readOnly && hasTimelineBlobs(item) ? <TimelineBlobs token={token} sessionId={session.id} item={item} /> : null
   if (!text && !hasAttachments && !blobs) {
     if (item.role === "assistant") return null
@@ -200,6 +205,8 @@ function MessageCard({
       />
     )
   }
+  // A supervision wake digest is the device talking to the supervisor's Agent, not the person.
+  if (author?.kind === "supervision" && text) return <SupervisionNoticeCard text={text} />
   const content = text ? (
     <MarkdownText text={text} token={readOnly ? "" : token} session={session} />
   ) : null
@@ -219,6 +226,7 @@ function MessageCard({
         "flex min-w-0 w-full flex-col gap-2 text-sm leading-relaxed",
         isUser ? "max-w-[88%] items-end" : "max-w-full",
       )}>
+        {author?.kind === "agent" ? <AgentAuthorLabel author={author} /> : null}
         {isUser ? attachmentList : null}
         {content ? (
           <div
@@ -244,6 +252,8 @@ function SystemCard({ token, session, item }: { token: string; session: SessionV
   if (kind === "reasoning") return <ReasoningEntry token={token} session={session} item={item} />
   if (kind === "compact") return <CompactMarker item={item} />
   if (kind === "goal") return <GoalTimelineOutcome item={item} />
+  const escalation = collabEscalationOf(item)
+  if (escalation) return <CollabEscalationCard escalation={escalation} />
   const text = textOf(item.content.text) || textOf(item.content.message) || textOf(item.content.rawText)
   const failed = item.status === "failed" || kind === "error"
   const title = text ? `${kind}: ${text}` : `${kind}: ${item.status}`

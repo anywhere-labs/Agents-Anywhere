@@ -38,6 +38,7 @@ import { accountDisplayName } from "@/features/auth/account-profile"
 import { MobileConnectionDialog } from "@/components/pages/mobile-signin-panel"
 import { ArchivedSessionsTab } from "@/components/settings/archived-sessions-tab"
 import { SecureConnectionsTab } from "@/components/settings/secure-connections-tab"
+import { AgentCollaborationTab } from "@/components/settings/agent-collaboration-tab"
 import { ModelConfigsTab } from "@/components/settings/model-configs-tab"
 import { parseSettingsTab, settingsNavigation } from "@/components/settings/settings-navigation"
 import { PageHeader } from "@/components/pages/page-header"
@@ -550,7 +551,7 @@ function AppearanceTab() {
 }
 
 export function SettingsPage() {
-  const { connectors, openSession, projects, sessions, isLoading, refreshData, settingsTab, upsertSession } = useWorkspace()
+  const { connectors, runtimes, openSession, projects, sessions, isLoading, refreshData, settingsTab, upsertSession } = useWorkspace()
   const { session, me: authMe, refreshMe } = useAuth()
   const t = useTranslations("pages.settings")
   // The section sidebar owns navigation; the route is the single source of truth.
@@ -641,6 +642,9 @@ export function SettingsPage() {
             />
           )}
           {tab === "secure-connections" && <SecureConnectionsTab />}
+          {tab === "agent-collaboration" && (
+            <AgentCollaborationTab token={session?.accessToken ?? ""} connectors={connectors} runtimes={runtimes} />
+          )}
           {tab === "archived-sessions" && (
             <ArchivedSessionsTab
               sessions={sessions}

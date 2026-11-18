@@ -87,6 +87,9 @@ export type SessionView = {
   updatedSeq: number
   effectiveRunMode?: "chat" | "terminal" | null
   runtimeSettings?: Record<string, unknown> | null
+  origin?: unknown
+  supervisors?: unknown
+  supervised?: unknown
   updatedAt: string // UI convenience field (not in backend)
 }
 

@@ -6,7 +6,7 @@
 
 export type Appversion = string | null
 export type Label = string
-export type Platform = "web" | "desktop" | "android" | "ios" | "cli"
+export type Platform = "web" | "desktop" | "android" | "ios" | "cli" | "agent"
 
 /**
  * Payload of XXpsk0 message 3 (client -> device).
