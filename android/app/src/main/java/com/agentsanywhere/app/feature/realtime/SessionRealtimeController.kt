@@ -13,6 +13,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
@@ -33,6 +35,8 @@ class SessionRealtimeController(
     private val streamRouter: () -> SessionStreamRouter? = { null },
 ) {
     private val retryNow = Channel<Unit>(Channel.CONFLATED)
+    private val pairingRevisionState = MutableStateFlow(0L)
+    val pairingRevision = pairingRevisionState.asStateFlow()
     private val connectionLock = Any()
     private val activeSocket = AtomicReference<WebSocket?>()
     private val activeSecureStream = AtomicReference<(() -> Unit)?>()
@@ -46,6 +50,11 @@ class SessionRealtimeController(
 
     fun isCurrentRuntimeRefresh(connectionGeneration: Long, refreshGeneration: Long): Boolean =
         isCurrentConnection(connectionGeneration) && activeRuntimeRefreshGeneration.get() == refreshGeneration
+
+    fun devicePaired() {
+        pairingRevisionState.value += 1
+        requestImmediateReconnect()
+    }
 
     fun requestImmediateReconnect() {
         synchronized(connectionLock) {

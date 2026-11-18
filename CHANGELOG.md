@@ -112,6 +112,8 @@
 
 ### Android
 
+- 在会话中完成加密配对后，会自动加载当前会话；加密会话可以正常发送消息和续聊。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
+
 - 连接 v3 Connector 的设备上，只保存在设备上的工具长输出、图片和文件可以点开查看完整内容、加载图片或交给其他应用打开；加密模式下附件也能正常加载。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 没发出去的消息下方显示「发送失败」，点开可以查看原因并删除这条消息，不会再一直留在对话里。（[#660](https://github.com/anywhere-labs/Agents-Anywhere/pull/660)）
 - 打开过文件后再进入会话，会直接显示对话，不再先停在「文件」页。（[#661](https://github.com/anywhere-labs/Agents-Anywhere/pull/661)）

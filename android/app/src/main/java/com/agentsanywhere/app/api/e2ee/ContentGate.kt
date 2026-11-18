@@ -29,14 +29,12 @@ enum class DeviceContent {
 /**
  * 哪些客户端 API 路径是会话 / 设备内容。
  *
- * - `/sessions/{id}/…` 下除 `meta`、`runtime/state`、`runtime/capabilities` 以外都是会话内容；
+ * - `/sessions/{id}/…` 下除 `meta` 以外走会话路由，包括实时运行状态和能力；
  * - `/runtime-workflows/sessions/{id}/…` (the Agent session behind a session: configuration, operations, close, recover) is session content too;
  * - `/connectors/{id}/fs/…`、`/connectors/{id}/terminals-v2…` 是设备内容；
  * - 其余（会话列表、创建会话、归档、设备管理、认证）不归通道管。
  */
 object E2eeContentPaths {
-    private val SESSION_PLAIN_SUBPATHS = setOf("meta", "runtime/state", "runtime/capabilities")
-
     fun classify(path: String): ContentTarget? {
         val pathname = apiPath(path).substringBefore('?').substringBefore('#').removePrefix("/api/v2")
         val segments = pathname.trim('/').split('/').filter { it.isNotEmpty() }.map(::decode)
@@ -44,7 +42,7 @@ object E2eeContentPaths {
         return when (segments[0]) {
             "sessions" -> {
                 val rest = segments.drop(2).joinToString("/")
-                if (rest in SESSION_PLAIN_SUBPATHS) null else ContentTarget.Session(segments[1])
+                if (rest == "meta") null else ContentTarget.Session(segments[1])
             }
             "runtime-workflows" -> if (segments.size >= 4 && segments[1] == "sessions") ContentTarget.Session(segments[2]) else null
             "connectors" -> when {

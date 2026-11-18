@@ -1017,7 +1017,7 @@ fun AgentsAnywhereApp(
             deviceId = deviceId,
             client = e2eeClient,
             onDismiss = { e2eeClient.dismissPairingPrompt(deviceId) },
-            onPaired = { sessionRealtimeController.requestImmediateReconnect() },
+            onPaired = { sessionRealtimeController.devicePaired() },
         )
     }
 }

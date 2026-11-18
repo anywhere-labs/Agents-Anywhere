@@ -41,6 +41,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -1402,7 +1403,8 @@ private fun SessionDetailVisit(
         }
     }
 
-    LaunchedEffect(sessionId, appVisible) {
+    val pairingRevision by realtimeController.pairingRevision.collectAsState()
+    LaunchedEffect(sessionId, appVisible, pairingRevision) {
         if (sessionId == null || !appVisible) return@LaunchedEffect
         if (!state.initialized && visit != null && !diskRestoreTried) {
             diskRestoreTried = true
