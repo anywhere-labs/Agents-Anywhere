@@ -40,6 +40,7 @@ import { dashboardApi } from "@/features/dashboard/api"
 import type { SessionView } from "@/features/dashboard/types"
 import { apiUrl } from "@/lib/api"
 import { openNativeFilePreviewWindow } from "@/lib/file-preview-window"
+import { sessionContentIsEncrypted } from "@/lib/transport/content-transport"
 import { cn } from "@/lib/utils"
 import { useTranslations } from "next-intl"
 
@@ -158,11 +159,19 @@ function MessageAttachmentItem({
     path: shouldReadFromDevice ? attachment.path : undefined,
     fallbackName: name,
   })
+  // An encrypted session's attachments are read from the device through its channel; the Server's copy is not readable.
+  const sealedFile = useSessionBlobFile({
+    token,
+    sessionId: session.id,
+    fileId: !attachmentUrl && !shouldReadFromDevice && !attachment.optimistic && attachment.fileId.startsWith("file_")
+      && sessionContentIsEncrypted(session.id) ? attachment.fileId : undefined,
+    fallbackName: name,
+  })
   const sourceUrl = persistentAttachment ? sessionAttachmentUrl : presetUrl || sessionAttachmentUrl
-  const openUrl = deviceFile.objectUrl || sourceUrl
-  const resolvedName = deviceFile.name || name
-  const resolvedMediaType = deviceFile.mediaType || mediaType
-  const resolvedSize = deviceFile.size ?? attachment.size
+  const openUrl = deviceFile.objectUrl || sealedFile.objectUrl || sourceUrl
+  const resolvedName = deviceFile.name || sealedFile.name || name
+  const resolvedMediaType = deviceFile.mediaType || sealedFile.mediaType || mediaType
+  const resolvedSize = deviceFile.size ?? sealedFile.size ?? attachment.size
   const isImage = attachmentIsImage(resolvedName, resolvedMediaType)
   const previewTarget = attachment.path || openUrl
     ? {
@@ -209,6 +218,29 @@ function MessageAttachmentItem({
         mediaType={mediaType}
         state="error"
         statusText={deviceFile.error}
+      />
+    )
+  }
+
+  if (sealedFile.status === "loading") {
+    return (
+      <LoadingAttachment
+        name={name}
+        mediaType={mediaType}
+        size={attachment.size}
+        orientation={isImage ? "vertical" : "horizontal"}
+      />
+    )
+  }
+
+  if (sealedFile.status === "error") {
+    return (
+      <FileAttachment
+        attachment={attachment}
+        name={name}
+        mediaType={mediaType}
+        state="error"
+        statusText={sealedFile.error}
       />
     )
   }
@@ -329,6 +361,62 @@ function useDeviceAttachmentFile({
       }
     }
   }, [connectorId, fallbackName, root, path, token])
+
+  return state
+}
+
+/** An attachment of the session read from the device (`GET /sessions/{id}/blobs/{fileId}`) as an object URL. */
+function useSessionBlobFile({
+  token,
+  sessionId,
+  fileId,
+  fallbackName,
+}: {
+  token: string
+  sessionId: string
+  fileId?: string
+  fallbackName: string
+}): DeviceAttachmentFileState {
+  const objectUrlRef = useRef<string | null>(null)
+  const [state, setState] = useState<DeviceAttachmentFileState>({ status: "idle", objectUrl: null })
+
+  useEffect(() => {
+    if (!fileId) {
+      setState({ status: "idle", objectUrl: null })
+      return
+    }
+    const blobRef = fileId
+    let cancelled = false
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current)
+      objectUrlRef.current = null
+    }
+    setState({ status: "loading", objectUrl: null })
+
+    async function load() {
+      try {
+        const file = await dashboardApi.sessionBlob(token, sessionId, blobRef)
+        if (cancelled) return
+        const name = file.name && file.name !== blobRef ? file.name : fallbackName
+        const mediaType = concreteMediaType(file.mediaType, name)
+        const objectUrl = URL.createObjectURL(new Blob([file.bytes], { type: mediaType }))
+        objectUrlRef.current = objectUrl
+        setState({ status: "ready", objectUrl, name, size: file.size, mediaType })
+      } catch (error) {
+        if (cancelled) return
+        setState({ status: "error", objectUrl: null, error: error instanceof Error ? error.message : String(error) })
+      }
+    }
+
+    void load()
+    return () => {
+      cancelled = true
+      if (objectUrlRef.current) {
+        URL.revokeObjectURL(objectUrlRef.current)
+        objectUrlRef.current = null
+      }
+    }
+  }, [fallbackName, fileId, sessionId, token])
 
   return state
 }

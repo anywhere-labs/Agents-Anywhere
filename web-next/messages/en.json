@@ -1214,7 +1214,20 @@
       "queueSendNow": "Send now (interrupts the current task)",
       "queueDelete": "Delete",
       "pairingRequiredTitle": "Pair this device first",
-      "pairDevice": "Pair this device"
+      "pairDevice": "Pair this device",
+      "blobStoredOnDevice": "Kept on the device; loaded only when you open it",
+      "blobShowText": "Show full output",
+      "blobShowImage": "Load image",
+      "blobDownload": "Download",
+      "blobCollapse": "Collapse",
+      "blobTooLarge": "Too large to load here.",
+      "blobNotFound": "The device no longer has this content.",
+      "blobDeviceOffline": "The device is offline. Try again when it is back.",
+      "blobLoadFailed": "Couldn't load this content.",
+      "blobKindText": "Full output",
+      "blobKindImage": "Image",
+      "blobKindAudio": "Audio",
+      "blobKindFile": "Data"
     },
     "sessionStatus": {
       "idle": "Idle",

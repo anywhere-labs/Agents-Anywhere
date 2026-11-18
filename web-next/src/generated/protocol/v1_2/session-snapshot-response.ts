@@ -166,6 +166,17 @@ export type Statusreason = string | null
 export type Updatedat2 = string
 export type Updatedseq2 = number
 export type Hasmore = boolean
+/**
+ * present only when fields were moved to the device's blob store
+ */
+export type Blobrefs = TimelineBlobRef[] | null
+export type Blobid = string
+export type Bytes = number
+export type Mediatype1 = string | null
+/**
+ * RFC 6901 JSON pointer into the item's content
+ */
+export type Path = string
 export type Completedat = string | null
 export type Contenthash = string
 export type Createdat5 = string
@@ -185,7 +196,7 @@ export type Status6 = "pending" | "running" | "waiting_approval" | "done" | "fai
 export type Type1 = "message" | "tool" | "artifact" | "marker" | "system"
 export type Updatedat3 = string
 export type Updatedseq3 = number
-export type Items1 = TimelineItem[]
+export type Items1 = TimelineItemV12[]
 export type Nextseq = number
 
 export interface ProtocolSessionSnapshotResponseV12 {
@@ -202,7 +213,7 @@ export interface ProtocolSessionSnapshotResponseV12 {
   serverTime: Servertime
   session: SessionViewV12
   state: SessionRuntimeState | null
-  timeline: ProtocolTimelineSnapshot
+  timeline: ProtocolTimelineSnapshotV12
   [k: string]: unknown
 }
 export interface Approval {
@@ -447,13 +458,14 @@ export interface Metadata1 {
 export interface Selections {
   [k: string]: string | null
 }
-export interface ProtocolTimelineSnapshot {
+export interface ProtocolTimelineSnapshotV12 {
   hasMore: Hasmore
   items: Items1
   nextSeq: Nextseq
   [k: string]: unknown
 }
-export interface TimelineItem {
+export interface TimelineItemV12 {
+  blobRefs?: Blobrefs
   completedAt?: Completedat
   content?: Content1
   contentHash: Contenthash
@@ -468,6 +480,20 @@ export interface TimelineItem {
   type: Type1
   updatedAt: Updatedat3
   updatedSeq: Updatedseq3
+  [k: string]: unknown
+}
+/**
+ * A field of a timeline item the device moved to its local blob store; the item keeps a preview at ``path``.
+ *
+ * A ``text/*`` blob is the full UTF-8 text of the string previewed at ``path``. Any other blob is media whose
+ * ``data`` (or ``blob``) key was removed from the block at ``path``'s parent, or a ``data:`` URL string replaced
+ * by a short description.
+ */
+export interface TimelineBlobRef {
+  blobId: Blobid
+  bytes: Bytes
+  mediaType: Mediatype1
+  path: Path
   [k: string]: unknown
 }
 export interface Content1 {

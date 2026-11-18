@@ -1,3 +1,4 @@
+import type { TimelineBlobRef } from "@/features/dashboard/session-blobs";
 import type { AuthMe } from "@/features/auth";
 import type {
   ProtocolCapability,
@@ -619,6 +620,8 @@ export type TimelineItem = {
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
+  /** Fields the device moved to its blob store (protocol 1.2); read with `sessionBlob`. */
+  blobRefs?: TimelineBlobRef[];
 };
 
 export type SessionShareScope = "message" | "session";

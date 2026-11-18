@@ -1214,7 +1214,20 @@
       "queueSendNow": "立即发送（打断当前任务）",
       "queueDelete": "删除",
       "pairingRequiredTitle": "需要先配对这台设备",
-      "pairDevice": "配对这台设备"
+      "pairDevice": "配对这台设备",
+      "blobStoredOnDevice": "保存在设备上，打开时才加载",
+      "blobShowText": "展开完整输出",
+      "blobShowImage": "加载图片",
+      "blobDownload": "下载",
+      "blobCollapse": "收起",
+      "blobTooLarge": "内容太大，无法在这里加载。",
+      "blobNotFound": "设备上已经没有这份内容。",
+      "blobDeviceOffline": "设备离线，等它重新连接后再试。",
+      "blobLoadFailed": "无法加载这份内容。",
+      "blobKindText": "完整输出",
+      "blobKindImage": "图片",
+      "blobKindAudio": "音频",
+      "blobKindFile": "数据"
     },
     "sessionStatus": {
       "idle": "空闲",

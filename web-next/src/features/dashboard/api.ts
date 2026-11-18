@@ -5,6 +5,7 @@ import { shouldAuthorizeDownloadUrl } from "@/lib/api/download-auth";
 import { ApiError } from "@/lib/api/errors";
 import { readFileThroughChannel } from "@/lib/transport/channel-files";
 import { contentTransportForDevice, sessionContentIsEncrypted } from "@/lib/transport/content-transport";
+import { readSessionBlob, type SessionBlobChunk, type SessionBlobContent } from "@/features/dashboard/session-blobs";
 import type {
   ArchiveAllResponse,
   BulkArchiveResponse,
@@ -422,6 +423,24 @@ export class DashboardApi {
     return this.client.get<SessionTimelineResponse>(
       `/sessions/${encodeURIComponent(sessionId)}/timeline`,
       { token, query },
+    );
+  }
+
+  /**
+   * A blob the device keeps for the session (a timeline item's `blobRefs[].blobId`, or an attachment's `fileId`),
+   * read slice by slice; through the device's encrypted channel when the session's content uses one.
+   */
+  sessionBlob(
+    token: string,
+    sessionId: string,
+    blobRef: string,
+    options: { maxBytes?: number; signal?: AbortSignal } = {},
+  ): Promise<SessionBlobContent> {
+    const path = `/sessions/${encodeURIComponent(sessionId)}/blobs/${encodeURIComponent(blobRef)}`;
+    return readSessionBlob(
+      (_ref, offset, length) => this.client.get<SessionBlobChunk>(path, { token, query: { offset: String(offset), length: String(length) } }),
+      blobRef,
+      options,
     );
   }
 

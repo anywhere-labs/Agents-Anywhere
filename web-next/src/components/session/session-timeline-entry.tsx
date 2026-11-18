@@ -25,6 +25,7 @@ import { firstTextOf, messageText, recordsOf, textOf } from "@/components/sessio
 import { extractAttachments, stripInjectedAttachmentMentions } from "@/features/dashboard/attachments"
 import { MessageAttachments } from "@/components/session/message-attachments"
 import { CollapsibleUserMessage } from "@/components/session/collapsible-user-message"
+import { TimelineBlobs, hasTimelineBlobs } from "@/components/session/timeline-blobs"
 
 const MarkdownText = dynamic(() => import("../markdown-text").then((mod) => ({ default: mod.MarkdownText })), { ssr: false })
 const INLINE_REASONING_SUMMARY_MAX_CHARS = 80
@@ -188,7 +189,8 @@ function MessageCard({
   const message = stripInjectedAttachmentMentions(messageText(item))
   const text = hasAttachments && message.trim() === tNew("attachmentOnlyPrompt") ? "" : message
   const showUserStatus = isUser && item.status === "failed"
-  if (!text && !hasAttachments) {
+  const blobs = !readOnly && hasTimelineBlobs(item) ? <TimelineBlobs token={token} sessionId={session.id} item={item} /> : null
+  if (!text && !hasAttachments && !blobs) {
     if (item.role === "assistant") return null
     return (
       <JsonMarker
@@ -229,6 +231,7 @@ function MessageCard({
           </div>
         ) : null}
         {!isUser ? attachmentList : null}
+        {blobs}
         {showUserStatus ? <TimelineStatusBadge status={item.status} /> : null}
       </div>
     </div>

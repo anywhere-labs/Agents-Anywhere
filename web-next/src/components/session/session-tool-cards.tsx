@@ -8,6 +8,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 import { InteractionCard } from "@/components/session/session-approval-card"
+import { TimelineBlobs, hasTimelineBlobs } from "@/components/session/timeline-blobs"
 import { useSessionFilePreviewOpener } from "@/components/session/session-file-preview-context"
 import { MonacoCodeView, monacoLanguageForFile } from "@/components/monaco-code-view"
 import { openSessionFilePreview } from "@/components/markdown-text"
@@ -72,7 +73,8 @@ export function ToolCard({
   const changes = recordsOf(item.content.changes)
   const displayOutput = changes.length > 0 ? null : output
   const title = timelineToolTitle(item, session, tSession)
-  const hasDetail = !isAgentCall && Boolean(command || displayOutput || changes.length > 0 || interaction)
+  const blobs = !readOnly && hasTimelineBlobs(item)
+  const hasDetail = !isAgentCall && Boolean(command || displayOutput || changes.length > 0 || interaction || blobs)
   const shouldOpenForInteraction = Boolean(interaction)
   const [localOpen, setLocalOpen] = React.useState(shouldOpenForInteraction)
   const actualOpen = open ?? localOpen
@@ -122,6 +124,7 @@ export function ToolCard({
             changes={changes}
             readOnly={readOnly}
           />
+          {blobs ? <TimelineBlobs token={token} sessionId={session.id} item={item} /> : null}
           {interaction ? (
             <div className="mt-2">
               <InteractionCard
