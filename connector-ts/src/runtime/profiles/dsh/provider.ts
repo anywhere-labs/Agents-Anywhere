@@ -64,8 +64,17 @@ const INSTANCE_SCHEMA: InstanceConfigSchema = {
   uiSchema: { order: ['dshHome'], fields: { dshHome: { component: 'path' } } },
 }
 
+/** The runtime type DSH instances have (the `runtime_type` session IDs are derived from). */
+export const DSH_RUNTIME_TYPE = 'dsh' as const
+
+export interface DshRuntimeProviderOptions extends DshProviderDeps {
+  /** Whether a DSH host with the AA plugin is connected now: DSH then serves without a launchable `dsh`. */
+  readonly hostsConnected?: () => boolean
+}
+
 /** The device registry exposes DSH configuration; executable selection stays local to the Connector. */
-export function dshProvider(deps: DshProviderDeps = {}): RuntimeProvider {
+export function dshProvider(deps: DshRuntimeProviderOptions = {}): RuntimeProvider {
+  const hostsConnected = (): boolean => deps.hostsConnected?.() === true
   const direct = new DshProvider({ ...deps, desktopExecutables: deps.desktopExecutables ?? desktopDshExecutables(deps.env) })
   const validateSettings = (settings: JsonObject, gateway?: ModelGatewayConfig): JsonObject => {
     if (gateway !== undefined) fail('model_gateway_unsupported', 'DSH model connections are configured in the local DSH profile.')
@@ -81,15 +90,15 @@ export function dshProvider(deps: DshProviderDeps = {}): RuntimeProvider {
     return { ...config, allowNpx: false }
   }
   return {
-    type: 'dsh',
+    type: DSH_RUNTIME_TYPE,
     instanceSchema: () => INSTANCE_SCHEMA,
     validateSettings,
     async discover(): Promise<ProviderFacts> {
       const facts = await direct.discover({ allowNpx: false })
-      // Runtime discovery admits the type when the Connector can provision it asynchronously.
-      const available = facts.installed || deps.managed !== undefined
+      // Runtime discovery admits the type when the Connector can provision it asynchronously or a plugin host serves it.
+      const available = facts.installed || deps.managed !== undefined || hostsConnected()
       return {
-        type: 'dsh',
+        type: DSH_RUNTIME_TYPE,
         displayName: 'DSH',
         installed: available,
         ...(facts.version !== undefined ? { agentVersion: facts.version } : {}),
@@ -102,7 +111,7 @@ export function dshProvider(deps: DshProviderDeps = {}): RuntimeProvider {
     async start(instance: RuntimeInstanceConfig): Promise<DshRuntime> {
       const settings = validateSettings(instance.settings, instance.modelGateway)
       const runtime = await direct.start({ runtimeId: instance.instanceId, settings })
-      if (!runtime.canMove) fail('runtime_unavailable', 'DSH could not be started on the work device.')
+      if (!runtime.canMove && !hostsConnected()) fail('runtime_unavailable', 'DSH could not be started on the work device.')
       return runtime
     },
   }
@@ -153,3 +162,4 @@ export class DshProvider {
       ...(managed ? { directInventoryReady: async () => (await managed.cached()) !== undefined } : {}), dshHome })
   }
 }
+

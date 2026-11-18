@@ -190,7 +190,7 @@ export async function runCli(argv: readonly string[], options: CliOptions = {}):
   }
   switch (command) {
     case 'rpc':
-      await runRpc({ ...(configPath !== undefined ? { configPath } : {}), debug, ...(options.home !== undefined ? { home: options.home } : {}), ...(options.routerBinary !== undefined ? { routerBinary: options.routerBinary } : {}) })
+      await runRpc({ ...(configPath !== undefined ? { configPath } : {}), debug, ...(options.home !== undefined ? { home: options.home } : {}), ...(options.routerBinary !== undefined ? { routerBinary: options.routerBinary } : {}), ...(options.compose !== undefined ? { compose: options.compose } : {}) })
       return 0
     case 'configure':
     case 'start':

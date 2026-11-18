@@ -30,6 +30,7 @@ import { browseScope } from '../sync/client-api/views.js'
 import type { ProtocolCapabilitySet } from '../generated/protocol/v1_2/capability-set.js'
 import { AttachmentCache, FileOps, PrintedUrls, RootPolicy, ShellOps, Terminals, nodePtySpawner, previewHost, rootsFromEnv, workspaceMethods, type PreviewHost, type TerminalOptions } from '../workspace/index.js'
 import { instanceCatalogs, preparedDownloadUpload } from './client-api.js'
+import { DshHosts } from './dsh-hosts.js'
 import { importLegacyV2 } from './legacy-import.js'
 import { sessionHintsSource, watchTimelineUrls, withPortPreview, type PreviewWiring } from './preview.js'
 import { builtinProviders } from './runtimes.js'
@@ -69,6 +70,11 @@ export interface ComposeOptions {
    * leaving this out leaves preview out (the capability is not declared and the commands are unknown).
    */
   readonly preview?: PreviewWiring | null
+  /**
+   * The local socket DSH plugin hosts dial (contracts/dsh-bridge/3.0): its directory and this process's instance ID.
+   * Absent or `false`: DSH is served only through its direct route.
+   */
+  readonly dshHosts?: { readonly dir: string; readonly instanceId: string } | false
 }
 
 const EGRESS_REFRESH_MS = 60_000
@@ -142,9 +148,10 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
       const log = options.log
       // Assigned below; Runtime events only arrive after an instance started, which needs the service.
       let onRuntimeEvent: (spec: RuntimeInstanceSpec, handle: RuntimeHandle, event: RuntimeHandleEvent) => void = () => undefined
+      let dshHosts: DshHosts | null = null
       const runtimes = new RuntimeRegistry({
         connectorId: settings.connectorId,
-        providers: options.providers ?? builtinProviders({ log, dataDir: options.dataDir }),
+        providers: options.providers ?? builtinProviders({ log, dataDir: options.dataDir, dsh: { hostsConnected: () => dshHosts?.connected() ?? false } }),
         log,
         onEvent: (spec, handle, event) => onRuntimeEvent(spec, handle, event),
       })
@@ -327,6 +334,25 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
           track?.trust?.(trust)
         }
         const deviceTrust = trust
+        if (options.dshHosts) {
+          // Started before the link: a host's native sessions reach the local store while the device is offline.
+          const hosts = new DshHosts({
+            ...options.dshHosts,
+            connectorVersion: options.connectorVersion,
+            registry: runtimes,
+            log,
+            onAttached: spec => {
+              void scans.now(spec.runtimeId)
+              void announceRuntimes(runtimes, live, log)
+            },
+          })
+          try {
+            await hosts.start()
+            dshHosts = hosts
+          } catch (error) {
+            log('warn', `DSH plugin hosts cannot connect: ${message(error)}`)
+          }
+        }
         const logger: LinkLogger = {
           debug: text => options.log('debug', text),
           info: text => options.log('info', text),
@@ -379,6 +405,7 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
         stopTimelineUrls?.()
         await preview?.close().catch(() => undefined)
         scans.close()
+        await dshHosts?.stop().catch(() => undefined)
         if (trust !== null) track?.trust?.(null)
         await trust?.close().catch(() => undefined)
         await preparations?.close().catch(() => undefined)

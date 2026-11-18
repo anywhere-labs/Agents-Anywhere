@@ -11,6 +11,7 @@ import {
   commandDigest,
   compareVersions,
   dataDir,
+  legacyDataDir,
   identityMatches,
   isV2ConnectorCommand,
   legacyIdentity,
@@ -175,5 +176,13 @@ describe('data directory', () => {
   it('defaults to ~/.agents-anywhere/v3 and honours AGENT_CONNECTOR_DATA_DIR', () => {
     expect(dataDir({}, '/h')).toBe(join('/h', '.agents-anywhere', 'v3'))
     expect(dataDir({ AGENT_CONNECTOR_DATA_DIR: '/data' }, '/h')).toBe('/data')
+  })
+
+  it('reads v2 data from AA_CONNECTOR_LEGACY_DATA_DIR, else AGENT_CONNECTOR_DATA_DIR, else ~/.agents-anywhere', () => {
+    expect(legacyDataDir({}, '/h')).toBe(join('/h', '.agents-anywhere'))
+    expect(legacyDataDir({ AGENT_CONNECTOR_DATA_DIR: '/data' }, '/h')).toBe('/data')
+    expect(legacyDataDir({ AGENT_CONNECTOR_DATA_DIR: '/data', AA_CONNECTOR_LEGACY_DATA_DIR: '/plugin/connector' }, '/h')).toBe('/plugin/connector')
+    // The v3 data directory does not follow the legacy one.
+    expect(dataDir({ AA_CONNECTOR_LEGACY_DATA_DIR: '/plugin/connector' }, '/h')).toBe(join('/h', '.agents-anywhere', 'v3'))
   })
 })

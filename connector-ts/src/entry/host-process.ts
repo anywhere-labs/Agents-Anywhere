@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 
 import {
+  agentsAnywhereHome,
   ConfigFile,
   ConnectorController,
   ControlEvents,
@@ -128,7 +129,7 @@ export async function startHostProcess(options: HostProcessOptions): Promise<Hos
     config: new ConfigFile(options.configPath ?? (options.home !== undefined ? join(dir, 'connector.json') : defaultConfigPath())),
     lease,
     runtimePath: runtimeRecordPath(home),
-    runtime: connectorRuntime({ legacyDataDir: legacyDataDir(process.env, home), ...options.compose, trust: composeTrust, dataDir: dir, host: COMPOSE_HOST[options.kind], connectorVersion: CONNECTOR_VERSION, log }, {
+    runtime: connectorRuntime({ legacyDataDir: legacyDataDir(process.env, home), dshHosts: { dir: join(agentsAnywhereHome(home), 'dsh-bridge'), instanceId: lease.instanceId }, ...options.compose, trust: composeTrust, dataDir: dir, host: COMPOSE_HOST[options.kind], connectorVersion: CONNECTOR_VERSION, log }, {
       store: value => (store = value),
       trust: value => {
         trust = value

@@ -4,7 +4,7 @@ import type { Log, RuntimeProvider } from '../application/ports/index.js'
 import { claudeProvider } from '../runtime/profiles/claude/index.js'
 import { codexProvider } from '../runtime/profiles/codex/index.js'
 import { managedDshRuntime } from '../runtime/profiles/dsh/managed-runtime.js'
-import { dshProvider } from '../runtime/profiles/dsh/provider.js'
+import { dshProvider, type DshRuntimeProviderOptions } from '../runtime/profiles/dsh/provider.js'
 import { officialAcpProviders } from '../runtime/profiles/generic/index.js'
 import { hermesProvider } from '../runtime/profiles/hermes/index.js'
 import { piProvider } from '../runtime/profiles/pi/provider.js'
@@ -12,6 +12,8 @@ import { piProvider } from '../runtime/profiles/pi/provider.js'
 export interface BuiltinProviderOptions {
   readonly log: Log
   readonly dataDir?: string
+  /** DSH: plugin hosts reach it through the local socket (`dsh-hosts.ts`), which tells it when one is connected. */
+  readonly dsh?: DshRuntimeProviderOptions
 }
 
 /** The Runtime profiles this build ships. */
@@ -23,7 +25,7 @@ export function builtinProviders(options: BuiltinProviderOptions): RuntimeProvid
     claudeProvider({ onStderr }),
     // Pi keeps v2's instance directory and caches (`~/.agents-anywhere/connector/pi`) so an upgrade reuses them.
     piProvider({ onStderr }),
-    dshProvider(managed ? { managed } : {}),
+    dshProvider({ ...options.dsh, ...(managed ? { managed } : {}) }),
     hermesProvider({ onStderr }),
     ...officialAcpProviders({ onStderr }),
   ]
