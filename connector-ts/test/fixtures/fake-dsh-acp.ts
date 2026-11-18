@@ -42,7 +42,7 @@ export class FakeDshAcp implements acp.Agent {
       agentCapabilities: { loadSession: this.options.plugin === true, mcpCapabilities: { http: true },
         promptCapabilities: { image: this.options.image === true, audio: false, embeddedContext: false },
         sessionCapabilities: { close: {}, list: {}, resume: {} } }, authMethods: [],
-      ...(this.options.plugin ? { _meta: { dsh: { features: { steer: true, questions: true, attachments: true, planning: true } } } } : {}) }
+      ...(this.options.plugin ? { _meta: { dsh: { features: { steer: true, questions: true, attachments: true, planning: true, continue: true } } } } : {}) }
   }
   async authenticate() {}
   private configOptions(): acp.SessionConfigOption[] {
@@ -94,9 +94,36 @@ export class FakeDshAcp implements acp.Agent {
     return this.conn.sessionUpdate({ sessionId, update: { sessionUpdate: 'agent_message_chunk', messageId, content: { type: 'text', text },
       ...(this.options.plugin ? { _meta: { dsh: { itemId: itemOf(messageId), committed: {} } } } : {}) } })
   }
+  /** Plugin: the native seq of the failed turn DSH would continue, per session (§7 `continuable`). */
+  readonly continuable = new Map<string, number>()
+  continued: { sessionId: string, turnEndSeq: number }[] = []
+  private seq = 100
+  private turnEnded(sessionId: string, reason: { kind: string, message?: string }, continuable: boolean) {
+    const seq = ++this.seq
+    return this.conn.sessionUpdate({ sessionId, update: { sessionUpdate: 'session_info_update',
+      _meta: { dsh: { seq, turnEvent: { sessionId, phase: 'ended', turn: seq, seq, requestIds: [], stopReason: 'end_turn', reason, continuable } } } } }).then(() => seq)
+  }
+  async extMethod(method: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
+    if (!this.options.plugin || method !== '_dsh/session/continue') throw acp.RequestError.methodNotFound(method)
+    const sessionId = String(params.sessionId)
+    const turnEndSeq = Number(params.turnEndSeq)
+    if (this.continuable.get(sessionId) !== turnEndSeq) return { outcome: 'unavailable' }
+    this.continuable.delete(sessionId)
+    this.continued.push({ sessionId, turnEndSeq })
+    // DSH runs the continuation as its own turn after answering.
+    setTimeout(() => void this.message(sessionId, 'continued', `m-continue-${turnEndSeq}`).then(() => this.turnEnded(sessionId, { kind: 'completed' }, false)), 10)
+    return { outcome: 'accepted' }
+  }
   async prompt(params: acp.PromptRequest): Promise<acp.PromptResponse> {
     if (this.running.has(params.sessionId)) throw acp.RequestError.invalidParams(undefined, 'a prompt is already running')
     const text = params.prompt.map(block => block.type === 'text' ? block.text : '').join('')
+    if (this.options.plugin && text.includes('fails')) {
+      this.prompts.push({ sessionId: params.sessionId, text })
+      // DSH ends a failed turn normally (`end_turn`); the failure is in the turn event.
+      const seq = await this.turnEnded(params.sessionId, { kind: 'error', message: 'upstream unavailable' }, true)
+      this.continuable.set(params.sessionId, seq)
+      return { stopReason: 'end_turn' }
+    }
     if (!text.trim() && !params.prompt.some(block => block.type === 'image')) throw acp.RequestError.invalidParams(undefined, 'empty prompt')
     this.prompts.push({ sessionId: params.sessionId, text })
     if (this.hangPrompts) {

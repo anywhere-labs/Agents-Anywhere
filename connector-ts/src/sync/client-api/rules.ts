@@ -24,12 +24,12 @@ export function mergeInteractionInput(context: Readonly<Record<string, unknown>>
 export const NOTICE_GONE_CODES: ReadonlySet<string> = new Set(['not_found', 'notice_not_found', 'interaction_not_found', 'request_not_found', 'approval_not_found'])
 
 /** Interaction kinds answered by choosing one of the offered actions; they only carry input when the user typed some. */
-const OPTION_KINDS: ReadonlySet<string> = new Set(['approval', 'confirmation'])
+const OPTION_KINDS: ReadonlySet<string> = new Set(['approval', 'confirmation', 'execution_error'])
 
 /**
  * The `input` to answer a notice with, or null to answer with the action alone. Forms always get the merged input
- * (an empty form is still an accept); an approval or confirmation gets it only when the user sent input, so a plain
- * option choice stays an option choice.
+ * (an empty form is still an accept); an approval, confirmation or error-card action gets it only when the user sent
+ * input, so a plain option choice stays an option choice.
  */
 export function noticeAnswerInput(notice: Readonly<Record<string, unknown>> | null, userInput: Readonly<Record<string, unknown>> | null): Record<string, unknown> | null {
   const merged = mergeInteractionInput(record(notice?.context) ?? {}, userInput ?? {})

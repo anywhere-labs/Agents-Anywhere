@@ -1,5 +1,6 @@
 import type { GoalObservation, GoalRequest } from '../domain/goals/index.js'
 import { AgentSessionControls, type AgentConfigurationUpdate, type AgentOperation } from './conversation/agent-session.js'
+import type { RespondNoticeResult } from '../generated/device-meshcall/v1_0/respond-notice-result.js'
 import { InteractionService } from './conversation/interactions.js'
 import { MessageService, type CreateSessionCommand, type SendMessageCommand, type SendResult } from './conversation/messages.js'
 import { Recovery } from './conversation/recovery.js'
@@ -132,7 +133,7 @@ export class ConversationService implements SessionEventSink {
     return this.controls.interrupt(sessionId)
   }
 
-  public respondNotice(sessionId: string, noticeId: string, responseId: string, answer: Parameters<RuntimeSession['respond']>[1]): Promise<{ status: string }> {
+  public respondNotice(sessionId: string, noticeId: string, responseId: string, answer: Parameters<RuntimeSession['respond']>[1]): Promise<RespondNoticeResult> {
     return this.interactions.respondNotice(sessionId, noticeId, responseId, answer)
   }
 

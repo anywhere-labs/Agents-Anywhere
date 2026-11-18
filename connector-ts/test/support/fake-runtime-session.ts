@@ -7,6 +7,7 @@ import type {
   ConfigResult,
   DeliveryRef,
   InteractionAnswer,
+  InteractionRefusal,
   PromptAcceptance,
   PromptInput,
   RuntimeEvent,
@@ -58,6 +59,8 @@ export class FakeRuntimeSession implements RuntimeSession {
   readonly events: PushQueue<RuntimeEvent> = new PushQueue()
   nextPrompt: PromptAcceptance = { outcome: 'accepted' }
   nextSteer: SteerResult = { outcome: 'injected' }
+  /** The result of the next respond (a refusal, or nothing for an accepted answer). */
+  nextRespond: InteractionRefusal | undefined
   capabilities: SessionCapabilities
 
   constructor(
@@ -86,8 +89,11 @@ export class FakeRuntimeSession implements RuntimeSession {
     this.calls.push({ method: 'cancel', expectedTurnId })
   }
 
-  async respond(interactionId: string, answer: InteractionAnswer): Promise<void> {
+  async respond(interactionId: string, answer: InteractionAnswer): Promise<void | InteractionRefusal> {
     this.calls.push({ method: 'respond', interactionId, answer })
+    const refusal = this.nextRespond
+    this.nextRespond = undefined
+    return refusal
   }
 
   async configure(change: ConfigChange): Promise<ConfigResult> {

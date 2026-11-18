@@ -17,7 +17,7 @@
  *   AA can only say so (`writer_held`, hint `install_dsh_plugin`).
  */
 import { resolve } from 'node:path'
-import type { Capability, Catalogs, CommandResult, ConfigChange, ConfigResult, DeliveryRef, HistoryWindow, InteractionAnswer,
+import type { Capability, Catalogs, CommandResult, ConfigChange, ConfigResult, DeliveryRef, HistoryWindow, InteractionAnswer, InteractionRefusal,
   NativeHistoryPage, NativeSessionPage, NativeSessionRef, NewSessionSpec, OpenOptions, OpenTarget, PrepareOptions, PreparedSession, PromptAcceptance, PromptInput, RuntimeCapabilities,
   RuntimeError, RuntimeEvent, RuntimeHandle, RuntimeHandleEvent, RuntimeSession, SteerResult } from '../../../application/ports/runtime-session.js'
 import { asRecord } from '../../acp/client.js'
@@ -28,7 +28,8 @@ import { EventQueue } from '../../acp/queue.js'
 import { createDirectSession } from './direct/create.js'
 import { directPromptProblem, dshDirectDialect, isWriterHeld, writerHeld } from './direct/dialect.js'
 import { supportedDshVersion } from './launcher.js'
-import { pluginPromptProblem } from './plugin/dialect.js'
+import { DIRECT_ROUTE_REASON } from './capabilities.js'
+import { isTurnFailureCard, pluginPromptProblem } from './plugin/dialect.js'
 import type { DshHostHello, DshPluginRoute } from './plugin/route.js'
 import type { DshSessionIds } from './session-ids.js'
 
@@ -409,7 +410,14 @@ export class DshSession implements RuntimeSession {
   }
 
   async cancel(expectedTurnId?: string): Promise<void> { await (await this.running()).cancel(expectedTurnId) }
-  async respond(interactionId: string, answer: InteractionAnswer): Promise<void> { await (await this.running()).respond(interactionId, answer) }
+  async respond(interactionId: string, answer: InteractionAnswer): Promise<void | InteractionRefusal> {
+    const inner = await this.running()
+    // Only the plugin route can continue a failed turn; the direct route keeps the card for when a host returns.
+    if (this.route.kind === 'direct' && isTurnFailureCard(interactionId)) {
+      return { refused: { code: 'dsh_continue_unavailable', message: DIRECT_ROUTE_REASON }, closes: false }
+    }
+    return inner.respond(interactionId, answer)
+  }
   async configure(change: ConfigChange): Promise<ConfigResult> { return (await this.current()).configure(change) }
   async command(name: string, args?: string): Promise<CommandResult> { return (await this.current()).command(name, args) }
 

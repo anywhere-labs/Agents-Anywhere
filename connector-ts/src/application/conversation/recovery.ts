@@ -45,10 +45,11 @@ export class Recovery {
       }
     }
     for (const interaction of await store.interactions.allActive()) {
-      const expired = interactionRules.expire(interaction, 'connector_restarted', at)
-      await store.interactions.save(expired)
+      const next = interactionRules.afterRestart(interaction, at)
+      if (next === interaction) continue
+      await store.interactions.save(next)
       const session = await store.sessions.get(interaction.sessionId)
-      if (session !== null) this.kernel.countApprovalClosed(session, expired)
+      if (session !== null) this.kernel.countApprovalClosed(session, next)
     }
     for (const session of await store.sessions.list()) {
       if (session.activeTurn !== null) await this.turns.onSessionLost(session.sessionId, { code: 'connector_restarted', message: 'The Connector restarted during this turn.' })

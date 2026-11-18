@@ -1066,6 +1066,7 @@
       "interactionsPending": "{count} 个待处理",
       "inputRequestOther": "其他",
       "inputRequestSubmit": "提交",
+      "continueFailedTurn": "继续",
       "toolRan": "执行了 {command}",
       "toolCommandFallback": "命令",
       "toolChangedFile": "修改了 {path}",

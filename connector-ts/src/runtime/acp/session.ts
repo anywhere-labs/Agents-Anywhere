@@ -19,6 +19,7 @@ import type {
   DeliveryRef,
   GoalPort,
   InteractionAnswer,
+  InteractionRefusal,
   InteractionKind,
   InteractionOption,
   PlanningPort,
@@ -308,9 +309,17 @@ export class AcpRuntimeSession implements RuntimeSession {
     }
   }
 
-  async respond(interactionId: string, answer: InteractionAnswer): Promise<void> {
+  async respond(interactionId: string, answer: InteractionAnswer): Promise<void | InteractionRefusal> {
     const pending = this.interactions.get(interactionId)
-    if (!pending) throw new JsonRpcError(-32602, `no pending interaction ${interactionId}`)
+    if (!pending) {
+      const card = this.dialect.respondCard?.(interactionId, answer, {
+        nativeSessionId: this.nativeSessionId,
+        request: (method, params) => this.client.request(method, params, { timeoutMs: 60_000 }),
+        emit: event => this.events.push(event),
+      })
+      if (card) return card
+      throw new JsonRpcError(-32602, `no pending interaction ${interactionId}`)
+    }
     const turnId = this.turn?.turnId
     // Compute and validate the answer first (invalid option, dialect error); only when everything passes is the pending interaction removed: on a validation failure the interaction stays, the Agent keeps waiting and the user can answer again.
     let result: unknown

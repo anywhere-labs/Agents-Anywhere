@@ -235,6 +235,60 @@ describe('runtime events', () => {
     expect(await store.interactions.list('sess_1', true)).toEqual([])
   })
 
+  it('keeps a failed-turn card open past its turn; continuing answers it, a refusal closes it, a new turn retires it', async () => {
+    await makeSession()
+    await service.binding('sess_1')
+    const runtime = sessions[0]!
+    const card = (seq: number, turnId?: string) => ({
+      type: 'interaction.opened' as const, interactionId: `dsh_turn_failed_${seq}`, kind: 'execution_error' as const, title: 'DSH 本轮执行失败', body: 'boom',
+      options: [{ id: 'continue', label: '继续', kind: 'other' as const }], context: { kind: 'execution_error' }, metadata: { turnEndSeq: seq },
+      ...(turnId !== undefined ? { turnId } : {}),
+    })
+    runtime.emit({ type: 'turn.started', turnId: 't1', origin: 'user' })
+    runtime.emit(card(7, 't1'))
+    runtime.emit({ type: 'turn.ended', turnId: 't1', reason: 'end_turn' })
+    await settle(40)
+    const [open] = await store.interactions.list('sess_1', true)
+    expect(open).toMatchObject({ noticeId: 'dsh_turn_failed_7', kind: 'execution_error', blocking: false, state: 'open' })
+    expect(open!.payload).toMatchObject({ interactionType: 'execution_error', severity: 'error', responseRequired: false, blocking: null,
+      actions: [{ actionId: 'continue', label: '继续', style: 'primary' }], metadata: { turnEndSeq: 7, turnId: 't1' } })
+    expect((await store.sessions.get('sess_1'))?.status).toBe('idle')
+    // The start of the failed turn reported late (a fast failure) does not retire its own card.
+    await service.onTurnStarted('sess_1', 't1', null)
+    expect(await store.interactions.list('sess_1', true)).toHaveLength(1)
+
+    // Continue: the Runtime takes it; the card is answered when the Runtime says so.
+    expect(await service.respondNotice('sess_1', 'dsh_turn_failed_7', 'r1', { kind: 'option', optionId: 'continue' })).toEqual({ status: 'responding' })
+    runtime.emit({ type: 'interaction.resolved', interactionId: 'dsh_turn_failed_7', resolution: 'answered', answeredBy: 'self' })
+    await settle(40)
+    expect(await store.interactions.list('sess_1', true)).toEqual([])
+
+    // A refusal that does not close (no plugin host now) leaves the card open for another try.
+    runtime.emit(card(9))
+    await settle(40)
+    runtime.nextRespond = { refused: { code: 'dsh_continue_unavailable', message: 'later' }, closes: false }
+    expect(await service.respondNotice('sess_1', 'dsh_turn_failed_9', 'r2', { kind: 'option', optionId: 'continue' }))
+      .toEqual({ status: 'open', ok: false, code: 'dsh_continue_unavailable', message: 'later' })
+    // The same card reported again keeps its state; a refusal that closes expires it and tells the clients.
+    runtime.emit(card(9))
+    await settle(40)
+    runtime.nextRespond = { refused: { code: 'dsh_continue_unavailable', message: '这一轮已无法继续生成，请重新发送消息。' }, closes: true }
+    expect(await service.respondNotice('sess_1', 'dsh_turn_failed_9', 'r3', { kind: 'option', optionId: 'continue' }))
+      .toMatchObject({ status: 'expired', ok: false, code: 'dsh_continue_unavailable' })
+    expect(await store.interactions.list('sess_1', true)).toEqual([])
+    expect(live.some(event => event.method === 'runtime.notice.updated' && (event.payload.notice as { noticeId: string, status: string }).noticeId === 'dsh_turn_failed_9'
+      && (event.payload.notice as { status: string }).status === 'expired')).toBe(true)
+
+    // A Connector restart keeps a card (its Runtime still decides); the next turn retires it.
+    runtime.emit(card(11))
+    await settle(40)
+    await service.recover()
+    expect((await store.interactions.get('sess_1', 'dsh_turn_failed_11'))?.state).toBe('open')
+    runtime.emit({ type: 'turn.started', turnId: 't2', origin: 'autonomous' })
+    await settle(40)
+    expect((await store.interactions.get('sess_1', 'dsh_turn_failed_11'))).toMatchObject({ state: 'expired', resolution: 'turn_started' })
+  })
+
   it('reports Runtime live facts as their runtime.status members', async () => {
     await makeSession()
     await service.binding('sess_1')

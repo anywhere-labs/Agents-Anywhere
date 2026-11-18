@@ -28,6 +28,7 @@ import type {
   ConfigResult,
   DeliveryRef,
   InteractionAnswer,
+  InteractionRefusal,
   JsonObject,
   NewSessionSpec,
   PlanningPort,
@@ -684,7 +685,7 @@ export class PiRuntimeSession implements RuntimeSession {
     await this.active?.inner.cancel(expectedTurnId)
   }
 
-  async respond(interactionId: string, answer: InteractionAnswer): Promise<void> {
+  async respond(interactionId: string, answer: InteractionAnswer): Promise<void | InteractionRefusal> {
     this.touch()
     const pending = this.synthetic.get(interactionId)
     const inner = this.active?.inner

@@ -436,8 +436,11 @@ export interface RuntimeSession {
   steer?(input: PromptInput, delivery: DeliveryRef): Promise<SteerResult>
   /** Interrupts the current turn; a mismatched expectedTurnId leaves later turns alone. */
   cancel(expectedTurnId?: string): Promise<void>
-  /** Answers approvals, forms, plan reviews and questions. */
-  respond(interactionId: string, answer: InteractionAnswer): Promise<void>
+  /**
+   * Answers approvals, forms, plan reviews, questions and card actions. Resolves with a refusal when the Runtime
+   * definitely declined the answer (nothing ran); throws when the outcome is unknown.
+   */
+  respond(interactionId: string, answer: InteractionAnswer): Promise<void | InteractionRefusal>
   /** Changes config options such as model, permission, mode and effort. */
   configure(change: ConfigChange): Promise<ConfigResult>
   /** The session's current config options as the Runtime reported them last; absent when the Runtime does not list them. */
@@ -655,7 +658,17 @@ export type TimelineItemEvent =
       readonly data?: JsonObject
     })
 
-export type InteractionKind = 'approval' | 'form' | 'plan_review' | 'question'
+/**
+ * `execution_error`: a card about a turn that already ended (DSH: the turn failed). It does not block the session,
+ * its options are actions such as "continue", and the next turn closes it.
+ */
+export type InteractionKind = 'approval' | 'form' | 'plan_review' | 'question' | 'execution_error'
+
+/** A Runtime's definite "no" to an answer. `closes`: the interaction cannot be answered any more (the card goes away). */
+export interface InteractionRefusal {
+  readonly refused: RuntimeError
+  readonly closes: boolean
+}
 
 export interface InteractionOption {
   readonly id: string
@@ -692,6 +705,9 @@ export type RuntimeEvent =
       readonly schema?: JsonObject
       /** The plan document for plan reviews. */
       readonly plan?: PlanDocument
+      /** For `execution_error` cards: what went wrong (the notice's `context`) and where it came from (its `metadata`). */
+      readonly context?: JsonObject
+      readonly metadata?: JsonObject
     })
   | (EventBase & {
       /** The interaction was handled (answered on any side, withdrawn by the Runtime, turn ended). */

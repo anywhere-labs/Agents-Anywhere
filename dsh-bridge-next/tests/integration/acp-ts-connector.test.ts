@@ -12,7 +12,7 @@ import * as Remotes from '@deepseek-ai/dsh-api-remotes'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { setApprovalPolicy } from '@deepseek-ai/dsh-user-approval'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, LlmError, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { nativeRuntime } from '../fixtures/native-runtime.js'
 import { mountAgents, TextAdapter } from '../fixtures/agent-runtime.js'
 
@@ -202,6 +202,64 @@ test('the plugin route: DSH questions become forms and plan reviews become plan_
       await until(() => events.some(event => event.type === 'interaction.resolved' && event.interactionId === pending.interactionId), 'AA form withdrawn')
       await session.close()
     } finally { await agentHandle.dispose() }
+  } finally { await f.close() }
+})
+
+/** Fails the requests whose failure codes are queued, then replies like TextAdapter. */
+class FlakyAdapter extends TextAdapter {
+  failures: string[] = []
+  override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    const code = this.failures.shift()
+    if (code === undefined) return yield* super.stream(options)
+    this.requests.push(options)
+    throw new LlmError('upstream unavailable', code)
+  }
+}
+
+test('the plugin route: a failed turn leaves a card whose "continue" runs DSH\'s continuation once', { timeout: 60_000, skip }, async () => {
+  const adapter = new FlakyAdapter()
+  const f = await fixture({ adapter })
+  try {
+    const session = await f.route.handle.open({ kind: 'new', spec: { cwd: f.home, preferredNativeSessionId: 'aa_0123456789abcdef_continue-1' } }, { sessionId: 'sess_cont', replay: 'none' })
+    const live = collect(session.events)
+    adapter.failures.push('SERVER')
+    assert.equal((await session.prompt({ text: '你好' }, { deliveryId: 'd1', clientMessageId: 'cm-fail' })).outcome, 'accepted')
+    await until(() => live.some(event => event.type === 'interaction.opened'), 'failure card opened')
+    const card = live.find(event => event.type === 'interaction.opened') as Extract<Port, { type: 'interaction.opened' }>
+    assert.equal(card.kind, 'execution_error')
+    assert.deepEqual(card.options?.map(option => option.id), ['continue'])
+    assert.equal(card.metadata?.source, 'dsh.turn.failed')
+
+    assert.equal(await session.respond(card.interactionId, { kind: 'option', optionId: 'continue' }), undefined)
+    assert.ok(live.some(event => event.type === 'interaction.resolved' && event.interactionId === card.interactionId && event.resolution === 'answered'))
+    await until(() => adapter.release !== undefined, 'DSH continues in a new turn')
+    adapter.release?.()
+    await until(() => live.some(event => event.type === 'message.completed' && event.role === 'assistant' && event.text === '你好'), 'the continuation replied')
+    // DSH's empty continuation is not a user message.
+    assert.equal(live.filter(event => event.type === 'message.completed' && event.role === 'user').length, 1)
+    await until(() => f.native.status(SessionId('aa_0123456789abcdef_continue-1')) === 'idle', 'continuation finished')
+    // Continuing the same turn again is a no-op: DSH ran it once.
+    const asked = adapter.requests.length
+    assert.equal(await session.respond(card.interactionId, { kind: 'option', optionId: 'continue' }), undefined)
+    await delay(200)
+    assert.equal(adapter.requests.length, asked)
+
+    // A failure followed by a new turn can no longer continue: the card is refused and closes.
+    adapter.failures.push('SERVER')
+    assert.equal((await session.prompt({ text: '再来' }, { deliveryId: 'd2', clientMessageId: 'cm-fail-2' })).outcome, 'accepted')
+    await until(() => live.filter(event => event.type === 'interaction.opened').length === 2, 'second failure card')
+    const stale = live.filter(event => event.type === 'interaction.opened')[1] as Extract<Port, { type: 'interaction.opened' }>
+    assert.notEqual(stale.interactionId, card.interactionId)
+    await until(() => f.native.status(SessionId('aa_0123456789abcdef_continue-1')) === 'idle', 'second turn over')
+    adapter.release = undefined
+    const next = session.prompt({ text: '换个问题' }, { deliveryId: 'd3', clientMessageId: 'cm-next' })
+    await until(() => adapter.release !== undefined, 'the next turn runs')
+    adapter.release?.()
+    assert.equal((await next).outcome, 'accepted')
+    await until(() => f.native.status(SessionId('aa_0123456789abcdef_continue-1')) === 'idle', 'next turn over')
+    assert.deepEqual(await session.respond(stale.interactionId, { kind: 'option', optionId: 'continue' }),
+      { refused: { code: 'dsh_continue_unavailable', message: '这一轮已无法继续生成，请重新发送消息。' }, closes: true })
+    await session.close()
   } finally { await f.close() }
 })
 

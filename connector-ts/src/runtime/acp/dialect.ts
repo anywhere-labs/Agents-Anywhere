@@ -10,6 +10,7 @@ import type {
   DeliveryRef,
   InteractionAnswer,
   InteractionKind,
+  InteractionRefusal,
   HistoryWindow,
   NativeHistoryPage,
   NativeSessionRef,
@@ -67,7 +68,7 @@ export interface PlanReviewDecision {
 export interface TurnState {
   readonly turnId?: string
   readonly origin?: 'user' | 'autonomous' | 'external'
-  /** The update comes from history replay. */
+  /** The update is history replay: it must not open interactions. */
   readonly replay?: boolean
 }
 
@@ -139,6 +140,11 @@ export interface AcpDialect {
   goalSnapshots?(info: AgentInfo): { readonly method: string; readonly actions: readonly import('../../domain/goals/index.js').GoalAction[] } | undefined
   /** Reverse requests the dialect handles itself (`_codex/session/history_reset`, etc.). Returns undefined when unrecognized. */
   handleRequest?(method: string, params: JsonRecord, session: DialectSessionHooks): Promise<unknown> | undefined
+  /**
+   * Answers an interaction the dialect opened from an update (an `execution_error` card), not from a reverse request.
+   * Returns undefined when the interaction is not one of the dialect's.
+   */
+  respondCard?(interactionId: string, answer: InteractionAnswer, session: DialectCardSession): Promise<InteractionRefusal | undefined> | undefined
   /** Session-level notification methods the dialect receives (routed to the session by params.sessionId). */
   readonly notificationMethods?: readonly string[]
   onNotification?(method: string, params: JsonRecord, session: DialectSessionHooks): void
@@ -150,6 +156,13 @@ export interface AcpDialect {
   adaptConfig?(options: ConfigOption[]): ConfigOption[]
   /** Read-only history: no resume, no lock, no native writes. undefined falls back to the generic implementation (load + capture + close). */
   readNativeHistory?(ref: NativeSessionRef, window: HistoryWindow, connection: () => Promise<{ readonly client: AcpClient; readonly info: AgentInfo }>): Promise<NativeHistoryPage> | undefined
+}
+
+/** What a dialect needs to act on one of its cards. */
+export interface DialectCardSession {
+  readonly nativeSessionId: string
+  request(method: string, params: JsonRecord): Promise<unknown>
+  emit(event: RuntimeEvent): void
 }
 
 /** Session abilities the dialect can use in reverse requests and notifications. */

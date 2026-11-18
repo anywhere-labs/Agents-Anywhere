@@ -1,4 +1,4 @@
-import { statusAfterTurn } from '../../domain/conversation/index.js'
+import { interaction as interactionRules, statusAfterTurn } from '../../domain/conversation/index.js'
 import type { QueueOp } from '../ports/index.js'
 import { TimelineProjector } from '../projection.js'
 import type { LiveFact, RuntimeBindings } from './bindings.js'
@@ -38,6 +38,20 @@ export class TurnLifecycle {
     }
     await this.kernel.patchSession(sessionId, { status: 'running', activeTurn: { turnId, clientMessageId, startedAt: this.kernel.deps.clock.nowIso() } })
     if (clientMessageId !== null) await this.deliveries.settleDeliveryStarted(sessionId, clientMessageId, null)
+    await this.closeEarlierCards(sessionId, turnId)
+  }
+
+  /** A new turn closes the failure cards of earlier turns. */
+  private async closeEarlierCards(sessionId: string, turnId: string): Promise<void> {
+    const deps = this.kernel.deps
+    const stale = interactionRules.closedByTurnStart(await deps.store.interactions.list(sessionId, true), turnId)
+    if (stale.length === 0) return
+    const at = deps.clock.nowIso()
+    for (const card of stale) {
+      const next = interactionRules.expire(card, 'turn_started', at)
+      await deps.store.interactions.save(next)
+      this.kernel.emitNotice(next)
+    }
   }
 
   public async onTurnEnded(sessionId: string, turnId: string, outcome: 'completed' | 'interrupted' | 'failed', _message: string | null): Promise<void> {

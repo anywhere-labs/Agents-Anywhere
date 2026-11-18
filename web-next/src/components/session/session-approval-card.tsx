@@ -81,6 +81,7 @@ export function InteractionCard({
     if (action.actionId === "reject") return tSession("reject")
     if (action.actionId === "cancel" || action.actionId === "dismiss") return tCommon("cancel")
     if (action.actionId === "submit") return tSession("inputRequestSubmit")
+    if (notice.interactionType === "execution_error" && action.actionId === "continue") return tSession("continueFailedTurn")
     return action.label
   }
 
