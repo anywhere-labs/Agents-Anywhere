@@ -87,3 +87,8 @@ export function piHistoryItemId(sessionId: string, entry: JsonObject, entryIndex
   const key: JsonValue = pyTruthy(entryId) ? entryId : `legacy:${entryIndex}:${acpFingerprint(entry)}`
   return acpFingerprint([sessionId, 'pi', key, suffix])
 }
+
+/** Pi ACP identifies assistant messages by their parent entry and ordinal among assistant siblings. */
+export function piAssistantItemId(sessionId: string, chunk: 'agent_message_chunk' | 'agent_thought_chunk', messageId: string): string {
+  return acpFingerprint([sessionId, chunk, messageId])
+}

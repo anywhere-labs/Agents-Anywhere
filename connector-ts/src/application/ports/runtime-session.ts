@@ -328,6 +328,10 @@ export interface NativeSessionPage {
 }
 
 export interface HistoryWindow {
+  /** Conversation ID used by live events when projecting history into its timeline. */
+  readonly sessionId?: string
+  /** Include identity aliases from the entire native record for repairing an existing timeline. */
+  readonly reconcile?: boolean
   /** When absent, start from the newest page. */
   readonly cursor?: string
   readonly limit: number
@@ -339,6 +343,8 @@ export interface NativeHistoryPage {
   readonly items: readonly HistoryItem[]
   readonly olderCursor?: string
   readonly newerCursor?: string
+  /** Current item ID → previous IDs for the same native message in older Connector versions. */
+  readonly itemAliases?: ReadonlyMap<string, readonly string[]>
 }
 
 /** History items and live events share one item shape and the same ID rules (replaying the same content keeps its ID). */

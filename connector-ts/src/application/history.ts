@@ -3,12 +3,14 @@ import type {
   ChangeFeed,
   Clock,
   ConversationStore,
-  HistoryItem,
+  HistoryWindow,
+  NativeHistoryPage,
   NativeSessionRef,
   NativeSessionSummary,
   RuntimeHandle,
   RuntimeHandles,
   SessionCommit,
+  TimelineChange,
 } from './ports/index.js'
 import { TimelineProjector } from './projection.js'
 
@@ -44,8 +46,15 @@ const stateKey = (sessionId: string): string => `history:${sessionId}`
 const permissionKey = (sessionId: string): string => `native-permission:${sessionId}`
 /** Native user message item id -> the stored user item it is (`NativeHistory.sameUserMessages`). */
 const aliasKey = (sessionId: string): string => `history-aliases:${sessionId}`
+const piReplayRepairKey = (sessionId: string): string => `pi-assistant-replay-repaired:${sessionId}`
 /** How many of the newest stored items are searched for the user message a native one repeats. */
 const USER_MATCH_WINDOW = 500
+
+interface HistorySource {
+  session: Session
+  handle: RuntimeHandle
+  ref: NativeSessionRef
+}
 
 function text(content: JsonObject): string {
   return typeof content.text === 'string' ? content.text.trim() : ''
@@ -119,7 +128,7 @@ export class NativeHistory {
     if (stored?.permission !== permission) await this.deps.store.kv.set(session.runtimeId, key, { permission })
   }
 
-  private async source(sessionId: string): Promise<{ session: Session; handle: RuntimeHandle; ref: NativeSessionRef } | null> {
+  private async source(sessionId: string): Promise<HistorySource | null> {
     const session = await this.deps.store.sessions.get(sessionId)
     if (session === null || session.externalSessionId === null) return null
     const handle = await this.deps.runtimes.handle(session.runtimeId)
@@ -127,13 +136,44 @@ export class NativeHistory {
     return { session, handle, ref: { nativeSessionId: session.externalSessionId, ...(session.cwd ? { cwd: session.cwd } : {}) } }
   }
 
+  private read(source: HistorySource, window: HistoryWindow): Promise<NativeHistoryPage> {
+    return source.handle.readNativeHistory(source.ref, { ...window, sessionId: source.session.sessionId })
+  }
+
   /** Projects the latest page once (discovery, or before a Runtime session is opened). */
   public ensureLatest(sessionId: string): Promise<void> {
     return this.serial(sessionId, async () => {
       const source = await this.source(sessionId)
-      if (source === null || (await this.state(source.session)) !== null) return
-      await this.projectLatest(source, null, false)
+      if (source === null) return
+      if ((await this.state(source.session)) === null) await this.projectLatest(source, null, false)
+      else if (source.session.runtimeType === 'pi') {
+        await this.repairPiReplies(source).catch(error => this.deps.onError?.(sessionId, error))
+      }
     })
+  }
+
+  /** Older versions could persist both IDs. Keep the original live reply and its order. */
+  private async repairPiReplies(source: HistorySource): Promise<void> {
+    const { sessionId, runtimeId } = source.session
+    const { kv, timeline } = this.deps.store
+    const key = piReplayRepairKey(sessionId)
+    if (await kv.get(runtimeId, key) === true) return
+    const { itemAliases } = await this.read(source, { limit: 1, reconcile: true })
+    if (itemAliases === undefined) return
+    const deletes: string[] = []
+    let pending = false
+    for (const [currentId, previousIds] of itemAliases) {
+      const current = await timeline.get(sessionId, currentId)
+      if (current === null) continue
+      for (const id of previousIds) {
+        if (await timeline.get(sessionId, id) === null) continue
+        // A streamed reply can still be incomplete. Revisit it after it settles.
+        if (current.status === 'running' || current.status === 'pending') pending = true
+        else deletes.push(id)
+      }
+    }
+    if (deletes.length > 0) await this.apply(sessionId, { upserts: [], deletes, at: this.deps.clock.nowIso() })
+    if (!pending) await kv.set(runtimeId, key, true)
   }
 
   /** Whether the native record has items older than the projected ones. */
@@ -161,8 +201,8 @@ export class NativeHistory {
         if (state === null || state.olderCursor === null) return added
         const stored = await this.deps.store.timeline.read(sessionId, beforeOrderSeq === null ? 'latest' : 'before', beforeOrderSeq, limit, Number.MAX_SAFE_INTEGER)
         if (stored.items.length >= limit) return added
-        const page = await source.handle.readNativeHistory(source.ref, { cursor: state.olderCursor, limit: this.pageLimit, direction: 'older' })
-        const commit = await this.place(source.session, page.items, 'below', {})
+        const page = await this.read(source, { cursor: state.olderCursor, limit: this.pageLimit, direction: 'older' })
+        const commit = await this.place(source.session, page, 'below', {})
         added ||= commit !== null && commit.changed.length > 0
         state = { ...state, olderCursor: page.olderCursor ?? null }
         await this.saveState(source.session, state)
@@ -187,14 +227,14 @@ export class NativeHistory {
       for (;;) {
         let page
         try {
-          page = await source.handle.readNativeHistory(source.ref, { cursor, limit: this.pageLimit, direction: 'newer' })
+          page = await this.read(source, { cursor, limit: this.pageLimit, direction: 'newer' })
         } catch (error) {
           if (!HISTORY_CURSOR_INVALID.has((error as { code?: string }).code ?? '')) throw error
           // The native record was rewritten: project it again and make clients take a snapshot.
           await this.projectLatest(source, nativeUpdatedAt, true)
           return
         }
-        if (page.items.length > 0) await this.place(source.session, page.items, 'above', { turnEnded: source.session.activeTurn === null })
+        if (page.items.length > 0) await this.place(source.session, page, 'above', { turnEnded: source.session.activeTurn === null })
         const next = page.newerCursor ?? cursor
         await this.saveState(source.session, { ...state, newerCursor: next, nativeUpdatedAt: nativeUpdatedAt ?? state.nativeUpdatedAt })
         if (page.items.length < this.pageLimit || next === cursor) return
@@ -204,21 +244,21 @@ export class NativeHistory {
   }
 
   private async projectLatest(
-    source: { session: Session; handle: RuntimeHandle; ref: NativeSessionRef },
+    source: HistorySource,
     nativeUpdatedAt: string | null,
     replace: boolean,
     where: 'below' | 'above' = 'below',
     previous: HistoryState | null = null,
   ): Promise<void> {
-    const page = await source.handle.readNativeHistory(source.ref, { limit: this.pageLimit })
-    await this.place(source.session, page.items, replace ? 'replace' : where, { turnEnded: page.items.length > 0 && source.session.activeTurn === null })
+    const page = await this.read(source, { limit: this.pageLimit })
+    await this.place(source.session, page, replace ? 'replace' : where, { turnEnded: page.items.length > 0 && source.session.activeTurn === null })
     // A repeated latest read keeps the older cursor of the first one: pages below are unchanged.
     const olderCursor = previous !== null && !replace ? previous.olderCursor : page.olderCursor ?? null
     await this.saveState(source.session, { olderCursor, newerCursor: page.newerCursor ?? null, nativeUpdatedAt })
   }
 
-  /** Projects `events` (oldest first) and gives new items positions below the oldest or above the newest item. */
-  private async place(session: Session, events: readonly HistoryItem[], where: 'below' | 'above' | 'replace', patch: { turnEnded?: boolean }): Promise<SessionCommit | null> {
+  /** Projects a history page (oldest first) and positions new items relative to the stored timeline. */
+  private async place(session: Session, { items: events, itemAliases }: NativeHistoryPage, where: 'below' | 'above' | 'replace', patch: { turnEnded?: boolean }): Promise<SessionCommit | null> {
     if (events.length === 0 && where !== 'replace') return null
     const projector = new TimelineProjector(session.runtimeType, session.externalSessionId, null, () => this.deps.clock.nowIso())
     const drafts = new Map<string, TimelineDraft>()
@@ -229,12 +269,26 @@ export class NativeHistory {
     const ordered = [...drafts.values()].sort((a, b) => a.orderSeq - b.orderSeq)
     const fresh: TimelineDraft[] = []
     const upserts: TimelineDraft[] = []
+    const deletes: string[] = []
     const same = where === 'replace' ? null : await this.sameUserMessages(session, ordered)
     for (const draft of ordered) {
       // A user message this device already stored (sent from here, under its own id) stays as it was stored.
       if (same?.has(draft.id) === true) continue
       const stored = where === 'replace' ? null : await this.deps.store.timeline.get(session.sessionId, draft.id)
-      if (stored !== null) upserts.push({ ...draft, orderSeq: stored.orderSeq })
+      const aliases = where === 'replace' ? undefined : itemAliases?.get(draft.id)
+      if (aliases) {
+        deletes.push(...aliases)
+        // A live reply already represents this native message. Keep its original metadata and position.
+        if (stored !== null && stored.status === draft.status && stored.content.text === draft.content.text) continue
+      }
+      let orderSeq = stored?.orderSeq
+      if (orderSeq === undefined && aliases) {
+        for (const id of aliases) {
+          const old = await this.deps.store.timeline.get(session.sessionId, id)
+          if (old !== null) orderSeq = Math.min(orderSeq ?? old.orderSeq, old.orderSeq)
+        }
+      }
+      if (orderSeq !== undefined) upserts.push({ ...draft, orderSeq })
       else fresh.push(draft)
     }
     // Positions in first-appearance order: the projector numbered drafts from the anchor, one native index each.
@@ -257,15 +311,20 @@ export class NativeHistory {
       if (index < 1) continue // Out of room below: older items stay unprojected.
       upserts.push({ ...draft, orderSeq: index * ORDER_SUB_SLOTS + subOf(draft) })
     }
-    if (upserts.length === 0 && where !== 'replace') return null
-    const commit = await this.deps.store.timeline.apply(session.sessionId, {
+    if (upserts.length === 0 && deletes.length === 0 && where !== 'replace') return null
+    return this.apply(session.sessionId, {
       upserts,
+      ...(deletes.length > 0 ? { deletes } : {}),
       ...(where === 'replace' ? { replace: {} } : {}),
       ...(patch.turnEnded === true ? { session: { turnEnded: true } } : {}),
       at: this.deps.clock.nowIso(),
     })
+  }
+
+  private async apply(sessionId: string, change: TimelineChange): Promise<SessionCommit> {
+    const commit = await this.deps.store.timeline.apply(sessionId, change)
     if (commit.toSeq >= commit.fromSeq && (commit.changed.length > 0 || commit.deleted.length > 0 || commit.reset)) {
-      this.deps.feed.publish({ sessionId: session.sessionId, fromSeq: commit.fromSeq, toSeq: commit.toSeq, resetSeq: commit.session.clock.resetSeq, reset: commit.reset })
+      this.deps.feed.publish({ sessionId, fromSeq: commit.fromSeq, toSeq: commit.toSeq, resetSeq: commit.session.clock.resetSeq, reset: commit.reset })
     }
     return commit
   }

@@ -153,14 +153,14 @@ export class PiRuntimeHandle implements RuntimeHandle {
   }
 
   /**
-   * Read-only history: parses native files directly, without resume, locks or writes to the source file. Item IDs
-   * are computed from the platform session ID used when browsing native sessions (`pi_native_<...>`, domain/identity
-   * `piNativeSessionId`), which clients already know; a session that changed native ID uses its external (original) ID.
+   * Parse the file without opening or writing the native session. Browsing keeps the original history IDs.
+   * A Conversation supplies its ID so its projected assistant replies match the live stream.
    */
   async readNativeHistory(ref: NativeSessionRef, window: HistoryWindow): Promise<NativeHistoryPage> {
     const source = await this.index.find(ref)
     const history = await this.index.read(source.path)
-    return piHistoryPage(piTimeline(history, piNativeSessionId(this.instanceId, history.path, source.externalSessionId)), window)
+    const nativeKey = piNativeSessionId(this.instanceId, history.path, source.externalSessionId)
+    return piHistoryPage(piTimeline(history, nativeKey, 'pi', window.sessionId), window, history.complete)
   }
 
   async open(target: OpenTarget, options: OpenOptions): Promise<PiRuntimeSession> {

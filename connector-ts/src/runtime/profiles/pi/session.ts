@@ -460,12 +460,12 @@ export class PiRuntimeSession implements RuntimeSession {
   private resetHistory(history: PiHistory): void {
     const revision = history.revision
     this.events.push({ type: 'history.reset', phase: 'begin', revision })
-    for (const event of this.historyEvents(history)) this.events.push(event)
+    for (const event of this.historyEvents(history, this.sessionId)) this.events.push(event)
     this.events.push({ type: 'history.reset', phase: 'commit', revision })
   }
 
-  private historyEvents(history: PiHistory): RuntimeEvent[] {
-    return piHistoryEvents(piTimeline(history, this.sessionId))
+  private historyEvents(history: PiHistory, conversationId?: string): RuntimeEvent[] {
+    return piHistoryEvents(piTimeline(history, this.sessionId, 'pi', conversationId))
   }
 
   /** With a pinned native file, checks that no other writer exists before sending new input. */

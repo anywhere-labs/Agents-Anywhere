@@ -13,7 +13,7 @@ import { isAbsolute } from 'node:path'
 import { statSync } from 'node:fs'
 
 import type { AttachmentInfo, HistoryItem, HistoryWindow, NativeHistoryPage } from '../../../application/ports/runtime-session.js'
-import { piHistoryItemId, type JsonValue } from '../../../domain/identity/index.js'
+import { piAssistantItemId, piHistoryItemId, type JsonValue } from '../../../domain/identity/index.js'
 import { fail } from '../../acp/errors.js'
 import { within } from './files.js'
 
@@ -189,21 +189,23 @@ export interface PiTimelineItem {
   readonly content: Record<string, JsonValue>
   readonly source: Record<string, JsonValue>
   readonly orderSeq: number
+  readonly assistantReplay?: { readonly id: string; readonly text: string; readonly previousIds: readonly string[] }
 }
 
 /** Keeps the whole entry tree (branches and compactions appear as their original nodes); each native record becomes one or more items. */
-export function piTimeline(history: PiHistory, sessionId: string, runtime = 'pi'): PiTimelineItem[] {
+export function piTimeline(history: PiHistory, sessionId: string, runtime = 'pi', conversationId?: string): PiTimelineItem[] {
   const result: PiTimelineItem[] = []
   const tools = new Map<string, PiTimelineItem>()
+  const assistantOrdinals = new Map<JsonValue | undefined, number>()
   history.entries.forEach((entry, entryIndex) => {
-    const add = (suffix: string | number, type: PiTimelineItem['type'], role: PiTimelineItem['role'], content: Record<string, JsonValue>, status: PiTimelineItem['status'] = 'done'): PiTimelineItem => {
+    const add = (suffix: string | number, type: PiTimelineItem['type'], role: PiTimelineItem['role'], content: Record<string, JsonValue>, status: PiTimelineItem['status'] = 'done', assistantReplay?: PiTimelineItem['assistantReplay']): PiTimelineItem => {
       const source: Record<string, JsonValue> = {
         runtime, sessionId: history.nativeId, itemId: entry.id ?? null, itemType: entry.type ?? null, event: 'pi.native_entry',
         derivedKey: String(suffix), nativeSessionId: history.nativeId, nativeEntryId: entry.id ?? null, parentId: entry.parentId ?? null,
         timestamp: entry.timestamp ?? null, origin: 'pi_native_history',
         ...(content.clientMessageId ? { clientMessageId: content.clientMessageId } : {}),
       }
-      const item: PiTimelineItem = { id: piHistoryItemId(sessionId, entry, entryIndex, suffix), type, role, status, content, source, orderSeq: result.length + 1 }
+      const item: PiTimelineItem = { id: piHistoryItemId(sessionId, entry, entryIndex, suffix), type, role, status, content, source, orderSeq: result.length + 1, ...(assistantReplay ? { assistantReplay } : {}) }
       result.push(item)
       return item
     }
@@ -216,6 +218,15 @@ export function piTimeline(history: PiHistory, sessionId: string, runtime = 'pi'
         // The SDK text carries execution resource paths; messages sent by AA keep their original display text.
         if (role === 'user' && typeof message.aaDisplayText === 'string') blocks = [{ type: 'text', text: message.aaDisplayText }]
         if (typeof blocks === 'string') blocks = [{ type: 'text', text: blocks }]
+        let replay: ReturnType<typeof assistantBlocks> | undefined
+        if (role === 'assistant' && conversationId !== undefined && history.version === 3) {
+          const parent = entry.parentId
+          const ordinal = (assistantOrdinals.get(parent) ?? 0) + 1
+          assistantOrdinals.set(parent, ordinal)
+          if (typeof entry.id === 'string' && Array.isArray(blocks)) {
+            replay = assistantBlocks(blocks, entry, entryIndex, sessionId, conversationId, `${parent ?? 'root'}:${ordinal}`)
+          }
+        }
         if (!Array.isArray(blocks)) return
         blocks.forEach((raw, index) => {
           if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return
@@ -230,7 +241,8 @@ export function piTimeline(history: PiHistory, sessionId: string, runtime = 'pi'
             if (message.aaClientMessageId) content.clientMessageId = message.aaClientMessageId
             // An empty list does not count as having attachments.
             if (role === 'user' && index === 0 && Array.isArray(message.aaAttachments) && message.aaAttachments.length > 0) content.attachments = message.aaAttachments
-            add(index, 'message', role === 'user' ? 'user' : 'assistant', content, messageStatus(message))
+            const assistantReplay = block.type === 'text' ? replay?.text : block.type === 'thinking' ? replay?.thinking : undefined
+            add(index, 'message', role === 'user' ? 'user' : 'assistant', content, messageStatus(message), assistantReplay)
           } else if (block.type === 'toolCall') {
             const args = block.arguments ?? {}
             const bash = block.name === 'bash'
@@ -261,6 +273,22 @@ export function piTimeline(history: PiHistory, sessionId: string, runtime = 'pi'
     }
   })
   return result
+}
+
+/** Keep the original block positions for pagination, but give each block its full ACP message and identity. */
+function assistantBlocks(blocks: readonly JsonValue[], entry: Entry, entryIndex: number, nativeKey: string, sessionId: string, messageId: string) {
+  const text = { id: piAssistantItemId(sessionId, 'agent_message_chunk', messageId), text: '', previousIds: [] as string[] }
+  const thinking = { id: piAssistantItemId(sessionId, 'agent_thought_chunk', messageId), text: '', previousIds: [] as string[] }
+  blocks.forEach((raw, index) => {
+    const block = record(raw)
+    const group = block.type === 'text' ? text : block.type === 'thinking' ? thinking : null
+    if (group === null) return
+    const value = block.type === 'text' ? block.text : block.thinking
+    if (typeof value === 'string') group.text += value
+    group.previousIds.push(piHistoryItemId(nativeKey, entry, entryIndex, index))
+    if (nativeKey !== sessionId) group.previousIds.push(piHistoryItemId(sessionId, entry, entryIndex, index))
+  })
+  return { text, thinking }
 }
 
 /** A message the model errored on counts as failed; an interrupted one counts as cancelled. */
@@ -308,7 +336,7 @@ export function piHistoryEvents(items: readonly PiTimelineItem[]): HistoryItem[]
       const clientMessageId = typeof content.clientMessageId === 'string' ? content.clientMessageId : undefined
       const attachments = attachmentInfos(content.attachments)
       events.push({
-        type: 'message.completed', itemId: item.id, role, text: jsonText(content.text), ...(clientMessageId ? { clientMessageId } : {}),
+        type: 'message.completed', itemId: item.assistantReplay?.id ?? item.id, role, text: item.assistantReplay?.text ?? jsonText(content.text), ...(clientMessageId ? { clientMessageId } : {}),
         ...(attachments.length > 0 ? { timelineAttachments: attachments } : {}),
         ...(item.status === 'failed' || item.status === 'cancelled' ? { status: item.status } : {}),
         replay: true,
@@ -338,7 +366,7 @@ export function piHistoryEvents(items: readonly PiTimelineItem[]): HistoryItem[]
  * History window: pages by intermediate item (a tool's start and result are never split). The cursor is an item
  * index; without one the newest page is returned, `older` takes items before the cursor and `newer` after it.
  */
-export function piHistoryPage(items: readonly PiTimelineItem[], window: HistoryWindow): NativeHistoryPage {
+export function piHistoryPage(items: readonly PiTimelineItem[], window: HistoryWindow, complete = true): NativeHistoryPage {
   const limit = window.limit > 0 ? window.limit : items.length
   const cursor = window.cursor !== undefined && /^\d+$/.test(window.cursor) ? Math.min(Number(window.cursor), items.length) : undefined
   let start: number
@@ -350,8 +378,14 @@ export function piHistoryPage(items: readonly PiTimelineItem[], window: HistoryW
     end = cursor ?? items.length
     start = Math.max(0, end - limit)
   }
+  const page = items.slice(start, end)
+  const aliases = new Map<string, readonly string[]>()
+  for (const { assistantReplay } of window.reconcile ? items : page) {
+    if (assistantReplay) aliases.set(assistantReplay.id, assistantReplay.previousIds)
+  }
   return {
-    items: piHistoryEvents(items.slice(start, end)),
+    items: piHistoryEvents(page),
+    ...(complete ? { itemAliases: aliases } : {}),
     ...(start > 0 ? { olderCursor: String(start) } : {}),
     ...(end < items.length ? { newerCursor: String(end) } : {}),
   }

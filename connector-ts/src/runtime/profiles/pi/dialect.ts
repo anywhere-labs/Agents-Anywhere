@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 import type { Capability, PromptAttachment, PromptInput, RuntimeError, RuntimeEvent } from '../../../application/ports/runtime-session.js'
-import { AcpProjectionIdentity, acpFingerprint } from '../../../domain/identity/index.js'
+import { AcpProjectionIdentity, acpFingerprint, piAssistantItemId } from '../../../domain/identity/index.js'
 import { negotiatedCapabilities } from '../../acp/capabilities.js'
 import { asRecord, type AgentInfo, type JsonRecord } from '../../acp/client.js'
 import type { AcpDialect, ItemIdentity, SessionContext } from '../../acp/dialect.js'
@@ -190,7 +190,7 @@ function messageUpdate(state: PiDialectState, update: JsonRecord, context: Sessi
     state.messages.delete(`${chunk}\0${messageId}`)
     if (!text) continue
     events.push({
-      ...base, type: 'message.completed', itemId: acpFingerprint([context.sessionId, chunk, messageId]), role, text,
+      ...base, type: 'message.completed', itemId: piAssistantItemId(context.sessionId, chunk, messageId), role, text,
       ...(status !== 'done' ? { status } : {}),
     })
   }
