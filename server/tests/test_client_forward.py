@@ -193,6 +193,68 @@ def test_snapshot_gets_the_servers_session_catalogs_and_capabilities(mesh_router
     asyncio.run(scenario())
 
 
+def test_blob_reads_are_forwarded_and_blob_refs_reach_the_client(mesh_router: RouterProcess, monkeypatch) -> None:
+    blob_id = "blob_" + "a" * 64
+    refs = [{"path": "/output", "blobId": blob_id, "bytes": 5, "mediaType": "text/plain; charset=utf-8"}]
+
+    async def scenario() -> None:
+        async with server(mesh_router, monkeypatch) as (app, client):
+            headers, _device_id, device = await _session(app, client)
+            state = device.state
+            try:
+                chunk = {"blobRef": blob_id, "name": blob_id, "mediaType": "text/plain; charset=utf-8",
+                         "encoding": "base64", "data": base64.b64encode(b"llo").decode(), "offset": 2, "size": 5,
+                         "eof": True}
+                state.client_handler = lambda request: (200, chunk)
+                response = await client.get(f"{BASE}/blobs/{blob_id}", params={"offset": 2, "length": 3},
+                                            headers=headers)
+                assert response.status_code == 200, response.text
+                assert response.json() == chunk
+                request = state.client_calls[-1]
+                assert request["route"] == "session.blobs.read" and request["path"] == f"{BASE}/blobs/{blob_id}"
+                assert request["query"] == {"offset": "2", "length": "3"}
+
+                # The device decides which blobs are the session's.
+                state.client_handler = lambda request: (
+                    404, {"detail": {"code": "blob_not_found", "message": "not on this device"}}
+                )
+                missing = await client.get(f"{BASE}/blobs/blob_other", headers=headers)
+                assert missing.status_code == 404 and _detail(missing)["code"] == "blob_not_found"
+
+                # The range is checked before forwarding.
+                calls = len(state.client_calls)
+                too_long = await client.get(f"{BASE}/blobs/{blob_id}", params={"length": 4 * 1024 * 1024 + 1},
+                                            headers=headers)
+                negative = await client.get(f"{BASE}/blobs/{blob_id}", params={"offset": -1}, headers=headers)
+                assert too_long.status_code == 422 and negative.status_code == 422
+                assert len(state.client_calls) == calls
+
+                # Another user's session is not forwarded at all.
+                other = await client.get(f"/api/v2/sessions/sess_nobody/blobs/{blob_id}", headers=headers)
+                assert other.status_code == 404 and len(state.client_calls) == calls
+
+                # ``blobRefs`` of an item survive the timeline and snapshot response models; items without keep none.
+                page = _timeline(2)
+                page["items"][0]["blobRefs"] = refs
+                state.client_handler = lambda request: (200, page)
+                items = (await client.get(f"{BASE}/timeline", headers=headers)).json()["items"]
+                assert items[0]["blobRefs"] == refs and "blobRefs" not in items[1]
+                state.client_handler = lambda request: (200, {
+                    "session": {"id": SID},
+                    "timeline": {"items": [{**timeline_item(SID, 1, "hi"), "updatedSeq": 1, "blobRefs": refs}],
+                                 "nextSeq": 1, "hasMore": False},
+                    "notices": [],
+                    "eventCursor": "seq:1",
+                    "serverTime": "2026-11-17T10:00:00Z",
+                })
+                snapshot = await client.get(f"{BASE}/snapshot", headers=headers)
+                assert snapshot.json()["timeline"]["items"][0]["blobRefs"] == refs
+            finally:
+                await device.stop()
+
+    asyncio.run(scenario())
+
+
 def test_command_receipts_register_settle_and_replay(mesh_router: RouterProcess, monkeypatch) -> None:
     monkeypatch.setenv("AGENT_SERVER_DEVICE_COMMAND_TIMEOUT_SECONDS", "1")
 

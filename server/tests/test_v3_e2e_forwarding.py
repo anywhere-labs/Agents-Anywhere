@@ -192,3 +192,61 @@ def test_selections_batch_validation_and_read_only(e2e: E2E) -> None:
     e2e.api.post(f"/sessions/{session_id}/runtime/messages",
                  {"content": "after the batch", "clientMessageId": f"cm_{uuid.uuid4().hex}"})
     wait_text(e2e, session_id, "echo: after the batch [model=m2 permission=auto]")
+
+
+def _big_lines(count: int) -> str:
+    return "\n".join(f"row {index}" for index in range(count))
+
+
+def _read_blob(e2e: E2E, session_id: str, blob_ref: str, length: int) -> tuple[bytes, dict[str, Any]]:
+    """Reads a device blob through ``GET /sessions/{id}/blobs/{ref}`` slice by slice."""
+
+    parts: list[bytes] = []
+    offset = 0
+    while True:
+        chunk = e2e.api.get(f"/sessions/{session_id}/blobs/{blob_ref}", params={"offset": offset, "length": length})
+        assert chunk["offset"] == offset, chunk
+        data = base64.b64decode(chunk["data"])
+        parts.append(data)
+        offset += len(data)
+        if chunk["eof"]:
+            assert offset == chunk["size"], chunk
+            return b"".join(parts), chunk
+        assert data, chunk
+
+
+def test_spilled_tool_output_and_attachments_read_back_from_the_device(e2e: E2E) -> None:
+    session_id = _new_session(e2e, "blob start")
+    uploaded = e2e.api.call(
+        "POST", f"/sessions/{session_id}/attachments",
+        files={"files": ("shot.png", base64.b64decode(PICTURE), "image/png")},
+    ).json()["attachments"][0]
+    sent = e2e.api.post(f"/sessions/{session_id}/runtime/messages", {
+        "content": "#big 9000 with a picture", "clientMessageId": f"cm_{uuid.uuid4().hex}",
+        "attachments": [{"fileId": uploaded["fileId"]}],
+    })
+    assert sent["ok"] is True, sent
+    wait_text(e2e, session_id, "echo: #big 9000 with a picture")
+    timeline = e2e.api.get(f"/sessions/{session_id}/timeline")["items"]
+
+    # The user message names its attachment, although the Agent never echoes attachments back.
+    user = next(item for item in timeline if item["role"] == "user" and "#big 9000" in str(item["content"]))
+    assert [a["fileId"] for a in user["content"].get("attachments", [])] == [uploaded["fileId"]], user
+    assert user["content"]["attachments"][0]["name"] == "shot.png"
+    # The attachment's bytes come from the device through the same route.
+    picture, head = _read_blob(e2e, session_id, uploaded["fileId"], 1024 * 1024)
+    assert picture == base64.b64decode(PICTURE) and head["mediaType"] == "image/png"
+
+    # The tool's output and image moved to the device's blob store; the item keeps previews and refs.
+    tool = next(item for item in timeline if item.get("blobRefs"))
+    refs = {ref["mediaType"]: ref for ref in tool["blobRefs"]}
+    text_ref, image_ref = refs["text/plain; charset=utf-8"], refs["image/png"]
+    text, _ = _read_blob(e2e, session_id, text_ref["blobId"], 20_000)
+    assert text.decode() == _big_lines(9000) and len(text) == text_ref["bytes"]
+    image, _ = _read_blob(e2e, session_id, image_ref["blobId"], 1024 * 1024)
+    assert image == bytes([7]) * 2048
+
+    # Another session cannot read this session's blobs.
+    other = _new_session(e2e, "blob other")
+    foreign = e2e.api.call("GET", f"/sessions/{other}/blobs/{text_ref['blobId']}", expect=None)
+    assert foreign.status_code == 404 and _detail(foreign)["code"] == "blob_not_found", foreign.text

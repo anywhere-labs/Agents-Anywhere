@@ -379,6 +379,27 @@ def test_files_read_and_write(secure: Secure) -> None:
     assert base64.b64decode(chunk["data"]).decode() == content and chunk["eof"] is True, chunk
 
 
+def test_spilled_tool_output_reads_back_through_the_channel(secure: Secure) -> None:
+    sid = secure.ensure_session()
+    client = secure.client
+    secure.send(sid, "#big 9000 through the channel")
+    secure.wait_reply(sid, "echo: #big 9000 through the channel")
+    items = client.ok("GET", f"/api/v2/sessions/{sid}/timeline")["items"]
+    ref = next(r for item in items for r in item.get("blobRefs") or [] if r["mediaType"].startswith("text/"))
+    parts: list[bytes] = []
+    offset = 0
+    while True:
+        chunk = client.ok("GET", f"/api/v2/sessions/{sid}/blobs/{ref['blobId']}?offset={offset}&length=30000")
+        data = base64.b64decode(chunk["data"])
+        parts.append(data)
+        offset += len(data)
+        if chunk["eof"]:
+            break
+    assert b"".join(parts).decode() == "\n".join(f"row {index}" for index in range(9000))
+    status, missing = client.request("GET", f"/api/v2/sessions/{sid}/blobs/blob_{'0' * 64}")
+    assert status == 404 and missing["detail"]["code"] == "blob_not_found", missing
+
+
 def test_shell_tasks_through_the_channel(secure: Secure) -> None:
     client = secure.client
     root = str(secure.env.device.workspace)

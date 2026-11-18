@@ -92,6 +92,15 @@ def test_attachment_goes_to_the_device_and_comes_back_through_the_relay(
                 assert opened.headers["content-type"].startswith("text/plain")
                 assert "readBlob" in device.state.calls
 
+                # A field the device moved to its blob store opens the same way.
+                blob_id = "blob_" + "b" * 64
+                device.state.blobs[blob_id] = (b"\x89PNG...", blob_id, "image/png")
+                moved = await client.get(f"/api/v2/sessions/sess_t1/attachments/{blob_id}/open", headers=headers)
+                assert moved.status_code == 200, moved.text
+                assert moved.content == b"\x89PNG..." and moved.headers["content-type"] == "image/png"
+                other = await client.get("/api/v2/sessions/sess_t1/attachments/x_unknown/open", headers=headers)
+                assert other.status_code == 404
+
                 # A transfer id cannot be reused or used by the wrong credentials.
                 replay = await client.put(
                     "/api/v3/device/transfers/fsdl_nope",
