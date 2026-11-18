@@ -88,8 +88,11 @@ internal fun glassBlurRadius(width: Float, height: Float, density: androidx.comp
 @Composable
 fun OnGlass(backdrop: LayerBackdrop, content: @Composable () -> Unit) {
     if (LocalWebBackdrop.current == null) content()
-    else CompositionLocalProvider(LocalWebBackdrop provides backdrop, content = content)
+    else CompositionLocalProvider(LocalWebBackdrop provides backdrop, LocalNestedGlass provides true, content = content)
 }
+
+/** True inside [OnGlass]: buttons there stand on another glass and use the nested-button surface (iOS-measured). */
+val LocalNestedGlass = staticCompositionLocalOf { false }
 
 /** The 「模糊程度」 setting, 0 (clear: refraction, hardly any blur) … 1 (most frosted). See `GlassSettings.frost`. */
 val LocalGlassFrost = androidx.compose.runtime.compositionLocalOf { 0.5f }
@@ -200,6 +203,7 @@ fun Modifier.glass(shape: Shape, kind: GlassKind = GlassKind.Regular, pressed: F
         // LiquidBottomTabs' container for panels): vibrancy, a small blur, lens refraction (Android 13+; 12 only
         // blurs), Kyant's highlight and shadow, a light surface tint. No stroke or shadow of ours.
         val panel = kind == GlassKind.Sheet || (kind == GlassKind.Regular && shape !is com.kyant.shapes.Capsule && shape != CircleShape && !isCapsule(shape))
+        val nested = !panel && LocalNestedGlass.current
         // `dialog`: the catalog's DialogContent instead (lighter tint 0.6, blur 16 / 8 dp, deeper lens, plain highlight).
         val dialog = panel && dev.agentsanywhere.v3poc.DebugLaunch.panel == "dialog"
         // 「模糊程度」: blur radius and surface tint scale with it; refraction, highlight and the light lift do not, so
@@ -209,10 +213,13 @@ fun Modifier.glass(shape: Shape, kind: GlassKind = GlassKind.Regular, pressed: F
             dialog -> if (dark) c.liquidPanelSurface else c.liquidPanelSurface.copy(alpha = 0.6f)
             kind == GlassKind.Sheet -> c.liquidSheetSurface
             panel -> c.liquidPanelSurface
+            nested -> c.liquidNestedButtonSurface
             else -> c.liquidButtonSurface
         }
         val surface = baseSurface.copy(alpha = baseSurface.alpha * (0.2f + 0.8f * frost))
-        return this.drawBackdrop(
+        // The rim goes first in the chain so it draws last: on top of Kyant's top/bottom highlight, as on iOS (grey ring
+        // outside, white highlight just inside it).
+        return this.then(Modifier.rim(shape, dark)).drawBackdrop(
             backdrop = web!!,
             shape = { shape },
             // Glass placed on this glass (buttons on the approval dock, controls in a sheet) samples this glass as
@@ -246,10 +253,10 @@ fun Modifier.glass(shape: Shape, kind: GlassKind = GlassKind.Regular, pressed: F
                 drawRect(surface)
                 // A light lift so glass over a flat colour still reads as a layer, as on iOS (over #000 iOS glass is
                 // #202020–#242424; over #FFF its buttons are ~#F8F8F8 and its composer ~#FDFDFD).
-                drawRect(if (panel) c.liquidPanelLift else c.liquidButtonLift)
+                drawRect(if (panel) c.liquidPanelLift else if (nested) c.liquidNestedButtonLift else c.liquidButtonLift)
                 if (pressed > 0f) drawRect(c.glassPressed.copy(alpha = c.glassPressed.alpha * pressed))
             },
-        ).then(Modifier.rim(shape, dark))
+        )
     }
 
     val blurLayer = if (nativeBlur) rememberGraphicsLayer() else null
@@ -309,8 +316,27 @@ private fun isCapsule(shape: Shape): Boolean =
 @Composable
 private fun Modifier.rim(shape: Shape, dark: Boolean): Modifier {
     val c = AA.colors
-    return this.border(0.5.dp, Brush.horizontalGradient(0f to c.glassRimEnds, 0.18f to c.glassRimMiddle,
-        0.82f to c.glassRimMiddle, 1f to c.glassRimEnds), shape)
+    val ends = c.glassRimEnds
+    val middle = c.glassRimMiddle
+    val maxCorner = with(androidx.compose.ui.platform.LocalDensity.current) { 32.dp.toPx() }
+    // A hairline: `border` rounds its width up to whole pixels (2 px here, 0.76 dp), so its strength is set by alpha,
+    // matched to iOS by summed darkness across the edge at equal physical size (iOS: 2 px at 3x, 214/175 at the ends
+    // and 240/230 along the top over 254). The dark part covers only the rounded ends — the
+    // corner radius (half the height for capsules, at most 32 dp for panels), not a share of the width — so the long
+    // top and bottom edges of a wide panel stay faint, as on iOS.
+    val brush = remember(ends, middle, maxCorner) {
+        object : androidx.compose.ui.graphics.ShaderBrush() {
+            override fun createShader(size: androidx.compose.ui.geometry.Size): androidx.compose.ui.graphics.Shader {
+                val f = if (size.width > 0f) (minOf(size.height / 2f, maxCorner) / size.width).coerceIn(0.01f, 0.5f) else 0.18f
+                return androidx.compose.ui.graphics.LinearGradientShader(
+                    from = Offset.Zero, to = Offset(size.width, 0f),
+                    colors = listOf(ends, middle, middle, ends),
+                    colorStops = listOf(0f, f, 1f - f, 1f),
+                )
+            }
+        }
+    }
+    return this.border(0.5.dp, brush, shape)
 }
 
 /** The soft darkening just inside the edge of light-mode glass (a few dp deep, a little stronger along the top). */
@@ -331,7 +357,7 @@ private fun softShadow() = com.kyant.backdrop.shadow.Shadow(
 internal fun edgeHighlight(dark: Boolean) = com.kyant.backdrop.highlight.Highlight(
     width = 1.dp,
     blurRadius = 1.dp,
-    alpha = if (dark) 0.3f else 0.6f,
+    alpha = if (dark) 0.45f else 0.6f,
     style = com.kyant.backdrop.highlight.HighlightStyle.Default(angle = 90f, falloff = 2f),
 )
 

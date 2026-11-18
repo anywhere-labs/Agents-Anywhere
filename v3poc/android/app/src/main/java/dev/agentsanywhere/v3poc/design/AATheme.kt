@@ -43,6 +43,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontVariation
@@ -76,7 +77,9 @@ object AA {
 
 // ── Text ────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-val Caveat = FontFamily(Font(R.font.caveat, FontWeight.Medium, variationSettings = FontVariation.Settings(FontVariation.weight(500))))
+// iOS asks for `.weight(.medium)` but CoreText renders this variable font at its heaviest instance: the wordmark's ink
+// coverage matches wght 700 exactly (347.9 vs 347.9; 500 would be 283.6). iOS is the reference, so Android uses 700.
+val Caveat = FontFamily(Font(R.font.caveat, FontWeight.Bold, variationSettings = FontVariation.Settings(FontVariation.weight(700))))
 
 fun AAFont.style(weight: Int? = null, mono: Boolean = false, color: Color = Color.Unspecified): TextStyle = TextStyle(
     fontSize = size.sp,
@@ -161,11 +164,26 @@ fun AccountAvatar(name: String, size: Dp) {
     }
 }
 
-/** iOS `AAWordmark`: Caveat, medium. */
+/**
+ * iOS `AAWordmark`: Caveat (rendered at wght 700, see [Caveat]). Caveat picks each letter's form with contextual alternates (`calt`) that depend on
+ * the letters before it. iOS shapes the whole line; Android's text engine shapes and caches word by word, so the cycle
+ * restarts at "Anywhere" and every letter after its A came out different (the y most visibly). The wordmark is fixed
+ * text, so `calt` is off and each letter gets the form iOS / HarfBuzz choose for the whole line:
+ * `A g e n.ss01 t.ss02 s ␣ A n.ss01 y.ss02 w h.ss01 e r.ss02 e.ss01`.
+ */
+private val WordmarkText = androidx.compose.ui.text.buildAnnotatedString {
+    fun alt(c: Char, set: String) =
+        withStyle(androidx.compose.ui.text.SpanStyle(fontFeatureSettings = "'calt' 0, '$set'")) { append(c) }
+    append("Age"); alt('n', "ss01"); alt('t', "ss02"); append("s A")
+    alt('n', "ss01"); alt('y', "ss02"); append("w"); alt('h', "ss01"); append("e"); alt('r', "ss02"); alt('e', "ss01")
+    append("\u2009")
+}
+
 @Composable
 fun AAWordmark(fontSize: Float = AAFonts.wordmark.size, modifier: Modifier = Modifier) {
-    BasicText("Agents Anywhere ", modifier, style = TextStyle(fontFamily = Caveat, fontWeight = FontWeight.Medium, fontSize = fontSize.sp,
-        lineHeight = fontSize.sp, color = LocalContentColor.current, platformStyle = PlatformTextStyle(includeFontPadding = false)), maxLines = 1, softWrap = false)
+    BasicText(WordmarkText, modifier, style = TextStyle(fontFamily = Caveat, fontWeight = FontWeight.Bold, fontSize = fontSize.sp,
+        lineHeight = fontSize.sp, color = LocalContentColor.current, fontFeatureSettings = "'calt' 0",
+        platformStyle = PlatformTextStyle(includeFontPadding = false)), maxLines = 1, softWrap = false)
 }
 
 /** iOS `ProgressView()`: eight spokes fading around, stepping 1/8 turn. */

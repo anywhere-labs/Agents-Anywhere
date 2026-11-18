@@ -37,12 +37,19 @@ class MainActivity : ComponentActivity() {
         (application as App).glass.refreshAccessibility()
         // uiMode and fontScale are handled in place (manifest configChanges): no Activity recreation, same WebView.
         applySystemBars()
+        // The window re-applies its theme's bar appearance while it handles the uiMode change, after this callback, so
+        // the light/dark icons set here were overwritten (dark clock on a dark page). Apply again once that has run.
+        window.decorView.post { applySystemBars() }
     }
 
     private fun applySystemBars() {
         val night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
         val style = if (night) SystemBarStyle.dark(Color.TRANSPARENT) else SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)
         enableEdgeToEdge(style, style)
+        androidx.core.view.WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = !night
+            isAppearanceLightNavigationBars = !night
+        }
         if (android.os.Build.VERSION.SDK_INT >= 29) window.isNavigationBarContrastEnforced = false
     }
 

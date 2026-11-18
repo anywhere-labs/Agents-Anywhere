@@ -30,6 +30,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.addOutline
+import androidx.compose.ui.graphics.asAndroidPath
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
@@ -141,15 +147,34 @@ fun SidebarDrawer(open: Boolean, onOpenChange: (Boolean) -> Unit, sidebar: @Comp
 
             // The page card.
             val cardShape = if (p > 0.0005f) screenCorners else RectangleShape
+            // Its shadow, as iOS draws it (CALayer: black 0.28, radius 18 pt, offset −3 pt, on every side; measured on
+            // the light sidebar: 16 % at the card edge fading out over ~40 pt). Android's elevation shadow is lit from
+            // above and hardly shows on the card's left edge, so it is drawn here: a Gaussian shadow layer (sigma ≈ 18 dp)
+            // under the card. Invisible over the black dark-mode sidebar, as on iOS.
+            if (p > 0.0005f) {
+                val shadowFill = AA.colors.background
+                Box(
+                    Modifier.fillMaxSize()
+                        .offset { IntOffset((revealPx * p).roundToInt(), 0) }
+                        .drawBehind {
+                            val sigma = 18.dp.toPx()
+                            val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                                color = shadowFill.toArgb()
+                                // Skia: sigma = radius * 0.57735 + 0.5.
+                                setShadowLayer(((sigma - 0.5f) / 0.57735f).coerceAtLeast(1f), -3.dp.toPx(), 0f,
+                                    androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.28f * p).toArgb())
+                            }
+                            val path = androidx.compose.ui.graphics.Path().apply { addOutline(cardShape.createOutline(size, layoutDirection, this@drawBehind)) }
+                            drawIntoCanvas { it.nativeCanvas.drawPath(path.asAndroidPath(), paint) }
+                        },
+                )
+            }
             Box(
                 Modifier.fillMaxSize()
                     .offset { IntOffset((revealPx * p).roundToInt(), 0) }
                     .graphicsLayer {
                         shape = cardShape
                         clip = p > 0.0005f
-                        shadowElevation = 24.dp.toPx() * p
-                        ambientShadowColor = AA_SHADOW
-                        spotShadowColor = AA_SHADOW
                     }
                     .background(AA.colors.background),
             ) {
@@ -178,7 +203,6 @@ fun SidebarDrawer(open: Boolean, onOpenChange: (Boolean) -> Unit, sidebar: @Comp
     }
 }
 
-private val AA_SHADOW = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.28f)
 
 /**
  * The card's corners follow the display's own (`WindowInsets.getRoundedCorner`, Android 12+, per corner), with
