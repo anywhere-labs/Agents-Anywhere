@@ -7,7 +7,8 @@ import type { InstanceConfigSchema, JsonObject, ModelGatewayConfig, ProviderFact
 import { processConnection, type ConnectionFactory } from '../../acp/handle.js'
 import { fail } from '../../acp/errors.js'
 import { dshDirectDialect } from './direct/dialect.js'
-import { dshEnvironment, resolveDshLaunch, systemProbe, type DshLaunchPlan, type LaunchProbe } from './launcher.js'
+import { desktopDshExecutables, dshEnvironment, dshInvocation, resolveDshLaunch, systemProbe, type DshLaunchPlan, type LaunchProbe } from './launcher.js'
+import type { ManagedDshRuntime } from './managed-runtime.js'
 import { DshRuntime } from './runtime.js'
 import { canonicalPath, dshHomeOf, type DshSessionIds } from './session-ids.js'
 
@@ -48,6 +49,7 @@ export interface DshProviderDeps {
   env?: NodeJS.ProcessEnv
   /** `dsh` executables bundled with DSH Desktop, as the host knows them. */
   desktopExecutables?: readonly string[]
+  managed?: ManagedDshRuntime
   /** Working directory of the direct-route process. */
   cwd?: string
   /** Test seam: how a launch plan becomes an ACP connection (default: start the process). */
@@ -64,7 +66,7 @@ const INSTANCE_SCHEMA: InstanceConfigSchema = {
 
 /** The device registry exposes DSH configuration; executable selection stays local to the Connector. */
 export function dshProvider(deps: DshProviderDeps = {}): RuntimeProvider {
-  const direct = new DshProvider(deps)
+  const direct = new DshProvider({ ...deps, desktopExecutables: deps.desktopExecutables ?? desktopDshExecutables(deps.env) })
   const validateSettings = (settings: JsonObject, gateway?: ModelGatewayConfig): JsonObject => {
     if (gateway !== undefined) fail('model_gateway_unsupported', 'DSH model connections are configured in the local DSH profile.')
     if (settings.dshHome !== undefined && (typeof settings.dshHome !== 'string' || settings.dshHome.length > 4096)) {
@@ -84,12 +86,14 @@ export function dshProvider(deps: DshProviderDeps = {}): RuntimeProvider {
     validateSettings,
     async discover(): Promise<ProviderFacts> {
       const facts = await direct.discover({ allowNpx: false })
+      // Runtime discovery admits the type when the Connector can provision it asynchronously.
+      const available = facts.installed || deps.managed !== undefined
       return {
         type: 'dsh',
         displayName: 'DSH',
-        installed: facts.installed,
+        installed: available,
         ...(facts.version !== undefined ? { agentVersion: facts.version } : {}),
-        problems: facts.installed ? [] : [{ code: 'runtime_unavailable', message: 'Install DSH on the work device to use it in Agents Anywhere.' }],
+        problems: available ? [] : [{ code: 'runtime_unavailable', message: 'Install DSH on the work device to use it in Agents Anywhere.' }],
         configSchema: INSTANCE_SCHEMA.schema,
         instancePolicy: 'single',
         processScope: 'shared',
@@ -113,6 +117,7 @@ export class DshProvider {
       ...(settings.command ? { configured: { command: settings.command, ...(settings.args ? { args: settings.args } : {}) } } : {}),
       ...(this.deps.desktopExecutables ? { desktopExecutables: this.deps.desktopExecutables } : {}),
       ...(settings.allowNpx === false ? { allowNpx: false } : {}),
+      preferInstalled: settings.allowNpx === false,
       platform: process.platform,
     }
   }
@@ -123,6 +128,8 @@ export class DshProvider {
       const plan = await resolveDshLaunch(this.launchOptions(parseDshSettings(settings)), this.deps.probe ?? systemProbe(this.deps.env))
       return { installed: true, ...(plan.version ? { version: plan.version } : {}), detail: { route: 'direct', source: plan.source } }
     } catch (error) {
+      const cached = await this.deps.managed?.cached()
+      if (cached?.version) return { installed: true, version: cached.version, detail: { route: 'direct', source: cached.source } }
       return { installed: false, detail: { route: 'direct', reason: error instanceof Error ? error.message : String(error) } }
     }
   }
@@ -135,9 +142,14 @@ export class DshProvider {
     const baseEnv = this.deps.env ?? process.env
     const dshHome = dshHomeOf(settings, baseEnv)
     const env = dshEnvironment(baseEnv, { ...(settings.dshHome ? { dshHome: await canonicalPath(dshHome) } : {}), ...(settings.model ? { model: settings.model } : {}) })
-    const direct = plan && this.deps.connect ? this.deps.connect(plan, env) : plan ? processConnection({ command: plan.command, args: plan.args, cwd: this.deps.cwd ?? process.cwd(), env }, dshDirectDialect(),
-      { initializeTimeoutMs: plan.source === 'npx' ? 180_000 : 30_000 }) : undefined
+    const connect = (launch: DshLaunchPlan, launchEnv: NodeJS.ProcessEnv) => this.deps.connect?.(launch, launchEnv)
+      ?? processConnection({ ...dshInvocation(launch.command, launch.args, launchEnv), cwd: this.deps.cwd ?? process.cwd(), env: launchEnv }, dshDirectDialect(),
+        { initializeTimeoutMs: launch.source === 'npx' ? 180_000 : 30_000 })
+    const managed = plan === undefined ? this.deps.managed : undefined
+    const direct: ConnectionFactory | undefined = plan
+      ? connect(plan, env)
+      : managed && (async scope => connect(await managed.install(), { ...env, DSH_HOME: await canonicalPath(dshHome) })(scope))
     return new DshRuntime({ instanceId: instance.runtimeId, ...(direct ? { direct } : {}), ...(instance.ids ? { ids: instance.ids } : {}),
-      dshHome })
+      ...(managed ? { directInventoryReady: async () => (await managed.cached()) !== undefined } : {}), dshHome })
   }
 }

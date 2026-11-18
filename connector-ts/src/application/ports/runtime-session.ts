@@ -321,6 +321,8 @@ export interface NativeSessionSummary extends NativeSessionRef {
 }
 
 export interface NativeSessionPage {
+  /** False when the inventory is temporarily unavailable without starting a cold runtime. */
+  readonly complete?: boolean
   readonly sessions: readonly NativeSessionSummary[]
   readonly nextCursor?: string
 }

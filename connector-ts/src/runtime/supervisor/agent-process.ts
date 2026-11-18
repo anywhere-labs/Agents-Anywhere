@@ -14,6 +14,7 @@ export interface AgentCommand {
   readonly args: readonly string[]
   readonly cwd: string
   readonly env: NodeJS.ProcessEnv
+  readonly windowsVerbatimArguments?: boolean
 }
 
 export interface SpawnOptions {
@@ -43,6 +44,7 @@ export class AgentProcess {
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
       windowsHide: true,
+      ...(spec.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
     })
     this.child.stderr?.on('data', (chunk: Buffer) => {
       const text = chunk.toString('utf8')

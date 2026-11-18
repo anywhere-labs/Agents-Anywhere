@@ -144,7 +144,7 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
       let onRuntimeEvent: (spec: RuntimeInstanceSpec, handle: RuntimeHandle, event: RuntimeHandleEvent) => void = () => undefined
       const runtimes = new RuntimeRegistry({
         connectorId: settings.connectorId,
-        providers: options.providers ?? builtinProviders({ log }),
+        providers: options.providers ?? builtinProviders({ log, dataDir: options.dataDir }),
         log,
         onEvent: (spec, handle, event) => onRuntimeEvent(spec, handle, event),
       })

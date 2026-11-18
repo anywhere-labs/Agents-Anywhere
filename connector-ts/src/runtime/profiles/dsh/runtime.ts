@@ -39,6 +39,7 @@ export interface DshRuntimeOptions {
   readonly instanceId: string
   /** Starts DSH's automation ACP; absent when no `dsh` is available (plugin hosts only). */
   readonly direct?: ConnectionFactory
+  readonly directInventoryReady?: () => Promise<boolean>
   /** Aliases for sessions the direct route creates (DSH picks their IDs, DSH-2). */
   readonly ids?: DshSessionIds
   /** The DSH home this instance serves; hosts reporting another one are not used. */
@@ -209,6 +210,7 @@ export class DshRuntime implements RuntimeHandle {
   async listNativeSessions(cursor?: string): Promise<NativeSessionPage> {
     const host = this.hosts.at(-1)
     if (host) return host.handle.listNativeSessions(cursor)
+    if (this.options.directInventoryReady && !await this.options.directInventoryReady()) return { sessions: [], complete: false }
     return this.options.direct ? this.direct().listNativeSessions(cursor) : { sessions: [] }
   }
 

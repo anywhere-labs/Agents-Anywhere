@@ -345,6 +345,7 @@ export class NativeHistory {
         complete = false
         break
       }
+      if (page.complete === false) complete = false
       for (const summary of page.sessions) {
         try {
           const knownSessionId = dshIds.get(summary.nativeSessionId)

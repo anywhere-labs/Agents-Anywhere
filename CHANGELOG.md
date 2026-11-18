@@ -49,7 +49,7 @@
 
 ### DSH 同步
 
-- 工作设备装有 DSH 时，可以用设备上配置的模型在 Agents Anywhere 新建 DSH 会话，并在桌面端和手机上继续同一会话。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
+- 新建 DSH 会话时可以直接复用工作设备上的兼容 CLI 或 DSH Desktop 自带的命令；缺少兼容安装时，首次使用会下载官方运行时，之后可在桌面端和手机上继续同一会话。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 
 - DSH 插件接上已有会话后，DSH 里新产生的消息、工具调用和回合开始结束都会同步到 AA，不再只剩流式片段；直接连接 DSH 时，连续的多条回复不再互相覆盖、只剩最后一条。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - DSH 插件可以直接连接新版 Connector：DSH 里打开的会话实时同步到 AA，在 AA 里可以发送图片和文件、回答 DSH 的提问、审阅计划，在 DSH 和 AA 之间切换时不会出现重复的消息；本机只有旧版 Connector 时，插件仍按原来的方式同步。（[#747](https://github.com/anywhere-labs/Agents-Anywhere/pull/747)）

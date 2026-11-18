@@ -119,6 +119,13 @@ CI 的一次性 PostgreSQL 使用 tmpfs，减少每个用例清表的磁盘开�
 本地服务直接绑定回环地址，不执行反向 DNS 查询；日志显示模块导入、服务绑定、
 运行时准备、每个场景及整个批次的耗时。
 
+v3 Connector 的 DSH 直连优先使用 `PATH` 上的兼容 `dsh`，其次使用 macOS 或 Windows
+常规安装目录中 DSH Desktop 自带的命令。不具备兼容安装时，首次准备会话会下载并校验
+[DeepSeek 官方原生运行时](https://pypi.org/project/deepseek-harness-runtime-bin/0.2.2rc2/)，
+缓存在 Connector 数据目录的 `dsh/runtimes` 下。原生包支持 macOS 14+（arm64/x64）、
+Linux glibc 2.28+（arm64/x64）和 Windows x64，下载失败可从客户端重试。三种启动方式都使用
+工作设备本地的 DSH ACP 模型配置。
+
 DSH 的 PR/push 检查统一在 CI 中执行。独立 `dsh-bridge.yml` 使用当前
 `dsh-bridge-next/`，仅负责手动验包和既有 `dsh-bridge-v<包版本>` release 发布：
 先完成类型、构建和测试，再用 `npm pack --ignore-scripts` 打包已验证的产物，

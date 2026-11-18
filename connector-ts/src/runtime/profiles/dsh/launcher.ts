@@ -1,14 +1,13 @@
 /**
  * How the direct route starts DSH's automation ACP (`dsh --profile acp`, D7).
  *
- * Order (04-connector.md §5.6): an explicitly configured command, then the `dsh` that
- * ships inside DSH Desktop, then a `dsh` on PATH within the supported range, then the
- * pinned `npx @deepseek-ai/dsh@<version>`. DSH is a developer preview, so the npx
- * fallback is pinned and every installed build is version-checked first.
+ * The built-in Provider uses a compatible CLI on PATH or the command bundled with DSH Desktop.
+ * Lower-level callers can supply a full override or use the pinned npx launcher.
  */
 import { execFile } from 'node:child_process'
 import { access } from 'node:fs/promises'
-import { delimiter, join } from 'node:path'
+import { homedir } from 'node:os'
+import { delimiter, isAbsolute, join } from 'node:path'
 
 /** The DSH build the direct route is tested against (S7, connector-ts/test/runtime/dsh). */
 export const DSH_PINNED_VERSION = '0.2.2-rc.3'
@@ -21,7 +20,7 @@ export function supportedDshVersion(version: string): boolean {
 export interface DshLaunchPlan {
   command: string
   args: string[]
-  source: 'configured' | 'desktop' | 'installed' | 'npx'
+  source: 'configured' | 'desktop' | 'installed' | 'npx' | 'managed'
   version?: string
 }
 
@@ -38,6 +37,7 @@ export interface LaunchOptions {
   configured?: { command: string, args?: string[] }
   /** Candidate `dsh` executables bundled with DSH Desktop, supplied by the host. */
   desktopExecutables?: readonly string[]
+  preferInstalled?: boolean
   /** Skip `npx` (offline installs); resolution then fails when nothing is installed. */
   allowNpx?: boolean
   platform?: NodeJS.Platform
@@ -53,17 +53,30 @@ export async function resolveDshLaunch(options: LaunchOptions, probe: LaunchProb
   const acpArgs = ['--profile', 'acp']
   if (options.configured) return { command: options.configured.command, args: [...(options.configured.args ?? []), ...acpArgs], source: 'configured' }
   const tried: string[] = []
+  const installedPlan = async (): Promise<DshLaunchPlan | undefined> => {
+    const names = options.platform === 'win32' ? ['dsh.cmd', 'dsh.exe'] : ['dsh']
+    for (const name of names) {
+      const command = await probe.which(name)
+      if (!command) continue
+      tried.push(command)
+      const version = await probe.version(command)
+      if (version && supportedDshVersion(version)) return { command, args: acpArgs, source: 'installed', version }
+    }
+    return undefined
+  }
+  if (options.preferInstalled) {
+    const plan = await installedPlan()
+    if (plan) return plan
+  }
   for (const candidate of options.desktopExecutables ?? []) {
     tried.push(candidate)
     if (!await probe.exists(candidate)) continue
     const version = await probe.version(candidate)
     if (version && supportedDshVersion(version)) return { command: candidate, args: acpArgs, source: 'desktop', version }
   }
-  const installed = await probe.which(options.platform === 'win32' ? 'dsh.cmd' : 'dsh')
-  if (installed) {
-    tried.push(installed)
-    const version = await probe.version(installed)
-    if (version && supportedDshVersion(version)) return { command: installed, args: acpArgs, source: 'installed', version }
+  if (!options.preferInstalled) {
+    const plan = await installedPlan()
+    if (plan) return plan
   }
   if (options.allowNpx !== false) {
     const npx = await probe.which(options.platform === 'win32' ? 'npx.cmd' : 'npx')
@@ -73,22 +86,58 @@ export async function resolveDshLaunch(options: LaunchOptions, probe: LaunchProb
   throw new DshNotInstalledError(tried)
 }
 
+// The bundled launcher layout is documented by DeepSeek's Desktop app.
+export function desktopDshExecutables(env: NodeJS.ProcessEnv = process.env): string[] {
+  if (process.platform === 'darwin') {
+    const roots = ['/Applications', join(env.HOME || homedir(), 'Applications')]
+    return roots.flatMap(root => ['DeepSeek Harness.app', 'DeepSeek Harness Desktop.app', 'DSH Desktop.app']
+      .map(app => join(root, app, 'Contents', 'Resources', 'runtime', 'cli', 'bin', 'dsh')))
+  }
+  if (process.platform === 'win32') {
+    return [env.LOCALAPPDATA && join(env.LOCALAPPDATA, 'Programs'), env.ProgramFiles, env['ProgramFiles(x86)']]
+      .filter((root): root is string => Boolean(root))
+      .flatMap(root => ['DeepSeek Harness', 'DSH Desktop'].map(app => join(root, app, 'resources', 'runtime', 'cli', 'bin', 'dsh.cmd')))
+  }
+  return []
+}
+
+/** Windows batch launchers need cmd.exe. Only pass fixed switches and a quoted absolute launcher path. */
+export function dshInvocation(command: string, args: readonly string[], env: NodeJS.ProcessEnv) {
+  if (process.platform !== 'win32' || !command.toLowerCase().endsWith('.cmd')) return { command, args }
+  if (!isAbsolute(command) || /["%\r\n]/u.test(command) || args.some(arg => !/^[a-z0-9_@./:-]+$/iu.test(arg))) {
+    throw new Error('Invalid DSH batch invocation')
+  }
+  return {
+    command: env.ComSpec || join(env.SystemRoot || 'C:\\Windows', 'System32', 'cmd.exe'),
+    args: ['/d', '/v:off', '/s', '/c', `""${command}" ${args.join(' ')}"`],
+    windowsVerbatimArguments: true as const,
+  }
+}
+
 export function systemProbe(env: NodeJS.ProcessEnv = process.env): LaunchProbe {
   return {
     async which(name) {
-      for (const dir of (env.PATH ?? '').split(delimiter)) {
+      for (const dir of (env.PATH ?? env.Path ?? '').split(delimiter)) {
         if (!dir) continue
         const path = join(dir, name)
         try { await access(path); return path } catch { /* next */ }
       }
       return undefined
     },
-    version: command => new Promise(resolve => {
-      execFile(command, ['--version'], { timeout: 15_000, env }, (error, stdout) => {
-        const line = String(stdout).trim().split(/\r?\n/).pop()?.trim()
-        resolve(error || !line ? undefined : line.replace(/^v/, ''))
-      })
-    }),
+    async version(command) {
+      try {
+        const invocation = dshInvocation(command, ['--version'], env)
+        const windowsVerbatimArguments = 'windowsVerbatimArguments' in invocation && invocation.windowsVerbatimArguments
+        return await new Promise(resolve => {
+          execFile(invocation.command, [...invocation.args], { windowsVerbatimArguments, timeout: 15_000, env, windowsHide: true }, (error, stdout) => {
+            const line = String(stdout).trim().split(/\r?\n/).pop()?.trim()
+            resolve(error || !line ? undefined : line.replace(/^v/, ''))
+          })
+        })
+      } catch {
+        return undefined
+      }
+    },
     async exists(path) { try { await access(path); return true } catch { return false } },
   }
 }
