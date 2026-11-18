@@ -137,6 +137,26 @@ def test_session_create_and_assistant_reply(e2e: E2E) -> None:
     e2e.session_id = session_id
 
 
+def test_usage_statistics_count_the_device_turns(e2e: E2E) -> None:
+    # The two turns above: messages counted by the Server at the request, turns from the device's usage.report.
+    e2e.need("session_id")
+
+    def counted() -> dict[str, Any] | None:
+        body = e2e.api.get("/admin/usage/report", params={"tz": "UTC"})
+        summary = body["summary"]
+        return body if summary["turns"] >= 2 and summary["messages"] >= 2 else None
+
+    body = _wait(counted, 30, 0.5, "the device's turns in the usage report")
+    assert body["summary"]["turnFailureRate"] == 0, body["summary"]
+    assert body["summary"]["turnDurationMs"]["samples"] >= 2, body["summary"]
+    runtime = next(r for r in body["runtimes"] if r["runtimeType"] == RUNTIME_TYPE)
+    assert runtime["turns"] >= 2 and runtime["messages"] >= 2 and runtime["sessions"] >= 1, runtime
+    assert body["summary"]["connectorsOnline"] >= 1, body["summary"]
+    # The OS the device named in its hello.
+    assert e2e.connector()["deviceOs"] in {"macos", "windows", "linux"}, e2e.connector()
+    assert sum(entry["connectorsOnline"] for entry in body["devices"]["byOs"] if entry["os"] != "unknown") >= 1, body["devices"]
+
+
 def test_snapshot_opens_the_session(e2e: E2E) -> None:
     # The first screen of the Web client: one snapshot with the latest Timeline page and the event cursor.
     sid = e2e.need("session_id")

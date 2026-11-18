@@ -141,9 +141,16 @@ export class SessionBinding {
       case 'tool.started':
       case 'tool.updated':
       case 'notice': {
+        let fresh = false
         if (!this.projector.knows(event.itemId)) {
           const stored = await this.kernel.deps.store.timeline.get(sessionId, event.itemId)
           if (stored !== null) this.projector.remember(stored)
+          fresh = stored === null
+        }
+        // A replayed history page is not a new error.
+        if (event.type === 'notice' && event.kind === 'error' && fresh && this.resetBuffer === null) {
+          const session = await this.kernel.deps.store.sessions.get(sessionId)
+          if (session !== null) this.kernel.countUsage(session, 'runtime.error')
         }
         const draft = this.projector.apply(event)
         const streaming = event.type === 'message.delta' || (event.type === 'tool.updated' && draft.status === 'running')

@@ -48,6 +48,19 @@ deleted; `user_id` is set to `NULL` when the user is deleted.
 | `runtime.error` | Connector notification `runtime.error` | `rterr:{noticeId}` | |
 | `connector.online` | Connector WebSocket became ready | none | Carries `device_os`. |
 
+A v3 device (TS Connector) reports `turn.ended`, `approval.requested`,
+`approval.resolved` and `runtime.error` itself: it counts them per session,
+runtime and outcome (with durations) and sends the counters in the outbox
+message `usage.report` (device-meshcall 1.0 `UsageReportOut`) every minute,
+when a turn ends and when a UTC hour starts. The Server stores one event per
+counted occurrence at the report's `periodEnd`, keyed
+`usage:{deviceId}:{reportId}:{counter}:{n}`, so a resent report counts once.
+The device also counts `message.sent` and `session.created`; the Server uses
+those only in E2EE `required` mode, where it cannot see the request, and
+records them itself otherwise. Turns count only for sessions the platform
+drives (taken over), as above. `connector.online` carries the OS the device
+reported.
+
 Writes are buffered in memory and flushed once per second
 (`AGENT_SERVER_USAGE_FLUSH_INTERVAL_SECONDS`); a failed write is logged and never
 fails the user's request. Rows older than `AGENT_SERVER_USAGE_RETENTION_DAYS`

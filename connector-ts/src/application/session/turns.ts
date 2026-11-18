@@ -3,7 +3,7 @@ import type { QueueOp } from '../ports/index.js'
 import { TimelineProjector } from '../projection.js'
 import type { LiveFact, RuntimeBindings } from './bindings.js'
 import type { DeliveryRecords } from './deliveries.js'
-import type { SessionKernel } from './kernel.js'
+import { elapsedMs, type SessionKernel } from './kernel.js'
 
 /** What a turn's end does to the session queue (the queue context implements it). */
 export interface TurnQueue {
@@ -41,13 +41,25 @@ export class TurnLifecycle {
   }
 
   public async onTurnEnded(sessionId: string, turnId: string, outcome: 'completed' | 'interrupted' | 'failed', _message: string | null): Promise<void> {
+    // The same end reported again is one turn.
+    const repeated = this.ended.get(sessionId) === turnId
     this.ended.set(sessionId, turnId)
     const deps = this.kernel.deps
     const after = statusAfterTurn(outcome)
     const at = deps.clock.nowIso()
+    const before = await deps.store.sessions.get(sessionId)
     const closed = await deps.store.interactions.expireBlocking(sessionId, 'turn_ended', at)
     for (const interaction of closed) this.kernel.emitNotice(interaction, 'expired')
     await this.kernel.patchSession(sessionId, { status: after.status, activeTurn: null, turnEnded: true, lastActivityAt: at })
+    if (before !== null) {
+      for (const interaction of closed) this.kernel.countApprovalClosed(before, interaction)
+      // Only sessions the platform drives count; a turn typed into the Agent locally is not platform usage.
+      if (before.takeover && !repeated) {
+        const startedAt = before.activeTurn?.startedAt ?? null
+        this.kernel.countUsage(before, 'turn.ended', { outcome, durationMs: elapsedMs(startedAt, at) })
+      }
+      this.kernel.flushUsage()
+    }
     await this.queue.apply(sessionId, { kind: 'turnEnded', outcome: after.queueOutcome })
     void this.kernel.serial(sessionId, () => this.queue.dispatchNext(sessionId)).catch(error => this.kernel.reportError(sessionId, error))
   }
@@ -103,8 +115,13 @@ export class TurnLifecycle {
     const session = await deps.store.sessions.get(sessionId)
     if (session === null) return
     const at = deps.clock.nowIso()
-    await deps.store.interactions.expireBlocking(sessionId, error.code, at)
+    const closed = await deps.store.interactions.expireBlocking(sessionId, error.code, at)
+    for (const interaction of closed) this.kernel.countApprovalClosed(session, interaction)
     if (session.activeTurn !== null) {
+      if (session.takeover) this.kernel.countUsage(session, 'turn.ended', { outcome: 'failed', durationMs: elapsedMs(session.activeTurn.startedAt, at) })
+      // A Connector restart is not the Runtime's error.
+      if (error.code !== 'connector_restarted') this.kernel.countUsage(session, 'runtime.error')
+      this.kernel.flushUsage()
       const projector = binding?.projector ?? new TimelineProjector(session.runtimeType, session.externalSessionId, await deps.store.timeline.latest(sessionId), () => at)
       const settled = projector.settleOpen('failed')
       const card = projector.platform({

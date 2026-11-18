@@ -26,6 +26,7 @@ export class SessionControls {
         userItem: null, enqueue: null, commandId: context.commandId, at,
       })
       if (received.duplicate) return { outcome: `duplicate:${received.delivery.state}` }
+      kernel.countUsage(session, 'message.sent')
       // Attachments first, as for a message: one that cannot be fetched is a rejection the Runtime never saw.
       let attachments: PromptAttachment[]
       try {

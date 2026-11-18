@@ -89,6 +89,7 @@ MeshCall 的外壳（`CommandCall.p`、`CommandAck.r`、`LinkAttachItem.p`、`Ou
 - 工作区准备与创建：请求为 `WorkspacePrepareCommand`、`PreparationReserveCommand` 等，回答为 runtime-workflows 1.2 的工作流状态（`workflow-state`）。
 - 读：`Sessions/watch` 的 `SessionWatchRequest` / `ChangesEvent`，`Store/readBlob` 的 `ReadBlobRequest` / `ReadBlobChunk`，`Store/exportShare` 的 `ExportShareRequest` / `ExportShareChunk` 等。
 - 事件：`runtime.status` 的 `status` 是按 `event` 区分的 `RuntimeStatusPayload`：`runtime.types`、`capabilities.changed`、`catalogs.changed`、`session.status`、`config.updated`、`planning.state.updated`、`goal.state.updated`；没有 `event` 时按带的是 `instance`（应用期望状态之后的实例）还是 `state`（运行中实例的健康状态）区分。`runtime.notice.updated` 带 protocol 1.2 的 notice，`runtime.queue.updated` 带队列状态，`port.*` 引用 preview 1.0。
+- 出站箱的 `usage.report`（`UsageReportOut`）是设备上平台活动的计数，只有计数名、数值、会话与 Runtime 标识、结果和时长，不含内容，E2EE `required` 模式下同样明文发送。设备累计从平台收到的消息与新会话（`message.sent`、`session.created`）、平台驱动会话的轮次（`turn.ended`，带结果与时长）、审批的发起与结束（`approval.requested`、`approval.resolved`）和 Runtime 报错（`runtime.error`），每分钟、每个轮次结束和每个 UTC 小时开始时各汇报一次。Server 以 `reportId` 去重，把每次计数记为一条用量事件（时间取 `periodEnd`），所以重发的汇报只算一次；普通模式下消息与新会话已由 Server 在请求时记下，只在 `required` 模式下采用设备的这两项计数。
 - `LinkWelcome.desired.runtimes` 的每一项是 `RuntimeApplyCommand`；没有的可选字段（`modelGateway`、`operationId`、`switchRevision`）不输出为 null。
 
 Server 发送每条命令之前按请求模型校验 `p`（`validate_command_payload()`）。模型只要求设备本来就要求的字段，不合格的命令不登记、不发出，按设备同样的规则回 409 `invalid_argument`。仍是任意对象的字段：Runtime 实例的 `config`（由该类型的 `configSchema` 约束）、`modelConnection` 状态、时间线条目与分享条目（protocol 1.2 的条目原样透传）、`ClientCallRequest.body`（由各路由的客户端契约约束）。

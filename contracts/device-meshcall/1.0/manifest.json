@@ -181,7 +181,7 @@
       "model": "UsageReportOut",
       "path": "schemas/usage-report-out.schema.json",
       "pydanticMode": "validation",
-      "sha256": "e5fc7fff20523bfbed04190ca36d8369ca775867b1201c0b941d9cbfa009587b",
+      "sha256": "b65e4c271986d58a928adf65e9c1ff8fc337d5e740b0e99d932632bf7a0dd94f",
       "slug": "usage-report-out"
     },
     {

@@ -103,6 +103,9 @@ export class MessageService {
         at,
       })
       if (received.duplicate) return { delivery: 'duplicate', clientMessageId: command.clientMessageId, state: received.delivery.state }
+      const created = { sessionId: command.sessionId, runtimeType: command.runtimeType, runtimeId: command.runtimeId }
+      this.kernel.countUsage(created, 'session.created')
+      this.kernel.countUsage(created, 'message.sent')
       this.handOff(command.sessionId, command.clientMessageId, command.content, command.attachments ?? [], open)
       return { delivery: 'accepted', clientMessageId: command.clientMessageId }
     })
@@ -152,6 +155,7 @@ export class MessageService {
         receipt: withResult(context.receipt, admission.kind === 'enqueue' ? null : { delivery: 'accepted', clientMessageId: command.clientMessageId }),
         at,
       })
+      kernel.countUsage(session, 'message.sent')
       if (received.queue !== null && received.queueItem !== null) {
         deps.live.emit('runtime.queue.updated', { sessionId: command.sessionId, queue: queueRules.queueState(received.queue) })
         if (admission.kind === 'enqueue' && admission.interrupt) void kernel.serial(command.sessionId, () => this.queue.interruptForQueue(command.sessionId))

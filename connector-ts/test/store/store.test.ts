@@ -342,9 +342,9 @@ describe('interactions, planning, goals, commands, outbox, kv', () => {
   })
 
   it('acknowledges the outbox cumulatively', async () => {
-    const a = await store.outbox.append('usage.report', null, { periodStart: 't', periodEnd: 't', n: 1 }, 't')
-    const b = await store.outbox.append('usage.report', null, { periodStart: 't', periodEnd: 't', n: 2 }, 't')
-    await store.outbox.append('usage.report', null, { periodStart: 't', periodEnd: 't', n: 3 }, 't')
+    const a = await store.outbox.append('usage.report', null, { reportId: 'usage_1', periodStart: 't', periodEnd: 't', n: 1 }, 't')
+    const b = await store.outbox.append('usage.report', null, { reportId: 'usage_2', periodStart: 't', periodEnd: 't', n: 2 }, 't')
+    await store.outbox.append('usage.report', null, { reportId: 'usage_3', periodStart: 't', periodEnd: 't', n: 3 }, 't')
     expect(await store.outbox.lowest()).toBe(a)
     expect(await store.outbox.ack(b)).toBe(2)
     expect((await store.outbox.pending(0, 10)).map(r => r.payload.n)).toEqual([3])

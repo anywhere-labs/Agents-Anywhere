@@ -640,17 +640,50 @@ class AttachmentConsumedOut(DeviceModel):
     sha256: NonEmpty
 
 
+#: Counter names the Server records (``usage_events`` types); it skips a name it does not know.
+USAGE_COUNTER_NAMES: tuple[str, ...] = (
+    "message.sent",
+    "session.created",
+    "turn.ended",
+    "approval.requested",
+    "approval.resolved",
+    "runtime.error",
+)
+# Names, outcomes and runtime types are identifiers, never free text.
+_USAGE_TOKEN = r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$"
+MAX_USAGE_COUNTER_VALUE = 10_000
+
+
 class UsageCounter(DeviceModel):
-    name: NonEmpty
-    value: int = Field(ge=0)
-    runtimeId: str | None = None
-    sessionId: str | None = None
+    """How often one platform activity happened in the report's period, per session, runtime and outcome.
+
+    ``message.sent`` / ``session.created``: messages and sessions the device accepted from the platform (not ones
+    typed into the Agent locally). ``turn.ended``: turns of sessions the platform drives, ``outcome`` ``completed`` /
+    ``interrupted`` / ``failed``. ``approval.requested`` / ``approval.resolved``: approvals, ``outcome`` ``resolved``
+    / ``expired``. ``runtime.error``: errors the Runtime reported. ``durationsMs``: one entry per occurrence whose
+    duration is known (turn: start to end; approval: opened to resolved), at most ``value`` entries.
+    """
+
+    name: str = Field(pattern=_USAGE_TOKEN)
+    value: int = Field(ge=0, le=MAX_USAGE_COUNTER_VALUE)
+    runtimeType: str | None = Field(default=None, pattern=_USAGE_TOKEN)
+    runtimeId: str | None = Field(default=None, max_length=200)
+    sessionId: str | None = Field(default=None, max_length=200)
+    outcome: str | None = Field(default=None, pattern=_USAGE_TOKEN)
+    durationsMs: list[Annotated[int, Field(ge=0)]] = Field(default_factory=list, max_length=MAX_USAGE_COUNTER_VALUE)
 
 
 class UsageReportOut(DeviceModel):
+    """``usage.report``: the device's platform activity since its previous report, as counters (D1: no content).
+
+    Sent in plaintext in E2EE ``required`` mode too. The Server keys what it records by ``reportId``, so a report
+    the outbox resends counts once. Counters belong to the period's end for hourly statistics.
+    """
+
+    reportId: str = Field(min_length=1, max_length=200)
     periodStart: str
     periodEnd: str
-    counters: list[UsageCounter] = Field(default_factory=list)
+    counters: list[UsageCounter] = Field(default_factory=list, max_length=1000)
 
 
 # ---------------------------------------------------------------------------

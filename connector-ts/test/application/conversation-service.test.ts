@@ -469,7 +469,7 @@ describe('sync streams', () => {
 
   it('outbox stream resends from the lowest unacknowledged oid with sealed summaries', async () => {
     await makeSession()
-    await store.outbox.append('usage.report', null, { periodStart: 't', periodEnd: 't', tokens: 5 }, 't')
+    await store.outbox.append('usage.report', null, { reportId: 'usage_1', periodStart: 't', periodEnd: 't', tokens: 5 }, 't')
     const signal = new OutboxSignal()
     const abort = new AbortController()
     const stream = outboxStream({ outbox: store.outbox, sealer: plainSealer, signal, pollMs: 50 }, abort.signal)

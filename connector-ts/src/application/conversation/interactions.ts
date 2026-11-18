@@ -51,7 +51,10 @@ export class InteractionService {
     if (event.kind === 'plan_review' && event.plan !== undefined) {
       await this.planning.onPlanReview(sessionId, { noticeId: event.interactionId, planId: event.plan.planId, markdown: event.plan.markdown, turnId: event.turnId ?? null, at })
     }
-    if (event.kind === 'approval') await this.kernel.patchSession(sessionId, { status: 'waiting_approval' })
+    if (event.kind === 'approval') {
+      const commit = await this.kernel.patchSession(sessionId, { status: 'waiting_approval' })
+      this.kernel.countUsage(commit.session, 'approval.requested')
+    }
     deps.live.emit('runtime.notice.updated', { sessionId, notice })
   }
 
@@ -63,6 +66,7 @@ export class InteractionService {
     const next = resolution === 'answered' ? interactionRules.resolve(current, resolution, at) : interactionRules.expire(current, resolution, at)
     await deps.store.interactions.save(next)
     const session = await this.kernel.requireSession(sessionId)
+    if (interactionRules.isActive(current)) this.kernel.countApprovalClosed(session, next)
     if (session.status === 'waiting_approval' && (await deps.store.interactions.list(sessionId, true)).length === 0) await this.kernel.patchSession(sessionId, { status: 'running' })
     this.kernel.emitNotice(next, next.state === 'resolved' ? 'resolved' : 'expired')
   }

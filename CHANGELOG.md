@@ -57,6 +57,7 @@
 - 系统钥匙串锁定或暂时不可用时，Connector 不再生成新密钥覆盖旧的（以前会导致设备身份和加密配对全部失效），第一次运行且没有可用钥匙串时改用仅本人可读的文件保存；密钥也不再出现在命令行参数里。端口预览只开放属于会话的端口；加密模式下端口通知不再带进程名和网址路径，普通模式下网址里的令牌参数也会被去掉。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 连接 v3 Connector 的设备在不开启端到端加密时，也可以浏览、编辑、下载设备上的文件，使用终端（多标签、重连后补回输出）和执行 Shell 命令；运行超过 30 秒的 Shell 命令不再超时失败，两种模式下都可以在后台运行命令，再等待它的输出和退出码或取消它。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 连接 v3 Connector 的设备上，可以看到可用的 Agent 类型，启用、停用 Agent 实例并修改配置、切换模型渠道和修改设备设置；设备离线时的修改会在设备上线后自动生效，不会被之前的旧修改覆盖。Agent 配置和模型密钥不再随操作记录保存在 Server 上。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
+- 管理员用量统计里，连接 v3 Connector 的设备的回合数、回合失败率与耗时、审批次数与等待时间、Agent 报错和设备系统分布不再一直为 0；加密模式下消息数和会话数也由设备汇报（只有计数，不含内容）。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 吊销设备凭据、删除设备或删除账号后，连接 v3 Connector 的设备会立即断开并显示离线，不再继续接收操作。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 加密模式下可以在工作设备上运行 `anywhere-cli pair-client` 显示配对二维码和链接（Desktop 等在运行时也可以）；已配对的客户端批准新客户端时，要在工作设备上确认（命令行询问或 Desktop 弹窗），超时或无人回答视为拒绝。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 设备配对码和配对时下发的连接凭据不再写入数据库，只在 Redis 里以哈希和加密形式保存到配对过期，凭据被领取一次后立即删除。（[#723](https://github.com/anywhere-labs/Agents-Anywhere/pull/723)）

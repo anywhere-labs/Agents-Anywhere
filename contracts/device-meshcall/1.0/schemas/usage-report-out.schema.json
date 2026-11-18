@@ -1,15 +1,39 @@
 {
   "$defs": {
     "UsageCounter": {
+      "description": "How often one platform activity happened in the report's period, per session, runtime and outcome.\n\n``message.sent`` / ``session.created``: messages and sessions the device accepted from the platform (not ones\ntyped into the Agent locally). ``turn.ended``: turns of sessions the platform drives, ``outcome`` ``completed`` /\n``interrupted`` / ``failed``. ``approval.requested`` / ``approval.resolved``: approvals, ``outcome`` ``resolved``\n/ ``expired``. ``runtime.error``: errors the Runtime reported. ``durationsMs``: one entry per occurrence whose\nduration is known (turn: start to end; approval: opened to resolved), at most ``value`` entries.",
       "properties": {
+        "durationsMs": {
+          "items": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxItems": 10000,
+          "title": "Durationsms",
+          "type": "array"
+        },
         "name": {
-          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$",
           "title": "Name",
           "type": "string"
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Outcome"
         },
         "runtimeId": {
           "anyOf": [
             {
+              "maxLength": 200,
               "type": "string"
             },
             {
@@ -19,9 +43,23 @@
           "default": null,
           "title": "Runtimeid"
         },
+        "runtimeType": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Runtimetype"
+        },
         "sessionId": {
           "anyOf": [
             {
+              "maxLength": 200,
               "type": "string"
             },
             {
@@ -32,6 +70,7 @@
           "title": "Sessionid"
         },
         "value": {
+          "maximum": 10000,
           "minimum": 0,
           "title": "Value",
           "type": "integer"
@@ -47,11 +86,13 @@
   },
   "$id": "urn:agents-anywhere:device-meshcall:1.0:usage-report-out",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "``usage.report``: the device's platform activity since its previous report, as counters (D1: no content).\n\nSent in plaintext in E2EE ``required`` mode too. The Server keys what it records by ``reportId``, so a report\nthe outbox resends counts once. Counters belong to the period's end for hourly statistics.",
   "properties": {
     "counters": {
       "items": {
         "$ref": "#/$defs/UsageCounter"
       },
+      "maxItems": 1000,
       "title": "Counters",
       "type": "array"
     },
@@ -62,9 +103,16 @@
     "periodStart": {
       "title": "Periodstart",
       "type": "string"
+    },
+    "reportId": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Reportid",
+      "type": "string"
     }
   },
   "required": [
+    "reportId",
     "periodStart",
     "periodEnd"
   ],

@@ -453,6 +453,18 @@ def test_slash_commands(secure: Secure) -> None:
     secure.wait_reply(sid, f"echo: /review {argument}")
 
 
+def test_usage_statistics_come_from_the_device(secure: Secure) -> None:
+    # Required mode: the Server sees no message, so messages, sessions and turns all come from usage.report.
+    secure.ensure_session()
+
+    def counted() -> dict[str, Any] | None:
+        summary = secure.env.api.get("/admin/usage/report", params={"tz": "UTC"})["summary"]
+        return summary if summary["messages"] >= 1 and summary["turns"] >= 1 and summary["sessions"] >= 1 else None
+
+    summary = wait_for(counted, 30, 0.5, "the device's counters in the usage report")
+    assert summary["activeUsers"] >= 1, summary
+
+
 def test_no_canary_reaches_the_server_side(secure: Secure) -> None:
     env = secure.env
     # Content of its own, so the scan has something to find even when this test runs alone.

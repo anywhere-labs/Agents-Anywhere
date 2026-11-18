@@ -72,6 +72,14 @@ def _iso_from_ms(value: int) -> str:
     return datetime.fromtimestamp(value / 1000, UTC).isoformat()
 
 
+# ``LinkHello.os`` (Node's ``process.platform``) as the connector's ``deviceOs``.
+_DEVICE_OS = {"darwin": "macos", "macos": "macos", "win32": "windows", "windows": "windows", "linux": "linux"}
+
+
+def _device_os(value: str) -> str | None:
+    return _DEVICE_OS.get(value.strip().lower())
+
+
 class DeviceLinkService:
     """One per worker; also the outbox, event and presence handler of the hub."""
 
@@ -177,6 +185,9 @@ class DeviceLinkService:
             # Kicks a half-dead previous link at once (4401) so it frees the instance id.
             await self._mesh.revoke_token(str(previous["tokenId"]))
         await self._store.set_connector_link_contract(device_id, LINK_CONTRACT)
+        device_os = _device_os(hello.os)
+        if device_os is not None:
+            await self._store.record_connector_connection(device_id, device_os=device_os)
         floors = await self._store.device_seq_floors(
             device_id, {head.sessionId: head.headSeq for head in hello.sessionsHead}
         )
@@ -322,13 +333,36 @@ class DeviceLinkService:
                 consumed = AttachmentConsumedOut.model_validate(item.p)
                 await self._attachment_consumed(device_id, consumed)
             elif item.m == "usage.report":
-                UsageReportOut.model_validate(item.p)
-                # Usage counters are platform statistics; recorded by the usage service when wired.
+                await self._record_usage(device_id, UsageReportOut.model_validate(item.p))
             else:
                 logger.warning("unknown outbox message device_id={} m={} oid={}", device_id, item.m, item.oid)
         except ValidationError as exc:
             # A malformed message would be resent forever; acknowledge it and log loudly.
             logger.error("dropping invalid outbox message device_id={} m={} error={}", device_id, item.m, exc)
+
+    async def _record_usage(self, device_id: str, report: UsageReportOut) -> None:
+        """Platform statistics from the device's counters; idempotent by ``reportId``."""
+
+        if self._usage_recorder is None:
+            return
+        from agent_server.services.usage_events import device_report_events
+
+        owner = await self._connector_or_none(device_id)
+        events = device_report_events(
+            report,
+            device_id=device_id,
+            user_id=owner.userId if owner is not None else None,
+            # Plain mode: the Server already counted messages and new sessions at the request.
+            include_intents=self._e2ee_settings().required,
+        )
+        for event in events:
+            await self._usage_recorder.record(event)
+
+    async def _connector_or_none(self, device_id: str) -> Any | None:
+        try:
+            return await self._store.get_connector(device_id)
+        except KeyError:
+            return None
 
     async def _apply_summary(self, device_id: str, summary: SessionSummary) -> None:
         # Required mode drops a plaintext envelope (the list shows "encrypting until the device is online"):
@@ -530,8 +564,13 @@ class DeviceLinkService:
             if self._usage_recorder is not None:
                 from agent_server.services.usage_events import connector_online_event
 
+                connector = await self._connector_or_none(device_id)
                 await self._usage_recorder.record(
-                    connector_online_event(connector_id=device_id, user_id=None, device_os=None)
+                    connector_online_event(
+                        connector_id=device_id,
+                        user_id=None,
+                        device_os=connector.deviceOs if connector is not None else None,
+                    )
                 )
         else:
             self.runtime_status.pop(device_id, None)

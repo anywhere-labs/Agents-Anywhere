@@ -9,6 +9,7 @@ import {
   PreparationService,
   RuntimeRegistry,
   RuntimeScans,
+  UsageMeter,
   announceRuntimes,
   applyDesiredRuntimes,
   capabilitySet,
@@ -126,6 +127,14 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
         onEvent: (spec, handle, event) => onRuntimeEvent(spec, handle, event),
       })
       let service: ConversationService | null = null
+      // Platform activity counters, reported to the Server through the outbox (`usage.report`).
+      const usage = new UsageMeter({
+        outbox: store.outbox,
+        clock,
+        ids,
+        onReport: () => outboxSignal.poke(),
+        onError: error => options.log('warn', `usage report: ${message(error)}`),
+      })
       let preparations: PreparationService | null = null
       const history = new NativeHistory({
         store,
@@ -170,12 +179,14 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
           clock,
           ids,
           history,
+          usage,
           attachments: async (sessionId, ref) => {
             const local = await attachments.resolve(sessionId, ref)
             return { kind: 'file', path: local.path, mimeType: local.mediaType, name: local.name }
           },
         })
         service = conversation
+        usage.start()
         onRuntimeEvent = (spec, handle, event) => runtimeEvent({ spec, handle, event, live, scans, conversations: conversation, store, connectorId: settings.connectorId, log })
         const facts: RuntimeFacts = {
           sessionCapabilities: async sessionId => {
@@ -312,6 +323,7 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
         await trust?.close().catch(() => undefined)
         await preparations?.close().catch(() => undefined)
         await service?.close().catch(() => undefined)
+        await usage.close().catch(() => undefined)
         terminals?.shutdown()
         await shell.close().catch(() => undefined)
         await runtimes.close().catch(() => undefined)

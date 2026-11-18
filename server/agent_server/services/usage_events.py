@@ -18,6 +18,7 @@ from typing import Any
 
 from loguru import logger
 
+from agent_server.core.device_meshcall import UsageReportOut
 from agent_server.core.models import NoticeIn, SessionView
 from agent_server.core.usage import (
     APPROVAL_RESOLVED_STATUSES,
@@ -48,6 +49,22 @@ MAX_TURN_DURATION_MS = 6 * 60 * 60 * 1000
 _MAX_TRACKED_USERS = 50_000
 _MAX_TRACKED_SESSIONS = 10_000
 _MAX_TRACKED_VIEWS = 50_000
+# Rows one device usage report may add, whatever its counters claim.
+MAX_DEVICE_REPORT_EVENTS = 10_000
+# Counter names of ``usage.report`` the Server records; others are skipped.
+DEVICE_COUNTER_EVENTS = frozenset(
+    {
+        EVENT_MESSAGE_SENT,
+        EVENT_SESSION_CREATED,
+        EVENT_TURN_ENDED,
+        EVENT_APPROVAL_REQUESTED,
+        EVENT_APPROVAL_RESOLVED,
+        EVENT_RUNTIME_ERROR,
+    }
+)
+# Platform intents: the Server records them itself at the request whenever it can
+# read the request (plain mode), so the device's counts are only used otherwise.
+DEVICE_INTENT_EVENTS = frozenset({EVENT_MESSAGE_SENT, EVENT_SESSION_CREATED})
 
 
 class UsageRecorder:
@@ -385,6 +402,76 @@ def connector_online_event(
         connector_id=connector_id,
         device_os=device_os,
     )
+
+
+def device_report_events(
+    report: UsageReportOut,
+    *,
+    device_id: str,
+    user_id: str | None,
+    include_intents: bool,
+    now: str | None = None,
+) -> list[UsageEvent]:
+    """Expand a device's ``usage.report`` counters into one usage event per occurrence.
+
+    Every event is keyed by the report id, its counter's position and the occurrence, so
+    a resent report adds nothing. Events take the period's end as their time (never later
+    than ``now``). ``include_intents`` admits ``message.sent`` / ``session.created``,
+    which carry ``user_id`` like the Server's own; the other events carry none.
+    """
+
+    occurred_at = _report_time(report.periodEnd, now or utc_now())
+    events: list[UsageEvent] = []
+    for index, counter in enumerate(report.counters):
+        if counter.name not in DEVICE_COUNTER_EVENTS:
+            continue
+        intent = counter.name in DEVICE_INTENT_EVENTS
+        if intent and not include_intents:
+            continue
+        max_ms = MAX_TURN_DURATION_MS if counter.name == EVENT_TURN_ENDED else None
+        for occurrence in range(counter.value):
+            if len(events) >= MAX_DEVICE_REPORT_EVENTS:
+                logger.warning(
+                    "device usage report truncated device_id={} report_id={}",
+                    device_id,
+                    report.reportId,
+                )
+                return events
+            duration = (
+                counter.durationsMs[occurrence]
+                if occurrence < len(counter.durationsMs)
+                else None
+            )
+            if duration is not None and max_ms is not None and duration > max_ms:
+                duration = None
+            events.append(
+                UsageEvent(
+                    counter.name,
+                    occurred_at,
+                    user_id=user_id if intent else None,
+                    connector_id=device_id,
+                    session_id=counter.sessionId,
+                    runtime_type=counter.runtimeType,
+                    runtime_id=counter.runtimeId,
+                    outcome=counter.outcome,
+                    duration_ms=duration,
+                    dedupe_key=f"usage:{device_id}:{report.reportId}:{index}:{occurrence}",
+                )
+            )
+    return events
+
+
+def _report_time(value: str, now: str) -> str:
+    """``value`` as a UTC timestamp in ``utc_now`` form; ``now`` when unreadable or in the future."""
+
+    try:
+        parsed = _parse_iso(value.replace("Z", "+00:00"))
+        latest = _parse_iso(now.replace("Z", "+00:00"))
+    except ValueError:
+        return now
+    if parsed > latest:
+        return now
+    return parsed.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _duration_ms(

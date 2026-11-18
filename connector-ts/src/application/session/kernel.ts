@@ -1,7 +1,7 @@
 import type { Interaction, Session, TimelineDraft } from '../../domain/conversation/index.js'
 import type { NoticeIn } from '../../generated/device-meshcall/v1_0/runtime-notice-updated-event.js'
 import { UseCaseError } from '../errors.js'
-import type { ChangeFeed, Clock, ConversationStore, IdSource, LiveEvents, PromptAttachment, RuntimeHandles, RuntimeStatusPayload, SessionCapabilities, SessionCommit } from '../ports/index.js'
+import type { ChangeFeed, Clock, ConversationStore, IdSource, LiveEvents, PromptAttachment, RuntimeHandles, RuntimeStatusPayload, SessionCapabilities, SessionCommit, UsageEventName, UsageSink } from '../ports/index.js'
 import { capabilitySet } from '../runtimes/capabilities.js'
 
 export interface ConversationDeps {
@@ -17,7 +17,11 @@ export interface ConversationDeps {
   readonly attachments?: (sessionId: string, ref: AttachmentRef) => Promise<PromptAttachment>
   /** Projects the latest page of an existing native session before it is opened (04-connector.md §6.6). */
   readonly history?: { ensureLatest(sessionId: string): Promise<void> }
+  /** Platform activity counters for the Server's usage statistics. */
+  readonly usage?: UsageSink
 }
+
+type SessionRef = Pick<Session, 'sessionId' | 'runtimeType' | 'runtimeId'>
 
 export interface AttachmentRef {
   fileId: string
@@ -123,9 +127,36 @@ export class SessionKernel {
     this.deps.live.emit('runtime.notice.updated', { sessionId: interaction.sessionId, notice })
   }
 
+  /** Counts one platform activity of a session for `usage.report`; statistics never fail a use case. */
+  public countUsage(session: SessionRef, name: UsageEventName, detail: { outcome?: string; durationMs?: number | null } = {}): void {
+    try {
+      this.deps.usage?.count({ name, sessionId: session.sessionId, runtimeType: session.runtimeType, runtimeId: session.runtimeId, ...detail })
+    } catch (error) {
+      this.reportError(session.sessionId, error)
+    }
+  }
+
+  /** An approval that was answered or expired, with how long it stayed open. */
+  public countApprovalClosed(session: SessionRef, interaction: Interaction): void {
+    if (interaction.kind !== 'approval' || (interaction.state !== 'resolved' && interaction.state !== 'expired')) return
+    this.countUsage(session, 'approval.resolved', { outcome: interaction.state, durationMs: elapsedMs(interaction.openedAt, interaction.resolvedAt) })
+  }
+
+  /** Reports the counts so far now (a turn ended). */
+  public flushUsage(): void {
+    void this.deps.usage?.flush().catch(() => undefined)
+  }
+
   public async requireSession(sessionId: string): Promise<Session> {
     const session = await this.deps.store.sessions.get(sessionId)
     if (session === null) throw new UseCaseError('session_not_found', `session ${sessionId} is not on this device`)
     return session
   }
+}
+
+/** Milliseconds from `start` to `end`, or null when either is missing or unreadable. */
+export function elapsedMs(start: string | null | undefined, end: string | null | undefined): number | null {
+  if (start == null || end == null) return null
+  const ms = Date.parse(end) - Date.parse(start)
+  return Number.isFinite(ms) && ms >= 0 ? ms : null
 }
