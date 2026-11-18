@@ -168,7 +168,8 @@ Codex **不声明** JetBrains AIR：codex-acp 对 AIR 客户端会改用另一�
   - `_codex/session/inspect`、`_codex/ipc/sessions`；
   - Windows 写锁判定为 unknown 时改用不带 `codexIpc` 的普通加载；
   - codex-acp 在 initialize 顶层声明 `_meta.localImageLinks.supported`（anywhere-labs/codex-acp#9），没声明时 Codex 的 `runtime.attachment` 报不支持；
-  - 端口能力 `runtime.owner_release`（释放外部持有者，例如退出 Codex App；两步，会话层确认）。
+  - 端口能力 `runtime.owner_release`（释放外部持有者，例如退出 Codex App；两步，会话层确认）与 `runtime.app_open`（在桌面应用里打开原生会话），只在本机装有 Codex App 时声明支持，以 `open-in-codex-app`、`quit-codex-app` 斜杠命令提供给客户端；
+  - codex-acp 的自动审查工具调用（`guardian_assessment:<reviewId>`）投影为时间线通知，不作为工具卡片。
   - `_meta.codexIpc.mode` 的 `follow` / `daemon` 没有用到。
 - **会话目录扩展**：`_session/list/subscribe`、`_session/list/changes`、`_session/archive`、`_session/rename`；对应的 `session.archive`、`session.rename` 能力。
 - **DSH**：`_dsh/session/turn`、`_dsh/session/continue`、`_meta.dsh.delivery` 等（`contracts/dsh-bridge/3.0`），Connector 侧尚无 DSH Profile。
