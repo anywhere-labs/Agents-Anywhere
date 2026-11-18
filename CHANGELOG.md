@@ -26,6 +26,7 @@
 
 ### 会话创建与消息交付
 
+- 连接 v3 Connector 的设备上，Codex、Claude、Hermes、通用 ACP Agent 等所有 Agent 的会话历史都会显示用户随消息发送的附件卡片，不再只有 Pi 会话显示，发送失败的消息也保留附件。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 连接 v3 Connector 的设备上，Agent 请求审批或提交计划审阅时，Web、Desktop、Android 和 iOS 不用刷新就能看到卡片，回答后的「处理中」、发送失败后重新可答和关闭状态也实时更新；开启端到端加密时，计划和目标状态同样实时更新。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 连接 v3 Connector 的设备上，在已有会话里输入 `/plan 任务` 会先进入规划模式再把任务发给 Agent，不再报错；进入规划模式失败或会话正忙时任务不会发出、草稿保留，同一次操作重试不会重复发送。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 连接 v3 Connector 的设备上：在 Web、Desktop 和 Android 打开会话不再报服务器错误；回答审批时选项无效不再让这一轮卡住，可以重新回答；附件文件缺失时发送会直接提示失败，之后还能继续发消息；Agent 进程意外退出不再让 Connector 一起崩溃；Hermes 和其他通用 ACP Agent 第二轮的回复不再覆盖上一轮的最后一条回复；Connector 在执行完操作、还没记下结果时重启，Server 重试同一操作不会再执行一次；通用 ACP Agent 的会话再次打开或读取历史时在会话自己的目录里进行，不再落到 Connector 的启动目录；Connector 重启后，Codex 和 Claude 的新建会话页仍能列出上次用过的模型，不用先打开一个已有会话；在设备上新建的 Pi 和 Claude 会话再次打开后，发过的用户消息不再显示两遍。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
@@ -80,6 +81,7 @@
 ### Web 与 Desktop 界面
 
 - Claude 退出规划模式时，会话里只显示计划审阅面板，不再同时弹出一张列着原生选项的审批卡片；审批卡片的选项较长时会换行显示，标题不再被挤成竖排。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
+- 连接 v3 Connector 的设备上，工具的超长输出和图片只保存在设备上时，可以在 Web 和 Desktop 点「展开完整输出」「加载图片」或「下载」从设备读取完整内容；加密模式下这些内容和附件图片也能正常加载。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 多个窗口或设备同时打开同一个会话时，关掉其中一个不再让其他窗口读取会话失败。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 会话所在的设备离线时，已经看过的消息仍然保留，输入框上方提示「设备离线」并说明显示的是本机缓存；从没打开过的会话显示「设备离线，上线后查看」；设备重新上线后自动补齐离线期间的新消息。（[#667](https://github.com/anywhere-labs/Agents-Anywhere/pull/667)）
 - 看过的会话会保存在本机，刷新页面或重新打开 Desktop 后能立即显示，设备离线时也能看；退出登录时清除本机保存的内容，切换账号时清除其他账号的内容。在共享电脑上可以在 Web 登录页勾选「不在此设备保存会话内容」。（[#677](https://github.com/anywhere-labs/Agents-Anywhere/pull/677)）
@@ -102,6 +104,7 @@
 
 ### Android
 
+- 连接 v3 Connector 的设备上，只保存在设备上的工具长输出、图片和文件可以点开查看完整内容、加载图片或交给其他应用打开；加密模式下附件也能正常加载。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 没发出去的消息下方显示「发送失败」，点开可以查看原因并删除这条消息，不会再一直留在对话里。（[#660](https://github.com/anywhere-labs/Agents-Anywhere/pull/660)）
 - 打开过文件后再进入会话，会直接显示对话，不再先停在「文件」页。（[#661](https://github.com/anywhere-labs/Agents-Anywhere/pull/661)）
 - 在小米 15、小米 17 等已升级 HyperOS 4 的手机上，展开推理内容不再闪退；推理正文改用与其他文字相同的常规字重。（[#662](https://github.com/anywhere-labs/Agents-Anywhere/pull/662)）
@@ -121,6 +124,7 @@
 
 ### iOS
 
+- 连接 v3 Connector 的设备上，只保存在设备上的工具长输出、图片和文件可以展开完整内容、加载图片或按文件打开；加密模式下附件也能正常加载。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 会话所在设备离线时（v3 Server）：
   - 本机缓存过的消息继续显示，输入框上方提示「设备离线」；没有缓存时对话区显示「设备离线，上线后查看。」，设备上线后自动补上离线期间的新消息。
   - 会话列表仍能看到「计划待审阅」「目标进行中」「目标已暂停」。
