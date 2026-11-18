@@ -243,15 +243,19 @@ describe.skipIf(binary === null)('DeviceLink against a real Router', () => {
 
   it('calls ready again when the holder worker dies, without a new hello', async () => {
     startLink()
-    await until(() => link.state === 'online', 10_000, 'online')
+    // The device turns online as its attach stream opens, before the holder has the first item and records it.
+    await until(() => link.state === 'online' && server.held !== null, 10_000, 'held')
     const hellos = server.hellos
+    const readies = server.readies
     const seen = states.length
     await server.drop()
     // The re-ready can follow within milliseconds, so look for the transition, not the current state.
     await until(() => states.slice(seen).includes('registered'), 5000, 'attach cancelled')
-    const recovery = await until(() => link.state === 'online' && server.held !== null, 10_000, 'held again')
+    await until(() => link.state === 'online' && server.held !== null, 10_000, 'held again')
+    // Recovered through `ready` alone: no new hello, and the Router registration stayed up throughout.
+    expect(server.readies).toBeGreaterThan(readies)
     expect(server.hellos).toBe(hellos)
-    expect(recovery).toBeLessThan(5000)
+    expect(states.slice(seen)).toEqual(['registered', 'online'])
   }, 20_000)
 
   it('says hello again when its token is revoked, and when the Router restarts', async () => {

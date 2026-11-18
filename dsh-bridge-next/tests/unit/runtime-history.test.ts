@@ -351,7 +351,9 @@ test('rc.1 failed attempts discard provisional blocks before the next attempt', 
   assert.ok(projection.drain().items.some(item => item.content.text === 'retry'))
 })
 
-test('multi-page list and snapshot captures release on final page or timer expiry without extra requests', async () => {
+test('multi-page list and snapshot captures release on final page or timer expiry without extra requests', async t => {
+  // Page lifetimes run on the mock clock: a slow request between two pages cannot expire a capture.
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
   const large = log([
     ...start,
     ...Array.from({ length: 1005 }, (_, i) => ({
@@ -396,7 +398,10 @@ test('multi-page list and snapshot captures release on final page or timer expir
   await router.request('getSessionSnapshot', params, signal)
   assert.equal(router.hasInventoryPage, true)
   assert.equal(router.hasHistoryPage, true)
-  await new Promise(resolve => setTimeout(resolve, 80))
+  t.mock.timers.tick(39)
+  assert.equal(router.hasInventoryPage, true)
+  assert.equal(router.hasHistoryPage, true)
+  t.mock.timers.tick(1)
   assert.equal(router.hasInventoryPage, false)
   assert.equal(router.hasHistoryPage, false)
 })

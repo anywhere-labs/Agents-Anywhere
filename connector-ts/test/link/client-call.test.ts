@@ -256,7 +256,10 @@ describe.skipIf(binary === null)('aa.device.v1.Client over a real Router', () =>
     const runtime = sessions.find(session => session.sessionId === sessionId)!
     runtime.emit({ type: 'turn.started', turnId: 't1', origin: 'user', clientMessageId: `cm_${sessionId}` })
     runtime.emit({ type: 'turn.ended', turnId: 't1', reason: 'end_turn' })
-    await new Promise(resolve => setTimeout(resolve, 150))
+    await poll(async () => {
+      const stored = await store.sessions.get(sessionId)
+      return stored !== null && stored.status !== 'running' && (stored.activeTurn ?? null) === null
+    }, 'the first turn to end')
   }
 
   it('refuses a route the device does not answer, or a method or path that is not the route\'s, before any lane', async () => {
@@ -406,9 +409,11 @@ describe.skipIf(binary === null)('aa.device.v1.Client over a real Router', () =>
     await startDevice({ limits: { critical: 3, command: 1 } })
     // The interrupt reaches the inbox only for a session the device holds.
     await createSession('sess_crit')
-    // Link/attach and Link/outbox hold two critical slots for the whole connection.
-    await poll(() => link.inflight('critical') === 2, 'the link streams')
+    // Link/attach and Link/outbox hold two critical slots for the whole connection. The holder's
+    // Link/ackOutbox calls are critical too: let the outbox drain so none of them is in flight.
+    await poll(async () => (await store.outbox.lowest()) === null && link.inflight('critical') === 2, 'the link streams and an empty outbox')
     gate.close()
+    const entered = gate.entered
     const interrupt = call({
       route: 'session.runtime.interrupt',
       method: 'POST',
@@ -416,7 +421,11 @@ describe.skipIf(binary === null)('aa.device.v1.Client over a real Router', () =>
       body: {},
       command: { commandId: 'c_int1', inputDigest: 'sha256:int-1', deadline: deadline() },
     })
-    await poll(() => link.inflight('critical') === 3, 'the interrupt in the critical lane')
+    // Awaited below; handled here too so a failed assertion in between leaves no unhandled rejection.
+    interrupt.catch(() => undefined)
+    // The interrupt holds its critical slot until the gate opens.
+    await poll(() => gate.entered > entered, 'the interrupt to reach the inbox')
+    expect(link.inflight('critical')).toBe(3)
     expect(link.inflight('command')).toBe(0)
     // Another critical route is refused; a read and a command still run beside it.
     await expect(call({ route: 'session.runtime.notices', method: 'GET', path: sessionPath('sess_x', 'runtime/notices') })).rejects.toMatchObject({ code: 'resource_exhausted' })

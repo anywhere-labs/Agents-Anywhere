@@ -10,6 +10,7 @@ import asyncio
 import base64
 import contextlib
 import json
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -308,7 +309,8 @@ def test_command_receipts_register_settle_and_replay(mesh_router: RouterProcess,
                 # Unknown: the call opened and timed out. A replay asks Commands/status first; once the device
                 # knows the outcome the command is forwarded again and its inbox replays the answer.
                 state.client_handler = lambda request: (200, accepted)
-                state.client_delay = 2
+                running = threading.Event()
+                state.client_gate = running
                 unknown = await client.post(send, json={"clientMessageId": "m_u", "content": "hi"}, headers=headers)
                 assert unknown.status_code == 504 and _detail(unknown)["code"] == "command_outcome_unknown"
                 assert (await store.get_device_command(user_id, "m_u"))["state"] == "unknown"
@@ -316,8 +318,9 @@ def test_command_receipts_register_settle_and_replay(mesh_router: RouterProcess,
                 calls = len(state.client_calls)
                 pending = await client.post(send, json={"clientMessageId": "m_u", "content": "hi"}, headers=headers)
                 assert pending.status_code == 504 and len(state.client_calls) == calls
+                running.set()
                 await eventually(lambda: _known(state, "m_u"))
-                state.client_delay = 0
+                state.client_gate = None
                 settled = await client.post(send, json={"clientMessageId": "m_u", "content": "hi"}, headers=headers)
                 assert settled.status_code == 200 and state.client_runs.count("session.runtime.messages") == 3
                 assert (await store.get_device_command(user_id, "m_u"))["state"] == "accepted"

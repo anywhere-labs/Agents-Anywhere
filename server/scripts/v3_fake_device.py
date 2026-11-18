@@ -138,6 +138,8 @@ class FakeDeviceState:
         self.client_receipts: dict[str, dict[str, Any]] = {}
         self.client_runs: list[str] = []
         self.client_delay = 0.0
+        # When set, ``Client/call`` work waits until the test sets this event (a device still running the call).
+        self.client_gate: threading.Event | None = None
         self.client_chunk_bytes = MAX_CHUNK_BYTES
         # ``Client/subscribe``: terminal messages to send per terminal (``TerminalStreamItem`` dicts).
         self.client_terminal_items: dict[str, collections.deque[dict[str, Any]]] = collections.defaultdict(
@@ -333,6 +335,9 @@ def _make_services(state: FakeDeviceState, *, mode: str = "off") -> list[object]
                 async def run() -> dict[str, Any]:
                     if state.client_delay:
                         await asyncio.sleep(state.client_delay)
+                    gate = state.client_gate
+                    while gate is not None and not gate.is_set():
+                        await asyncio.sleep(0.01)
                     state.client_runs.append(route)
                     answer = client_answer(request)
                     if command_id and answer.get("command"):
