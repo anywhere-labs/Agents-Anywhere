@@ -10,7 +10,7 @@
 
 import type { ProtocolCapabilitySet } from '../../generated/protocol/v1_2/capability-set.js'
 import type { ContractStatusOf, JsonObject, LiveEvents, Log, ProviderFacts, RuntimeProvider } from '../ports/index.js'
-import { capabilitySet } from './capabilities.js'
+import { capabilitySet, runtimeCapabilities } from './capabilities.js'
 import { GATEWAY_FIELD, GATEWAY_RUNTIME_PROTOCOLS, RuntimeApplyError, runtimeSpecFrom, type InstanceReport, type RuntimeInstanceSpec } from './instances.js'
 import type { RuntimeRegistry } from './registry.js'
 
@@ -168,7 +168,7 @@ async function resultOf(registry: RuntimeRegistry, report: InstanceReport): Prom
   return {
     ...report,
     instanceId: registry.processId,
-    ...(handle !== null && handle !== undefined ? { capabilities: capabilitySet(handle.capabilities(), { runtime: spec?.runtimeType ?? report.runtimeId, sessionId: null }) } : {}),
+    ...(handle !== null && handle !== undefined ? { capabilities: capabilitySet(runtimeCapabilities(spec?.runtimeType ?? report.runtimeId, handle.capabilities()), { runtime: spec?.runtimeType ?? report.runtimeId, sessionId: null }) } : {}),
     ...(connection !== null ? { modelConnection: connection } : {}),
   }
 }

@@ -95,6 +95,10 @@ describe('runtime.apply with the Server payload', () => {
     expect(ack.outcome).toBe('accepted')
     shape('results', 'runtimeApply', ack.r)
     expect(ack.r).toMatchObject({ runtimeId: 'rti_work', status: 'running', instanceId: 'dp_fixture', modelConnection: { state: 'applied', protocol: 'anthropic' } })
+    // Claude has not run yet: what the type declares, so clients can offer plan mode and attachments already.
+    const reported = (ack.r!.capabilities as { capabilities: { capabilityId: string; supported: boolean; runtime: string }[] }).capabilities
+    expect(reported.filter(item => item.supported).map(item => item.capabilityId)).toEqual(expect.arrayContaining(['session.send_message', 'session.planning', 'runtime.attachment', 'catalog.model']))
+    expect(new Set(reported.map(item => item.runtime))).toEqual(new Set(['claude']))
     expect(started).toHaveLength(1)
     // The Server's config minus the gateway; the gateway as the Profile's injection, its key as authToken.
     expect(started[0]).toMatchObject({ instanceId: 'rti_work', settings: { claudeExecutable: '/opt/claude/bin/claude' }, modelGateway: { baseUrl: 'https://gateway.example/v1', authToken: 'sk-fixture', protocol: 'anthropic' } })

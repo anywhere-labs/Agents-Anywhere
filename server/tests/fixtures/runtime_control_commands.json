@@ -61,7 +61,139 @@
       "instanceId": "dp_fixture",
       "capabilities": {
         "revision": 1,
-        "capabilities": []
+        "capabilities": [
+          {
+            "capabilityId": "session.send_message",
+            "supported": true,
+            "available": true,
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          },
+          {
+            "capabilityId": "session.interrupt",
+            "supported": true,
+            "available": true,
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          },
+          {
+            "capabilityId": "session.interaction.approval",
+            "supported": true,
+            "available": true,
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          },
+          {
+            "capabilityId": "session.interaction.form",
+            "supported": true,
+            "available": true,
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          },
+          {
+            "capabilityId": "session.commands",
+            "supported": true,
+            "available": true,
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          },
+          {
+            "capabilityId": "session.configuration.read",
+            "supported": true,
+            "available": true,
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          },
+          {
+            "capabilityId": "session.configuration.update",
+            "supported": true,
+            "available": true,
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          },
+          {
+            "capabilityId": "session.steer",
+            "supported": false,
+            "available": false,
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          },
+          {
+            "capabilityId": "session.list",
+            "supported": true,
+            "available": true,
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          },
+          {
+            "capabilityId": "session.history.native",
+            "supported": true,
+            "available": true,
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          },
+          {
+            "capabilityId": "runtime.attachment",
+            "supported": true,
+            "available": true,
+            "parameters": {
+              "image": true
+            },
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          },
+          {
+            "capabilityId": "catalog.model",
+            "supported": true,
+            "available": true,
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          },
+          {
+            "capabilityId": "catalog.permission",
+            "supported": true,
+            "available": true,
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          },
+          {
+            "capabilityId": "session.planning",
+            "supported": true,
+            "available": true,
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          },
+          {
+            "capabilityId": "session.plan_document",
+            "supported": true,
+            "available": true,
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          },
+          {
+            "capabilityId": "session.plan_review",
+            "supported": true,
+            "available": true,
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          }
+        ]
       },
       "modelConnection": {
         "state": "applied",
@@ -85,7 +217,139 @@
       "instanceId": "dp_fixture",
       "capabilities": {
         "revision": 1,
-        "capabilities": []
+        "capabilities": [
+          {
+            "capabilityId": "session.send_message",
+            "supported": true,
+            "available": true,
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          },
+          {
+            "capabilityId": "session.interrupt",
+            "supported": true,
+            "available": true,
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          },
+          {
+            "capabilityId": "session.interaction.approval",
+            "supported": true,
+            "available": true,
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          },
+          {
+            "capabilityId": "session.interaction.form",
+            "supported": true,
+            "available": true,
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          },
+          {
+            "capabilityId": "session.commands",
+            "supported": true,
+            "available": true,
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          },
+          {
+            "capabilityId": "session.configuration.read",
+            "supported": true,
+            "available": true,
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          },
+          {
+            "capabilityId": "session.configuration.update",
+            "supported": true,
+            "available": true,
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          },
+          {
+            "capabilityId": "session.steer",
+            "supported": false,
+            "available": false,
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          },
+          {
+            "capabilityId": "session.list",
+            "supported": true,
+            "available": true,
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          },
+          {
+            "capabilityId": "session.history.native",
+            "supported": true,
+            "available": true,
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          },
+          {
+            "capabilityId": "runtime.attachment",
+            "supported": true,
+            "available": true,
+            "parameters": {
+              "image": true
+            },
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          },
+          {
+            "capabilityId": "catalog.model",
+            "supported": true,
+            "available": true,
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          },
+          {
+            "capabilityId": "catalog.permission",
+            "supported": true,
+            "available": true,
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          },
+          {
+            "capabilityId": "session.planning",
+            "supported": true,
+            "available": true,
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          },
+          {
+            "capabilityId": "session.plan_document",
+            "supported": true,
+            "available": true,
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          },
+          {
+            "capabilityId": "session.plan_review",
+            "supported": true,
+            "available": true,
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          }
+        ]
       },
       "modelConnection": {
         "state": "applied",

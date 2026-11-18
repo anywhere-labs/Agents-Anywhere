@@ -33,6 +33,16 @@ Runtime-scoped capabilities affect dashboard/setup/create behavior, runtime
 configuration UI, global runtime catalogs before a session exists, and feature
 entry points such as IPC controls.
 
+Runtime-scoped capability is known before the Agent has ever run. Each runtime
+type declares what it supports regardless of the Agent's negotiation (Codex:
+plan mode, goals, steering, attachments, model and permission catalogs; Claude:
+plan mode, attachments, catalogs; Pi, Hermes and the other ACP Agents:
+workspace preparation and the session basics; DSH: what both of its routes
+have). The Connector reports the declared set as soon as an instance runs, and
+once the Agent has negotiated, each live capability replaces the declared one
+with the same id. Clients therefore show or hide runtime features the same way
+for a freshly installed Agent and for one that already ran.
+
 ### Session-scoped effective capability
 
 Session-scoped capability describes what is possible for one active session

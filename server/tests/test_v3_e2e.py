@@ -100,7 +100,12 @@ def test_agent_types_and_enabling_an_instance(e2e: E2E) -> None:
     assert changed["config"] == {"cliPath": cli}, changed
     view = _wait(lambda: (v := settled()) and v["config"] == {"cliPath": cli} and v, 30, 0.2, "the new config applied")
     assert view["error"] is None, view
-    assert api.get(f"{runtime}/capabilities")["capabilitySet"]["revision"] >= 0
+    # Known before any session ran the Agent: what the type declares (refined by the Agent once it negotiated).
+    declared = api.get(f"{runtime}/capabilities")["capabilitySet"]["capabilities"]
+    assert {c["runtime"] for c in declared} == {RUNTIME_TYPE}, declared
+    usable = {c["capabilityId"] for c in declared if c["supported"] and c["available"]}
+    assert {"session.send_message", "session.interrupt", "session.interaction.approval",
+            "runtime.workspace.prepare"} <= usable, declared
 
 
 def test_session_create_and_assistant_reply(e2e: E2E) -> None:

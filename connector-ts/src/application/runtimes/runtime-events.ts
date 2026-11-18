@@ -1,6 +1,6 @@
 import type { NativeHistory } from '../history.js'
 import type { ConversationStore, IdSource, LiveEvents, Log, RuntimeHandle, RuntimeHandleEvent } from '../ports/index.js'
-import { capabilitySet } from './capabilities.js'
+import { capabilitySet, runtimeCapabilities } from './capabilities.js'
 import type { RuntimeCatalogMemory } from './catalog-memory.js'
 import { nativeSessionId, type RuntimeInstanceSpec } from './instances.js'
 
@@ -71,7 +71,7 @@ export function runtimeEvent(context: RuntimeEventContext): void {
       live.emit('runtime.status', { runtimeId: spec.runtimeId, status: { state: event.status, ...(event.error !== undefined ? { error: { ...event.error } } : {}) } })
       return
     case 'capabilities.changed':
-      live.emit('runtime.status', { runtimeId: spec.runtimeId, status: { event: 'capabilities.changed' }, capabilities: capabilitySet(event.capabilities, { runtime: spec.runtimeType, sessionId: null }) })
+      live.emit('runtime.status', { runtimeId: spec.runtimeId, status: { event: 'capabilities.changed' }, capabilities: capabilitySet(runtimeCapabilities(spec.runtimeType, event.capabilities), { runtime: spec.runtimeType, sessionId: null }) })
       return
     case 'catalogs.changed':
       void context.catalogMemory?.remember(spec, event.catalogs as Record<string, unknown>)

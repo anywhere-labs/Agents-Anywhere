@@ -14,6 +14,7 @@ import {
   announceRuntimes,
   applyDesiredRuntimes,
   capabilitySet,
+  runtimeCapabilities,
   legacyInstanceSpec,
   nativeSessionId,
   runtimeEvent,
@@ -218,8 +219,7 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
             const bound = conversation.boundSession(sessionId)
             if (bound !== null) return withPreview(capabilitySet(bound.capabilities, { runtime: session.runtimeType, sessionId }), { runtime: session.runtimeType, sessionId })
             const handle = await runtimes.started(session.runtimeId)
-            if (handle === null || handle === undefined) return null
-            return withPreview(capabilitySet(handle.capabilities(), { runtime: session.runtimeType, sessionId: null }), { runtime: session.runtimeType, sessionId: null })
+            return withPreview(capabilitySet(runtimeCapabilities(session.runtimeType, handle?.capabilities() ?? null), { runtime: session.runtimeType, sessionId: null }), { runtime: session.runtimeType, sessionId: null })
           },
           selections: sessionId => history.nativeSelections(sessionId),
           catalogs: async sessionId => {

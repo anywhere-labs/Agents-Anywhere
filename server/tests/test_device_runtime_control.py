@@ -274,6 +274,62 @@ def test_runtime_status_events_are_stored() -> None:
     asyncio.run(scenario())
 
 
+def test_runtime_capabilities_of_an_agent_that_never_ran() -> None:
+    """A v3 device reports what the Runtime type declares before its Agent ever ran (``results.runtimeApply``
+    is the real device's answer for a Claude instance it has not started an Agent for); live capabilities replace it."""
+
+    async def scenario() -> None:
+        from agent_server.api.connector_runtimes import (
+            get_connector_runtime_capabilities,
+        )
+        from agent_server.core.e2ee_settings import E2eeSettings
+
+        fixture = _fixture()
+        async with v3_device() as (_app, user_id, device_id, service, _manager, commands):
+            commands.answer = lambda kind, payload: {**fixture["results"]["runtimeApply"], "runtimeId": payload["runtimeId"]}
+            runtime = await service.create_runtime(
+                device_id, runtime_type="claude", name="Work", config=CONFIG, active=True, user_id=user_id
+            )
+
+            async def read(mode: str = "off") -> dict[str, dict[str, Any]]:
+                response = await get_connector_runtime_capabilities(
+                    device_id, runtime.runtimeId, service=service, user_id=user_id, e2ee=E2eeSettings(mode=mode)
+                )
+                assert response.connectorId == device_id
+                items = response.capabilitySet.model_dump(mode="json")["capabilities"]
+                assert {item["runtime"] for item in items} == {"claude"}
+                assert {item["scope"] for item in items} == {"runtime"}
+                return {item["capabilityId"]: item for item in items}
+
+            usable = lambda item: item["supported"] and item["available"] and item["allowed"]
+            declared = await read()
+            for capability_id in (
+                "session.send_message", "session.interrupt", "session.planning", "session.plan_review",
+                "runtime.attachment", "catalog.model", "catalog.permission",
+            ):
+                assert usable(declared[capability_id]), declared
+            assert not declared["session.steer"]["supported"]
+            # The same facts in end-to-end encrypted mode (nothing here is a plaintext workflow).
+            assert (await read("required")).keys() == declared.keys()
+
+            # Once the Agent negotiated, the device sends its live set merged with the declared one.
+            live = {
+                "revision": 2,
+                "capabilities": [
+                    {**item, "supported": True, "available": True} if item["capabilityId"] == "session.steer" else item
+                    for item in fixture["results"]["runtimeApply"]["capabilities"]["capabilities"]
+                ],
+            }
+            await service.on_device_event(
+                device_id, "runtime.status",
+                {"runtimeId": runtime.runtimeId, "status": {"event": "capabilities.changed"}, "capabilities": live},
+            )
+            refined = await read()
+            assert usable(refined["session.steer"]) and usable(refined["session.planning"])
+
+    asyncio.run(scenario())
+
+
 def test_device_settings_apply_command() -> None:
     async def scenario() -> None:
         fixture = _fixture()
