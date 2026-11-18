@@ -271,7 +271,7 @@ CLIENT_ROUTES: tuple[ClientRoute, ...] = (
     # Agent session controls of one session: the device answers them from the session's open Agent session.
     _read("workflow.session.tree", f"{WORKFLOWS}/sessions/{{session_id}}/tree"),
     _command("workflow.session.position", "POST", f"{WORKFLOWS}/sessions/{{session_id}}/position", GENERATED_COMMAND_ID),
-    _command("workflow.session.close", "POST", f"{WORKFLOWS}/sessions/{{session_id}}/close", GENERATED_COMMAND_ID),
+    _command("workflow.session.close", "POST", f"{WORKFLOWS}/sessions/{{session_id}}/close", GENERATED_COMMAND_ID, agent=True),
     _read("workflow.session.configuration.get", f"{WORKFLOWS}/sessions/{{session_id}}/configuration"),
     _command("workflow.session.configuration.update", "POST", f"{WORKFLOWS}/sessions/{{session_id}}/configuration",
              "operationId"),

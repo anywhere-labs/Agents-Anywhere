@@ -694,7 +694,7 @@
     },
     {
       "path": "client-routes.json",
-      "sha256": "3ea8b83033e65b46410e2bbc50d7baf402886e9770aa3efc6ebd246d0ddf5c21"
+      "sha256": "fb2cdd31dc98b7ef2c643c9eb2c6abf4fb1216dccb0afae524a02ad5132a7f1b"
     },
     {
       "path": "client-errors.json",

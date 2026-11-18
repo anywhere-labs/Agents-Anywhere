@@ -1606,7 +1606,7 @@
       "writesCommandId": false
     },
     {
-      "agent": false,
+      "agent": true,
       "commandId": "commandId",
       "decorate": [],
       "e2ee": "channel",
