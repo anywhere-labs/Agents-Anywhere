@@ -18,6 +18,7 @@ import { dashboardApi } from "@/features/dashboard/api"
 import type { Notice, SessionView, TimelineItem } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
 import { commandText, firstTextOf, recordsOf, textOf } from "@/components/session/session-utils"
+import { COLLAB_TOOLS, collabToolOf } from "@/features/collab/model"
 import {
   fileChangeAction,
   fileChangeDisplayDiff,
@@ -197,11 +198,17 @@ export function timelineToolKind(item: TimelineItem): string {
   return textOf(item.content.kind) || "tool"
 }
 
+function collabToolLabel(tool: string, tSession: (key: string) => string): string {
+  return (COLLAB_TOOLS as readonly string[]).includes(tool) ? tSession(`collabTools.${tool}`) : tool
+}
+
 export function timelineToolTitle(
   item: TimelineItem,
   session: SessionView,
   tSession: (key: string, values?: Record<string, string | number>) => string,
 ): string {
+  const collabTool = collabToolOf(item)
+  if (collabTool) return tSession("collabToolTitle", { action: collabToolLabel(collabTool.tool, tSession) })
   const kind = timelineToolKind(item)
   const changes = recordsOf(item.content.changes)
   const createdFilesOnly = changes.length > 0 && changes.every(isCreatedFileChange)

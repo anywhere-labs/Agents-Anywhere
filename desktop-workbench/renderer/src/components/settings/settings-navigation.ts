@@ -1,4 +1,4 @@
-import { Archive, Boxes, Laptop, Logs, Rocket, ShieldCheck, Smartphone, Sun, User } from "lucide-react"
+import { Archive, Boxes, Network, Laptop, Logs, Rocket, ShieldCheck, Smartphone, Sun, User } from "lucide-react"
 
 export const settingsNavigation = [
   { id: "account", labelKey: "account", icon: User, group: "general" },
@@ -9,6 +9,7 @@ export const settingsNavigation = [
   { id: "logs", labelKey: "logs", icon: Logs, group: "general" },
   { id: "archived-sessions", labelKey: "archivedSessions", icon: Archive, group: "general" },
   { id: "secure-connections", labelKey: "secureConnections", icon: ShieldCheck, group: "general" },
+  { id: "agent-collaboration", labelKey: "agentCollaboration", icon: Network, group: "general" },
   { id: "model-configs", labelKey: "modelConfigsTitle", icon: Boxes, group: "models" },
 ] as const
 

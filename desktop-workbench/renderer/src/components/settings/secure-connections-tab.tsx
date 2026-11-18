@@ -10,6 +10,7 @@ import { toast } from "sonner"
 
 import { useDeviceName } from "@/components/e2ee/secure-pairing-dialog"
 import { SettingsSection } from "@/components/settings/settings-section"
+import { AgentDeviceAccess } from "@/components/settings/agent-device-access"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -110,6 +111,11 @@ export function SecureConnectionsTab() {
           </ul>
         )}
       </SettingsSection>
+
+      <AgentDeviceAccess
+        pins={view.pins}
+        nameOf={(pin) => (deviceName(pin.deviceId) !== pin.deviceId ? deviceName(pin.deviceId) : pin.label || pin.deviceId)}
+      />
 
       {view.policy.required && !serverRequires ? (
         <SettingsSection

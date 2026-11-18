@@ -1281,7 +1281,24 @@
       "blobKindText": "Full output",
       "blobKindImage": "Image",
       "blobKindAudio": "Audio",
-      "blobKindFile": "Data"
+      "blobKindFile": "Data",
+      "collabToolTitle": "Collaboration · {action}",
+      "collabTools": {
+        "aa_targets": "List targets",
+        "aa_spawn": "Create session",
+        "aa_send": "Send message",
+        "aa_steer": "Steer",
+        "aa_interrupt": "Interrupt",
+        "aa_status": "Check status",
+        "aa_read": "Read progress",
+        "aa_wait": "Wait",
+        "aa_respond": "Answer approval",
+        "aa_plan_review": "Review plan",
+        "aa_supervise": "Start supervising",
+        "aa_unsupervise": "Stop supervising",
+        "aa_escalate": "Ask a person",
+        "aa_close": "Close session"
+      }
     },
     "sessionStatus": {
       "idle": "Idle",
@@ -2132,7 +2149,8 @@
       "modelConfigsTitle": "Model gateways",
       "modelsGroup": "Models",
       "channelSwitchTitle": "Gateway switching",
-      "secureConnections": "Secure connections"
+      "secureConnections": "Secure connections",
+      "agentCollaboration": "Agent collaboration"
     },
     "team": {
       "title": "Team",
@@ -2904,6 +2922,153 @@
       "copy": "Copy",
       "copied": "Fingerprint copied.",
       "copyFailed": "Couldn't copy the fingerprint."
+    }
+  },
+  "collab": {
+    "createdBy": "Created by {title}",
+    "supervisedBy": "Supervised by {title}",
+    "supervisedByState": "Supervised by {title} ({state})",
+    "originTooltip": "The Agent of {title} created this session.",
+    "supervisorTooltip": "The Agent of {title} supervises this session.",
+    "unknownSession": "Session {id}",
+    "state": {
+      "active": "Active",
+      "paused": "Paused",
+      "ended": "Ended"
+    },
+    "indicator": {
+      "createdByAgent": "Created by an Agent",
+      "supervised": "Supervised"
+    },
+    "author": {
+      "sentByAgent": "Sent by the Agent of {title}",
+      "sentByAgentUnknown": "Sent by another session's Agent"
+    },
+    "supervisionNotice": {
+      "title": "Supervision notice",
+      "about": "About {title}",
+      "expand": "Expand",
+      "collapse": "Collapse"
+    },
+    "escalation": {
+      "title": "Your decision is needed",
+      "from": "From {title}",
+      "target": "About {title}",
+      "context": "Context"
+    },
+    "openSession": "Open session",
+    "panel": {
+      "button": "Collaboration",
+      "title": "Collaboration",
+      "description": "This session's Agent can create, drive and supervise other sessions of your account. You can pause or end a supervision at any time.",
+      "deviceUnavailable": "The device cannot report collaboration details right now; only the supervisions the Server knows are listed.",
+      "notAvailable": "Agent collaboration is off for this session. Turn it on for its runtime instance in Settings → Agent collaboration.",
+      "grant": "The Agent may manage up to {children} sessions at once, {depth} levels deep, and be woken up to {wakes} times per hour.",
+      "grantCrossDevice": "Other devices of the account are allowed.",
+      "supervisedTitle": "Supervised sessions",
+      "noSupervised": "Not supervising any session yet.",
+      "createdByAgent": "Started by the Agent",
+      "createdByHuman": "Started by you",
+      "pausedReason": "Paused: {reason}",
+      "lastWake": "Last woken: {time}",
+      "pause": "Pause",
+      "resume": "Resume",
+      "end": "End",
+      "endTitle": "End the supervision of {title}?",
+      "endDescription": "This session's Agent stops receiving that session's progress and can no longer act on it for you. You can supervise it again later.",
+      "cancel": "Cancel",
+      "authorityTitle": "May act for you",
+      "authorityHint": "These permissions never exceed the supervising session's own permission mode.",
+      "triggersTitle": "Wake the supervising session on",
+      "detailUnavailable": "Permissions and wake-ups can be viewed and changed once the device is online.",
+      "actionsTitle": "Recent actions",
+      "noActions": "No actions yet.",
+      "outcome": {
+        "pending": "In progress",
+        "accepted": "Done",
+        "rejected": "Rejected",
+        "unknown": "Outcome unknown"
+      },
+      "superviseOther": "Supervise another session…",
+      "pickerTitle": "Choose a session to supervise",
+      "pickerDescription": "This session's Agent is notified when that session ends a turn, needs an approval and so on.",
+      "pickerPlaceholder": "Search sessions",
+      "pickerEmpty": "No session can be supervised.",
+      "started": "Now supervising {title}.",
+      "failed": "That did not work: {error}",
+      "refresh": "Refresh",
+      "loading": "Loading…"
+    },
+    "verbs": {
+      "targets": "List targets",
+      "spawn": "Create session",
+      "send": "Send message",
+      "steer": "Steer",
+      "interrupt": "Interrupt",
+      "status": "Check status",
+      "read": "Read progress",
+      "wait": "Wait",
+      "respond": "Answer approval",
+      "review_plan": "Review plan",
+      "supervise": "Start supervising",
+      "unsupervise": "Stop supervising",
+      "escalate": "Ask a person",
+      "close": "Close session"
+    },
+    "authority": {
+      "steer": "Steer",
+      "interrupt": "Interrupt",
+      "respondApproval": "Answer approvals",
+      "reviewPlan": "Review plans",
+      "close": "Close sessions it created"
+    },
+    "triggers": {
+      "turn_end": "Turn ended",
+      "turn_failed": "Turn failed",
+      "notice_opened": "Approval needed",
+      "plan_proposed": "Plan to review",
+      "goal_changed": "Goal changed",
+      "stalled": "No progress for a while"
+    },
+    "settings": {
+      "title": "Agent collaboration",
+      "description": "When on, Agents can create, drive and supervise other sessions on the devices of this account. Everything is off by default.",
+      "enabled": "Allow Agent collaboration",
+      "enabledDescription": "Account switch. While it is off, no runtime instance can use the collaboration tools.",
+      "crossDevice": "Allow other devices",
+      "crossDeviceDescription": "Lets Agents reach sessions on the account's other devices.",
+      "instancesTitle": "Runtime instances",
+      "instancesDescription": "Only runtime instances that support the collaboration tools are listed. Turn each on separately and choose what its Agent may do for you.",
+      "authorityHint": "These permissions never exceed the supervising session's own permission mode: a read-only session cannot change other sessions, and a session that always asks cannot answer approvals.",
+      "noInstances": "No runtime instance supports Agent collaboration yet.",
+      "instanceEnabled": "On",
+      "instanceCrossDevice": "Other devices",
+      "deviceOffline": "Device offline",
+      "loadFailed": "Could not load the Agent collaboration settings: {error}",
+      "saveFailed": "Could not save: {error}",
+      "saved": "Saved."
+    },
+    "agentAccess": {
+      "title": "Agent access between devices",
+      "description": "In encrypted mode, an Agent on one device can reach another device only after you vouch for it from this client, which is paired with both. The target device asks for confirmation locally.",
+      "needTwo": "Pair with at least two devices to set this up.",
+      "source": "Device of the Agent",
+      "target": "Device to reach",
+      "allow": "Allow the Agent on {source} to reach {target}",
+      "allowButton": "Allow access",
+      "agentLabel": "Agent of {device}",
+      "step": {
+        "identity": "Reading the Agent identity of {source}…",
+        "approve": "Confirm on {target}…",
+        "pin": "Handing the key of {target} to {source}…"
+      },
+      "done": "The Agent on {source} can now reach {target}.",
+      "failed": "Not completed: {error}",
+      "peersTitle": "The Agent on {device} can reach",
+      "noPeers": "No devices yet.",
+      "peersFailed": "Could not load: {error}",
+      "pinnedAt": "Added {time}",
+      "sameDevice": "Choose two different devices."
     }
   }
 }
