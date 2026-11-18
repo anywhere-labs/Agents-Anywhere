@@ -27,6 +27,7 @@
 
 ### 会话创建与消息交付
 
+- 修复 Web、Desktop、Android 和 iOS 无法完成加密配对的问题，并恢复加密会话的实时消息更新。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - Web 和 Desktop 新建会话时会选用设备允许访问的默认工作目录，主目录受限时可从允许的工作目录加载 Agent 配置。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - Web 和 Desktop 新建会话时，准备过期或模型加载失败会在模型控件旁显示原因和「重试」。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 连接 v3 Connector 的设备上，Codex、Claude、Hermes、通用 ACP Agent 等所有 Agent 的会话历史都会显示用户随消息发送的附件卡片，不再只有 Pi 会话显示，发送失败的消息也保留附件。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）

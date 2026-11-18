@@ -79,6 +79,10 @@ Noise 传输消息的明文格式为 `flag(1 字节) ‖ body`，`body` 最长 6
 | `event` | 设备 → 客户端 | `TunnelEvent`：`sub` 指明属于哪个订阅；通道级事件 `e2ee.directory_key`、`e2ee.trust_changed` 不带 `sub` |
 | `close` | 双向 | `ChannelClose` |
 
+设备接受会话订阅后先发送 `session.subscribed`，其 `sequence` 和 `payload.eventCursor` 表示设备当时的会话游标，`payload.clientId` 表示订阅客户端。之后按请求的 `afterCursor` 重放事件并推送实时更新。终端订阅仍以终端的回放和输出事件为准。
+
+实时会话页可经通道读取 `runtime/state` 和 `runtime/capabilities`，设备创建的会话在同步到 Server 的目录前即可读取。设备在会话状态变化时向订阅者发送 `runtime.state.updated`。强制加密模式下，这两个 HTTPS 路径从 Server 已保存的元数据返回结果。新建会话所用的设备 Runtime 模型和权限目录也可经通道读取。
+
 文件下载：`GET /api/v2/connectors/{deviceId}/fs/read?root=…&path=…&offset=…&length=…`（普通模式的查询参数再加 `offset`、`length`），`length` 最多 8 MiB（`FILE_CHUNK_MAX_BYTES`），响应体是 `TunnelFileChunk {encoding: "base64", data, offset, size, eof}`。大文件按块依次读取，每块都是一条普通的通道消息。浏览目录、读文本文件（`fs/list`、`fs/readText`）与普通模式相同，只是经通道发送。
 
 信任管理同样用 `request`，路径在 `/e2ee/v1/` 下（`TRUST_ROUTES`）：

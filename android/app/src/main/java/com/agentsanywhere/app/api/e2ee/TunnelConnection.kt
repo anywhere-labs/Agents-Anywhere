@@ -73,7 +73,7 @@ class ChannelBinding : TunnelListener {
 }
 
 /**
- * 默认的隧道：`POST /api/v2/ws-ticket {clientId, scope: {tunnel: true}}` 拿票，再连 `WS /api/v3/tunnel?ticket=…`；
+ * 默认的隧道：`POST /api/v2/ws-ticket {clientId, scope: {dashboard: true}}` 拿票，再连 `WS /api/v3/tunnel?ticket=…`；
  * 收发 `ClientTunnelFrame {t: "tun", route, n, ct}` 与 `ClientTunnelEnd {t: "end", route, code}`。
  * 一条 WebSocket 复用给所有路由；断开时所有路由收到 [E2eeErrorCodes.TUNNEL_DISCONNECTED]，下次 [open] 重新连接。
  *
@@ -124,7 +124,7 @@ class WebSocketTunnelConnection(
             client().postJson(
                 serverUrl = serverUrl(),
                 path = "/ws-ticket",
-                body = JSONObject().put("clientId", clientId).put("scope", JSONObject().put("tunnel", true)),
+                body = JSONObject().put("clientId", clientId).put("scope", JSONObject().put("dashboard", true)),
                 authorizationToken = accessToken(),
             ).optString("ticket").takeIf { it.isNotBlank() } ?: throw ApiException("The server returned an invalid tunnel ticket.")
         }

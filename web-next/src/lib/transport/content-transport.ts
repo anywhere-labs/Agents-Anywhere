@@ -137,6 +137,7 @@ export function sessionIdOfContentPath(path: string): string | null {
 }
 
 const DEVICE_CONTENT_PATH = /^(?:\/api\/v\d+)?\/connectors\/([^/?#]+)\/(?:fs|shell|terminals|terminals-v2)(?:\/[^?#]*)?$/
+const DEVICE_RUNTIME_CATALOG_PATH = /^(?:\/api\/v\d+)?\/connectors\/([^/?#]+)\/runtimes\/[^/?#]+\/catalogs\/(?:model|permission)$/
 const SESSION_CREATE_PATH = /^(?:\/api\/v\d+)?\/sessions(?:\/create-and-start)?$/
 
 /**
@@ -146,7 +147,7 @@ const SESSION_CREATE_PATH = /^(?:\/api\/v\d+)?\/sessions(?:\/create-and-start)?$
  */
 export function deviceIdOfContentRequest(method: ContentMethod, path: string, body?: unknown): string | null {
   const clean = path.split("?")[0] ?? ""
-  const match = DEVICE_CONTENT_PATH.exec(clean)
+  const match = DEVICE_CONTENT_PATH.exec(clean) ?? (method === "GET" ? DEVICE_RUNTIME_CATALOG_PATH.exec(clean) : null)
   if (match) return decodeURIComponent(match[1]!)
   if (method === "POST" && SESSION_CREATE_PATH.test(clean) && body && typeof body === "object") {
     const connectorId = (body as { connectorId?: unknown }).connectorId

@@ -191,7 +191,7 @@ in-channel `close` from the device (revoked / not paired) drops a pin; a
 false`) and never changes trust records or policy.
 
 `URLSessionE2EETunnel` multiplexes routes on `WS /api/v3/tunnel` after a
-`POST /api/v2/ws-ticket {scope: {tunnel: true}}`. `V2E2EEService` reads the
+`POST /api/v2/ws-ticket {scope: {dashboard: true}}`. `V2E2EEService` reads the
 Server mode from `auth/config`, pairs, reconnects with KK and chooses each
 device's transport: `route(for:)`, `transport(for:plain:)` (an `HTTPTransport`
 that existing API resources accept), `sessionEvents(...)` and `sendCommand(...)`

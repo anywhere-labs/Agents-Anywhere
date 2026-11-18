@@ -5,7 +5,7 @@ import { desktopDownloadUrl } from "@/features/desktop/server-connection";
 import { shouldAuthorizeDownloadUrl } from "@/lib/api/download-auth";
 import { ApiError } from "@/lib/api/errors";
 import { readFileThroughChannel } from "@/lib/transport/channel-files";
-import { contentTransportForDevice, sessionContentIsEncrypted } from "@/lib/transport/content-transport";
+import { contentTransportFor, contentTransportForDevice, sessionContentIsEncrypted } from "@/lib/transport/content-transport";
 import { readSessionBlob, type SessionBlobChunk, type SessionBlobContent } from "@/features/dashboard/session-blobs";
 import type {
   ArchiveAllResponse,
@@ -257,7 +257,7 @@ export class DashboardApi {
 
   /** Ticket for the secure-channel tunnel `WS /api/v3/tunnel` (E2EE). */
   createTunnelTicket(token: string, clientId: string): Promise<WsTicketResponse> {
-    return this.client.post<WsTicketResponse>("/ws-ticket", { clientId, scope: { tunnel: true } }, { token });
+    return this.createDashboardWsTicket(token, clientId);
   }
 
   /** `POST /api/v3/e2ee/commands`: plaintext registration of a command sent through a secure channel. */
@@ -977,20 +977,23 @@ export class DashboardApi {
     token: string,
     sessionId: string,
   ): Promise<SessionRuntimeStateResponse> {
-    return this.client.get<SessionRuntimeStateResponse>(
-      `/sessions/${encodeURIComponent(sessionId)}/runtime/state`,
-      { token },
-    );
+    return this.getLiveSessionRuntime(token, sessionId, "state");
   }
 
   getSessionRuntimeCapabilities(
     token: string,
     sessionId: string,
   ): Promise<ProtocolCapabilitiesResponse> {
-    return this.client.get<ProtocolCapabilitiesResponse>(
-      `/sessions/${encodeURIComponent(sessionId)}/runtime/capabilities`,
-      { token },
-    );
+    return this.getLiveSessionRuntime(token, sessionId, "capabilities");
+  }
+
+  private getLiveSessionRuntime<T>(token: string, sessionId: string, resource: "state" | "capabilities"): Promise<T> {
+    const path = `/sessions/${encodeURIComponent(sessionId)}/runtime/${resource}`;
+    // A device-created session can be live before its directory entry reaches the Server.
+    const transport = contentTransportFor(sessionId);
+    return transport
+      ? transport.request({ method: "GET", path: apiPath(path) }) as Promise<T>
+      : this.client.get<T>(path, { token });
   }
 
   updateSessionSelections(

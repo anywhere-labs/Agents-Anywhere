@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from contextlib import nullcontext
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import (
     APIRouter,
@@ -691,6 +691,7 @@ async def _session_or_404(db: Store, session_id: str, user_id: str) -> SessionVi
 async def session_runtime_state(
     request: Request,
     session_id: str,
+    e2ee: Annotated[E2eeSettings, Depends(get_e2ee_settings)],
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     reads: DeviceReadService = Depends(get_device_reads),
@@ -698,14 +699,14 @@ async def session_runtime_state(
         get_session_runtime_state_cache
     ),
 ) -> Any:
-    """A v3 device answers; an offline one and a v2 Connector get the Server's last known state."""
+    """Use the Server's last known state for encrypted, offline and v2 devices."""
 
     async def _stored_state(session: SessionView) -> dict[str, Any]:
         state = await read_runtime_state_snapshot(db, runtime_state_cache, session, user_id)
         return SessionRuntimeStateResponse(state=state, serverTime=utc_now()).model_dump(mode="json")
 
     session = await _session_or_404(db, session_id, user_id)
-    if not await reads.is_v3_device(session.connectorId):
+    if e2ee.required or not await reads.is_v3_device(session.connectorId):
         return await _stored_state(session)
     return await forward_session(
         request, "session.runtime.state", user_id=user_id, session_id=session_id,
@@ -717,13 +718,13 @@ async def session_runtime_state(
 async def session_runtime_capabilities(
     request: Request,
     session_id: str,
+    e2ee: Annotated[E2eeSettings, Depends(get_e2ee_settings)],
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     reads: DeviceReadService = Depends(get_device_reads),
     manager: ConnectorPresenceRegistry = Depends(get_connector_presence),
 ) -> Any:
-    """A v3 device answers; an offline one and a v2 Connector get the capabilities the Server derives from the
-    facts it stored."""
+    """Derive capabilities from stored facts for encrypted, offline and v2 devices."""
 
     async def _derived(session: SessionView) -> dict[str, Any]:
         session = await with_effective_session_connector_status(manager, session)
@@ -736,7 +737,7 @@ async def session_runtime_capabilities(
         ).model_dump(mode="json")
 
     session = await _session_or_404(db, session_id, user_id)
-    if not await reads.is_v3_device(session.connectorId):
+    if e2ee.required or not await reads.is_v3_device(session.connectorId):
         return await _derived(session)
     return await forward_session(
         request, "session.runtime.capabilities", user_id=user_id, session_id=session_id,

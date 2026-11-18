@@ -280,9 +280,9 @@ export class DeviceTunnelApi implements TunnelApi {
     }
   }
 
-  public async subscribe(_caller: ChannelCaller, subscription: TunnelSubscription, emit: (event: Record<string, unknown>) => void): Promise<() => void> {
+  public async subscribe(caller: ChannelCaller, subscription: TunnelSubscription, emit: (event: Record<string, unknown>) => void): Promise<() => void> {
     if (subscription.stream === 'terminal') return this.subscribeTerminal(subscription.terminalId ?? '', subscription.fromSeq ?? 0, emit)
-    return this.subscribeSession(subscription.sessionId, subscription.afterCursor, emit)
+    return this.subscribeSession(caller.clientId, subscription.sessionId, subscription.afterCursor, emit)
   }
 
   // ------------------------------------------------------------------------------------------- sessions
@@ -467,7 +467,7 @@ export class DeviceTunnelApi implements TunnelApi {
         return this.events(sessionId, route)
       case 'GET runtime/state': {
         const session = await this.requireSession(sessionId)
-        const state = inputObject((await reads.sessionState({ sessionId })).state)
+        const state = await reads.runtimeState(sessionId)
         return { status: 200, body: { state: runtimeStateView(state, session, this.now()), serverTime: this.now() } }
       }
       case 'GET runtime/capabilities': {
@@ -839,9 +839,11 @@ export class DeviceTunnelApi implements TunnelApi {
     return { status: 200, body: { session: sessionView(this.deps.deviceId, session, text(body.title)), connectorResult: result, attachments } }
   }
 
-  private async subscribeSession(sessionId: string, afterCursor: string | null, emit: (event: Record<string, unknown>) => void): Promise<() => void> {
-    await this.requireSession(sessionId)
+  private async subscribeSession(clientId: string, sessionId: string, afterCursor: string | null, emit: (event: Record<string, unknown>) => void): Promise<() => void> {
+    const session = await this.requireSession(sessionId)
     const abort = new AbortController()
+    const headSeq = session.clock.headSeq
+    emit({ ...protocolEvent(sessionId, headSeq, 'session.subscribed', { clientId, eventCursor: eventCursor(headSeq) }, this.now()) })
     void (async () => {
       try {
         for await (const changes of watchSession(this.deps.watch, { sessionId, afterSeq: cursorSeq(afterCursor) }, abort.signal)) {
@@ -851,8 +853,18 @@ export class DeviceTunnelApi implements TunnelApi {
         // The channel closes the subscription; a store failure ends the stream like a closed WebSocket.
       }
     })()
+    let lastStatus: string = session.status
     const stopFacts = this.deps.facts?.subscribe(sessionId, (method, payload) => {
-      emit(sessionFactEvent(sessionId, method, payload, this.now()) as unknown as Record<string, unknown>)
+      const status = record(payload.status)
+      if (method === 'runtime.status' && status.event === 'session.status') {
+        if (typeof status.status !== 'string' || status.status === lastStatus) return
+        lastStatus = status.status
+        void this.deps.readers.runtimeState(sessionId).then(state => {
+          if (!abort.signal.aborted) emit({ ...protocolEvent(sessionId, 0, 'runtime.state.updated', { state }, this.now()) })
+        }).catch(() => undefined)
+        return
+      }
+      emit({ ...sessionFactEvent(sessionId, method, payload, this.now()) })
     })
     return () => {
       abort.abort()

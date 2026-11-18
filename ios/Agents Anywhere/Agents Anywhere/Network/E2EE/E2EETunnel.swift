@@ -104,7 +104,7 @@ nonisolated enum E2EETunnelWire {
 
 // MARK: - 默认实现
 
-/// 一条 WebSocket 上复用多条路由：`POST /api/v2/ws-ticket {clientId, scope: {tunnel: true}}` 拿票，
+/// 一条 WebSocket 上复用多条路由：`POST /api/v2/ws-ticket {clientId, scope: {dashboard: true}}` 拿票，
 /// 再连 `WS /api/v3/tunnel?ticket=…`。连接断开时所有路由收到 `end(closed)`，下次打开时重新连接。
 ///
 /// Server 侧的隧道 WS 与这个票据 scope 由另一项工作实现，这里还没有和真实 Server 联调。

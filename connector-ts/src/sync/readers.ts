@@ -223,6 +223,13 @@ export class DeviceReaders {
     return runtimeStateWire(session, selections)
   }
 
+  /** Current runtime state without reading the separate planning and goal projections. */
+  public async runtimeState(sessionId: string): Promise<Record<string, unknown>> {
+    const selections = await this.selections(sessionId)
+    const session = await this.session(sessionId)
+    return { ...this.state(session, selections ?? {}), runtimeType: session.runtimeType }
+  }
+
   /** A session capability (`ProtocolCapabilitySet` item) the Runtime declares and can use now. */
   private async capability(sessionId: string, capabilityId: string): Promise<Record<string, unknown> | null> {
     const set = await this.facts.sessionCapabilities(sessionId).catch(() => null)
