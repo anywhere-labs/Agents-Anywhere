@@ -130,6 +130,8 @@ export interface SupervisorFacts {
   busy(sessionId: string): Promise<boolean>
   /** A session of this device can host the collaboration tools (its Runtime supports injection). */
   canHostTools(runtimeId: string): Promise<boolean>
+  /** This device's runtime instances (`aa_targets` lists them without the Server). */
+  localRuntimes(): Promise<readonly { readonly runtimeId: string; readonly runtimeType: string; readonly name: string | null }[]>
 }
 
 /** Shows a person a question an Agent asked (a `collab_escalation` system item). */

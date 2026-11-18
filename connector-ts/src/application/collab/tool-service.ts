@@ -127,7 +127,9 @@ export class ToolService {
     const listed = [{ deviceId: this.deps.deviceId, name: 'this device', online: true, e2eeMode: null }, ...reachable]
     const out: Record<string, unknown>[] = []
     for (const device of listed) {
-      const runtimes = device.online ? await this.deps.gateway.runtimes(actor, device.deviceId).catch(() => []) : []
+      const runtimes = device.deviceId === this.deps.deviceId
+        ? (await this.deps.facts.localRuntimes()).map(runtime => ({ ...runtime, deviceId: device.deviceId }))
+        : device.online ? await this.deps.gateway.runtimes(actor, device.deviceId).catch(() => []) : []
       out.push({
         deviceId: device.deviceId,
         name: device.name,

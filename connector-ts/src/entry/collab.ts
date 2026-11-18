@@ -50,6 +50,9 @@ export interface CollabOptions {
   readonly launch?: Omit<ToolServerLaunch, 'endpoint'> | null
   /** Directory of the agent-tools socket (default `~/.agents-anywhere/agent-tools`). */
   readonly socketDir?: string
+  /** Whether a runtime instance can host the tools (it declares `runtime.agent_tools.host`). */
+  readonly hostsTools: (runtimeId: string) => Promise<boolean>
+  readonly localRuntimes: SupervisorFacts['localRuntimes']
   readonly onOutbox: () => void
 }
 
@@ -105,7 +108,8 @@ export class CollabWiring {
         const session = await this.options.store.sessions.get(sessionId)
         return session !== null && BUSY.has(session.status)
       },
-      canHostTools: runtimeId => this.hostsTools?.(runtimeId).catch(() => false) ?? Promise.resolve(false),
+      canHostTools: runtimeId => this.options.hostsTools(runtimeId).catch(() => false),
+      localRuntimes: () => this.options.localRuntimes(),
     }
   }
 
@@ -116,7 +120,6 @@ export class CollabWiring {
     readonly egress: () => Egress
     readonly peers: FileAgentPeers | null
     readonly e2eeMode: () => 'off' | 'required'
-    readonly hostsTools: (runtimeId: string) => Promise<boolean>
   }): void {
     this.conversation = deps.conversation
     const { deviceId, clock, store, ids, log } = this.options
@@ -168,12 +171,9 @@ export class CollabWiring {
     this.supervisions = supervisions
     this.tools = new ToolService({ deviceId, store, clock, ids, grants: this.grants, gateway, facts, supervisions, escalations })
     this.people = new CollabPeopleApi(supervisions, sessionId => this.grants.available(sessionId))
-    this.hostsTools = deps.hostsTools
     this.stopSettings = this.settings.onChange(() => void this.grants.reconcile().catch(error => log('warn', `collaboration settings: ${message(error)}`)))
   }
 
-  /** Whether a runtime instance can host the tools (it declares `runtime.agent_tools.host`); set by `attach`. */
-  private hostsTools: ((runtimeId: string) => Promise<boolean>) | null = null
 
   /** `collab.signal`: target signals the Server forwarded. */
   public async onSignals(signals: readonly Record<string, unknown>[]): Promise<{ accepted: number }> {

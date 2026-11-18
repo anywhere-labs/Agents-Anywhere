@@ -79,6 +79,7 @@ beforeEach(() => {
     permissionLevel: async () => 'auto',
     busy: async sessionId => ['pending', 'running', 'stopping'].includes((await store.sessions.get(sessionId))?.status ?? ''),
     canHostTools: async () => true,
+    localRuntimes: async () => [{ runtimeId: 'codex', runtimeType: 'codex', name: 'Codex' }],
   }
   const grants = new GrantService({ deviceId: DEVICE, store, clock, ids, settings: () => settings.get(), facts, launch: { command: 'node', args: ['agent-tools.js'], env: {}, endpoint: '/tmp/tools.sock' } })
   service = new ConversationService({ store, feed, live: { emit: () => undefined }, runtimes, clock, ids, tools: grants })
@@ -170,6 +171,7 @@ describe('agent collaboration on one device', () => {
     await expect.poll(() => opened.length).toBe(1)
     const token = opened[0]!.toolServers![0]!.env.AA_AGENT_TOOLS_TOKEN!
     const otherId = await createSession('two')
+    expect(await tools.call(token, 'aa_targets', {})).toMatchObject({ ok: true, value: { devices: [{ deviceId: DEVICE, thisDevice: true, runtimes: [{ runtimeId: 'codex', runtime: 'codex' }] }], createdSessions: [] } })
     expect(await tools.call('nope', 'aa_status', { sessionId: otherId })).toMatchObject({ ok: false, code: 'agent_grant_revoked' })
     expect(await tools.call(token, 'aa_send', { sessionId: supervisorId, message: 'hi' })).toMatchObject({ ok: false, code: 'agent_scope_denied' })
     expect(await tools.call(token, 'aa_close', { sessionId: otherId })).toMatchObject({ ok: false, code: 'agent_authority_exceeded' })

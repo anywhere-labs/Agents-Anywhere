@@ -1561,7 +1561,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
-    "agent": false,
+    "agent": true,
     "commandId": "commandId",
     "decorate": [],
     "e2ee": "channel",

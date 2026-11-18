@@ -216,6 +216,8 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
           ids,
           log,
           onOutbox: () => outboxSignal.poke(),
+          hostsTools: async runtimeId => ((await runtimes.handle(runtimeId))?.capabilities().items ?? []).some(item => item.id === 'runtime.agent_tools.host' && item.supported),
+          localRuntimes: async () => runtimes.instances().filter(spec => spec.enabled).map(spec => ({ runtimeId: spec.runtimeId, runtimeType: spec.runtimeType, name: spec.name ?? null })),
           ...(options.collaboration ?? {}),
         })
         const collaboration = collab
@@ -369,7 +371,6 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
             egress,
             peers: agentPeers,
             e2eeMode: () => (link?.e2eeMode ?? deviceTrust?.localMode() ?? 'off') === 'required' ? 'required' : 'off',
-            hostsTools: async runtimeId => ((await runtimes.handle(runtimeId))?.capabilities().items ?? []).some(item => item.id === 'runtime.agent_tools.host' && item.supported),
           })
           await collaboration.start()
         }
