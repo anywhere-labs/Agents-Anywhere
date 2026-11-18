@@ -100,6 +100,20 @@ yarn workspace agents-anywhere-desktop-renderer protocol:check
 
 Server 测试应使用隔离测试环境，不要把生产数据库 URL 带入测试进程。Headless 检查通过不代表真实安装、OAuth 回调或远程 Runtime 会话已验证；这些按变更影响单独记录。
 
+### v3 Connector 使用的 Codex ACP
+
+仓库通过 `connector-ts/scripts/build-codex-acp.sh` 固定
+`anywhere-labs/codex-acp` 的验收提交。在有读权限的开发机上使用 Node.js 24 构建。
+
+```bash
+bash connector-ts/scripts/build-codex-acp.sh /absolute/path/to/new-codex-acp-checkout
+```
+
+在 macOS 或 Linux，把输出的 `dist/index.js` 绝对路径填到工作设备的 Codex 实例
+「本机 codex-acp 路径」；Connector 进程的 `PATH` 需要能找到 Node.js。
+Windows 请用同一源码运行 `npm run bundle:win-x64` 或 `npm run bundle:win-arm64`，
+再把对应的可执行文件填到实例配置。Connector 在启动适配器时协商 Goal 和图片能力。
+
 ### CI 入口与缓存
 
 `.github/workflows/ci.yml` 按路径选择 Connector、Server、DSH 插件、Web 和 Desktop

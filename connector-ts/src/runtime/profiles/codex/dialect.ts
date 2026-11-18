@@ -9,8 +9,7 @@
 //   messages are recognised both live and in history.
 // - Item IDs follow the rules in identity.ts and depend on the client declaring `_meta.codexItemContext`
 //   (codex-acp#6).
-// - AIR is not declared: codex-acp reports tool calls in a different shape to AIR clients. `_session/goal` does
-//   not depend on declaring AIR.
+// - Goal snapshots use the standalone capability: declaring AIR changes the tool-call format.
 // - Attachments: local files (images included) are always passed by path (resource_link + MIME), never read into
 //   a data URL: data URLs are written into the rollout, bloat the file and affect history rendering in the App.
 //   codex-acp currently turns resource_link into a text link; for the model to see images directly, codex-acp has
@@ -23,10 +22,12 @@
 // - Automatic approval reviews (`guardian_assessment:` tool calls) become timeline notices (auto-review.ts).
 
 import type { ConfigOption, HistoryItem, NativeSessionRef, RuntimeEvent } from '../../../application/ports/runtime-session.js'
+import { GOAL_ACTIONS } from '../../../domain/goals/index.js'
 import { codexModelSelectionId } from '../../../domain/identity/index.js'
 import { negotiatedCapabilities } from '../../acp/capabilities.js'
 import { asRecord, type AgentInfo, type JsonRecord } from '../../acp/client.js'
 import type { AcpDialect, PlanReviewDecision } from '../../acp/dialect.js'
+import { parseGoalObservation } from '../../acp/goal.js'
 import { translateUpdate } from '../../acp/mapping.js'
 import { historyPage } from '../../companions/native-history/page.js'
 import { guardianReviewEvents } from './auto-review.js'
@@ -70,6 +71,14 @@ export function codexLocalImageLinks(info: AgentInfo): boolean {
   return asRecord(info.meta.localImageLinks).supported === true
 }
 
+function codexGoalSnapshots(info: AgentInfo) {
+  const goal = asRecord(info.meta.goal)
+  if (goal.version !== 1 || goal.controlMethod !== CODEX_GOAL_METHOD || goal.read !== 'get' || !Array.isArray(goal.actions)) return undefined
+  const available = goal.actions
+  const actions = GOAL_ACTIONS.filter(action => available.includes(action) || (action === 'edit' && available.includes('set')))
+  return actions.length === 0 ? undefined : { method: CODEX_GOAL_METHOD, actions }
+}
+
 const HISTORY_EVENTS = new Set<RuntimeEvent['type']>(['message.delta', 'message.completed', 'tool.started', 'tool.updated', 'notice'])
 
 export interface CodexDialectOptions {
@@ -89,17 +98,20 @@ export interface CodexDialectOptions {
 export function codexDialect(options: CodexDialectOptions = {}): AcpDialect {
   return {
     runtime: 'codex',
-    clientCapabilities: () => ({ ...structuredClone(GENERIC_CLIENT_CAPABILITIES), _meta: { codexItemContext: true } }),
+    clientCapabilities: () => ({ ...structuredClone(GENERIC_CLIENT_CAPABILITIES), _meta: { codexItemContext: true, goal: { version: 1 } } }),
     initializeMeta: () => ({ codexIpc: { approvals: true, settings: true, historyReplacement: true, ...(options.announceNewThreads === true ? { announceNewThreads: true } : {}) } }),
-    capabilities: info => [
-      ...negotiatedCapabilities(info, { steer: asRecord(info.meta.steering).supported === true, permissionCatalog: true })
-        .map(capability => (capability.id === 'runtime.attachment' && !codexLocalImageLinks(info) ? { id: capability.id, supported: false } : capability)),
-      { id: 'session.planning', supported: true, parameters: { preparedCreation: true } },
-      { id: 'session.plan_document', supported: true },
-      { id: 'session.plan_review', supported: true },
-      { id: 'session.goal', supported: true, parameters: { actions: ['set', 'pause', 'resume', 'clear'] } },
-      { id: 'catalog.model', supported: true },
-    ],
+    capabilities: info => {
+      const goal = codexGoalSnapshots(info)
+      return [
+        ...negotiatedCapabilities(info, { steer: asRecord(info.meta.steering).supported === true, permissionCatalog: true })
+          .map(capability => (capability.id === 'runtime.attachment' && !codexLocalImageLinks(info) ? { id: capability.id, supported: false } : capability)),
+        { id: 'session.planning', supported: true, parameters: { preparedCreation: true } },
+        { id: 'session.plan_document', supported: true },
+        { id: 'session.plan_review', supported: true },
+        { id: 'session.goal', supported: goal !== undefined, ...(goal === undefined ? {} : { parameters: { actions: goal.actions } }) },
+        { id: 'catalog.model', supported: true },
+      ]
+    },
     identity: codexIdentity,
     openParams: ref => (options.openRoute?.(ref) === 'plain' ? {} : { _meta: { codexIpc: { mode: 'auto' } } }),
     promptParams: delivery => ({ _meta: { codexIpc: { clientMessageId: delivery.clientMessageId } } }),
@@ -113,8 +125,19 @@ export function codexDialect(options: CodexDialectOptions = {}): AcpDialect {
     planMode: options => (options.some(o => o.id === 'collaboration_mode') ? { optionId: 'collaboration_mode', planValue: 'plan', normalValue: 'default' } : undefined),
     interactionKind: (method, params) => (method === 'session/request_permission' && isPlanReview(params) ? 'plan_review' : undefined),
     planReview: (answer, options) => codexPlanReview(answer, options),
-    goalMethod: () => CODEX_GOAL_METHOD,
-    translateUpdate: (update, context, turn) => guardianReviewEvents(update, context.nativeSessionId, turn),
+    goalSnapshots: codexGoalSnapshots,
+    translateUpdate: (update, context, turn) => {
+      if (update.sessionUpdate === 'session_info_update') {
+        const negotiated = codexGoalSnapshots(context.info)
+        const goal = asRecord(update._meta).goal
+        const observation = negotiated === undefined ? null : parseGoalObservation(goal, negotiated.actions, true)
+        if (observation !== null) {
+          const title = typeof update.title === 'string' ? [{ ...turn, type: 'session.info' as const, title: update.title }] : []
+          return [...title, { ...turn, type: 'goal.updated', observation }]
+        }
+      }
+      return guardianReviewEvents(update, context.nativeSessionId, turn)
+    },
     handleRequest: (method, params, session) => {
       if (method !== CODEX_HISTORY_RESET || params.phase !== 'begin' || typeof params.revision !== 'string') return undefined
       const revision = params.revision

@@ -18,7 +18,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { CommandInbox } from '../../src/application/inbound/index.js'
 import { ConversationService, PreparationService } from '../../src/application/index.js'
 import type { ConfigChange, ConfigOption, ConfigResult, GoalPort, OpenTarget, PlanningPort, RuntimeHandle, RuntimeHandles } from '../../src/application/ports/index.js'
-import type { GoalState as GoalWire } from '../../src/generated/protocol/v1_2/goal-state.js'
+import type { GoalObservation } from '../../src/domain/goals/index.js'
 import { AcpRuntimeHandle, peerConnection } from '../../src/runtime/acp/handle.js'
 import { genericDialect } from '../../src/runtime/profiles/generic/dialect.js'
 import { inProcessStore, openSqliteStore, type RemoteStore } from '../../src/store/index.js'
@@ -68,7 +68,7 @@ class ShapeSession extends FakeRuntimeSession {
   ]
   modes: string[] = []
   goalCalls: string[] = []
-  native: NonNullable<GoalWire['goal']> | null = null
+  native: GoalObservation['goal'] | null = null
 
   override async configure(change: ConfigChange): Promise<ConfigResult> {
     await super.configure(change)
@@ -84,21 +84,22 @@ class ShapeSession extends FakeRuntimeSession {
     current: async () => ({ mode: 'plan' }),
   }
 
-  private goalWire(): GoalWire {
-    return { sessionId: this.sessionId, runtime: 'codex', goal: this.native }
+  private goalWire(): GoalObservation {
+    return { goal: this.native, empty: this.native === null }
   }
 
   readonly goal: GoalPort = {
     get: async () => this.goalWire(),
     set: async objective => {
       this.goalCalls.push(`set:${objective}`)
-      this.native = { id: 'native_goal_1', objective, status: 'active', createdAt: '2026-11-16T00:00:00.000Z', updatedAt: '2026-11-16T00:00:00.000Z' }
+      this.native = { nativeIdentity: 'native_goal_1', objective, status: 'active', createdAt: '2026-11-16T00:00:00.000Z', updatedAt: '2026-11-16T00:00:00.000Z' }
       return this.goalWire()
     },
     pause: async () => this.goalWire(),
     resume: async () => this.goalWire(),
     clear: async () => {
       this.native = null
+      return this.goalWire()
     },
   }
 }

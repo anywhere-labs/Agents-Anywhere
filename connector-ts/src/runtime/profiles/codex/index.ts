@@ -52,6 +52,8 @@ export class CodexProvider implements RuntimeProvider {
       deeplinkHandoff: settings.deeplinkHandoff !== false,
       ...(this.options.platform ? { platform: this.options.platform.platform } : {}),
     })
+    // Publish the adapter's Goal capabilities before the first new-session composer reads them.
+    await inner.connection().catch(() => undefined)
     handle.startCompanions()
     return handle
   }

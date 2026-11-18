@@ -1,4 +1,4 @@
-import { checkRequest as checkGoalRequest, goalWire, initialGoalState, observe as observeGoal, type GoalRequest, type GoalState } from '../../domain/goals/index.js'
+import { checkRequest as checkGoalRequest, goalWire, initialGoalState, observe as observeGoal, type GoalObservation, type GoalRequest, type GoalState } from '../../domain/goals/index.js'
 import { UseCaseError } from '../errors.js'
 import type { CommandReceipt, ContractStatusOf } from '../ports/index.js'
 import type { RuntimeBindings } from '../session/bindings.js'
@@ -20,32 +20,32 @@ export class GoalService {
       if (state === null || state.freshness !== 'fresh') {
         // Nothing observed yet (a client acted on the capabilities alone): the native goal first, so the
         // request is checked against what the Runtime really has.
-        await this.onGoalUpdated(sessionId, (await port.get()) as unknown as Record<string, unknown> | null)
-        state = await kernel.deps.store.goals.load(sessionId)
+        const current = await port.get()
+        if (current !== null) state = await this.onGoalUpdated(sessionId, current)
       }
       state ??= initialGoalState({ sessionId, runtime: session.runtimeType, runtimeId: session.runtimeId, sourceEpoch: kernel.deps.ids.newId('ep_') })
       checkGoalRequest(state, request)
+      let observed: GoalObservation | null
       switch (request.action) {
         case 'set':
         case 'edit':
-          await port.set(request.objective ?? '')
+          observed = await port.set(request.objective ?? '')
           break
         case 'pause':
-          await port.pause()
+          observed = await port.pause()
           break
         case 'resume':
-          await port.resume()
+          observed = await port.resume()
           break
         case 'clear':
-          await port.clear()
+          observed = await port.clear()
           break
       }
-      const observed = await port.get()
-      // The goal state the Runtime reported commits with the receipt (when it changed; otherwise nothing local did).
-      // A v2 `GoalResponse` (`CommandAck.r`), the body the secure channel returns as is.
+      if (observed === null) {
+        return { operationId: request.operationId, outcome: 'unknown', ok: false, state: goalWire(state, session.takeover) }
+      }
       const resultOf = (saved: GoalState) => ({ operationId: request.operationId, outcome: 'applied', ok: true, state: goalWire(saved, session.takeover) })
-      await this.onGoalUpdated(sessionId, observed as unknown as Record<string, unknown> | null, saved => withResult(receipt, resultOf(saved)))
-      return resultOf((await kernel.deps.store.goals.load(sessionId)) ?? state)
+      return resultOf(await this.onGoalUpdated(sessionId, observed, saved => withResult(receipt, resultOf(saved))))
     })
   }
 
@@ -59,30 +59,21 @@ export class GoalService {
     const port = binding.session.goal
     if (port === undefined) throw new UseCaseError('goal_unavailable', 'This Runtime has no session goal.')
     await deps.store.deliveries.transition(sessionId, clientMessageId, 'sending', { at: deps.clock.nowIso() })
-    await port.set(objective.trim())
+    const observed = await port.set(objective.trim())
     await deps.store.deliveries.transition(sessionId, clientMessageId, 'started', { at: deps.clock.nowIso() })
-    await this.onGoalUpdated(sessionId, (await port.get()) as unknown as Record<string, unknown> | null)
+    if (observed !== null) await this.onGoalUpdated(sessionId, observed)
   }
 
-  public async onGoalUpdated(sessionId: string, wire: Record<string, unknown> | null, receiptFor?: (state: GoalState) => CommandReceipt | null): Promise<void> {
+  public async onGoalUpdated(sessionId: string, observation: GoalObservation, receiptFor?: (state: GoalState) => CommandReceipt | null): Promise<GoalState> {
     const deps = this.kernel.deps
     const session = await this.kernel.requireSession(sessionId)
     const state = (await deps.store.goals.load(sessionId)) ?? initialGoalState({ sessionId, runtime: session.runtimeType, runtimeId: session.runtimeId, sourceEpoch: deps.ids.newId('ep_') })
-    const native = (wire?.goal ?? null) as Record<string, unknown> | null
-    const next = observeGoal(state, {
-      goal: native === null ? null : {
-        objective: String(native.objective ?? ''),
-        status: (native.status ?? 'active') as never,
-        ...(typeof native.id === 'string' ? { nativeIdentity: native.id } : {}),
-        ...(typeof native.updatedAt === 'string' ? { updatedAt: native.updatedAt } : {}),
-        ...(typeof native.createdAt === 'string' ? { createdAt: native.createdAt } : {}),
-      },
-      empty: native === null,
-    }, { newId: () => deps.ids.newId('goal_'), now: deps.clock.nowIso() })
+    const next = observeGoal(state, observation, { newId: () => deps.ids.newId('goal_'), now: deps.clock.nowIso() })
     if (next.revision !== state.revision || JSON.stringify(next) !== JSON.stringify(state)) {
       this.kernel.publish(await deps.store.goals.save(next, receiptFor?.(next) ?? null))
       this.emitGoal(sessionId, next, session.takeover)
     }
+    return next
   }
 
   /**

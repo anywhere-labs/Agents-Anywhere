@@ -2,8 +2,8 @@
 // running Codex App (IPC; S1: App 26.1111 uses IPC v13, codex-acp#5).
 //
 // - Instance config offers no `environment` or custom launch arguments (research/06 §6.2).
-// - codex-acp is installed by the user or its path is set in instance config; see the codex-acp repository for
-//   managed installs and releases.
+// - Use the local adapter from PATH or the path configured for this instance. The verified fork revision and
+//   build entry are in connector-ts/scripts/build-codex-acp.sh.
 
 import { instanceSchema, type AcpAgentDefinition, type ConfigSchema } from '../definition.js'
 import { codexDialect } from './dialect.js'

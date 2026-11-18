@@ -106,7 +106,7 @@ describe('reported runtime capabilities before the Agent has run', () => {
     const set = events[0]!.payload.capabilities as ProtocolCapabilitySet
     expect(set.revision).toBe(3)
     expect(items(set).find(item => item.capabilityId === 'session.steer')?.supported).toBe(false)
-    expect(items(set).find(item => item.capabilityId === 'session.goal')?.supported).toBe(true)
+    expect(items(set).find(item => item.capabilityId === 'session.goal')?.supported).toBe(false)
     expect(ids(set)).toContain('runtime.owner_release')
   })
 })

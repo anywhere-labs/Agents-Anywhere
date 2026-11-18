@@ -154,7 +154,7 @@ export function observe(state: GoalState, observation: GoalObservation | null, i
   const base: GoalState = { ...state, freshness: 'fresh', capabilities }
   const native = observation.goal
   if (native === null) {
-    if (observation.empty && state.goal !== null && state.goal.status !== 'paused') {
+    if (observation.empty && state.goal !== null && (state.goal.status !== 'paused' || observation.outcome === 'cleared')) {
       return commit(base, {
         goal: null,
         lastOutcome: { ...state.goal, status: observation.outcome ?? 'cleared', endedAt: ids.now, updatedAt: ids.now },

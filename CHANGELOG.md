@@ -45,6 +45,7 @@
 
 ### Codex 与 Claude
 
+- 使用支持 Goal 状态同步的 codex-acp 时，Codex 目标可以在不同设备间查看、暂停、恢复和清除。计划审阅的实时更新也不再触发 Server 报错。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 连接 v3 Connector 时，选择项目后即可加载 Codex 和 Claude Code 的模型列表，首次新建会话也能在发送前选择模型。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 连接 v3 Connector、装有 Codex App 的电脑上，Codex 会话的斜杠命令菜单可以用 `/open-in-codex-app` 在 Codex App 中打开这个会话，用 `/quit-codex-app` 退出占用会话的 Codex App 让 AA 接手：退出前会列出要结束的进程并请你确认，可以选择没有按时退出时强制结束，Web、Desktop、Android 和 iOS 都可以操作。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 连接 v3 Connector 时，在 AA 新建的 Codex 线程默认立即出现在 Codex App 侧边栏（需要 codex-acp 支持），可以在 Codex 实例配置里关闭。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）

@@ -60,7 +60,7 @@ const DECLARED: Readonly<Record<string, readonly DeclaredCapability[]>> = {
     on('catalog.permission'),
     ...PLANNING,
     ...WORKSPACE_PREPARATION,
-    on('session.goal', { actions: ['set', 'pause', 'resume', 'clear'] }),
+    off('session.goal'),
   ],
   claude: [
     ...ACP_SESSION,

@@ -1,4 +1,4 @@
-import type { GoalRequest, GoalState } from '../domain/goals/index.js'
+import type { GoalObservation, GoalRequest } from '../domain/goals/index.js'
 import { AgentSessionControls, type AgentConfigurationUpdate, type AgentOperation } from './conversation/agent-session.js'
 import { InteractionService } from './conversation/interactions.js'
 import { MessageService, type CreateSessionCommand, type SendMessageCommand, type SendResult } from './conversation/messages.js'
@@ -227,8 +227,8 @@ export class ConversationService implements SessionEventSink {
     return this.plans.onPlanningMode(sessionId, mode)
   }
 
-  public onGoalUpdated(sessionId: string, wire: Record<string, unknown> | null, receiptFor?: (state: GoalState) => CommandReceipt | null): Promise<void> {
-    return this.goals.onGoalUpdated(sessionId, wire, receiptFor)
+  public async onGoalUpdated(sessionId: string, observation: GoalObservation): Promise<void> {
+    await this.kernel.serial(sessionId, () => this.goals.onGoalUpdated(sessionId, observation))
   }
 
   public onLiveFact(sessionId: string, event: LiveFact): void {

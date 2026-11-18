@@ -135,6 +135,8 @@ export interface AcpDialect {
   planMode?(config: readonly ConfigOption[]): PlanModeSpec | undefined
   /** Goal extension method name (`_session/goal`); undefined means not supported. */
   goalMethod?(info: AgentInfo): string | undefined
+  /** Negotiated Goal control returning a native snapshot with every successful operation. */
+  goalSnapshots?(info: AgentInfo): { readonly method: string; readonly actions: readonly import('../../domain/goals/index.js').GoalAction[] } | undefined
   /** Reverse requests the dialect handles itself (`_codex/session/history_reset`, etc.). Returns undefined when unrecognized. */
   handleRequest?(method: string, params: JsonRecord, session: DialectSessionHooks): Promise<unknown> | undefined
   /** Session-level notification methods the dialect receives (routed to the session by params.sessionId). */

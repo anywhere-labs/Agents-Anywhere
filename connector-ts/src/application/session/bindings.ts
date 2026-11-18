@@ -1,4 +1,5 @@
 import type { TimelineDraft } from '../../domain/conversation/index.js'
+import type { GoalObservation } from '../../domain/goals/index.js'
 import { Coalescer } from '../coalescer.js'
 import { UseCaseError } from '../errors.js'
 import type { RuntimeEvent, RuntimeSession } from '../ports/index.js'
@@ -50,7 +51,7 @@ export interface SessionEventSink {
   onInteractionResolved(sessionId: string, interactionId: string, resolution: 'answered' | 'withdrawn' | 'expired'): Promise<void>
   onPlanUpdated(sessionId: string, event: Event<'plan.updated'>): Promise<void>
   onPlanningMode(sessionId: string, mode: 'plan' | 'normal'): Promise<void>
-  onGoalUpdated(sessionId: string, wire: Record<string, unknown> | null): Promise<void>
+  onGoalUpdated(sessionId: string, observation: GoalObservation): Promise<void>
   onLiveFact(sessionId: string, event: LiveFact): void
   onSessionLost(sessionId: string, error: { code: string; message: string }): Promise<void>
 }
@@ -188,7 +189,7 @@ export class SessionBinding {
         await this.sink.onPlanningMode(sessionId, event.mode)
         return
       case 'goal.updated':
-        await this.sink.onGoalUpdated(sessionId, event.goal as unknown as Record<string, unknown> | null)
+        await this.sink.onGoalUpdated(sessionId, event.observation)
         return
       case 'session.info':
         if (event.title !== undefined) await this.kernel.patchSession(sessionId, { nativeTitle: event.title })

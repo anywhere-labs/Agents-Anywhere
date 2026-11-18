@@ -31,7 +31,7 @@ import type {
   SessionCapabilities,
   SteerResult,
 } from '../../application/ports/runtime-session.js'
-import type { GoalState } from '../../generated/protocol/v1_2/goal-state.js'
+import { parseGoalObservation } from './goal.js'
 import { AcpProjectionIdentity, acpFingerprint, type JsonValue } from '../../domain/identity/index.js'
 import { asRecord, describeAcpError, isMethodNotFound, type AcpClient, type AgentInfo, type JsonRecord } from './client.js'
 import { choiceError, findOption, normalizeConfig, replaceConfig, withCurrent, type ConfigApply, type NormalizedConfig } from './config.js'
@@ -143,8 +143,9 @@ export class AcpRuntimeSession implements RuntimeSession {
     this.context = { sessionId: options.sessionId, nativeSessionId: options.nativeSessionId, epoch: randomUUID(), info: options.info }
     this.identity = this.dialect.identity?.(this.context) ?? defaultIdentity(this.context)
     if (this.dialect.steer !== 'none') this.steer = (input, delivery) => this.steerTurn(input, delivery)
-    const goalMethod = this.dialect.goalMethod?.(options.info)
-    if (goalMethod) this.goal = this.goalPort(goalMethod)
+    const goalSnapshots = this.dialect.goalSnapshots?.(options.info)
+    const goalMethod = goalSnapshots?.method ?? this.dialect.goalMethod?.(options.info)
+    if (goalMethod) this.goal = this.goalPort(goalMethod, goalSnapshots)
     if (this.dialect.planMode) this.planning = this.planningPort()
     this.detach = this.client.attach(options.nativeSessionId, {
       onUpdate: update => this.onUpdate(update),
@@ -590,20 +591,25 @@ export class AcpRuntimeSession implements RuntimeSession {
     }
   }
 
-  private goalPort(method: string): GoalPort {
-    const call = async (action: string, extra: JsonRecord = {}): Promise<GoalState | null> => {
-      const result = asRecord(await this.client.request(method, { sessionId: this.nativeSessionId, action, ...extra }, { timeoutMs: 30_000 }))
-      const goal = result.goal ?? result.state ?? null
-      return goal === null ? null : (goal as unknown as GoalState)
+  private goalPort(method: string, snapshots: ReturnType<NonNullable<AcpDialect['goalSnapshots']>>): GoalPort {
+    const request = async (action: string, extra: JsonRecord = {}) =>
+      asRecord(await this.client.request(method, { sessionId: this.nativeSessionId, action, ...extra }, { timeoutMs: 30_000 }))
+    const legacyRead = async () => {
+      const result = await request('get')
+      const state = result.goal ?? result.state
+      const goal = asRecord(state).goal
+      return parseGoalObservation(goal ?? null)
+    }
+    const observed = async (action: string, extra: JsonRecord = {}) => {
+      const result = await request(action, extra)
+      return snapshots === undefined ? legacyRead() : parseGoalObservation(result.goal, snapshots.actions, true)
     }
     return {
-      get: () => call('get'),
-      set: async (objective, options) => (await call('set', { objective, ...(options?.tokenBudget !== undefined ? { tokenBudget: options.tokenBudget } : {}) })) as GoalState,
-      pause: async () => (await call('pause')) as GoalState,
-      resume: async () => (await call('resume')) as GoalState,
-      clear: async () => {
-        await call('clear')
-      },
+      get: () => snapshots === undefined ? legacyRead() : observed('get'),
+      set: (objective, options) => observed('set', { objective, ...(options?.tokenBudget !== undefined ? { tokenBudget: options.tokenBudget } : {}) }),
+      pause: () => observed('pause'),
+      resume: () => observed('resume'),
+      clear: () => observed('clear'),
     }
   }
 

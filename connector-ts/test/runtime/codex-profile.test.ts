@@ -21,7 +21,7 @@ function codexAgent(): FakeAcpAgent {
   ]
   agent.peer.onRequest('_session/goal', params => {
     agent.received.push({ method: '_session/goal', params: params as Json })
-    return { goal: null }
+    return { goal: { objective: 'ship it', status: 'active' } }
   })
   return agent
 }
@@ -67,9 +67,12 @@ describe('Codex definition', () => {
 describe('Codex negotiation', () => {
   it('opts into item context and codexIpc controls, tags prompts and follows existing sessions', async () => {
     const agent = codexAgent()
+    agent.initializeResult = { ...agent.initializeResult, _meta: {
+      goal: { version: 1, controlMethod: '_session/goal', actions: ['set', 'clear'], read: 'get' },
+    } }
     const { handle, session } = await open(agent)
     const init = agent.received.find(r => r.method === 'initialize')!.params
-    expect(init.clientCapabilities).toMatchObject({ _meta: { codexItemContext: true } })
+    expect(init.clientCapabilities).toMatchObject({ _meta: { codexItemContext: true, goal: { version: 1 } } })
     expect(init._meta).toEqual({ codexIpc: { approvals: true, settings: true, historyReplacement: true } })
     // do not declare AIR: with AIR codex-acp switches to a different tool-report shape
     expect(JSON.stringify(init)).not.toContain('jetbrains')
@@ -78,8 +81,9 @@ describe('Codex negotiation', () => {
     await handle.open({ kind: 'existing', ref: { nativeSessionId: 'thread-9', locator: '/w' } }, { sessionId: 'aa_x2', replay: 'none' })
     expect(agent.received.find(r => r.method === 'session/resume')!.params).toMatchObject({ sessionId: 'thread-9', _meta: { codexIpc: { mode: 'auto' } } })
     expect(handle.capabilities().items.find(c => c.id === 'session.goal')?.supported).toBe(true)
-    await session.goal!.set('ship it')
-    expect(agent.received.find(r => r.method === '_session/goal')?.params).toMatchObject({ sessionId: THREAD, action: 'set', objective: 'ship it' })
+    expect(handle.capabilities().items.find(c => c.id === 'session.goal')?.parameters).toEqual({ actions: ['set', 'edit', 'clear'] })
+    expect(await session.goal!.set('ship it')).toMatchObject({ goal: { objective: 'ship it', status: 'active' } })
+    expect(agent.received.filter(r => r.method === '_session/goal').map(r => r.params)).toEqual([{ sessionId: THREAD, action: 'set', objective: 'ship it' }])
   })
 })
 

@@ -10,7 +10,7 @@
 // - Capabilities come only from negotiation and dialect declarations, never hardcoded by provider name (docs/api/capabilities.md).
 
 import type { JsonValue } from '../../domain/identity/index.js'
-import type { GoalState } from '../../generated/protocol/v1_2/goal-state.js'
+import type { GoalObservation } from '../../domain/goals/index.js'
 import type { ProtocolModelCatalog } from '../../generated/protocol/v1_2/model-catalog.js'
 import type { ProtocolPermissionCatalog } from '../../generated/protocol/v1_2/permission-catalog.js'
 import type { PlanDocument } from '../../generated/protocol/v1_2/plan-document.js'
@@ -543,11 +543,11 @@ export interface CommandResult {
 }
 
 export interface GoalPort {
-  get(): Promise<GoalState | null>
-  set(objective: string, options?: { readonly tokenBudget?: number }): Promise<GoalState>
-  pause(): Promise<GoalState>
-  resume(): Promise<GoalState>
-  clear(): Promise<void>
+  get(): Promise<GoalObservation | null>
+  set(objective: string, options?: { readonly tokenBudget?: number }): Promise<GoalObservation | null>
+  pause(): Promise<GoalObservation | null>
+  resume(): Promise<GoalObservation | null>
+  clear(): Promise<GoalObservation | null>
 }
 
 export interface PlanningPort {
@@ -703,7 +703,7 @@ export type RuntimeEvent =
       readonly document?: PlanDocument
     })
   | (EventBase & { readonly type: 'planning.mode_changed'; readonly mode: 'plan' | 'normal' })
-  | (EventBase & { readonly type: 'goal.updated'; readonly goal: GoalState | null })
+  | (EventBase & { readonly type: 'goal.updated'; readonly observation: GoalObservation })
   | (EventBase & { readonly type: 'config.updated'; readonly options: readonly ConfigOption[] })
   | (EventBase & {
       readonly type: 'commands.updated'
