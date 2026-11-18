@@ -10,10 +10,13 @@ import { SyncFeed, type SyncOperation, type SyncTransport } from '../../src/host
 import { BridgeError } from '../../src/host/dsh-runtime/errors.js'
 import { nativeRuntime } from '../fixtures/native-runtime.js'
 import { mountAgents } from '../fixtures/agent-runtime.js'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
+import { sessionId as platformSessionId } from '../../src/host/dsh-runtime/identity.js'
+import { bridge2Connector, connectorTsInstalled, v3RouterBinary } from '../helpers/ts-connector.js'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+
+const routerBinary = v3RouterBinary()
+const bridge2Skip = !connectorTsInstalled ? 'connector-ts is not installed' : !routerBinary ? 'no meshcall 9334405 Router binary' : false
 
 const signal = () => new AbortController().signal
 type Descriptor = { id: string, description: string, acceptsArgs: boolean, enabled: boolean, metadata: Record<string, any> }
@@ -209,9 +212,10 @@ test('registry change refreshes existing capability signals with a restart-safe 
   } finally { feed.close() }
 }))
 
-test('compiled native Host and actual Python public adapters execute commands over authenticated transport', { timeout: 30_000 }, async () => {
+test('compiled native Host executes commands for the v3 Connector over the authenticated 2.0 transport', { timeout: 30_000, skip: bridge2Skip }, async () => {
   const home = await mkdtemp(join(tmpdir(), 'aa-commands-wire-'))
   const f = await nativeRuntime(home, ctx => mountAgents(ctx))
+  let connector: Awaited<ReturnType<typeof bridge2Connector>> | undefined
   try {
     const id = SessionId('commands-wire')
     await f.ctx.sessionController.create({ sessionId: id, cwd: home, agentPreset: 'minimal' })
@@ -224,14 +228,30 @@ test('compiled native Host and actual Python public adapters execute commands ov
       const event = inv.agent.session.append('session/title', { title: 'echo', source: { kind: 'user' }, messageSeqs: [] })
       return { kind: 'success', text: inv.rawInput, sourceEventSeq: event.seq }
     } })
-    const { stdout } = await promisify(execFile)('uv', ['run', '--frozen', 'python', 'tests/dsh_commands_probe.py', home], {
-      cwd: new URL('../../../connector/', import.meta.url), timeout: 20_000,
-    })
-    assert.match(stdout, /DSH compiled native command integration passed/)
+    connector = await bridge2Connector(home, 'wire', routerBinary!)
+    const call = (method: string, params: Record<string, unknown> = {}, timeoutMs?: number) => connector!.runtime.client.request(method, params, timeoutMs)
+    const session = { sessionId: platformSessionId('wire', 'commands-wire'), externalSessionId: 'commands-wire' }
+    const listed = await call('listCommands', { ...session, query: 'compact', limit: 1 }) as { commands: { id: string, metadata?: { ui?: { acceptsMultiline?: boolean } } }[] }
+    assert.deepEqual(listed.commands.map(command => command.id), ['compact'])
+    assert.equal(listed.commands[0]!.metadata?.ui?.acceptsMultiline, true)
+    const done = await call('executeCommand', { ...session, command: 'compact', args: [], raw: '/compact  first\nsecond  ' }) as Record<string, any>
+    assert.equal(done.ok, true)
+    assert.equal(done.message, '  first\nsecond  ')
+    assert.equal(done.result.executionState, 'accepted')
+    assert.ok(done.result.commandId && done.result.sourceEventSeq >= 0)
+    const mismatch = await call('executeCommand', { ...session, command: 'compact', args: [], raw: '/permission workspace-write' }) as Record<string, any>
+    assert.deepEqual([mismatch.ok, mismatch.code], [false, 'invalid_command'])
+    const failed = await call('executeCommand', { ...session, command: 'compact', args: [], raw: '/compact invalid' }) as Record<string, any>
+    assert.deepEqual([failed.ok, failed.result.kind, failed.result.executionState], [false, 'error', 'completed'])
+    const permissions = await call('listPermissions', { limit: 100 }) as { permissions: { selectionId: string, metadata?: { preset?: string } }[] }
+    const workspaceWrite = permissions.permissions.find(item => item.metadata?.preset === 'workspace-write')!.selectionId
+    assert.notEqual((await call('updateSelections', { ...session, selections: { permission: workspaceWrite } })).ok, false)
     assert.equal(f.ctx.permissionPresets.current(agent.session), 'workspace-write')
+    // A command whose answer never comes is dispatched once and never retried.
+    await assert.rejects(call('executeCommand', { ...session, command: 'compact', args: [], raw: '/compact wait' }, 200))
     const events = agent.session.snapshotEvents()
     assert.equal(events.filter(e => e.type === 'command/run' && e.data.name === 'compact' && e.data.args?.trim() === 'wait').length, 1)
     assert.equal(events.filter(e => e.type === 'turn/start').length, 0)
     assert.equal(events.filter(e => e.type === 'user/message').length, 1)
-  } finally { await f.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
+  } finally { await connector?.close(); await f.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
 })

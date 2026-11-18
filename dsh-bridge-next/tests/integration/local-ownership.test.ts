@@ -1,69 +1,50 @@
+// One Connector per computer (local-machine 2.0): Desktop's and the plugin's Connectors, both the v3 Connector,
+// race for the machine and exactly one runs; the other's control channel stays usable and starts once it is free.
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { once } from 'node:events'
+import { mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { setTimeout as delay } from 'node:timers/promises'
+import { MeshCallError } from 'meshcall'
 import { localRuntimePath, readLocalState } from '../../src/host/desktop/local-runtime.js'
-import { launchConnector } from '../helpers/python-connector.js'
+import { connectorTsInstalled, launchRpcConnector, v3RouterBinary } from '../helpers/ts-connector.js'
 
-const config = (id: string) => ({ serverUrl: 'https://example.test', connectorId: id, connectorToken: 'fixture' })
+const routerBinary = v3RouterBinary()
+const skip = !connectorTsInstalled ? 'connector-ts is not installed' : !routerBinary ? 'no meshcall 9334405 Router binary' : false
+// Nothing listens here: a started Connector keeps retrying its Server.
+const config = (id: string) => ({ serverUrl: 'http://127.0.0.1:9', connectorId: id, connectorToken: 'fixture' })
 
-test('Python Desktop and plugin race, CLI is excluded, and the same RPC channel retries after exit', { timeout: 20000 }, async t => {
-  const home = await mkdtemp(join(tmpdir(), 'aa-python-owners-'))
-  t.after(() => rm(home, { recursive: true, force: true }))
-  const desktop = launchConnector(home, 'desktop-workbench'), plugin = launchConnector(home, 'dsh-plugin')
-  t.after(async () => { await desktop.close(); await plugin.close() })
-  assert.equal((await desktop.request('connector.getState')).running, false)
-  assert.equal(readLocalState(localRuntimePath(home)).runtime, undefined, 'Opening RPC does not claim ownership')
-  const results = await Promise.allSettled([desktop.request('connector.start', config('desktop-id')), plugin.request('connector.start', config('plugin-id'))])
-  assert.equal(results.filter(r => r.status === 'fulfilled').length, 1)
-  const failure = results.find(r => r.status === 'rejected') as PromiseRejectedResult
-  assert.equal(failure.reason.code, 'connector_already_running',
-    `${failure.reason.message}\ndesktop stderr:\n${desktop.stderr}\nplugin stderr:\n${plugin.stderr}`)
-  assert.equal(failure.reason.details.reason, 'connector_already_running')
-  const winner = results[0].status === 'fulfilled' ? desktop : plugin
-  const loser = winner === desktop ? plugin : desktop
-  const winnerId = winner === desktop ? 'desktop-id' : 'plugin-id'
-  const loserId = winner === desktop ? 'plugin-id' : 'desktop-id'
+test('Desktop and plugin Connectors race: one runs, the other is refused and starts after the first exits', { timeout: 60_000, skip }, async t => {
+  const home = await realpath(await mkdtemp(join(process.platform === 'win32' ? tmpdir() : '/tmp', 'aa-own-')))
+  const previous = process.env['MESHCALL_ROUTER_BINARY']
+  process.env['MESHCALL_ROUTER_BINARY'] = routerBinary
+  const desktop = launchRpcConnector(home, 'desktop-workbench'), plugin = launchRpcConnector(home, 'dsh-plugin')
+  t.after(async () => {
+    await desktop.close(); await plugin.close()
+    if (previous === undefined) delete process.env['MESHCALL_ROUTER_BINARY']
+    else process.env['MESHCALL_ROUTER_BINARY'] = previous
+    await rm(home, { recursive: true, force: true })
+  })
+  const [desktopControl, pluginControl] = await Promise.all([desktop.control(), plugin.control()])
+  assert.equal((await desktopControl.getState({ timeoutMs: 10_000 })).running, false)
+  assert.equal(readLocalState(localRuntimePath(home)).runtime, undefined, 'opening the control channel does not claim the machine')
+  const results = await Promise.allSettled([
+    desktopControl.start(config('desktop-id'), { timeoutMs: 20_000 }),
+    pluginControl.start(config('plugin-id'), { timeoutMs: 20_000 }),
+  ])
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1, `desktop:\n${desktop.stderr}\nplugin:\n${plugin.stderr}`)
+  const failure = (results.find(result => result.status === 'rejected') as PromiseRejectedResult).reason
+  assert.ok(failure instanceof MeshCallError)
+  assert.equal(failure.code, 'connector_already_running')
+  const [winner, loser] = results[0].status === 'fulfilled' ? [desktop, plugin] : [plugin, desktop]
+  const [winnerId, loserId] = winner === desktop ? ['desktop-id', 'plugin-id'] : ['plugin-id', 'desktop-id']
   const file = localRuntimePath(home)
   assert.equal(readLocalState(file).runtime?.pid, winner.child.pid)
-  assert.equal(readLocalState(file).runtime?.childPid, undefined)
-  assert.deepEqual(readLocalState(file).connectorIds, [winnerId])
-  const cli = launchConnector(home, 'cli', 'start')
-  t.after(() => cli.close())
-  assert.equal((await once(cli.child, 'exit'))[0], 2)
-  assert.match(cli.stderr, /Another Connector is running/)
   assert.deepEqual(readLocalState(file).connectorIds, [winnerId])
   await winner.close()
-  assert.equal((await loser.request('connector.start', config(loserId))).running, true)
+  assert.equal((await (await loser.control()).start(config(loserId), { timeoutMs: 20_000 })).running, true)
+  assert.equal(readLocalState(file).runtime?.pid, loser.child.pid)
   assert.deepEqual(readLocalState(file).connectorIds, [winnerId, loserId])
-  await loser.close(true)
-  const next = launchConnector(home, 'cli', 'start')
-  t.after(() => next.close())
-  for (let i = 0; !next.stderr.includes('backend-ready'); i++) {
-    assert.ok(i < 300, next.stderr)
-    assert.equal(next.child.exitCode, null)
-    await delay(20)
-  }
-  assert.equal(readLocalState(file).runtime?.pid, next.child.pid)
-  assert.deepEqual(readLocalState(file).connectorIds, [winnerId, loserId, 'cli-id'])
-  await next.close()
+  await loser.close()
   assert.equal(readLocalState(file).runtime, undefined)
-})
-
-test('CLI ownership blocks both RPC launchers without killing their control channels', { timeout: 15000 }, async t => {
-  const home = await mkdtemp(join(tmpdir(), 'aa-cli-owner-'))
-  t.after(() => rm(home, { recursive: true, force: true }))
-  const cli = launchConnector(home, 'cli', 'start')
-  const clients = [launchConnector(home, 'desktop-workbench'), launchConnector(home, 'dsh-plugin')]
-  t.after(async () => { await cli.close(); for (const client of clients) await client.close() })
-  for (let i = 0; !cli.stderr.includes('backend-ready'); i++) { assert.ok(i < 300, cli.stderr); await delay(20) }
-  for (const client of clients) {
-    await assert.rejects(client.request('connector.acquireOwnership'), { code: 'connector_already_running' })
-    await assert.rejects(client.request('connector.start', config('blocked')), { code: 'connector_already_running' })
-    assert.equal((await client.request('connector.getState')).running, false)
-  }
-  assert.deepEqual(readLocalState(localRuntimePath(home)).connectorIds, ['cli-id'])
 })

@@ -42,7 +42,7 @@ DeepSeek 官方的 DeepSeek Harness Desktop 没有内置本插件，需要从 np
    ```
 
    然后点击「安装」。下载慢或连不上时，在「安装源」中改选「中国大陆镜像源」再试。
-3. 如果安装停下并提示「允许这些脚本并重试」，列表中应只有 `@dataiku/uv`（它为插件提供 uv 程序），点击该按钮继续。列表里出现其他包名时，先不要允许，到 [Issues](https://github.com/anywhere-labs/Agents-Anywhere/issues) 反馈。
+3. 如果安装停下并提示「允许这些脚本并重试」，列表中应只有 `node-pty`（它为远程终端提供本机终端支持），点击该按钮继续。列表里出现其他包名时，先不要允许，到 [Issues](https://github.com/anywhere-labs/Agents-Anywhere/issues) 反馈。插件自带 Connector，不需要另外安装 uv 或 Python。
 4. 安装完成后点击「立即启用」，然后重启 DeepSeek Harness Desktop。
 5. 从左侧边栏「设置」上方打开「远程控制」，按提示登录并连接。
 
@@ -56,7 +56,7 @@ DSH 的 AI 通过 `plugin_manager` 工具管理插件，这个工具在 Creator 
 1. 插件的 npm 包名是 @agents-anywhere/dsh-bridge-next，安装 npm 上的最新版本，不要改用其他包名。
 2. 使用 plugin_manager 工具。如果当前会话没有这个工具，告诉我切换到 Creator 模式，或者改到「插件」页面手动安装；不要用 shell 命令修改 profile 文件。
 3. 先用 list_bundles 检查是否已经安装。已安装时告诉我当前版本；需要升级时，经我同意后先用 remove_bundle 卸载旧版本，再安装新版本。
-4. 用 install_bundle 安装并启用。如果因为依赖的安装脚本被拦下而失败，把等待允许的包名告诉我；只有列表中只有 @dataiku/uv 时，才在我确认后批准它并重试。
+4. 用 install_bundle 安装并启用。如果因为依赖的安装脚本被拦下而失败，把等待允许的包名告诉我；只有列表中只有 node-pty 时，才在我确认后批准它并重试。
 5. 如果提示版本不兼容（incompatible-version），不要添加版本豁免，告诉我当前的 DSH 版本和插件要求的版本范围。
 6. 不要改动其他插件、profile 配置或会话文件。
 7. 完成后告诉我安装的插件版本，并提醒我重启 DeepSeek Harness Desktop，然后从左侧边栏打开「远程控制」登录。

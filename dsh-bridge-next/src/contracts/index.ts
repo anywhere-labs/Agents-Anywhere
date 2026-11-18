@@ -79,7 +79,6 @@ export interface OnboardingHostApi {
   saveConnectorSettings(settings: ConnectorSettings): Promise<null>
   openConnectorFolder(folder: ConnectorFolder): Promise<null>
   resetConnector(forceLocal: boolean): Promise<null>
-  resetConnectorEnvironment(): Promise<null>
   createMobileLogin(): Promise<MobileLoginSnapshot>
   inspectMobileLogin(id: string): Promise<MobileLoginSnapshot>
   confirmMobileLogin(id: string, approved: boolean): Promise<MobileLoginSnapshot>

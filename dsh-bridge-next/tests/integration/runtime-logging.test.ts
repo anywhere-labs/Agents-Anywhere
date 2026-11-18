@@ -1,35 +1,31 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { spawn } from 'node:child_process'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createInterface } from 'node:readline'
 import { Mesh, Router } from 'meshcall'
 import { LogsServiceClient } from '../../src/host/generated/connector-logs.js'
 import { BridgeConnection } from '../../src/host/dsh-runtime/connection.js'
 import { RuntimeDiagnostics } from '../../src/host/dsh-runtime/diagnostics.js'
 import { RpcLogOutput } from '../../src/host/dsh-runtime/log-output.js'
 import { writeJson } from '../../src/host/storage/files.js'
+import { connectorTs, connectorTsInstalled, v3RouterBinary } from '../helpers/ts-connector.js'
 
+const routerBinary = v3RouterBinary()
+const skip = !connectorTsInstalled ? 'connector-ts is not installed' : !routerBinary ? 'no meshcall 9334405 Router binary' : false
+
+/** The Connector's local Router with its Logs service (connector-ts `host/`), as a running Connector serves it. */
 async function connector(home: string) {
-  const child = spawn('uv', ['run', 'python', 'tests/logs_probe.py', home], {
-    cwd: new URL('../../../connector/', import.meta.url), stdio: ['pipe', 'pipe', 'pipe'],
-  })
-  let stderr = ''
-  child.stderr.on('data', chunk => { stderr = (stderr + String(chunk)).slice(-8000) })
-  const exited = new Promise<void>(resolve => child.once('exit', () => resolve()))
-  const lines = createInterface({ input: child.stdout })
-  const descriptor = await new Promise<{ instanceId: string; pid: number; key: string; callerKey: string; endpoint: { unixPath: string } }>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`Connector not ready: ${stderr}`)), 15000)
-    lines.once('line', line => { clearTimeout(timer); resolve(JSON.parse(line)) })
-    child.once('error', error => { clearTimeout(timer); reject(error) })
-    child.once('exit', () => { clearTimeout(timer); reject(new Error(`Connector exited: ${stderr}`)) })
-  })
-  return { descriptor, async close() { lines.close(); child.stdin.end(); await exited } }
+  const host = await import(new URL('src/host/index.ts', connectorTs).href) as typeof import('../../../connector-ts/src/host/index.js')
+  const logs = await host.LogStore.open(join(home, 'logs'))
+  const hub = new host.LocalHub({ directory: join(home, 'router'), binaryPath: routerBinary! })
+  await hub.start()
+  await hub.mount(host.logsService(logs))
+  const descriptor = { ...hub.descriptor('dsh-bridge'), callerKey: hub.descriptor('connector').key }
+  return { descriptor, async close() { await hub.stop(); await logs.close() } }
 }
 
-test('Bridge DI logger crosses real Python Logs RPC and history survives Connector replacement', { timeout: 30000 }, async () => {
+test('Bridge DI logger crosses the Connector\'s Logs RPC and history survives Connector replacement', { timeout: 30000, skip }, async () => {
   const home = await mkdtemp(join(tmpdir(), 'aa-log-rpc-'))
   let process = await connector(home)
   let mesh: Mesh | undefined

@@ -1,8 +1,8 @@
 import { translateMessage, type Translate } from '../../locales.js'
 import { useEffect, useId, useState } from 'react'
 import { Button, Input, Menu, RiskConfirmation, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
-import { ChevronDown, FolderOpen, PackageX, Power, RotateCw } from 'lucide-react'
-import { PYPI_MIRRORS, PYTHON_MIRRORS, SYNC_INTERVALS } from '../../../contracts/connector.js'
+import { ChevronDown, FolderOpen, Power, RotateCw } from 'lucide-react'
+import { SYNC_INTERVALS } from '../../../contracts/connector.js'
 import type { OnboardingHostApi, OnboardingSnapshot } from '../../../contracts/index.js'
 import { connectorStatus } from './account-panel.js'
 import type { OnboardingState } from './state.js'
@@ -32,9 +32,6 @@ export function SettingsPanel({ t, host, state, snapshot, onConnection }: {
   const [openingFolder, setOpeningFolder] = useState<'data' | 'logs' | null>(null)
   const [reset, setReset] = useState<'normal' | 'force' | null>(null)
   const [acknowledged, setAcknowledged] = useState(false)
-  const [reinstall, setReinstall] = useState(false)
-  const [reinstallAcknowledged, setReinstallAcknowledged] = useState(false)
-  const [reinstalling, setReinstalling] = useState(false)
   const id = useId()
   const signature = JSON.stringify(management?.settings)
   useEffect(() => { setDraft(management?.settings) }, [signature])
@@ -43,7 +40,6 @@ export function SettingsPanel({ t, host, state, snapshot, onConnection }: {
   const busy = state.busy || connecting || Boolean(state.readError)
   const status = connectorStatus(snapshot, state.readError, t)
   const dirty = JSON.stringify(draft) !== signature
-  const mirror = PYPI_MIRRORS.find(mirror => mirror.url === draft.uvPypiIndexUrl)?.id ?? 'default'
   const proxyChoice = draft.connectorProxy === 'direct' ? 'direct' : draft.connectorProxy || customProxy ? 'custom' : 'system'
   const update = <K extends keyof typeof draft>(key: K, value: (typeof draft)[K]) => {
     setDraft({ ...draft, [key]: value }); setSaved(false); state.clearError()
@@ -62,12 +58,6 @@ export function SettingsPanel({ t, host, state, snapshot, onConnection }: {
     if (success) { setReset(null); onConnection() }
     else if (!force && revokeFailed) { setReset('force'); setAcknowledged(false) }
   }
-  const confirmReinstall = () => {
-    setReinstall(false)
-    setReinstalling(true)
-    // A stalled installation is the usual reason to be here, so this may interrupt it.
-    void state.run(() => host.resetConnectorEnvironment(), { interrupt: true }).finally(() => setReinstalling(false))
-  }
 
   return <section className={css.panel} aria-busy={state.busy}>
     <div className={css.section}>
@@ -80,7 +70,6 @@ export function SettingsPanel({ t, host, state, snapshot, onConnection }: {
         <dt>{t('服务器')}</dt><dd>{snapshot.settings.apiBaseUrl}</dd>
       </dl>
       {status.detail ? <p className={css.hint} role="status">{translateMessage(t, status.detail)}</p> : null}
-      {snapshot.stage === 'error' && !snapshot.deviceRecovery ? <p className={css.hint}>{t('如果依赖下载反复失败，可以切换下方的 PyPI 镜像，或在“维护”中重装依赖环境。')}</p> : null}
       {!snapshot.account || snapshot.deviceRecovery ? <Button variant="outline" onClick={onConnection}>
         {snapshot.account ? t('前往恢复连接') : t('前往登录')}
       </Button> : <div className={css.actions}>
@@ -103,25 +92,6 @@ export function SettingsPanel({ t, host, state, snapshot, onConnection }: {
           .finally(() => setSaving(false))
       }
     }}>
-      <div className={css.section}>
-        <h3>{t('运行环境')}</h3>
-        <label className={css.field} htmlFor={`${id}-uv`}>{t('uv 路径')}</label>
-        <Input id={`${id}-uv`} className={css.input!} disabled={busy} value={draft.uvPath} spellCheck={false}
-          placeholder={t('留空使用内置 uv')} autoComplete="off" onChange={event => update('uvPath', event.target.value)} />
-        <p className={css.hint}>{t('当前路径：')}<span className={css.path}>{management.resolvedUvPath || t('未找到 uv')}</span></p>
-        <div className={css.row}>
-          <span>{t('Python 下载镜像')}</span>
-          <Choice label={t('Python 下载镜像')} value={PYTHON_MIRRORS.find(item => item.url === draft.uvPythonInstallMirror)?.id ?? 'default'} disabled={busy}
-            options={PYTHON_MIRRORS.map(({ id, label }) => ({ id, label: translateMessage(t, label) }))}
-            onChange={id => update('uvPythonInstallMirror', PYTHON_MIRRORS.find(item => item.id === id)!.url)} />
-        </div>
-        <div className={css.row}>
-          <span>{t('PyPI 镜像')}</span>
-          <Choice label={t('PyPI 镜像')} value={mirror} disabled={busy} options={PYPI_MIRRORS.map(({ id, label }) => ({ id, label: translateMessage(t, label) }))}
-            onChange={id => update('uvPypiIndexUrl', PYPI_MIRRORS.find(mirror => mirror.id === id)!.url)} />
-        </div>
-      </div>
-
       <div className={css.section}>
         <h3>{t('网络')}</h3>
         <div className={css.row}>
@@ -165,19 +135,10 @@ export function SettingsPanel({ t, host, state, snapshot, onConnection }: {
           onClick={() => openFolder('data')}>{t('打开数据目录')}</Button>
         <Button variant="outline" icon={<FolderOpen size={14} />} disabled={openingFolder !== null || !management.canOpenFolders}
           onClick={() => openFolder('logs')}>{t('打开日志目录')}</Button>
-        <Button variant="outline" icon={<PackageX size={14} />} disabled={reinstalling || Boolean(state.readError)}
-          onClick={() => { setReinstall(true); setReinstallAcknowledged(false); state.clearError() }}>
-          {reinstalling ? t('正在重装依赖环境…') : t('重装依赖环境')}
-        </Button>
         <Button variant="outline" className={css.danger} disabled={busy}
           onClick={() => { setReset('normal'); setAcknowledged(false); state.clearError() }}>{t('恢复出厂设置')}</Button>
       </div>
       {!management.canOpenFolders ? <p className={css.hint}>{t('当前环境不支持打开本机目录。')}</p> : null}
-      <RiskConfirmation open={reinstall} title={t('重装依赖环境')}
-        description={t('将停止 Connector，删除本插件的 Python 依赖环境并重新下载安装，可能需要几分钟。登录状态、设备连接和设置会保留。')}
-        acknowledgeLabel={t('我了解需要重新下载依赖')} acknowledged={reinstallAcknowledged} onAcknowledgedChange={setReinstallAcknowledged}
-        cancelLabel={t('取消')} closeLabel={t('关闭重装依赖环境确认')} confirmLabel={t('确认重装')}
-        disabled={reinstalling} onCancel={() => setReinstall(false)} onConfirm={confirmReinstall} />
       <RiskConfirmation open={reset !== null} title={reset === 'force' ? t('无法撤销连接') : t('恢复出厂设置')}
         description={reset === 'force' ? t('服务端撤销失败，本地数据尚未清理。可以取消后重试，或仅清理本地数据；原设备凭据在服务端可能仍有效。')
           : t('将撤销当前设备凭据、停止 Connector，并清除本插件的本地连接数据。DSH 会话和共享的设备记录会保留。')}

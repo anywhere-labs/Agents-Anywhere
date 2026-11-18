@@ -8,7 +8,7 @@ import { AccountApi, ApiError, publicProfile, type Account } from '../account/ap
 import { DeviceRecoveryRequired, ensureBinding, readBoundDevice, recoverBinding, verifyBoundDevice, type BoundDevice } from '../account/binding.js'
 import { checkServer, normalizeServerOrigin, resolveOAuthWebOrigin } from '../account/server.js'
 import type { ResolvedConfig } from '../config.js'
-import { ConnectorCredentialError, ConnectorOwnershipError, SourceConnector, type ConnectorProcess } from '../connector/process.js'
+import { BundledConnector, ConnectorCredentialError, ConnectorOwnershipError, type ConnectorProcess } from '../connector/process.js'
 import { detectDesktop } from '../desktop/detect.js'
 import { desktopOnboardingUrl, launchDesktop, newDesktopFlowId, type DesktopLauncher } from '../desktop/launch.js'
 import type { LocalMachineRegistry } from '../desktop/machine-state.js'
@@ -19,7 +19,7 @@ import type { ConnectorAction, ConnectorFolder, ConnectorSettings } from '../../
 import type { RuntimeLogPage, RuntimeLogQuery, StartupFailureDiagnostic } from '../../contracts/logs.js'
 import { startupFailure, startupFailureDiagnostic } from '../dsh-runtime/startup-status.js'
 import { ConnectorSettingsStore, validateConnectorSettings } from '../connector/settings.js'
-import { canOpenFolders, openFolder, resolveUv } from '../connector/environment.js'
+import { canOpenFolders, openFolder } from '../connector/environment.js'
 import { MobileLogin } from '../account/mobile.js'
 import type { MobileLoginSnapshot } from '../../contracts/mobile.js'
 import { RuntimeDiagnostics } from '../dsh-runtime/diagnostics.js'
@@ -36,7 +36,6 @@ interface Dependencies {
   onlineTimeoutMs?: number
   pollIntervalMs?: number
   openFolder?: (path: string) => Promise<void>
-  systemLanguages?: () => Promise<string[]>
   diagnostics?: RuntimeDiagnostics
   logOutput?: RpcLogOutput
   /** Waits between automatic startup attempts; the last value repeats until one succeeds. */
@@ -98,20 +97,18 @@ export class OnboardingManager {
   private readonly diagnostics: RuntimeDiagnostics
   private roleCheck: Promise<void> | null = null
   private roleTimer: ReturnType<typeof setInterval> | null = null
-  private resolvedUvPath: string | null = null
   private resuming: Promise<void> | null = null
   private resumeController: AbortController | null = null
 
   constructor(private readonly config: ResolvedConfig, private readonly dependencies: Dependencies = {}) {
     this.settings = { apiBaseUrl: config.apiBaseUrl }
-    this.connectorSettings = new ConnectorSettingsStore(config, dependencies.systemLanguages)
+    this.connectorSettings = new ConnectorSettingsStore(config)
     this.logOutput = dependencies.logOutput ?? new RpcLogOutput(512, 'plugin')
     this.diagnostics = dependencies.diagnostics ?? new RuntimeDiagnostics(this.logOutput, {}, 'dsh-plugin')
-    this.connector = dependencies.connector ?? new SourceConnector(
+    this.connector = dependencies.connector ?? new BundledConnector(
       config,
       undefined,
       () => this.connectorSettings.get(),
-      undefined,
       undefined,
       this.diagnostics,
       this.logOutput,
@@ -158,7 +155,6 @@ export class OnboardingManager {
       await migrateStateRoot(this.config.stateRoot, this.config.legacyStateRoot)
       await this.refreshRole()
       await this.connectorSettings.load()
-      this.resolvedUvPath = await resolveUv(this.config, this.connectorSettings.get())
       const settings = await readJson<ConnectionSettings>(join(this.config.stateRoot, 'settings.json'))
       if (settings) {
         this.settings = this.validateSettings(settings)
@@ -389,7 +385,7 @@ export class OnboardingManager {
     this.recovery = null
     await this.requireStandalone()
     signal.throwIfAborted()
-    this.setProgress('starting', '正在启动本机连接，首次准备运行环境可能需要几分钟…')
+    this.setProgress('starting', '正在启动本机连接…')
     await this.connector.start(this.binding, this.settings.apiBaseUrl, signal)
     await this.waitOnline(api, account, this.binding.connectorId, signal)
     signal.throwIfAborted()
@@ -641,10 +637,9 @@ export class OnboardingManager {
       if (JSON.stringify(next) === JSON.stringify(previous)) return null
       const restart = this.connector.running
       if (restart) this.requireSignedIn()
-      if (restart || next.uvPath !== previous.uvPath) await this.connector.prepare(next)
+      if (restart) await this.connector.prepare()
       if (this.disposed) throw new Error('插件已关闭。')
       await this.connectorSettings.save(next)
-      this.resolvedUvPath = await resolveUv(this.config, next)
       if (restart) {
         await this.cancelFlow()
         await this.connector.stop()
@@ -658,7 +653,7 @@ export class OnboardingManager {
     await this.requireStandalone()
     if (folder !== 'data' && folder !== 'logs') throw new Error('不支持的目录。')
     if (folder === 'data') {
-      await (this.dependencies.openFolder ?? openFolder)(join(this.config.stateRoot, 'connector'))
+      await (this.dependencies.openFolder ?? openFolder)(this.config.connectorDataDir)
       return null
     }
     const logsPath = (await this.connector.resolveLogsPath?.()) ?? this.connector.logsPath ?? fallbackLogsPath ?? null
@@ -691,27 +686,7 @@ export class OnboardingManager {
       }
       this.settings = { apiBaseUrl: this.config.apiBaseUrl }
       await this.connectorSettings.reset()
-      this.resolvedUvPath = await resolveUv(this.config, this.connectorSettings.get())
       this.setProgress('idle', '已恢复出厂设置，请重新登录。')
-      return null
-    })
-  }
-
-  /** Rebuilds the Connector's dependency environment; account, device binding and settings stay. */
-  resetConnectorEnvironment(): Promise<null> {
-    this.stopResume()
-    // A stuck installation holds the queue, and clearing it is the reason to be here.
-    if (!this.disposed && this.desktop.status === 'absent') this.controller?.abort()
-    return this.serial(async () => {
-      await this.requireStandalone()
-      await this.cancelFlow()
-      await this.connector.resetEnvironment()
-      if (this.recovery || !this.account) {
-        this.setProgress('idle', '依赖环境已清空，下次连接时会重新安装。')
-        return null
-      }
-      await this.connector.prepare()
-      await this.startConnector()
       return null
     })
   }
@@ -854,8 +829,8 @@ export class OnboardingManager {
       connectorId: this.binding?.connectorId ?? null, connectorRunning: this.connector.running, flowId: this.flow?.id ?? null,
       deviceRecovery: this.recovery ? { ...this.recovery } : null,
       connector: {
-        settings: this.connectorSettings.get(), resolvedUvPath: this.resolvedUvPath,
-        dataPath: join(this.config.stateRoot, 'connector'), logsPath: this.connector.logsPath ?? '',
+        settings: this.connectorSettings.get(),
+        dataPath: this.config.connectorDataDir, logsPath: this.connector.logsPath ?? '',
         canOpenFolders: canOpenFolders(), deviceName: this.binding?.name ?? null,
         lastError: this.connector.lastError ?? null,
       },

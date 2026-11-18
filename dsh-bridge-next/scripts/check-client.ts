@@ -85,7 +85,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
       stage: 'idle', message: '登录后连接这台电脑。', account: null,
       connectorId: null, connectorRunning: false, flowId: null,
       deviceRecovery: null,
-      connector: { settings: { ...DEFAULT_CONNECTOR_SETTINGS }, resolvedUvPath: '/usr/local/bin/uv',
+      connector: { settings: { ...DEFAULT_CONNECTOR_SETTINGS },
         dataPath: '/example/connector', logsPath: '/example/logs', canOpenFolders: true, deviceName: '本机', lastError: null },
     }
     let mobile: MobileLoginSnapshot = { id: 'qr-test', status: 'pending_scan', qrImage: 'data:image/png;base64,cXI=',
@@ -468,18 +468,18 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     assert.equal(button('恢复出厂设置').parentElement, button('打开数据目录').parentElement)
     assert.equal(button('恢复出厂设置').parentElement, button('打开日志目录').parentElement)
     assert.equal(button('保存并重启').disabled, true)
-    await act(async () => { button('PyPI 镜像').click() })
-    const mirror = Array.from(dialog()!.querySelectorAll('[role="menuitem"]')).find(item => item.textContent?.includes('清华大学')) as HTMLElement | undefined
-    assert.ok(mirror)
+    assert.doesNotMatch(dialog()!.textContent!, /uv|Python|PyPI|重装依赖环境/)
+    await act(async () => { button('同步间隔').click() })
+    const interval = Array.from(dialog()!.querySelectorAll('[role="menuitem"]')).find(item => item.textContent?.includes('60 秒')) as HTMLElement | undefined
+    assert.ok(interval)
     await switchLanguage('en')
     assert.equal(button('Settings').getAttribute('aria-selected'), 'true')
-    assert.match(dialog()!.textContent!, /Tsinghua University/)
     assert.ok(button('Save and restart').disabled)
     await switchLanguage('zh')
-    await act(async () => { mirror.click() })
+    await act(async () => { interval.click() })
     await act(async () => { button('保存并重启').click() })
-    const savedSettings = (calls.find(call => call.endpoint.endsWith('/saveConnectorSettings'))?.payload as { args: { settings: { uvPypiIndexUrl: string } } }).args.settings
-    assert.equal(savedSettings.uvPypiIndexUrl, 'https://pypi.tuna.tsinghua.edu.cn/simple')
+    const savedSettings = (calls.find(call => call.endpoint.endsWith('/saveConnectorSettings'))?.payload as { args: { settings: { syncIntervalSeconds: number } } }).args.settings
+    assert.deepEqual({ ...savedSettings }, { ...DEFAULT_CONNECTOR_SETTINGS, syncIntervalSeconds: 60 })
     assert.match(dialog()!.textContent!, /设置已保存/)
     await act(async () => { button('停止 Connector').click() })
     assert.deepEqual(JSON.parse(JSON.stringify(calls.filter(call => call.endpoint.endsWith('/controlConnector')).at(-1)?.payload)), { args: { action: 'stop' } })
@@ -566,7 +566,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     await reopen()
     assert.match(dialog()!.textContent!, /Connector未运行/)
     assert.equal(dialog()!.querySelector('[data-state]')?.getAttribute('data-state'), 'warning')
-    snapshot = { ...snapshot, stage: 'starting', message: '正在准备运行环境…' }
+    snapshot = { ...snapshot, stage: 'starting', message: '正在启动本机连接…' }
     await reopen()
     assert.match(dialog()!.textContent!, /Connector正在启动/)
     snapshot = { ...snapshot, stage: 'error', message: 'Connector 意外退出。' }
@@ -686,7 +686,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     assert.equal(document.activeElement, panelButton)
     await act(async () => { root.render(pluginEntries.get('plugins.bundle.config')!({ view: 'page' })) })
     assert.ok(container.querySelector('form'), 'Bundle details must contain the real Connector settings form')
-    assert.match(container.textContent!, /运行环境/)
+    assert.doesNotMatch(container.textContent!, /运行环境|uv|Python|PyPI/)
     assert.match(container.textContent!, /同步设置/)
     const settingsForm = container.querySelector('form')
     await switchLanguage('en')

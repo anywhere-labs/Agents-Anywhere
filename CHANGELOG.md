@@ -19,6 +19,7 @@
 - Server 需要执行 `v2_57` 数据库迁移：只新增 v3 设备连接用到的会话目录字段和命令回执表，不改写已有数据。（[#685](https://github.com/anywhere-labs/Agents-Anywhere/pull/685)）
 - 自托管 Compose 新增 MeshCall Router 和前置网关（Caddy）：对外端口改由网关提供，v3 设备经 `/api/v3/device/mesh` 连接 Router；Router 账号密码默认自动生成并保存在数据卷里，也可以用 `AGENT_SERVER_MESH_PASSWORD` 指定。（[#675](https://github.com/anywhere-labs/Agents-Anywhere/pull/675)）
 - Desktop 改用内置的新版 Connector，不再需要 Python 和 uv：升级后第一次启动会删除旧 Connector 留下的 Python 环境和下载缓存，设备凭据和绑定保留，不用重新连接；「uv 路径」「Python 路径」和两个镜像设置不再使用。（[#748](https://github.com/anywhere-labs/Agents-Anywhere/pull/748)）
+- DSH 插件改用内置的新版 Connector，不再需要 Python 和 uv：升级后第一次启动会删除旧 Connector 留下的 Python 环境，设备凭据和绑定保留，不用重新连接；「uv 路径」、两个镜像设置和「重装依赖环境」按钮不再提供。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 运行中排队消息需要 Server 执行 `v2_56` 数据库迁移（只新增两张表，不改写已有数据）；排队在 Web、Desktop、Android 和 iOS 上可用，旧版客户端的行为不变。（[#658](https://github.com/anywhere-labs/Agents-Anywhere/pull/658)、[#659](https://github.com/anywhere-labs/Agents-Anywhere/pull/659)）
 - 加密模式（`AGENT_SERVER_E2EE=required`）下，旧版 Connector 上报的会话标题和工作目录不再保存在 Server 上，这些设备上新出现的会话也不会加入列表；要在加密模式下使用，请把设备升级到 v3。（[#745](https://github.com/anywhere-labs/Agents-Anywhere/pull/745)）
 
@@ -54,6 +55,7 @@
 
 - DSH 插件接上已有会话后，DSH 里新产生的消息、工具调用和回合开始结束都会同步到 AA，不再只剩流式片段；直接连接 DSH 时，连续的多条回复不再互相覆盖、只剩最后一条。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - DSH 插件可以直接连接新版 Connector：DSH 里打开的会话实时同步到 AA，在 AA 里可以发送图片和文件、回答 DSH 的提问、审阅计划，在 DSH 和 AA 之间切换时不会出现重复的消息；本机只有旧版 Connector 时，插件仍按原来的方式同步。（[#747](https://github.com/anywhere-labs/Agents-Anywhere/pull/747)）
+- 安装 DSH 插件不再需要下载 uv 和 Python，插件自带的新版 Connector 启动后，DSH 里的会话直接同步到 AA，与 Desktop 共用同一台设备的数据和密钥。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 打开装有插件的 DSH Desktop 或 `dsh web` 后，AA 里的 DSH 会话会自动交给它继续：空闲的会话马上切换，正在运行的等这一轮结束再切换；DSH 退出后会话自动回到本机 DSH 继续，退出时正在进行的那一轮显示为结果未知，不会自动重发；等待切换期间正在等审批的回合仍然可以审批和停止。会话在 DSH Desktop 里打开而没有安装插件时，AA 会提示关闭它或安装插件。（[#752](https://github.com/anywhere-labs/Agents-Anywhere/pull/752)、[#755](https://github.com/anywhere-labs/Agents-Anywhere/pull/755)、[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 
 ### Desktop

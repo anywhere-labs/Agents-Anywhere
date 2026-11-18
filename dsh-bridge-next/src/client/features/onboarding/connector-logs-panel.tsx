@@ -103,7 +103,7 @@ export function ConnectorLogsPanel({ t, host }: { t: Translate; host: Onboarding
     <div ref={viewport} className={css.terminal} tabIndex={0} aria-label={t('Connector 终端输出')}
       onScroll={event => { if (event.currentTarget.scrollTop <= 24 && older) void refresh('older') }}>
       {older ? <Button variant="ghost" disabled={busy} onClick={() => void refresh('older')}>{t('加载更早的 200 行')}</Button> : null}
-      {!entries.length && !busy ? <p className={css.empty}>{t('暂无启动前诊断输出。uv 引导与 Connector 进程拉起输出会显示在这里。')}</p> : null}
+      {!entries.length && !busy ? <p className={css.empty}>{t('暂无启动前诊断输出。Connector 进程拉起输出会显示在这里。')}</p> : null}
       {entries.map(entry => <div key={entry.id} className={css.terminalLine}><time dateTime={entry.time}>{new Date(entry.time).toLocaleTimeString(t('locale.code'))}</time>{' '}{entry.text}</div>)}
     </div>
   </section>

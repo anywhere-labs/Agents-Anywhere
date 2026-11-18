@@ -5,11 +5,8 @@ import { mkdtemp, readFile, rm, writeFile, symlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { setTimeout as delay } from 'node:timers/promises'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { bridgePath, nativeRuntime } from '../fixtures/native-runtime.js'
-import { corruptHistory } from '../fixtures/corrupt-history.js'
 import { mountAgents, TextAdapter, initialSelections } from '../fixtures/agent-runtime.js'
 import { RuntimeRouter } from '../../src/host/dsh-runtime/router.js'
 import { RuntimeAttachments, parseAttachments, IMAGE_MIME_TYPES } from '../../src/host/dsh-runtime/attachments.js'
@@ -164,36 +161,6 @@ test('official admission refuses images for a text-only model with an actionable
     assert.equal(session.snapshotEvents().some(event => event.type === 'user/message' || event.type === 'agent/inbox/spliced'), false)
   } finally { router.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }
 })
-
-test('real Python Connector sends images and text with corrupt history present, including a cold restart', { timeout: 40_000 }, async () => {
-  const home = await mkdtemp(join(tmpdir(), 'aa-dsh-image-wire-'))
-  const adapter = new VisionAdapter()
-  const fixture = await nativeRuntime(home, async ctx => { await corruptHistory(ctx, home); await mountAgents(ctx, adapter) })
-  const release = setInterval(() => adapter.release?.(), 10)
-  try {
-    await writeFile(join(home, 'input.png'), png)
-    const { stdout } = await promisify(execFile)('uv', ['run', '--frozen', 'python', 'tests/dsh_image_probe.py', home, JSON.stringify(initialSelections)], {
-      cwd: new URL('../../../connector/', import.meta.url), timeout: 30_000,
-    })
-    assert.match(stdout, /DSH image integration passed/)
-    assert.equal(adapter.requests.length, 2, 'image retry is deduplicated and the text followup still runs')
-    const id = SessionId(nativeSessionId('image-wire', 'sess_python_image'))
-    await fixture.ctx.agents.get(id)!.whenIdle()
-    await fixture.ctx.sessions.flush(fixture.ctx.sessions.get(id)!)
-    await fixture.ctx.fiber.dispose()
-    const restarted = await nativeRuntime(home, ctx => mountAgents(ctx, new VisionAdapter()), 'restarted-')
-    try {
-      assert.equal(restarted.ctx.agents.get(id), undefined)
-      await restarted.ctx.agentsAnywhereRuntime.native.inventory()
-      const timeline = projectHistory(await restarted.ctx.agentsAnywhereRuntime.native.read(id), 'sess_python_image')
-      assert.equal((timeline.find(item => item.role === 'user')!.content.attachments as { fileId: string }[])[0]!.fileId, 'file_wire')
-      assert.equal(restarted.ctx.agents.get(id), undefined, 'cold history does not resume the Agent')
-    } finally { await restarted.ctx.fiber.dispose() }
-  } finally {
-    clearInterval(release); adapter.release?.(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true })
-  }
-})
-
 
 test('platform files stream into an official new session, mix with images and survive retry and history reload', { timeout: 40_000 }, async () => {
   const home = await mkdtemp(join(tmpdir(), 'aa-dsh-files-'))

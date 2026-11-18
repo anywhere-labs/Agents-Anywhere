@@ -83,7 +83,7 @@ export async function nativeRuntime(home: string, beforeHost?: (ctx: Context) =>
     await ctx.plugin(Gateway).await()
     await beforeHost?.(ctx)
     const host = await import('../../lib/index.js')
-    const config = { dshHome: home, stateRoot: join(home, 'account'), connectorSourceDir: home }
+    const config = { dshHome: home, stateRoot: join(home, 'account'), connectorDir: home }
     // Exercise the distributed patch through the official Loader when the writable Host is composed.
     const patches = load(await readFile(new URL('../../cordis.patch.yml', import.meta.url), 'utf8')) as PatchOptions[]
     for (const patch of patches) for (const entry of patch.insert ?? []) {

@@ -1,62 +1,83 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { execFile } from 'node:child_process'
-import { constants } from 'node:fs'
-import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { constants, existsSync } from 'node:fs'
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve, sep } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { promisify } from 'node:util'
-import { ensureExecutable, launchDetached, resolveUv, withPackageIndexes } from '../../src/host/connector/environment.js'
-import { DEFAULT_CONNECTOR_SETTINGS } from '../../src/contracts/connector.js'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { ensureExecutable, launchDetached, removePythonEnvironment, resolveConnectorLaunch } from '../../src/host/connector/environment.js'
 
-const config = { stateRoot: '/unused', connectorSourceDir: '/unused', uvPath: 'uv', apiBaseUrl: 'https://example.test' }
-test('npm uv resolves its native optional dependency with install scripts disabled', async () => {
-  const binary = await resolveUv(config, DEFAULT_CONNECTOR_SETTINGS)
-  assert.ok(binary)
-  // There is no committed lockfile and the linker layout is not part of the contract:
-  // with install scripts disabled the platform optional package may be resolved directly
-  // or through the package's bin shim. What matters is that the plugin runs the uv
-  // bundled with the npm dependency instead of an arbitrary uv from the system PATH.
-  const nodeModules = `${resolve(fileURLToPath(new URL('../../node_modules', import.meta.url)))}${sep}`
-  assert.ok(resolve(binary).startsWith(nodeModules), `expected a bundled uv under ${nodeModules}, got ${binary}`)
-  const { stdout } = await promisify(execFile)(binary, ['--version'], { timeout: 10_000 })
-  assert.match(stdout, /^uv 0\.12\.0\b/)
-})
-test('explicit uv overrides take priority over the npm dependency', async () => {
-  assert.equal(await resolveUv(config, { ...DEFAULT_CONNECTOR_SETTINGS, uvPath: process.execPath }), process.execPath)
-  assert.equal(await resolveUv({ ...config, uvPath: process.execPath }, DEFAULT_CONNECTOR_SETTINGS), process.execPath)
-})
+const config = (root: string) => ({ stateRoot: join(root, 'state'), connectorDir: join(root, 'bundle'), connectorDataDir: join(root, 'v3'), apiBaseUrl: 'https://example.test' })
+const host = (overrides: Partial<{ execPath: string, platform: NodeJS.Platform, arch: string, electron: boolean, env: NodeJS.ProcessEnv }> = {}) =>
+  ({ execPath: '/opt/node/bin/node', platform: 'linux' as NodeJS.Platform, arch: 'x64', electron: false, env: {}, ...overrides })
 
-test('the chosen PyPI mirror comes first and the official PyPI is the fallback', () => {
-  const inherited = { PATH: '/bin', UV_INDEX: 'https://inherited.example/simple', UV_DEFAULT_INDEX: 'https://inherited.example/simple' }
-  const pypi = 'https://pypi.org/simple'
-  // TUNA carries no openai-codex: uv resolves it from the PyPI fallback.
-  assert.deepEqual(withPackageIndexes(inherited, 'https://pypi.tuna.tsinghua.edu.cn/simple/'), {
-    PATH: '/bin', UV_DEFAULT_INDEX: pypi, UV_INDEX_URL: pypi,
-    UV_INDEX: 'https://pypi.tuna.tsinghua.edu.cn/simple', PIP_INDEX_URL: 'https://pypi.tuna.tsinghua.edu.cn/simple',
-  })
-  for (const official of ['', 'https://pypi.org/simple/']) {
-    const environment = withPackageIndexes(inherited, official)
-    assert.equal('UV_INDEX' in environment, false, `${official || 'default'} drops an inherited UV_INDEX`)
-    assert.deepEqual(environment, { PATH: '/bin', UV_DEFAULT_INDEX: pypi, UV_INDEX_URL: pypi, PIP_INDEX_URL: pypi })
+async function bundle(root: string, targets: string[]) {
+  await mkdir(join(root, 'bundle', 'assets'), { recursive: true })
+  await writeFile(join(root, 'bundle', 'anywhere-cli.js'), '')
+  for (const target of targets) {
+    await mkdir(join(root, 'bundle', 'router', target), { recursive: true })
+    await writeFile(join(root, 'bundle', 'router', target, target.startsWith('win32') ? 'meshcall-router.exe' : 'meshcall-router'), '', { mode: 0o755 })
   }
+}
+
+test('the bundled Connector runs on the host\'s Node with the Router of its platform', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aa-plugin-launch-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  await bundle(root, ['linux-x64', 'darwin-arm64'])
+  const launch = await resolveConnectorLaunch(config(root), '/state/connector/connector.json', host())
+  assert.deepEqual(launch, {
+    command: '/opt/node/bin/node',
+    args: [join(root, 'bundle', 'anywhere-cli.js'), 'rpc', '--config', '/state/connector/connector.json'],
+    env: {}, router: join(root, 'bundle', 'router', 'linux-x64', 'meshcall-router'),
+  })
+  const arm = await resolveConnectorLaunch(config(root), '/c.json', host({ platform: 'darwin', arch: 'arm64' }))
+  assert.equal(arm.router, join(root, 'bundle', 'router', 'darwin-arm64', 'meshcall-router'))
+  assert.equal((await resolveConnectorLaunch(config(root), '/c.json', host({ env: { MESHCALL_ROUTER_BINARY: '/dev/router' } }))).router, '/dev/router')
+  await assert.rejects(resolveConnectorLaunch(config(root), '/c.json', host({ platform: 'win32', arch: 'arm64' })), /不支持这台电脑的平台（win32-arm64）/)
+  await rm(join(root, 'bundle', 'anywhere-cli.js'))
+  await assert.rejects(resolveConnectorLaunch(config(root), '/c.json', host()), /未找到内置 Connector/)
 })
 
-test('a bundled uv without its executable bit is repaired, or copied when it cannot be', { skip: process.platform === 'win32' }, async t => {
-  const root = await mkdtemp(join(tmpdir(), 'aa-plugin-uv-mode-'))
+test('under DSH Desktop the Connector runs on Electron as Node, without leaking that to its own commands', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aa-plugin-launch-electron-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  await bundle(root, ['darwin-arm64'])
+  const electron = '/Applications/DSH.app/Contents/MacOS/DSH'
+  const launch = await resolveConnectorLaunch(config(root), '/c.json', host({ execPath: electron, platform: 'darwin', arch: 'arm64', electron: true }))
+  assert.equal(launch.command, electron)
+  assert.deepEqual(launch.args, ['--import', pathToFileURL(join(root, 'bundle', 'assets', 'electron-node.mjs')).href,
+    join(root, 'bundle', 'anywhere-cli.js'), 'rpc', '--config', '/c.json'])
+  assert.deepEqual(launch.env, { ELECTRON_RUN_AS_NODE: '1', AA_ELECTRON_NODE: electron })
+})
+
+test('the Python Connector\'s environment is removed from the plugin data directory, and nothing else', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aa-plugin-python-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  for (const path of [['connector-venv', 'bin', 'python'], ['connector-source', 'abc', 'uv.lock'], ['bin', 'uv'], ['bin', 'meshcall-router'], ['connector', 'connector.json']]) {
+    await mkdir(join(root, ...path.slice(0, -1)), { recursive: true })
+    await writeFile(join(root, ...path), '')
+  }
+  await removePythonEnvironment(root)
+  await removePythonEnvironment(root)
+  assert.deepEqual([existsSync(join(root, 'connector-venv')), existsSync(join(root, 'connector-source')), existsSync(join(root, 'bin', 'uv'))], [false, false, false])
+  assert.equal(existsSync(join(root, 'bin', 'meshcall-router')), true)
+  assert.equal(existsSync(join(root, 'connector', 'connector.json')), true)
+})
+
+test('a bundled binary without its executable bit is repaired, or copied when it cannot be', { skip: process.platform === 'win32' }, async t => {
+  const root = await mkdtemp(join(tmpdir(), 'aa-plugin-exec-mode-'))
   t.after(() => rm(root, { recursive: true, force: true }))
   const executable = async (path: string) => { await access(path, constants.X_OK); return path }
-  const unpacked = join(root, 'uv')
+  const unpacked = join(root, 'meshcall-router')
   await writeFile(unpacked, '#!/bin/sh\n', { mode: 0o644 })
   assert.equal(await executable(await ensureExecutable(unpacked, join(root, 'bin'))), unpacked)
   // Already executable: left alone, and its mode is not touched.
   assert.equal(await ensureExecutable(unpacked, join(root, 'bin'), async () => { throw new Error('unexpected') }), unpacked)
 
-  const readOnly = join(root, 'readonly-uv')
+  const readOnly = join(root, 'readonly-router')
   await writeFile(readOnly, '#!/bin/sh\necho copy\n', { mode: 0o644 })
   const copied = await ensureExecutable(readOnly, join(root, 'bin'), async () => { throw new Error('EPERM') })
-  assert.equal(copied, join(root, 'bin', 'readonly-uv'))
+  assert.equal(copied, join(root, 'bin', 'readonly-router'))
   await executable(copied)
   assert.equal(await readFile(copied, 'utf8'), await readFile(readOnly, 'utf8'))
 

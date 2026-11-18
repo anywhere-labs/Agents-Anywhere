@@ -2,23 +2,22 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { constants, existsSync } from 'node:fs'
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DeadlineExceededError, LocalRouter, Mesh, MeshCallError, Router, mutates, query, service, stream, z } from 'meshcall'
-import { ConnectorOwnershipError, SourceConnector } from '../../src/host/connector/process.js'
+import { BundledConnector, ConnectorOwnershipError } from '../../src/host/connector/process.js'
 import { readJson } from '../../src/host/storage/files.js'
 import { DEFAULT_CONNECTOR_SETTINGS, type ConnectorSettings } from '../../src/contracts/connector.js'
-import { ConnectorSettingsStore } from '../../src/host/connector/settings.js'
 
-// A real stdio subprocess, without running Python, Agents or an AA service.
+// A real stdio subprocess standing in for the bundled `anywhere-cli.js`, without Agents or an AA service.
 // The child prints one `connector.ready` line and serves nothing itself: this
 // test process owns the MeshCall Router and the `aa.local.v2.Control` service.
 const fixtureSource = `
 let running = false;
-if (process.argv[2] === 'exit-error') { process.stderr.write('error: Python download failed: connection reset\\n'); process.exit(2); }
-process.stderr.write('uv: preparing Python environment\\n');
+if (process.argv[2] === 'exit-error') { process.stderr.write('error: store worker failed: disk full\\n'); process.exit(2); }
+process.stderr.write('connector: opening the local store\\n');
 process.stderr.write('PRIVATE-DEVICE-TOKEN\\n');
 if (process.argv[2] !== 'stall') {
   const ready = JSON.stringify({
@@ -67,7 +66,7 @@ class FakeControlBackend {
 
   startClock(): void {
     // The plugin subscribes to `events` after `start` returns; emit later so it sees the change.
-    // Like the Python controller, a credential failure also records lastError.
+    // Like the Connector's controller, a credential failure also records lastError.
     if (this.mode === 'auth-failed') setTimeout(() => {
       this.running = false; this.authFailed = true; this.lastError = 'invalid connector credential'; this.emit()
     }, 100)
@@ -135,18 +134,23 @@ function localEndpoint(directory: string): { router: { unixPath: string } | { pi
   return { router: { unixPath }, rendezvous: { unixPath } }
 }
 
-async function fixture(mode = 'normal', settings: ConnectorSettings = DEFAULT_CONNECTOR_SETTINGS, firstRequestTimeoutMs?: number,
-  prune: (command: string) => Promise<unknown> = async () => undefined, onLaunch?: () => void) {
-  const pruned: string[] = []
+const routerName = process.platform === 'win32' ? 'meshcall-router.exe' : 'meshcall-router'
+
+/** A bundle laid out as scripts/bundle-connector.ts writes it; its Router is unpacked without the executable bit. */
+async function bundle(root: string): Promise<string> {
+  const directory = join(root, 'bundled-connector')
+  await mkdir(join(directory, 'router', `${process.platform}-${process.arch}`), { recursive: true })
+  await writeFile(join(directory, 'anywhere-cli.js'), fixtureSource)
+  await writeFile(join(directory, 'router', `${process.platform}-${process.arch}`, routerName), '', { mode: 0o644 })
+  return directory
+}
+
+async function fixture(mode = 'normal', settings: ConnectorSettings = DEFAULT_CONNECTOR_SETTINGS, firstRequestTimeoutMs?: number, onLaunch?: () => void) {
   let didSpawn!: () => void
   const spawned = new Promise<void>(resolve => { didSpawn = resolve })
   const root = await mkdtemp(join(tmpdir(), 'aa-process-中文 '))
-  const source = join(root, 'source')
-  await mkdir(join(source, 'connector'), { recursive: true })
-  await writeFile(join(source, 'pyproject.toml'), '')
-  await writeFile(join(source, 'connector', 'cli.py'), '')
-  const script = join(root, 'rpc.cjs')
-  await writeFile(script, fixtureSource)
+  const connectorDir = await bundle(root)
+  if (mode === 'missing') await rm(join(connectorDir, 'anywhere-cli.js'))
   const endpoint = localEndpoint(root)
   const key = `mk_fixture_${randomUUID()}`
   const backend = new FakeControlBackend(mode)
@@ -155,42 +159,32 @@ async function fixture(mode = 'normal', settings: ConnectorSettings = DEFAULT_CO
   control.mount(new FakeControl(backend))
   await control.startServing()
   let child: ChildProcessWithoutNullStreams | undefined
-    let childEnv: NodeJS.ProcessEnv | undefined
-    const connector = new SourceConnector({
-      stateRoot: join(root, 'data'), connectorSourceDir: source, uvPath: mode === 'missing' ? join(root, 'missing-uv') : process.execPath,
-      apiBaseUrl: 'https://api.example.test', dshHome: join(root, 'dsh-home'),
-    }, (command, args, options) => {
-      childEnv = options.env
-      assert.equal(args[0], 'run')
-    assert.equal(args[1], '--directory')
-    assert.equal(args[3], 'anywhere-cli')
-    assert.equal(args[4], 'rpc')
-    assert.equal(args[5], '--config')
-    // 打包内的负载只是只读输入：uv 在插件数据目录里的副本上工作。
-    const projectDir = args[2]!
-    assert.equal(projectDir.startsWith(source), false)
-    assert.equal(projectDir.startsWith(join(root, 'data')), true)
-    assert.equal(existsSync(join(projectDir, 'pyproject.toml')), true)
-    assert.equal(existsSync(join(projectDir, 'connector', 'cli.py')), true)
-    assert.equal(options.cwd, projectDir)
-    assert.doesNotMatch(JSON.stringify(args), /PRIVATE-DEVICE-TOKEN/)
-    assert.equal(options.env?.UV_PROJECT_ENVIRONMENT, join(root, 'data', 'connector-venv'))
+  let childEnv: NodeJS.ProcessEnv | undefined
+  const data = join(root, 'data')
+  const connector = new BundledConnector({
+    stateRoot: data, connectorDir, connectorDataDir: join(root, 'v3'),
+    apiBaseUrl: 'https://api.example.test', dshHome: join(root, 'dsh-home'),
+  }, (command, args, options) => {
+    childEnv = options.env
+    // This host's own Node runs the bundled entry; the device token never reaches the command line.
+    assert.equal(command, process.execPath)
+    assert.deepEqual(args, [join(connectorDir, 'anywhere-cli.js'), 'rpc', '--config', join(data, 'connector', 'connector.json')])
+    assert.equal(options.cwd, join(data, 'connector'))
+    assert.equal(options.env?.AA_CONNECTOR_OWNER_KIND, 'dsh-plugin')
     assert.equal(options.env?.DSH_HOME, join(root, 'dsh-home'))
-    const mirror = settings.uvPypiIndexUrl
-    assert.equal(options.env?.UV_PYTHON_INSTALL_MIRROR, settings.uvPythonInstallMirror || 'https://github.com/astral-sh/python-build-standalone/releases/download')
-    // The mirror comes first and PyPI is the fallback for packages it lacks.
-    assert.equal(options.env?.UV_DEFAULT_INDEX, 'https://pypi.org/simple')
-    assert.equal(options.env?.UV_INDEX_URL, 'https://pypi.org/simple')
-    assert.equal(options.env?.UV_INDEX, mirror || undefined)
-    assert.equal(options.env?.PIP_INDEX_URL, mirror || 'https://pypi.org/simple')
-    assert.equal(options.env?.UV_HTTP_TIMEOUT, process.env['UV_HTTP_TIMEOUT'] || '60')
-    child = spawn(command, [script, mode, JSON.stringify(endpoint.rendezvous), key], options)
+    assert.equal(options.env?.AGENT_CONNECTOR_DATA_DIR, join(root, 'v3'))
+    assert.equal(options.env?.AA_CONNECTOR_LEGACY_DATA_DIR, join(data, 'connector'))
+    assert.equal(options.env?.AGENT_CONNECTOR_CONFIG, undefined)
+    assert.equal(options.env?.MESHCALL_ROUTER_BINARY,
+      process.env['MESHCALL_ROUTER_BINARY']?.trim() || join(connectorDir, 'router', `${process.platform}-${process.arch}`, routerName))
+    assert.deepEqual(Object.keys(options.env ?? {}).filter(name => /^(UV_|PYTHON|PIP_)/.test(name) && !(name in process.env)), [])
+    child = spawn(process.execPath, [args[0]!, mode, JSON.stringify(endpoint.rendezvous), key], options)
     child.once('spawn', didSpawn)
     onLaunch?.()
     return child
-  }, () => settings, firstRequestTimeoutMs, async command => { pruned.push(command); return prune(command) })
+  }, () => settings, firstRequestTimeoutMs)
   return {
-    connector, root, pruned, spawned, get child() { return child }, get childEnv() { return childEnv },
+    connector, root, connectorDir, spawned, get child() { return child }, get childEnv() { return childEnv },
     async close() {
       await connector.stop()
       await control.close().catch(() => undefined)
@@ -200,7 +194,7 @@ async function fixture(mode = 'normal', settings: ConnectorSettings = DEFAULT_CO
   }
 }
 
-test('source Connector uses the MeshCall Control service and a private config, then exits on plugin stop', async () => {
+test('the bundled Connector uses the MeshCall Control service and a private config, then exits on plugin stop', async () => {
   const h = await fixture()
   try {
     await h.connector.prepare()
@@ -212,31 +206,7 @@ test('source Connector uses the MeshCall Control service and a private config, t
     await Promise.all([h.connector.stop(), h.connector.stop()])
     assert.equal(h.connector.running, false)
     assert.equal(h.child?.exitCode, 0)
-    // A start that reached the Connector downloaded nothing partially, so it owes no reclamation.
-    assert.deepEqual(h.pruned, [])
     await assert.rejects(h.connector.assertHealthy())
-  } finally { await h.close() }
-})
-
-test('resetting the environment stops the child and drops only the venv and the project copy', async () => {
-  const h = await fixture()
-  try {
-    await h.connector.start(binding, 'https://api.example.test', new AbortController().signal)
-    const data = join(h.root, 'data')
-    await mkdir(join(data, 'connector-venv'), { recursive: true })
-    await writeFile(join(data, 'connector-venv', 'pyvenv.cfg'), '')
-    const firstProject = (await readdir(join(data, 'connector-source')))[0]
-    await h.connector.resetEnvironment()
-    assert.equal(h.connector.running, false)
-    assert.equal(h.child?.exitCode, 0)
-    assert.equal(existsSync(join(data, 'connector-venv')), false)
-    assert.equal(existsSync(join(data, 'connector-source')), false)
-    assert.equal(existsSync(join(data, 'connector', 'connector.json')), true, 'credentials stay')
-    // The shared uv cache keeps finished downloads; only dangling entries go.
-    assert.deepEqual(h.pruned, [process.execPath])
-    // The next start materializes the project again instead of reusing the deleted path.
-    await h.connector.start(binding, 'https://api.example.test', new AbortController().signal)
-    assert.deepEqual(await readdir(join(data, 'connector-source')), [firstProject])
   } finally { await h.close() }
 })
 
@@ -253,25 +223,10 @@ test('runtime state failure retains a reason and redacted diagnostics before the
   } finally { await h.close() }
 })
 
-test('locale initialization applies Aliyun before the first source Connector subprocess', async () => {
-  const settings = { ...DEFAULT_CONNECTOR_SETTINGS }
-  const h = await fixture('normal', settings)
-  try {
-    const store = new ConnectorSettingsStore({
-      stateRoot: join(h.root, 'data'), connectorSourceDir: h.root, uvPath: 'uv', apiBaseUrl: 'https://api.example.test',
-    }, async () => ['en-US', 'zh-CN'])
-    await store.load()
-    Object.assign(settings, store.get())
-    assert.equal(settings.uvPypiIndexUrl, 'https://mirrors.aliyun.com/pypi/simple')
-    await h.connector.start(binding, 'https://api.example.test', new AbortController().signal)
-    await h.connector.assertHealthy()
-  } finally { await h.close() }
-})
-
-test('saved scan interval and mirror reach the child while connection defaults stay fixed on every restart', async () => {
+test('the saved scan interval reaches the child while connection defaults stay fixed on every restart', async () => {
   // Even an old settings provider cannot override the fixed connection behavior.
   const settings = { ...DEFAULT_CONNECTOR_SETTINGS, syncIntervalSeconds: 60, heartbeatSeconds: 15,
-    reconnectSeconds: 5, syncExistingOnConnect: false, uvPypiIndexUrl: 'https://pypi.tuna.tsinghua.edu.cn/simple' }
+    reconnectSeconds: 5, syncExistingOnConnect: false }
   const h = await fixture('normal', settings)
   try {
     await h.connector.prepare()
@@ -289,17 +244,49 @@ test('saved scan interval and mirror reach the child while connection defaults s
     }
     const logs = await readFile(join(h.root, 'data', 'logs', 'connector-output.json'), 'utf8')
     assert.match(logs, /\[process\] running/)
-    assert.match(logs, /uv: preparing Python environment/)
+    assert.match(logs, /connector: opening the local store/)
     assert.doesNotMatch(logs, /PRIVATE|connectorToken/)
   } finally { await h.close() }
 })
 
-test('a spawn error releases the child without waiting indefinitely', { timeout: 8000 }, async () => {
+test('a missing bundle or Router is reported before anything is launched', async () => {
   const h = await fixture('missing')
   try {
-    await assert.rejects(h.connector.start(binding, 'https://api.example.test', new AbortController().signal), /启动失败|已关闭|已退出/)
-    assert.equal(h.connector.running, false)
+    await assert.rejects(h.connector.prepare(), /未找到内置 Connector/)
+    await assert.rejects(h.connector.start(binding, 'https://api.example.test', new AbortController().signal), /未找到内置 Connector/)
+    assert.equal(h.child, undefined)
   } finally { await h.close() }
+  const previous = process.env['MESHCALL_ROUTER_BINARY']
+  delete process.env['MESHCALL_ROUTER_BINARY']
+  const other = await fixture()
+  try {
+    await rm(join(other.connectorDir, 'router'), { recursive: true })
+    await assert.rejects(other.connector.prepare(), /内置 Connector 不支持这台电脑的平台/)
+  } finally {
+    if (previous !== undefined) process.env['MESHCALL_ROUTER_BINARY'] = previous
+    await other.close()
+  }
+})
+
+test('preparing restores the Router\'s executable bit and clears what the Python Connector left behind', { skip: process.platform === 'win32' }, async () => {
+  const previous = process.env['MESHCALL_ROUTER_BINARY']
+  delete process.env['MESHCALL_ROUTER_BINARY']
+  const h = await fixture()
+  try {
+    const data = join(h.root, 'data')
+    for (const path of [['connector-venv', 'pyvenv.cfg'], ['connector-source', 'abc', 'uv.lock'], ['bin', 'uv'], ['connector', 'connector.json'], ['account.json']]) {
+      await mkdir(join(data, ...path.slice(0, -1)), { recursive: true })
+      await writeFile(join(data, ...path), '{}')
+    }
+    await h.connector.prepare()
+    for (const gone of ['connector-venv', 'connector-source', join('bin', 'uv')]) assert.equal(existsSync(join(data, gone)), false, gone)
+    assert.equal(existsSync(join(data, 'connector', 'connector.json')), true, 'credentials stay')
+    assert.equal(existsSync(join(data, 'account.json')), true, 'the account stays')
+    await access(join(h.connectorDir, 'router', `${process.platform}-${process.arch}`, routerName), constants.X_OK)
+  } finally {
+    if (previous !== undefined) process.env['MESHCALL_ROUTER_BINARY'] = previous
+    await h.close()
+  }
 })
 
 test('auth failure is delivered over the unsolicited Control events stream while the process stays alive', { timeout: 8000 }, async () => {
@@ -329,31 +316,18 @@ test('cancelling a Connector that has not finished startup closes its owned proc
 })
 
 
-test('the first request spends its own installation budget, not the ordinary request timeout', { timeout: 8000 }, async () => {
+test('the first request spends its own startup budget, not the ordinary request timeout', { timeout: 8000 }, async () => {
   // A child that never answers proves which budget the first request uses: the ordinary 15 s
-  // default would outlast this test, so rejecting here means the installation budget applied.
+  // default would outlast this test, so rejecting here means the startup budget applied.
   const h = await fixture('stall', DEFAULT_CONNECTOR_SETTINGS, 300)
   try {
-    await assert.rejects(h.connector.start(binding, 'https://api.example.test', new AbortController().signal), /响应超时/)
+    await assert.rejects(h.connector.start(binding, 'https://api.example.test', new AbortController().signal), /启动超时/)
     assert.equal(h.connector.running, false)
   } finally { await h.close() }
 })
 
 
-test('an interrupted installation reclaims the cache it half-filled, through the same uv', { timeout: 8000 }, async () => {
-  // Cancelling mid-install is what leaves a truncated unpack directory behind in uv's cache.
-  const h = await fixture('stall')
-  const controller = new AbortController()
-  try {
-    const stopped = assert.rejects(h.connector.start(binding, 'https://api.example.test', controller.signal))
-    await h.spawned
-    controller.abort()
-    await stopped
-    assert.deepEqual(h.pruned, [process.execPath])
-  } finally { await h.close() }
-})
-
-test('cancelling before startup does not launch a child or prune an untouched cache', async () => {
+test('cancelling before startup does not launch a child', async () => {
   const h = await fixture('stall')
   const controller = new AbortController()
   const reason = new Error('cancelled before startup')
@@ -361,36 +335,25 @@ test('cancelling before startup does not launch a child or prune an untouched ca
   try {
     await assert.rejects(h.connector.start(binding, 'https://api.example.test', controller.signal), error => error === reason)
     assert.equal(h.child, undefined)
-    assert.deepEqual(h.pruned, [])
   } finally { await h.close() }
 })
 
 test('cancellation during launch is observed before the request listener is installed', { timeout: 8000 }, async () => {
   const controller = new AbortController()
   const reason = new Error('cancelled during launch')
-  const h = await fixture('stall', DEFAULT_CONNECTOR_SETTINGS, 300, undefined, () => controller.abort(reason))
+  const h = await fixture('stall', DEFAULT_CONNECTOR_SETTINGS, 300, () => controller.abort(reason))
   try {
     await assert.rejects(h.connector.start(binding, 'https://api.example.test', controller.signal), error => error === reason)
     assert.equal(h.connector.running, false)
     assert.equal(h.child?.exitCode, 0)
-    assert.deepEqual(h.pruned, [process.execPath])
   } finally { await h.close() }
 })
 
-test('a prune that fails leaves the startup failure it was reclaiming after', { timeout: 8000 }, async () => {
-  // uv may be gone or busy by now; that must not rewrite the error the operator needs to read.
-  const h = await fixture('exit-error', DEFAULT_CONNECTOR_SETTINGS, undefined, () => Promise.reject(new Error('uv cache prune failed')))
-  try {
-    await assert.rejects(h.connector.start(binding, 'https://api.example.test', new AbortController().signal), /已退出（2）/)
-    assert.deepEqual(h.pruned, [process.execPath])
-  } finally { await h.close() }
-})
-
-test('source Connector preserves the RPC conflict identity and stops only its rejected child', async () => {
+test('the bundled Connector preserves the RPC conflict identity and stops only its rejected child', async () => {
   const h = await fixture('conflict')
   try {
     // The Control service reports the MeshCall application error
-    // `connector_already_running`; the Source Connector surfaces it as the typed
+    // `connector_already_running`; the plugin surfaces it as the typed
     // onboarding error so the UI can show its conflict message.
     await assert.rejects(h.connector.start(binding, 'https://api.example.test', new AbortController().signal),
       error => error instanceof ConnectorOwnershipError)
@@ -401,38 +364,17 @@ test('source Connector preserves the RPC conflict identity and stops only its re
 })
 
 
-test('startup exit 2 preserves uv diagnostics in the Connector journal', async () => {
+test('startup exit 2 preserves the Connector\'s output in its journal', async () => {
   const h = await fixture('exit-error')
   try {
     await assert.rejects(h.connector.start(binding, 'https://api.example.test', new AbortController().signal), /已退出（2）/)
     const logs = await readFile(join(h.root, 'data', 'logs', 'connector-output.json'), 'utf8')
-    assert.match(logs, /Python download failed: connection reset/)
+    assert.match(logs, /store worker failed: disk full/)
     assert.match(logs, /exited \(2\)/)
   } finally { await h.close() }
 })
 
-test('source Connector normalizes [::1] in child NO_PROXY and no_proxy without mutating parent process.env', async () => {
-  const previousNoProxyUpper = process.env['NO_PROXY']
-  const previousNoProxyLower = process.env['no_proxy']
-  process.env['NO_PROXY'] = 'localhost,127.0.0.1,[::1]'
-  process.env['no_proxy'] = '[::1],.internal.example'
-  const h = await fixture()
-  try {
-    await h.connector.start(binding, 'https://api.example.test', new AbortController().signal)
-    assert.equal(h.childEnv?.['NO_PROXY'], 'localhost,127.0.0.1,::1')
-    assert.equal(h.childEnv?.['no_proxy'], '::1,.internal.example')
-    assert.equal(process.env['NO_PROXY'], 'localhost,127.0.0.1,[::1]')
-    assert.equal(process.env['no_proxy'], '[::1],.internal.example')
-  } finally {
-    if (previousNoProxyUpper === undefined) delete process.env['NO_PROXY']
-    else process.env['NO_PROXY'] = previousNoProxyUpper
-    if (previousNoProxyLower === undefined) delete process.env['no_proxy']
-    else process.env['no_proxy'] = previousNoProxyLower
-    await h.close()
-  }
-})
-
-test('source Connector takes its proxy from the setting, not from an inherited value', async () => {
+test('the bundled Connector takes its proxy from the setting, not from an inherited value', async () => {
   const previous = process.env['AA_CONNECTOR_PROXY']
   process.env['AA_CONNECTOR_PROXY'] = 'http://inherited:1'
   try {

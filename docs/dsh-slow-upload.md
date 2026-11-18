@@ -42,7 +42,7 @@ Server 的 `timeline.sync complete=true` 会按完整历史替换已有条目，
 
 在 DSH 插件目录执行 `yarn tsx --test tests/unit/sync-progress.test.ts tests/integration/runtime-recovery.test.ts`。定时器测试模拟 160 秒持续推进、停滞及重复进度；真实 loopback TCP/RPC 测试覆盖能力协商、旧端、错误流标识以及最终 ACK 才释放下一批次。
 
-完整插件测试中的 `runtime-events.test.ts` 使用官方 DSH SDK、真实 Python Connector、临时 SQLite 的实际 Server ingest，覆盖整份历史、冷启动、增量恢复和丢失响应后的重传。上述检查使用合成历史与受控载体，没有使用生产数据，也不能代替真实 DSH 安装和低带宽设备验收。
+完整插件测试中的 `runtime-events.test.ts` 使用官方 DSH SDK 和受控的 Server ingest，覆盖整份历史、冷启动、增量恢复和丢失响应后的重传。上述检查使用合成历史与受控载体，没有使用生产数据，也不能代替真实 DSH 安装和低带宽设备验收。
 
 ### 本机 TCP 验证记录（2026-10-02）
 

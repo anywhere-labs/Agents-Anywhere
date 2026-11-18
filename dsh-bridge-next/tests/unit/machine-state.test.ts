@@ -5,13 +5,13 @@ import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import desktopMachine from '../../../desktop-workbench/electron/machine-state.ts'
 import { machineStatePath, readLocalConnectorIds, readMachineState } from '../../src/host/desktop/machine-state.js'
-import { recordConnectorId, launchConnector } from '../helpers/python-connector.js'
+import { holdConnectorLease, recordConnectorId } from '../helpers/ts-connector.js'
 
 const { MachineStateStore, desktopInstallation } = desktopMachine
 const installation = (home: string) => desktopInstallation({ executablePath: process.execPath, appPath: home, packaged: false, platform: process.platform })
 
-test('hosts read the history written by Python without changing order or file contents', async t => {
-  const home = await mkdtemp(join(tmpdir(), 'aa-python-history-'))
+test('hosts read the history written by the Connector without changing order or file contents', async t => {
+  const home = await mkdtemp(join(tmpdir(), 'aa-connector-history-'))
   t.after(() => rm(home, { recursive: true, force: true }))
   await recordConnectorId(home, 'first')
   await recordConnectorId(home, 'second')
@@ -23,34 +23,34 @@ test('hosts read the history written by Python without changing order or file co
   assert.doesNotMatch(before, /fixture|connectorToken|accessToken/)
 })
 
-test('Desktop installation updates preserve a live Python Connector owner and history', { timeout: 15000 }, async t => {
+test('Desktop installation updates preserve a live Connector owner and history', { timeout: 15000 }, async t => {
   const home = await mkdtemp(join(tmpdir(), 'aa-install-owner-'))
   t.after(() => rm(home, { recursive: true, force: true }))
-  const connector = launchConnector(home, 'cli')
-  t.after(() => connector.close())
-  await connector.request('connector.start', { serverUrl: 'https://example.test', connectorId: 'live', connectorToken: 'fixture' })
+  const release = await holdConnectorLease(home, 'live')
+  t.after(release)
   const before = await readMachineState(home)
   await new MachineStateStore(machineStatePath(home)).recordInstallation(installation(home))
   const after = await readMachineState(home)
+  assert.ok(before.runtime)
   assert.deepEqual(after.runtime, before.runtime)
   assert.deepEqual(after.connectorIds, ['live'])
   assert.equal((after.desktop as any).executablePath, process.execPath)
 })
 
-test('Desktop installation and Python ID publication serialize without losing either field', { timeout: 20000 }, async t => {
+test('Desktop installation and Connector ID publication serialize without losing either field', { timeout: 20000 }, async t => {
   const home = await mkdtemp(join(tmpdir(), 'aa-machine-writers-'))
   t.after(() => rm(home, { recursive: true, force: true }))
   const desktop = new MachineStateStore(machineStatePath(home))
   await Promise.all([
     (async () => { for (let i = 0; i < 8; i++) await desktop.recordInstallation(installation(home)) })(),
-    (async () => { for (let i = 0; i < 8; i++) await recordConnectorId(home, `python-${i}`) })(),
+    (async () => { for (let i = 0; i < 8; i++) await recordConnectorId(home, `connector-${i}`) })(),
   ])
   const state = await readMachineState(home)
-  assert.deepEqual(state.connectorIds, Array.from({ length: 8 }, (_, i) => `python-${i}`))
+  assert.deepEqual(state.connectorIds, Array.from({ length: 8 }, (_, i) => `connector-${i}`))
   assert.equal((state.desktop as any).appPath, await realpath(home))
 })
 
-test('read-only discovery leaves legacy migration to Python and preserves unknown fields', async t => {
+test('read-only discovery leaves legacy migration to the Connector and preserves unknown fields', async t => {
   const home = await mkdtemp(join(tmpdir(), 'aa-migrate-state-'))
   t.after(() => rm(home, { recursive: true, force: true }))
   const legacy = join(home, '.agentsanywhere', 'machine.json')

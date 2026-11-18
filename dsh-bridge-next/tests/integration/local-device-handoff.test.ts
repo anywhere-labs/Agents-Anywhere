@@ -1,4 +1,4 @@
-import { recordConnectorId } from '../helpers/python-connector.js'
+import { recordConnectorId } from '../helpers/ts-connector.js'
 import assert from 'node:assert/strict'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -79,11 +79,10 @@ for (const entry of ['first-login', 'deleted-local-device'] as const) {
       prepare: async () => {},
       start: async binding => { await recordConnectorId(home, binding.connectorId); server.devices.get(binding.connectorId)!.status = 'online'; pluginRunning = true },
       stop: async () => { pluginRunning = false },
-      resetEnvironment: async () => { pluginRunning = false },
       assertHealthy: async () => { assert.equal(pluginRunning, true) },
     }
     const manager = new OnboardingManager({
-      stateRoot: join(home, 'plugin'), apiBaseUrl: server.origin, connectorSourceDir: home, uvPath: 'uv',
+      stateRoot: join(home, 'plugin'), apiBaseUrl: server.origin, connectorDir: home, connectorDataDir: join(home, 'v3'),
     }, {
       api: () => new AccountApi(server.origin, server.fetch), connector: pluginConnector,
       detect: async () => ({ status: 'absent', message: 'Desktop not installed yet' }),
@@ -105,7 +104,7 @@ for (const entry of ['first-login', 'deleted-local-device'] as const) {
       }
       assert.equal(server.devices.size, 1)
       const pluginId = [...server.devices.keys()][0]!
-      assert.ok(machine.readConnectorIds().includes(pluginId), 'Python startup must publish the plugin Connector ID')
+      assert.ok(machine.readConnectorIds().includes(pluginId), 'the Connector start must publish the plugin Connector ID')
       const publishedIds = machine.readConnectorIds()
 
       // A newly started Desktop reads the plugin's real file before reconnecting.

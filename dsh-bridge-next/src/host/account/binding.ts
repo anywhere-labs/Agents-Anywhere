@@ -152,7 +152,7 @@ async function registerBinding(path: string, binding: Binding, account: Account,
   if (created.connector.userId !== account.userId) throw new Error('注册设备的账号不一致。')
   const complete = { installationId: binding.installationId, name: binding.name, connectorId: created.connector.id, connectorToken: created.connectorToken }
   await writeJson(path, complete)
-  // Python records this ID when startup is accepted. Retain the private binding
+  // The Connector records this ID when startup is accepted. Retain the private binding
   // if startup fails, so retry does not register another device.
   return complete
 }

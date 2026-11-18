@@ -618,7 +618,7 @@ test('a replacement feed uses Connector checkpoints and uploads only offline del
     await fixture.plugin.dispose()
     fixture.session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'changed while Host destroyed' }] }), { surfaceOp: 'append' })
     const host = await import('../../lib/index.js')
-    await fixture.ctx.plugin(host, { dshHome: home, stateRoot: join(home, 'account'), connectorSourceDir: home }).await()
+    await fixture.ctx.plugin(host, { dshHome: home, stateRoot: join(home, 'account'), connectorDir: home }).await()
     const restored = new Map<string, unknown>(JSON.parse(saved))
     stream = follow(fixture.ctx.agentsAnywhereRuntime.native, { checkpoints: restored })
     await until(() => notifications(stream.ops()).some(n => n.method === 'session.inventory.complete'), 'new Host restores Connector checkpoints')

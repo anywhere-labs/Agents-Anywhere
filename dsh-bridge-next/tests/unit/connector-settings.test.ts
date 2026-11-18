@@ -7,46 +7,37 @@ import { ConnectorSettingsStore, validateConnectorSettings } from '../../src/hos
 import { readJson, writeJson } from '../../src/host/storage/files.js'
 import { DEFAULT_CONNECTOR_SETTINGS } from '../../src/contracts/connector.js'
 
-const aliyun = 'https://mirrors.aliyun.com/pypi/simple'
+const config = (root: string) => ({ stateRoot: root, connectorDir: root, connectorDataDir: join(root, 'v3'), apiBaseUrl: 'https://api.example.test' })
 
-test('first Host initialization persists a locale-based mirror without a Client', async (t) => {
-  const root = await mkdtemp(join(tmpdir(), 'aa-plugin-mirror-'))
-  t.after(() => rm(root, { recursive: true, force: true }))
-  for (const [languages, expected] of [
-    [['zh-CN'], aliyun], [['en-US', 'zh-Hans-CN'], aliyun], [['zh_TW'], aliyun], [['en-US'], ''],
-  ] as const) {
-    const config = { stateRoot: join(root, languages.join('-')), connectorSourceDir: root, uvPath: 'uv', apiBaseUrl: 'https://api.example.test' }
-    const store = new ConnectorSettingsStore(config, async () => [...languages])
-    await store.load()
-    assert.equal(store.get().uvPypiIndexUrl, expected)
-    assert.equal(store.get().uvPythonInstallMirror, expected ? 'https://registry.npmmirror.com/-/binary/python-build-standalone' : '')
-    assert.deepEqual(await readJson(join(config.stateRoot, 'connector-settings.json')), store.get())
-    const reopened = new ConnectorSettingsStore(config, async () => { assert.fail('Saved mirrors must not be re-detected') })
-    await reopened.load()
-    assert.equal(reopened.get().uvPypiIndexUrl, expected)
-    for (const choice of ['', 'https://pypi.tuna.tsinghua.edu.cn/simple']) {
-      await store.save({ ...store.get(), uvPypiIndexUrl: choice })
-      await reopened.load()
-      assert.equal(reopened.get().uvPypiIndexUrl, choice)
-    }
-  }
-})
-
-test('legacy mirror migration preserves user choices and factory reset reapplies the system default', async (t) => {
-  const root = await mkdtemp(join(tmpdir(), 'aa-plugin-mirror-legacy-'))
+test('settings of the Python Connector are dropped on load, keeping the proxy and the sync interval', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'aa-plugin-settings-'))
   t.after(() => rm(root, { recursive: true, force: true }))
   const path = join(root, 'connector-settings.json')
-  const config = { stateRoot: root, connectorSourceDir: root, uvPath: 'uv', apiBaseUrl: 'https://api.example.test' }
-  const store = new ConnectorSettingsStore(config, async () => ['zh-CN'])
-  await writeJson(path, { uvPath: '', syncIntervalSeconds: 60, autoStart: false })
+  await writeJson(path, { uvPath: '/opt/uv', uvPypiIndexUrl: 'https://mirrors.aliyun.com/pypi/simple',
+    uvPythonInstallMirror: 'https://registry.npmmirror.com/-/binary/python-build-standalone',
+    connectorProxy: 'http://127.0.0.1:7890', syncIntervalSeconds: 60, autoStart: false })
+  const store = new ConnectorSettingsStore(config(root))
   await store.load()
-  assert.deepEqual(store.get(), { ...DEFAULT_CONNECTOR_SETTINGS, syncIntervalSeconds: 60, uvPypiIndexUrl: aliyun, uvPythonInstallMirror: 'https://registry.npmmirror.com/-/binary/python-build-standalone' })
-  await writeJson(path, { ...DEFAULT_CONNECTOR_SETTINGS, autoStart: false })
-  await store.load()
-  assert.equal(store.get().uvPypiIndexUrl, '')
+  assert.deepEqual(store.get(), { connectorProxy: 'http://127.0.0.1:7890', syncIntervalSeconds: 60 })
+  assert.deepEqual(await readJson(path), store.get(), 'the file is rewritten without the retired keys')
   await store.reset()
-  assert.deepEqual(store.get(), { ...DEFAULT_CONNECTOR_SETTINGS, uvPypiIndexUrl: aliyun, uvPythonInstallMirror: 'https://registry.npmmirror.com/-/binary/python-build-standalone' })
-  assert.deepEqual(await readJson(path), store.get())
+  assert.deepEqual(store.get(), DEFAULT_CONNECTOR_SETTINGS)
+  assert.deepEqual(await readJson(path), DEFAULT_CONNECTOR_SETTINGS)
+})
+
+test('a first start without saved settings uses the defaults and writes nothing', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'aa-plugin-settings-new-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const store = new ConnectorSettingsStore(config(root))
+  await store.load()
+  assert.deepEqual(store.get(), DEFAULT_CONNECTOR_SETTINGS)
+  assert.equal(await readJson(join(root, 'connector-settings.json')), null)
+})
+
+test('saving a retired setting is refused', () => {
+  for (const key of ['uvPath', 'uvPypiIndexUrl', 'uvPythonInstallMirror']) {
+    assert.throws(() => validateConnectorSettings({ ...DEFAULT_CONNECTOR_SETTINGS, [key]: '' }), /不支持的 Connector 配置项/)
+  }
 })
 
 test('the Connector network setting accepts the system, direct or a full proxy address', () => {

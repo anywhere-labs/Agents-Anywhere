@@ -1,7 +1,7 @@
 /**
  * DSH-3 regression: this plugin (dsh-bridge 2.x) against the v3 TS Connector's
  * `dsh-bridge 2.0` compatibility layer (connector-ts/src/runtime/dsh-bridge2), the way
- * `runtime.test.ts` runs it against the Python Connector probe.
+ * `runtime.test.ts` runs it against an in-process Bridge client.
  *
  * It is also the cross-version check from docs/v3 08 (risk table): the plugin keeps its own
  * meshcall 0.3.0 client while the Connector runs meshcall 9334405 and that version's Router.

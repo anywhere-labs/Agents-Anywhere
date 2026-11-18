@@ -1,4 +1,4 @@
-import { recordConnectorId } from '../helpers/python-connector.js'
+import { recordConnectorId } from '../helpers/ts-connector.js'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'

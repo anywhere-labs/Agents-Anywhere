@@ -59,7 +59,7 @@ export class OnboardingService extends TypertRemoteService implements Onboarding
       return
     }
     // Restoring an authorized connection must not prevent the settings page
-    // from mounting while uv prepares its environment.
+    // from mounting while the Connector starts.
     void this.manager.resume().catch(() => undefined)
   }
 
@@ -164,8 +164,6 @@ export class OnboardingService extends TypertRemoteService implements Onboarding
   }
   @Remote('resetConnector')
   resetConnector(forceLocal: boolean): Promise<null> { return this.manager.resetConnector(forceLocal) }
-  @Remote('resetConnectorEnvironment')
-  resetConnectorEnvironment(): Promise<null> { return this.manager.resetConnectorEnvironment() }
   @Remote('createMobileLogin')
   createMobileLogin(): Promise<MobileLoginSnapshot> { return this.manager.createMobileLogin() }
   @Remote('inspectMobileLogin')

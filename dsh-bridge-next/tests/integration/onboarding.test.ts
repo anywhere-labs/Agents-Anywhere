@@ -58,11 +58,9 @@ class FakeConnector implements ConnectorProcess {
   expire() { this.running = false; for (const listener of this.listeners) listener({ running: false, authFailed: true }) }
   async prepare() {}
   startError: Error | null = null
-  // Like SourceConnector, starting a running process keeps it.
+  // Like BundledConnector, starting a running process keeps it.
   async start() { if (this.startError) throw this.startError; if (this.running) return; this.running = true; this.starts++ }
   async stop() { this.running = false; this.stops++ }
-  environmentResets = 0
-  async resetEnvironment() { await this.stop(); this.environmentResets++ }
   async assertHealthy() { if (!this.running) throw new Error('not running') }
   async resolveLogsPath() { return this.logsPath }
 }
@@ -79,10 +77,9 @@ async function fixture() {
   let localIds: string[] = []
   let detections = 0
   const create = () => new OnboardingManager({
-    stateRoot: root, connectorSourceDir: root, uvPath: 'uv',
+    stateRoot: root, connectorDir: root, connectorDataDir: join(root, 'v3'),
     apiBaseUrl: api.baseUrl,
   }, {
-    systemLanguages: async () => ['en-US'],
     api: base => base === api.baseUrl ? api : new FakeApi(base), connector, detect: async () => { detections++; return detection },
     checkServer: async (base) => {
       checkedServers.push(base)
@@ -220,12 +217,12 @@ test('invalid configuration and unavailable executables leave a working Connecto
     await until(async () => (await h.manager.inspect()).stage === 'ready')
     const settings = (await h.manager.inspect()).connector.settings
     for (const patch of [{ syncIntervalSeconds: 0 }, { syncIntervalSeconds: 0.5 }, { autoStart: false },
-      { syncExistingOnConnect: false }, { heartbeatSeconds: 15 }, { reconnectSeconds: 5 }, { uvPath: 'relative/uv' },
+      { syncExistingOnConnect: false }, { heartbeatSeconds: 15 }, { reconnectSeconds: 5 }, { uvPath: '/opt/uv' },
       { uvPypiIndexUrl: 'https://untrusted.example/simple' }, { connectorToken: 'override' }]) {
       await assert.rejects(h.manager.saveConnectorSettings({ ...settings, ...patch }))
     }
-    h.connector.prepare = async () => { throw new Error('未找到可用的 uv') }
-    await assert.rejects(h.manager.saveConnectorSettings({ ...settings, uvPath: '/missing/uv' }), /未找到/)
+    h.connector.prepare = async () => { throw new Error('未找到内置 Connector，请重新安装插件。') }
+    await assert.rejects(h.manager.saveConnectorSettings({ ...settings, syncIntervalSeconds: 60 }), /未找到内置 Connector/)
     assert.equal(h.connector.running, true)
     assert.deepEqual((await h.manager.inspect()).connector.settings, settings)
   } finally { await h.close() }
@@ -269,38 +266,6 @@ test('reset preserves credentials on failed revoke and explicit local reset remo
   } finally { await h.close() }
 })
 
-test('reinstalling dependencies keeps the account and device, then starts the Connector again', async () => {
-  const h = await fixture()
-  h.api.online = true
-  try {
-    await callback((await h.manager.begin()).url)
-    await until(async () => (await h.manager.inspect()).stage === 'ready')
-    const account = await readJson(join(h.root, 'account.json'))
-    await h.manager.resetConnectorEnvironment()
-    assert.equal(h.connector.environmentResets, 1)
-    assert.equal(h.connector.starts, 2)
-    assert.equal(h.connector.running, true)
-    const snapshot = await h.manager.inspect()
-    assert.equal(snapshot.stage, 'ready')
-    assert.equal(snapshot.connectorId, 'conn_test')
-    assert.deepEqual(await readJson(join(h.root, 'account.json')), account)
-    assert.equal(h.api.registrations, 1)
-    assert.equal(h.api.renewals, 0)
-  } finally { await h.close() }
-})
-
-test('reinstalling dependencies before sign-in only clears them', async () => {
-  const h = await fixture()
-  try {
-    await h.manager.resetConnectorEnvironment()
-    assert.equal(h.connector.environmentResets, 1)
-    assert.equal(h.connector.starts, 0)
-    const snapshot = await h.manager.inspect()
-    assert.equal(snapshot.stage, 'idle')
-    assert.match(snapshot.message, /下次连接时会重新安装/)
-  } finally { await h.close() }
-})
-
 test('installed Desktop blocks every new standalone management and phone endpoint', async () => {
   const h = await fixture()
   try {
@@ -308,7 +273,7 @@ test('installed Desktop blocks every new standalone management and phone endpoin
     for (const action of [
       () => h.manager.controlConnector('start'), () => h.manager.controlConnector('stop'),
       () => h.manager.saveConnectorSettings(DEFAULT_CONNECTOR_SETTINGS), () => h.manager.openConnectorFolder('data'),
-      () => h.manager.resetConnector(true), () => h.manager.resetConnectorEnvironment(), () => h.manager.createMobileLogin(),
+      () => h.manager.resetConnector(true), () => h.manager.createMobileLogin(),
       () => h.manager.inspectMobileLogin('qr'), () => h.manager.confirmMobileLogin('qr', true),
     ]) await assert.rejects(action, /managed by Desktop/)
     assert.equal(h.connector.starts, 0)
@@ -657,7 +622,7 @@ test('an existing local account without settings survives the new cloud default'
   const account = await api.exchange()
   await writeJson(join(root, 'account.json'), account)
   const manager = new OnboardingManager({
-    stateRoot: root, connectorSourceDir: root, uvPath: 'uv', apiBaseUrl: CLOUD_API_BASE_URL,
+    stateRoot: root, connectorDir: root, connectorDataDir: join(root, 'v3'), apiBaseUrl: CLOUD_API_BASE_URL,
   }, { api: () => api, connector: new FakeConnector(), detect: async () => ({ status: 'absent', message: 'not registered' }) })
   try {
     const snapshot = await manager.inspect()
@@ -794,7 +759,7 @@ test('openConnectorFolder uses Connector-returned logsPath and does not block be
     assert.equal((await h.manager.inspect()).connector.logsPath, h.connector.logsPath)
     await h.manager.openConnectorFolder('logs')
     await h.manager.openConnectorFolder('data')
-    assert.deepEqual(h.openedPaths, [h.connector.logsPath, join(h.root, 'connector')])
+    assert.deepEqual(h.openedPaths, [h.connector.logsPath, join(h.root, 'v3')])
     releaseStart()
     await until(async () => (await h.manager.inspect()).stage === 'ready')
   } finally { await h.close() }

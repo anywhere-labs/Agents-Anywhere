@@ -1,9 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { promisify } from 'node:util'
-import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { appendFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -15,8 +13,6 @@ import { writeJson } from '../../src/host/storage/files.js'
 import dshProtocol from '@deepseek-ai/dsh-typert-protocol/package.json' with { type: 'json' }
 import bridgePackage from '../../package.json' with { type: 'json' }
 
-const execute = promisify(execFile)
-
 async function until(check: () => boolean | Promise<boolean>, label: string, attempts = 800) {
   for (let n = 0; n < attempts; n++) { if (await check()) return; await delay(10) }
   assert.fail(label)
@@ -25,36 +21,6 @@ async function until(check: () => boolean | Promise<boolean>, label: string, att
 const code = (wanted: string) => (error: unknown) => error instanceof MeshCallError && error.code === wanted
 const serviceGone = (error: unknown) => error instanceof MeshCallError
   && ['unavailable', 'method_not_found'].includes(error.code)
-
-/**
- * The probe's mock Host asserts as soon as `DshRuntime.start()` returns, while the real
- * DshRuntime schedules a retry when the plugin registers just after the Connector published
- * its rendezvous. The plugin polls that file once a second, so grant `initialize` the same
- * bounded retry the production runtime performs instead of requiring the registration to
- * win a ~50 ms race.
- */
-async function runNativeProbe(home: string): Promise<string> {
-  const hook = join(home, 'probe-hook')
-  await mkdir(hook, { recursive: true })
-  await writeFile(join(hook, 'sitecustomize.py'), `
-import asyncio
-from connector.runtimes.dsh.bridge.client import BridgeClient, BridgeUnavailableError
-_original_start = BridgeClient.start
-async def _start(self):
-    for attempt in range(100):
-        try:
-            return await _original_start(self)
-        except BridgeUnavailableError:
-            if attempt == 99:
-                raise
-            await asyncio.sleep(0.05)
-BridgeClient.start = _start
-`)
-  const cwd = new URL('../../../connector/', import.meta.url)
-  const { stdout } = await execute('uv', ['run', '--frozen', 'python', 'tests/dsh_native_probe.py', home],
-    { cwd, timeout: 40_000, env: { ...process.env, PYTHONPATH: hook } })
-  return stdout
-}
 
 /** A Connector Router and the rendezvous document it publishes for the plugin. */
 async function connectorRouter() {
@@ -67,7 +33,7 @@ async function connectorRouter() {
 
 const reader = { query: { listSessions: async () => [], readTitleSnapshots: async () => [], readSession: async () => { throw new Error('unused') } }, status: () => undefined }
 
-test('published Host + official SessionQuery/JSONL + actual Python adapter complete the read-only workflow', { timeout: 60_000 }, async () => {
+test('published Host + official SessionQuery/JSONL complete the read-only workflow over the 2.0 Bridge', { timeout: 60_000 }, async () => {
   const home = await mkdtemp(join(tmpdir(), 'aa-dsh-native-'))
   let context: Awaited<ReturnType<typeof nativeRuntime>> | undefined
   let router: LocalRouter | undefined
@@ -97,12 +63,6 @@ test('published Host + official SessionQuery/JSONL + actual Python adapter compl
     const snapshot = await call('getSessionSnapshot', { sessionId: sessionId('instance', 'native-main'), externalSessionId: 'native-main' })
     assert.equal(snapshot.complete, true)
     assert.equal((snapshot.items as { type: string }[]).filter(item => item.type === 'tool').length, 1)
-    const stdout = await runNativeProbe(home)
-    assert.match(stdout, /DSH native integration passed/)
-    // The probe is its own Connector and removes its rendezvous; the test republishes
-    // and the plugin must follow the replacement without a restart.
-    await publish()
-    await until(async () => { try { return (await call('ping')).ok === true } catch { return false } }, 'the plugin follows the replacement Connector')
     assert.equal(context.ctx.sessions.get('persisted-only' as never), undefined)
     assert.equal(context.ctx.get('agents'), undefined)
     const cold = (await context.ctx.sessionQuery.listSessions()).find(item => item.header.id === 'persisted-only')!

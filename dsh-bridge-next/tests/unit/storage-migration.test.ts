@@ -116,7 +116,7 @@ test('symlinks fail explicitly instead of keeping checkpoint writes in the old d
 test('manager migrates before reading settings and serializes startup; failed migration prevents initialization', async () => {
   await fixture(async (source, target) => {
     await writeJson(join(source, 'settings.json'), { apiBaseUrl: 'https://migrated.example.test' })
-    const config = { stateRoot: target, legacyStateRoot: source, connectorSourceDir: target, uvPath: 'uv', apiBaseUrl: 'https://default.example.test' }
+    const config = { stateRoot: target, legacyStateRoot: source, connectorDir: target, connectorDataDir: join(target, 'v3'), apiBaseUrl: 'https://default.example.test' }
     const dependencies = { detect: async () => ({ status: 'absent' as const, message: '' }), systemLanguages: async () => ['en-US'] }
     const first = new OnboardingManager(config, dependencies)
     const second = new OnboardingManager(config, dependencies)

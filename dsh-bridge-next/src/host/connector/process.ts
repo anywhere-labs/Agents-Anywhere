@@ -1,6 +1,6 @@
 import { execFile, spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from 'node:child_process'
-import { mkdir, rm } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { mkdir } from 'node:fs/promises'
+import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { promisify } from 'node:util'
 import { DeadlineExceededError, Mesh, MeshCallError, Router } from 'meshcall'
@@ -15,15 +15,8 @@ import { LogsServiceClient } from '../generated/connector-logs.js'
 import { RuntimeDiagnostics, RuntimeRpcLogger } from '../dsh-runtime/diagnostics.js'
 import { RpcLogOutput } from '../dsh-runtime/log-output.js'
 import { readRuntimeLogPage } from '../dsh-runtime/log-reader.js'
-import { resolveUv, withPackageIndexes } from './environment.js'
+import { removePythonEnvironment, resolveConnectorLaunch } from './environment.js'
 import { ConnectorLogs } from './logs.js'
-import { materializeConnectorProject } from './project.js'
-
-function deriveLogsPath(value: { logsPath?: unknown; runtimePath?: unknown }): string | null {
-  if (typeof value.logsPath === 'string' && value.logsPath) return value.logsPath
-  if (typeof value.runtimePath === 'string' && value.runtimePath) return join(dirname(value.runtimePath), 'logs')
-  return null
-}
 
 const runFile = promisify(execFile)
 /** The ready line (`connector.ready`) is a few hundred bytes; anything larger is a protocol error. */
@@ -31,28 +24,11 @@ const MAX_READY_BYTES = 64 * 1024
 /** The Router is already serving when it writes the ready line; a wedged handshake must not hang startup. */
 const CONTROL_CONNECT_TIMEOUT_MS = 10_000
 /**
- * The first request waits out uv's initial dependency installation, not a Python launch: the
- * Connector project pulls roughly 235 MiB of wheels, which needs a quarter of an hour on a
- * 300 KB/s link. A stalled install still fails long before this budget, because uv gives up on
- * its own read timeout below and its exit rejects every pending request; the caller may abort
- * the start signal at any point. So this only bounds an installation that is making progress.
+ * Bounds the ready line and the first requests: a first start opens the local store and imports the
+ * plugin's v2 data once, which takes seconds; nothing is downloaded.
  */
-const FIRST_REQUEST_TIMEOUT = 3_600_000
-/** Bounds a transfer that stopped producing bytes, which uv can see and this process cannot. */
-const UV_READ_TIMEOUT_SECONDS = '60'
-/** Reclaiming the cache is housekeeping, so it may not outlast the failure that asked for it. */
-const CACHE_PRUNE_TIMEOUT = 60_000
+const FIRST_REQUEST_TIMEOUT = 120_000
 type ConnectorLauncher = (command: string, args: string[], options: SpawnOptionsWithoutStdio) => ChildProcessWithoutNullStreams
-type CachePruner = (command: string) => Promise<unknown>
-
-/**
- * uv unpacks a download into a temporary directory inside its cache and only commits the entry
- * once it is whole, so a child killed mid-download orphans that directory for good: the reporter
- * of #112 accumulated 57 of them, 2.44 GiB, over four days of retries. Pruning drops exactly those
- * dangling entries and keeps every archive that did finish, so the next attempt still starts from
- * whatever the last one managed to download.
- */
-const pruneUvCache: CachePruner = command => runFile(command, ['cache', 'prune'], { timeout: CACHE_PRUNE_TIMEOUT, windowsHide: true })
 
 /** What `anywhere-cli rpc` writes on stdout once its Router serves the control channel. */
 interface Rendezvous {
@@ -80,11 +56,9 @@ export interface ConnectorProcess {
   readonly lastError?: string | null
   readonly logsPath?: string | null
   onState(listener: (state: ConnectorState) => void): () => void
-  prepare(settings?: ConnectorSettings): Promise<void>
+  prepare(): Promise<void>
   start(binding: BoundDevice, apiBaseUrl: string, signal: AbortSignal): Promise<void>
   stop(): Promise<void>
-  /** Stops the Connector and drops its dependency environment, so the next start reinstalls it. */
-  resetEnvironment(): Promise<void>
   assertHealthy(): Promise<void>
   hasRuntimeLogs?(): boolean
   resolveLogsPath?(): Promise<string | null>
@@ -108,13 +82,16 @@ function connectorFailure(error: unknown): unknown {
     : error
 }
 
-/** Owns only the child it spawns; DSH Agent operations are served by the plugin runtime. */
-export class SourceConnector implements ConnectorProcess {
+/**
+ * The Connector bundled with this plugin (connector-ts, `anywhere-cli rpc`), run as a child of the DSH host.
+ * Owns only the child it spawns; DSH Agent operations are served by the plugin runtime over the Connector's
+ * local socket.
+ */
+export class BundledConnector implements ConnectorProcess {
   private child: ChildProcessWithoutNullStreams | null = null
   private mesh: Mesh | null = null
   private control: ControlServiceClient | null = null
   private logsClient: LogsServiceClient | null = null
-  private cachedLogsPath: string | null = null
   private readyBuffer = ''
   private ready: Rendezvous | null = null
   private readyWaiter: { resolve: () => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> } | null = null
@@ -127,14 +104,11 @@ export class SourceConnector implements ConnectorProcess {
   private readonly logs: ConnectorLogs
   private readonly logOutput: RpcLogOutput
   private readonly diagnostics: RuntimeDiagnostics
-  /** 可写的项目副本；uv 只在这个目录里写 uv.lock，绝不碰插件包目录。 */
-  private projectDir: string | null = null
   constructor(
     private readonly config: ResolvedConfig,
     private readonly launch: ConnectorLauncher = spawn,
     private readonly settings: () => ConnectorSettings = () => DEFAULT_CONNECTOR_SETTINGS,
     private readonly firstRequestTimeoutMs = FIRST_REQUEST_TIMEOUT,
-    private readonly prune: CachePruner = pruneUvCache,
     diagnostics?: RuntimeDiagnostics,
     logOutput?: RpcLogOutput,
   ) {
@@ -146,27 +120,15 @@ export class SourceConnector implements ConnectorProcess {
   private get alive(): boolean { return this.child !== null && this.child.exitCode === null && this.child.signalCode === null }
   get running(): boolean { return this.alive && this.state.running && !this.state.authFailed }
   get lastError(): string | null { return this.failure?.message ?? null }
-  get logsPath(): string | null { return this.cachedLogsPath }
+  /** The Connector's log store, under the data directory this plugin hands it. */
+  get logsPath(): string { return join(this.config.connectorDataDir, 'logs') }
   hasRuntimeLogs(): boolean { return this.logsClient !== null }
   onState(listener: (state: ConnectorState) => void): () => void {
     this.listeners.add(listener)
     return () => { this.listeners.delete(listener) }
   }
 
-  async resolveLogsPath(): Promise<string | null> {
-    if (this.cachedLogsPath) return this.cachedLogsPath
-    if (!this.control) return null
-    try {
-      const paths = await this.control.getPaths({ timeoutMs: 3_000 })
-      const resolved = deriveLogsPath(paths as { logsPath?: unknown; runtimePath?: unknown })
-      if (resolved) {
-        this.cachedLogsPath = resolved
-      }
-    } catch {
-      /* Control channel may be closing or still handshaking. */
-    }
-    return this.cachedLogsPath
-  }
+  async resolveLogsPath(): Promise<string | null> { return this.logsPath }
 
   async readRuntimeLogs(query?: RuntimeLogQuery): Promise<RuntimeLogPage> {
     const client = this.logsClient
@@ -179,17 +141,17 @@ export class SourceConnector implements ConnectorProcess {
         total: 0,
         hasMoreBefore: false,
         hasMoreAfter: false,
-        logsPath: this.cachedLogsPath,
+        logsPath: this.logsPath,
         updatedAt: new Date().toISOString(),
       }
     }
     await this.logOutput.flush()
-    return readRuntimeLogPage(client, query, this.cachedLogsPath)
+    return readRuntimeLogPage(client, query, this.logsPath)
   }
 
   private updateState(value: unknown): void {
     if (!value || typeof value !== 'object') return
-    const state = value as Partial<ControlState> & { logsPath?: unknown }
+    const state = value as Partial<ControlState>
     // Credential failures also carry lastError; they are reported as authFailed, not as a runtime failure.
     if (!state.running && !state.authFailed && typeof state.lastError === 'string' && state.lastError && !this.stopping) {
       const invalidState = /^(invalid|unsupported) connector sync state file:/.test(state.lastError)
@@ -202,13 +164,9 @@ export class SourceConnector implements ConnectorProcess {
         this.diagnostics.log('error', 'connector.runtime_failed', {}, this.failure)
       }
     }
-    const resolvedLogsPath = deriveLogsPath(state)
-    if (resolvedLogsPath) {
-      this.cachedLogsPath = resolvedLogsPath
-    }
     if (typeof state.running !== 'boolean' || typeof state.authFailed !== 'boolean') return
     if (state.running === this.state.running && state.authFailed === this.state.authFailed) return
-    // Do not forward config paths, credentials or raw error text from Python.
+    // Do not forward config paths, credentials or raw error text from the Connector.
     this.state = { running: state.running, authFailed: state.authFailed }
     this.logs.record(state.authFailed ? 'auth_failed' : state.running ? 'running' : 'stopped')
     this.diagnostics.log(state.authFailed ? 'warn' : 'info', 'connector.state_changed', {
@@ -218,32 +176,27 @@ export class SourceConnector implements ConnectorProcess {
     for (const listener of this.listeners) listener({ ...this.state })
   }
 
-  async prepare(settings = this.settings()): Promise<void> {
-    // uv 会在项目目录写 uv.lock，所以插件包目录只当只读负载用，项目落到可写副本里。
-    this.projectDir = await materializeConnectorProject(this.config)
-    try {
-      const executable = await resolveUv(this.config, settings)
-      if (!executable) throw new Error('uv unavailable')
-      await runFile(executable, ['--version'], { timeout: 10_000, windowsHide: true })
-    } catch {
-      throw new Error('未找到可用的 uv，请安装 uv，或在插件配置中指定 uvPath。')
-    }
+  /** Checks that the bundled Connector can run here, and clears what the Python Connector of plugin 2.x left. */
+  async prepare(): Promise<void> {
+    await removePythonEnvironment(this.config.stateRoot)
+    await resolveConnectorLaunch(this.config, this.configPath)
   }
+
+  private get dataDir(): string { return join(this.config.stateRoot, 'connector') }
+  private get configPath(): string { return join(this.dataDir, 'connector.json') }
 
   async start(binding: BoundDevice, apiBaseUrl: string, signal: AbortSignal): Promise<void> {
     if (this.stopping) await this.stopping
     if (this.running) return
     if (this.alive) await this.stop()
     signal.throwIfAborted()
-    const dataDir = join(this.config.stateRoot, 'connector')
-    const configPath = join(dataDir, 'connector.json')
+    const configPath = this.configPath
     const settings = this.settings()
-    await mkdir(dataDir, { recursive: true, mode: 0o700 })
+    await mkdir(this.dataDir, { recursive: true, mode: 0o700 })
     await writeJson(configPath, {
       serverUrl: apiBaseUrl,
       connectorId: binding.connectorId,
       connectorToken: binding.connectorToken,
-      statePath: join(dataDir, `${binding.connectorId}.sqlite3`),
       heartbeatSeconds: 20,
       reconnectSeconds: 3,
       syncIntervalSeconds: settings.syncIntervalSeconds,
@@ -257,34 +210,25 @@ export class SourceConnector implements ConnectorProcess {
     await this.logs.startSession([binding.connectorToken])
     this.logs.record('starting')
     this.diagnostics.log('info', 'connector.starting', { connectorId: binding.connectorId, apiBaseUrl })
-    const executable = await resolveUv(this.config, settings)
-    const command = executable ?? (settings.uvPath || this.config.uvPath)
+    const launch = await resolveConnectorLaunch(this.config, configPath)
     signal.throwIfAborted()
-    // 不依赖 prepare() 的调用顺序：start() 自己也要保证项目副本就位。
-    const projectDir = this.projectDir ??= await materializeConnectorProject(this.config)
-    signal.throwIfAborted()
-    const child = this.launch(command, [
-      'run', '--directory', projectDir,
-      'anywhere-cli', 'rpc', '--config', configPath,
-    ], {
-      cwd: projectDir,
+    const child = this.launch(launch.command, launch.args, {
+      cwd: this.dataDir,
       windowsHide: true,
       detached: process.platform !== 'win32',
-      env: withPackageIndexes({
+      env: {
         ...process.env,
-        ...(typeof process.env['NO_PROXY'] === 'string' ? { NO_PROXY: process.env['NO_PROXY'].replaceAll('[::1]', '::1') } : {}),
-        ...(typeof process.env['no_proxy'] === 'string' ? { no_proxy: process.env['no_proxy'].replaceAll('[::1]', '::1') } : {}),
         AA_CONNECTOR_OWNER_KIND: 'dsh-plugin',
         // Undefined removes an inherited value: the setting decides.
         AA_CONNECTOR_PROXY: settings.connectorProxy || undefined,
         ...(this.config.dshHome ? { DSH_HOME: this.config.dshHome } : {}),
-        AGENT_CONNECTOR_DATA_DIR: dataDir,
-        UV_PROJECT_ENVIRONMENT: join(this.config.stateRoot, 'connector-venv'),
-        PYTHONDONTWRITEBYTECODE: '1',
-        PYTHONUNBUFFERED: '1',
-        UV_HTTP_TIMEOUT: process.env['UV_HTTP_TIMEOUT'] || UV_READ_TIMEOUT_SECONDS,
-        UV_PYTHON_INSTALL_MIRROR: settings.uvPythonInstallMirror || 'https://github.com/astral-sh/python-build-standalone/releases/download',
-      }, settings.uvPypiIndexUrl),
+        // The shared v3 data directory; the plugin's own v2 data is imported from where its Python Connector kept it.
+        AGENT_CONNECTOR_DATA_DIR: this.config.connectorDataDir,
+        AA_CONNECTOR_LEGACY_DATA_DIR: this.dataDir,
+        AGENT_CONNECTOR_CONFIG: undefined,
+        MESHCALL_ROUTER_BINARY: launch.router,
+        ...launch.env,
+      },
     })
     this.child = child
     child.stdout.setEncoding('utf8')
@@ -292,7 +236,7 @@ export class SourceConnector implements ConnectorProcess {
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', (chunk: string) => { this.logs.output(chunk) })
     child.stdin.on('error', () => { if (this.child === child) this.fail(new Error('Connector 输入连接已关闭。')) })
-    child.on('error', () => { if (this.child === child) this.fail(new Error('Connector 进程启动失败，请检查 uv 和源码运行环境。')) })
+    child.on('error', () => { if (this.child === child) this.fail(new Error('Connector 进程启动失败，请重新安装插件后重试。')) })
     child.on('close', (code) => {
       this.closed.add(child)
       this.logs.finish()
@@ -309,7 +253,6 @@ export class SourceConnector implements ConnectorProcess {
     signal.addEventListener('abort', abort, { once: true })
     try {
       signal.throwIfAborted()
-      // Includes the first uv dependency installation, not just Python startup.
       await this.connect(signal)
       const control = this.control!
       this.updateState(await control.getState({ timeoutMs: this.firstRequestTimeoutMs }))
@@ -319,8 +262,6 @@ export class SourceConnector implements ConnectorProcess {
       this.watchEvents()
     } catch (error) {
       await this.stop()
-      // Whatever ended this attempt left a partial download behind, and only a prune reclaims it.
-      try { await this.prune(command) } catch { /* Housekeeping may not replace the real failure. */ }
       throw connectorFailure(error)
     } finally {
       signal.removeEventListener('abort', abort)
@@ -352,24 +293,6 @@ export class SourceConnector implements ConnectorProcess {
     return this.stopping
   }
 
-  /**
-   * A half-downloaded or broken install survives every restart, because uv reuses whatever the
-   * environment and the project copy already hold. Only the plugin-owned pieces go: the venv and
-   * the materialized project with its uv.lock. The uv cache is the user's and shared with other
-   * projects, so it is only pruned of the dangling entries an interrupted download left behind.
-   */
-  async resetEnvironment(): Promise<void> {
-    await this.stop()
-    this.projectDir = null
-    for (const name of ['connector-venv', 'connector-source']) {
-      // Windows can hold a file briefly after the child exits.
-      await rm(join(this.config.stateRoot, name), { recursive: true, force: true, maxRetries: 5 })
-    }
-    const executable = await resolveUv(this.config, this.settings()).catch(() => null)
-    if (executable) { try { await this.prune(executable) } catch { /* Housekeeping only. */ } }
-    this.diagnostics.log('info', 'connector.environment_reset', {})
-  }
-
   private async stopChild(): Promise<void> {
     const child = this.child
     this.events?.abort()
@@ -382,7 +305,7 @@ export class SourceConnector implements ConnectorProcess {
       if (this.closed.has(child) || child.exitCode !== null || child.signalCode !== null) resolve()
       else child.once('close', () => resolve())
     })
-    // Closing stdio lets the Python controller shut down its owned runtime.
+    // Closing stdin lets the Connector shut down its runtime and its Router.
     await Promise.race([ended, delay(1_000)])
     if (!this.closed.has(child)) await this.terminate(child, false)
     await Promise.race([ended, delay(3_000)])
@@ -423,7 +346,7 @@ export class SourceConnector implements ConnectorProcess {
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.readyWaiter = null
-        reject(new Error('Connector 响应超时，请检查 Python 依赖安装和网络连接。'))
+        reject(new Error('Connector 启动超时，请在日志页切换到 Connector 查看原因。'))
       }, this.firstRequestTimeoutMs)
       this.readyWaiter = { resolve, reject, timer }
       signal.addEventListener('abort', () => reject(signal.reason), { once: true })

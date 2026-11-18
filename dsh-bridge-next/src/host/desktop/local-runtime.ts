@@ -1,4 +1,4 @@
-// Read-only view. Python Connector owns migration, identity history and runtime ownership.
+// Read-only view. The Connector owns migration, identity history and runtime ownership.
 import fs from "node:fs";
 import path from "node:path";
 import { userInfo } from "node:os";

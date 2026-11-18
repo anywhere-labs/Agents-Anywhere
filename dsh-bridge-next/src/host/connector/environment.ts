@@ -1,56 +1,24 @@
 import { execFile, spawn } from 'node:child_process'
 import { constants } from 'node:fs'
-import { access, chmod, copyFile, mkdir, rename } from 'node:fs/promises'
-import { userInfo } from 'node:os'
-import { basename, delimiter, dirname, isAbsolute, join } from 'node:path'
-import { createRequire } from 'node:module'
+import { access, chmod, copyFile, mkdir, rename, rm } from 'node:fs/promises'
+import { basename, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import type { ResolvedConfig } from '../config.js'
-import type { ConnectorSettings } from '../../contracts/connector.js'
 
-/** Host-side locale detection also works before a Client connects or in headless mode. */
-export async function systemLanguages(): Promise<string[]> {
-  const languages = [Intl.DateTimeFormat().resolvedOptions().locale]
-  const locale = process.env['LC_ALL'] || process.env['LC_MESSAGES'] || process.env['LANG']
-  if (locale) languages.push(locale)
-  languages.push(...(process.env['LANGUAGE'] ?? '').split(':').filter(Boolean))
-  if (process.platform === 'darwin') {
-    try {
-      // Node can inherit an English shell locale even when macOS prefers Chinese.
-      const { stdout } = await promisify(execFile)('/usr/bin/defaults', ['read', '-g', 'AppleLanguages'], {
-        encoding: 'utf8', timeout: 1500, windowsHide: true,
-      })
-      languages.push(...(stdout.match(/[a-z]{2,3}(?:[-_][a-z0-9]+)*/gi) ?? []))
-    } catch { /* Use Intl and POSIX locales when system preferences are unavailable. */ }
-  }
-  return languages
+/** What runs the bundled Connector: this host's own Node (or Electron as Node), the entry and the Router. */
+export interface ConnectorLaunch {
+  command: string
+  args: string[]
+  env: Record<string, string>
+  /** The MeshCall Router for this platform the Connector starts for its local control channel. */
+  router: string
 }
 
-const PYPI_SIMPLE = 'https://pypi.org/simple'
+const routerName = (platform: NodeJS.Platform) => platform === 'win32' ? 'meshcall-router.exe' : 'meshcall-router'
 
 /**
- * The chosen PyPI mirror is uv's first index and the official PyPI its
- * fallback: uv takes each package from the first index that has it, so a
- * mirror that filters large wheels (TUNA, USTC and BFSU carry no
- * openai-codex) still installs. Every index is set explicitly, because the
- * bundled project and the inherited environment may declare others; an
- * inherited `UV_INDEX` is dropped when no mirror is chosen. Desktop applies
- * the same rule (desktop-workbench/electron/connector-supervisor.ts).
- */
-export function withPackageIndexes(environment: NodeJS.ProcessEnv, pypiIndexUrl: string): NodeJS.ProcessEnv {
-  const mirror = pypiIndexUrl.trim().replace(/\/+$/, '')
-  const { UV_INDEX: _inherited, ...rest } = environment
-  return {
-    ...rest,
-    UV_DEFAULT_INDEX: PYPI_SIMPLE,
-    UV_INDEX_URL: PYPI_SIMPLE,
-    ...(mirror && mirror !== PYPI_SIMPLE ? { UV_INDEX: mirror } : {}),
-    PIP_INDEX_URL: mirror || PYPI_SIMPLE,
-  }
-}
-
-/**
- * Some package managers unpack the bundled uv without its executable bit. Restore
+ * Some package managers unpack bundled binaries without their executable bit. Restore
  * it in place, or use a private copy when the install directory is read-only.
  */
 export async function ensureExecutable(file: string, fallbackDirectory: string, setMode: typeof chmod = chmod): Promise<string> {
@@ -62,7 +30,7 @@ export async function ensureExecutable(file: string, fallbackDirectory: string, 
   } catch { /* Not ours to change: fall back to a copy. */ }
   const target = join(fallbackDirectory, basename(file))
   await mkdir(fallbackDirectory, { recursive: true })
-  // A rename can replace a uv that is currently running; copying over it cannot.
+  // A rename can replace a binary that is currently running; copying over it cannot.
   const partial = `${target}.${process.pid}`
   await copyFile(file, partial)
   await chmod(partial, 0o755)
@@ -70,31 +38,43 @@ export async function ensureExecutable(file: string, fallbackDirectory: string, 
   return target
 }
 
-export async function resolveUv(config: ResolvedConfig, settings: ConnectorSettings): Promise<string | null> {
-  const command = settings.uvPath || config.uvPath
-  if (!settings.uvPath && config.uvPath === 'uv') {
-    try {
-      // Resolve through the declared dependency so pnpm's isolated layout works.
-      // Use the native binary directly, including when install scripts are disabled.
-      const require = createRequire(import.meta.url)
-      const provider = require.resolve('@dataiku/uv/package.json')
-      const binaryPackage = createRequire(provider).resolve(`@dataiku/uv-${process.platform}-${process.arch}/package.json`)
-      const bundled = join(dirname(binaryPackage), 'bin', process.platform === 'win32' ? 'uv.exe' : 'uv')
-      return await ensureExecutable(bundled, join(config.stateRoot, 'bin'))
-    } catch { /* Missing optional dependency or unsupported platform: try system uv. */ }
+/**
+ * The command line of the bundled Connector (`<connectorDir>/anywhere-cli.js`, built from connector-ts). It runs on
+ * the Node that runs DSH; under DSH Desktop that is Electron, told to act as Node, with a preload that keeps
+ * `ELECTRON_RUN_AS_NODE` out of the commands the Connector starts. `MESHCALL_ROUTER_BINARY` overrides the bundled
+ * Router (development builds carry none).
+ */
+export async function resolveConnectorLaunch(config: ResolvedConfig, configPath: string, host: {
+  execPath: string, platform: NodeJS.Platform, arch: string, electron: boolean, env: NodeJS.ProcessEnv,
+} = { execPath: process.execPath, platform: process.platform, arch: process.arch, electron: Boolean(process.versions.electron), env: process.env }): Promise<ConnectorLaunch> {
+  const entry = join(config.connectorDir, 'anywhere-cli.js')
+  try { await access(entry, constants.R_OK) } catch { throw new Error('未找到内置 Connector，请重新安装插件。') }
+  const target = `${host.platform}-${host.arch}`
+  const configured = host.env['MESHCALL_ROUTER_BINARY']?.trim()
+  let router: string
+  try {
+    router = configured || await ensureExecutable(join(config.connectorDir, 'router', target, routerName(host.platform)), join(config.stateRoot, 'bin'))
+  } catch {
+    throw new Error(`内置 Connector 不支持这台电脑的平台（${target}）。`)
   }
-  const home = userInfo().homedir
-  const paths = [
-    ...(process.env['PATH'] ?? process.env['Path'] ?? '').split(delimiter).filter(Boolean),
-    join(home, '.local', 'bin'), join(home, '.cargo', 'bin'),
-    ...(process.platform === 'darwin' ? ['/opt/homebrew/bin', '/usr/local/bin'] : []),
-  ]
-  const names = process.platform === 'win32' && !command.endsWith('.exe') ? [command, `${command}.exe`] : [command]
-  const candidates = isAbsolute(command) ? [command] : paths.flatMap(path => names.map(name => join(path, name)))
-  for (const candidate of new Set(candidates)) {
-    try { await access(candidate, constants.X_OK); return candidate } catch { /* Try the next PATH entry. */ }
+  const reset = join(config.connectorDir, 'assets', 'electron-node.mjs')
+  return {
+    command: host.execPath,
+    args: [...host.electron ? ['--import', pathToFileURL(reset).href] : [], entry, 'rpc', '--config', configPath],
+    env: host.electron ? { ELECTRON_RUN_AS_NODE: '1', AA_ELECTRON_NODE: host.execPath } : {},
+    router,
   }
-  return null
+}
+
+/**
+ * What the Python Connector of plugin 2.x left in the plugin's data directory: its uv environment, the
+ * materialized source with its uv.lock, and the private copy of uv. Removed once; nothing here is used any more.
+ */
+export async function removePythonEnvironment(stateRoot: string): Promise<void> {
+  for (const path of [['connector-venv'], ['connector-source'], ['bin', 'uv'], ['bin', 'uv.exe']]) {
+    // Windows can hold a file briefly after a process exits.
+    await rm(join(stateRoot, ...path), { recursive: true, force: true, maxRetries: 5 }).catch(() => undefined)
+  }
 }
 
 export function canOpenFolders(): boolean {

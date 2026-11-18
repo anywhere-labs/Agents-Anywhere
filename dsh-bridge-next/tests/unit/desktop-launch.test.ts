@@ -18,7 +18,7 @@ async function writeDesktopRecord(home: string, desktop: Record<string, unknown>
 
 function managerAt(home: string, desktop: DesktopDetection, launched: DesktopLaunchTarget[]) {
   return new OnboardingManager({
-    stateRoot: join(home, 'plugin'), apiBaseUrl: 'https://api.example.test', connectorSourceDir: home, uvPath: 'uv',
+    stateRoot: join(home, 'plugin'), apiBaseUrl: 'https://api.example.test', connectorDir: home, connectorDataDir: join(home, 'v3'),
   }, {
     detect: async () => desktop,
     launchDesktop: async (target) => { launched.push(target) },
@@ -97,7 +97,7 @@ test('a launch failure is reported without leaking the command', async (t) => {
   const home = await mkdtemp(join(tmpdir(), 'aa-desktop-fail-'))
   t.after(() => rm(home, { recursive: true, force: true }))
   const manager = new OnboardingManager({
-    stateRoot: join(home, 'plugin'), apiBaseUrl: 'https://api.example.test', connectorSourceDir: home, uvPath: 'uv',
+    stateRoot: join(home, 'plugin'), apiBaseUrl: 'https://api.example.test', connectorDir: home, connectorDataDir: join(home, 'v3'),
   }, {
     detect: async () => ({ status: 'installed', message: 'installed', executablePath: '/example/Desktop', launchArgs: [], packaged: true }),
     launchDesktop: async () => { throw new Error('spawn failed') },
