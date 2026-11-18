@@ -200,6 +200,8 @@ users = Table(
     Column("avatar", Text),
     Column("created_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
+    # The account's agent collaboration settings (JSON, ``core.agent_collab.AgentCollaborationSettings``).
+    Column("agent_collaboration", Text),
 )
 
 
@@ -450,6 +452,11 @@ sessions = Table(
     Column("latest_item_type", Text),
     Column("latest_item_role", Text),
     Column("latest_item_status", Text),
+    # Who created the session when an Agent did (``SessionOrigin``); NULL for a person's session. Immutable.
+    Column("origin_kind", Text),
+    Column("origin_session_id", Text),
+    Column("origin_device_id", Text),
+    Column("origin_depth", Integer),
     Index(
         "idx_sessions_connector_runtime_source_state",
         "connector_id",
@@ -778,6 +785,8 @@ device_commands = Table(
     ),
     Column("origin", Text, nullable=False, server_default="server"),
     CheckConstraint("origin IN ('server','client','sealed')", name="ck_device_commands_origin"),
+    # Who sent a forwarded command: ``user``, or ``agent:<deviceId>/<sessionId>`` for an Agent with a delegation.
+    Column("actor", Text, nullable=False, server_default="user"),
     Index("idx_device_commands_device_state", "device_id", "state"),
     Index(
         "uq_device_commands_sealed_command",
@@ -826,4 +835,44 @@ previews = Table(
     UniqueConstraint("device_id", "port", name="uq_previews_device_port"),
     Index("idx_previews_user", "user_id"),
     Index("idx_previews_state_expires", "state", "expires_at"),
+)
+
+
+# Delegation tokens issued to a device for its Agent (agent collaboration): only a hash of the token. Revoked with
+# the grant (``collab.grant.changed``), the supervisor session or the device.
+agent_delegations = Table(
+    "agent_delegations",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("device_id", Text, ForeignKey("connectors.id", ondelete="CASCADE"), nullable=False),
+    Column("supervisor_session_id", Text, nullable=False),
+    Column("grant_id", Text, nullable=False),
+    Column("scope_json", Text, nullable=False),
+    Column("token_hash", Text, nullable=False, unique=True),
+    Column("expires_at", Text, nullable=False),
+    Column("revoked_at", Text),
+    Column("created_at", Text, nullable=False),
+    Index("idx_agent_delegations_grant", "device_id", "grant_id"),
+    Index("idx_agent_delegations_supervisor", "supervisor_session_id"),
+)
+
+# Supervision edges the supervisor's device reports (``collab.supervision.changed``): ids and state only.
+collab_edges = Table(
+    "collab_edges",
+    metadata,
+    Column("supervision_id", Text, primary_key=True),
+    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("supervisor_session_id", Text, nullable=False),
+    Column("supervisor_device_id", Text, nullable=False),
+    Column("target_session_id", Text, nullable=False),
+    Column("target_device_id", Text, nullable=False),
+    Column("state", Text, nullable=False),
+    Column("created_by", Text, nullable=False),
+    Column("updated_at", Text, nullable=False),
+    CheckConstraint("state IN ('active','paused','ended')", name="ck_collab_edges_state"),
+    CheckConstraint("created_by IN ('human','agent')", name="ck_collab_edges_created_by"),
+    Index("idx_collab_edges_target", "target_session_id", "state"),
+    Index("idx_collab_edges_supervisor", "supervisor_session_id", "state"),
+    Index("idx_collab_edges_user", "user_id", "state"),
 )

@@ -24,11 +24,13 @@ from agent_server.api.v2_compat import device_upgrade_required
 from agent_server.core.api_namespace import API_V2_PREFIX
 from agent_server.core.client_routes import MAX_REQUEST_BODY_BYTES
 from agent_server.core.device_meshcall import (
+    AgentCaller,
     AttachmentRef,
     ClientCaller,
     ClientServerFacts,
 )
 from agent_server.core.models import SessionView
+from agent_server.deps import agent_principal
 from agent_server.services.client_forward import (
     ClientAnswer,
     ClientForwarder,
@@ -44,11 +46,18 @@ def forwarder_of(conn: Request) -> ClientForwarder:
 
 
 def caller_of(conn: Request, user_id: str) -> ClientCaller:
+    """Who sent the request. A delegated Agent's supervisor session comes from its token (``api.agent_gate``),
+    never from the request."""
+
     headers = conn.headers
+    principal = agent_principal(conn)
     return ClientCaller(
         userId=user_id,
         clientId=headers.get("x-client-id") or None,
         platform=headers.get("x-client-platform") or headers.get("x-device-os") or None,
+        agent=AgentCaller(
+            deviceId=principal.device_id, sessionId=principal.supervisor_session_id, grantId=principal.grant_id
+        ) if principal is not None else None,
     )
 
 

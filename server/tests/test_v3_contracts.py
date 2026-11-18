@@ -261,7 +261,9 @@ def test_required_mode_registers_no_content_methods() -> None:
     assert "aa.device.v1.Runtime" not in required
     commands = set(required["aa.device.v1.Commands"])
     assert "sessionSendMessage" not in commands and "sessionSync" not in commands
-    assert commands == {"status", "runtimeApply", "deviceSettingsApply", "channelSwitch", "previewOpen", "previewClose"}
+    assert commands == {
+        "status", "runtimeApply", "deviceSettingsApply", "channelSwitch", "previewOpen", "previewClose", "collabSignal",
+    }
     assert set(dl.E2EE_COMMAND_METHODS) <= set(dl.COMMAND_METHODS)
     assert set(dl.E2EE_EVENT_METHODS) <= set(dl.EVENT_METHODS)
     off = dl.registered_services("off")

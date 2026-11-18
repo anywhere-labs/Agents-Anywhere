@@ -16,6 +16,8 @@ from agent_server.infra.repositories.store_support import *
 from agent_server.infra.repositories.projects import _clean_workspace_path
 from agent_server.core.models import ConnectorSessionResolution
 from agent_server.infra.db.engine import closing_connection, read_connection
+from agent_server.infra.db.schema import collab_edges as collab_edges_t
+from agent_server.infra.repositories.collab import edges_json_column
 
 
 SESSION_CURSOR_VERSION = 1
@@ -200,6 +202,8 @@ def _session_view_query() -> Any:
         device_runtimes_t.c.name.label("runtime_name"),
         connector_runtime_types_t.c.display_name.label("runtime_type_display_name"),
         _session_sort_at().label("session_sort_at"),
+        edges_json_column(collab_edges_t.c.target_session_id, sessions_t.c.id).label("collab_supervisors"),
+        edges_json_column(collab_edges_t.c.supervisor_session_id, sessions_t.c.id).label("collab_supervised"),
     ).select_from(
         sessions_t.join(
             connectors_t,
@@ -216,6 +220,30 @@ def _session_view_query() -> Any:
             & (connector_runtime_types_t.c.runtime_type == sessions_t.c.runtime),
         )
     )
+
+
+def _session_origin(row: Any) -> dict[str, Any] | None:
+    if not row.get("origin_kind") or not row.get("origin_session_id"):
+        return None
+    origin: dict[str, Any] = {
+        "kind": row["origin_kind"],
+        "bySessionId": row["origin_session_id"],
+        "depth": int(row.get("origin_depth") or 1),
+    }
+    if row.get("origin_device_id"):
+        origin["byDeviceId"] = row["origin_device_id"]
+    return origin
+
+
+def _edge_list(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return []
+    if not isinstance(value, list):
+        return []
+    return sorted((item for item in value if isinstance(item, dict)), key=lambda item: str(item.get("supervisionId")))
 
 
 class SessionRepositoryMixin:
@@ -1911,6 +1939,9 @@ class SessionRepositoryMixin:
             displayUser=json.loads(row["display_user"]) if row.get("display_user") else None,
             planState=row.get("plan_state") or "none",
             goalState=row.get("goal_state") or "none",
+            origin=_session_origin(row),
+            supervisors=_edge_list(row.get("collab_supervisors")),
+            supervised=_edge_list(row.get("collab_supervised")),
             id=session_id,
             connectorId=row["connector_id"],
             projectId=row["project_id"],

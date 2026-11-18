@@ -20,6 +20,7 @@ from agent_server.core.device_settings import (
     apply_device_settings_patch,
     device_settings_command_payload,
     device_settings_from_stored,
+    device_settings_payload,
 )
 from agent_server.core.models import ConnectorView
 
@@ -71,7 +72,10 @@ async def update_device_settings(
     link_contract = getattr(store, "connector_link_contract", None)
     if link_contract is None or not await link_contract(connector_id):
         return settings, False
-    return settings, await deliver_device_settings_v3(commands, connector_id, settings)
+    # The device gets its own settings with the account's agent collaboration settings beside them.
+    collaboration = getattr(store, "connector_agent_collaboration", None)
+    payload = device_settings_payload(settings, await collaboration(connector_id) if collaboration else None)
+    return settings, await deliver_device_settings_v3(commands, connector_id, payload)
 
 
 async def deliver_device_settings_v3(

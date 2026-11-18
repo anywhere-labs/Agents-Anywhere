@@ -84,8 +84,13 @@ class TunnelSession:
         mesh: DeviceMesh,
         hub: DeviceLinkHub,
         send: Send,
+        reach: Callable[[str], bool] | None = None,
     ) -> None:
+        """``reach``: which devices this socket may open channels to besides the user's own check (a delegated
+        Agent's scope); None allows every device of the user."""
+
         self._user_id = user_id
+        self._reach = reach
         self._store = store
         self._mesh = mesh
         self._hub = hub
@@ -110,6 +115,8 @@ class TunnelSession:
             owned = (await self._store.get_connector(device_id)).userId == self._user_id
         except KeyError:
             owned = False
+        if owned and self._reach is not None:
+            owned = bool(self._reach(device_id))
         self._owned[device_id] = owned
         return owned
 

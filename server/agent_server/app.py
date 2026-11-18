@@ -18,6 +18,7 @@ from redis.exceptions import RedisError
 from agent_server.api import (
     admin,
     admin_usage,
+    agent_collaboration,
     agents,
     announcements,
     auth,
@@ -39,6 +40,7 @@ from agent_server.api import (
     projects,
     runtime_workflows,
     service,
+    session_collab,
     session_goals,
     session_planning,
     session_queue,
@@ -49,6 +51,7 @@ from agent_server.api import (
     tokens_link,
     tunnel,
 )
+from agent_server.api.agent_gate import AgentGateMiddleware
 from agent_server.api.e2ee_gate import E2eeGateMiddleware
 from agent_server.core.api_namespace import API_V2_PREFIX, API_V3_PREFIX
 from agent_server.core.auth import require_server_secret
@@ -80,6 +83,7 @@ from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.infra.tokens_access_cache import TokensAccessCache
 from agent_server.infra.tokens_client import TokensClient
 from agent_server.infra.ws_tickets import ClientWsTicketManager
+from agent_server.services.agent_collab import CollabService
 from agent_server.services.channel_reconciliation import ChannelReconciler
 from agent_server.services.client_forward import ClientForwarder
 from agent_server.services.connector_deletion import ConnectorDeletionRecovery
@@ -233,6 +237,7 @@ def create_app(
                 await app.state.usage_recorder.close()
             except Exception:  # noqa: BLE001 - shutdown must continue
                 logger.exception("failed to flush usage events on shutdown")
+            await app.state.collab.close()
             await app.state.capability_refresh.close()
             try:
                 await app.state.session_watch.close()
@@ -253,6 +258,8 @@ def create_app(
                         await app.state.store.close()
 
     app = FastAPI(title="Agent Server", version="2.2.0", lifespan=lifespan)
+    # Innermost: requests with a delegation token are admitted (or refused) after the E2EE gate.
+    app.add_middleware(AgentGateMiddleware)
     # Inside CORS, so a refused request still carries CORS headers and the browser can read e2ee_required.
     app.add_middleware(E2eeGateMiddleware, settings=e2ee_settings)
     cors_origins = os.environ.get("AGENT_SERVER_CORS_ORIGINS")
@@ -360,6 +367,14 @@ def create_app(
         app.state.store, app.state.device_mesh, app.state.device_link_hub, e2ee_settings=_e2ee_settings
     )
     app.state.device_link.commands = app.state.device_commands
+    # Agent collaboration: settings, delegations, supervision edges and target signals.
+    app.state.collab = CollabService(
+        app.state.store,
+        app.state.timeline_broker,
+        app.state.device_commands,
+        app.state.device_link_hub.is_online,
+    )
+    app.state.device_link.collab = app.state.collab
     # Every device-served client route of a device-meshcall device goes through ``Client/call``.
     app.state.client_forwarder = ClientForwarder(
         app.state.device_mesh, app.state.device_link_hub, app.state.device_commands
@@ -495,6 +510,9 @@ def create_app(
     app.include_router(previews.internal_router)
     app.include_router(projects.router, prefix=API_V2_PREFIX)
     app.include_router(sessions.router, prefix=API_V2_PREFIX)
+    app.include_router(session_collab.router, prefix=API_V2_PREFIX)
+    app.include_router(agent_collaboration.router, prefix=API_V2_PREFIX)
+    app.include_router(agent_collaboration.device_router)
     app.include_router(session_planning.router, prefix=API_V2_PREFIX)
     app.include_router(session_queue.router, prefix=API_V2_PREFIX)
     app.include_router(session_goals.router, prefix=API_V2_PREFIX)

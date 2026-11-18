@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import Depends, Header, HTTPException
 from starlette.requests import HTTPConnection
 
+from agent_server.core.agent_collab import AGENT_PRINCIPAL_STATE, AgentPrincipal
 from agent_server.core.auth import verify_user_access_claims
 from agent_server.core.e2ee_settings import E2eeSettings
 from agent_server.core.models import UserView
@@ -224,12 +225,26 @@ async def authenticate_access_token(app: Any, token: str) -> tuple[str, str | No
     return await tokens.authenticate(token)
 
 
+def agent_principal(conn: HTTPConnection) -> AgentPrincipal | None:
+    """The delegated Agent a request authenticated as (``api.agent_gate``), or None for a person."""
+
+    state = conn.scope.get("state")
+    principal = state.get(AGENT_PRINCIPAL_STATE) if isinstance(state, dict) else None
+    return principal if isinstance(principal, AgentPrincipal) else None
+
+
 async def current_user_claims(
     conn: HTTPConnection,
     authorization: str | None = Header(None, alias="Authorization"),
 ) -> tuple[str, str | None]:
-    """``(user_id, family_id)`` of the bearer token; 401 when it is invalid or its login was revoked."""
+    """``(user_id, family_id)`` of the bearer token; 401 when it is invalid or its login was revoked.
 
+    A delegated Agent (admitted by ``api.agent_gate``) is its account's user without a login family.
+    """
+
+    principal = agent_principal(conn)
+    if principal is not None:
+        return principal.user_id, None
     prefix = "Bearer "
     if authorization is None or not authorization.startswith(prefix):
         raise HTTPException(status_code=401, detail="missing user access token")
@@ -253,7 +268,7 @@ async def current_user_id(
     """
     user_id, _family = await current_user_claims(conn, authorization)
     recorder = getattr(conn.app.state, "usage_recorder", None)
-    if recorder is not None:
+    if recorder is not None and agent_principal(conn) is None:
         await recorder.touch_user(user_id)
     return user_id
 

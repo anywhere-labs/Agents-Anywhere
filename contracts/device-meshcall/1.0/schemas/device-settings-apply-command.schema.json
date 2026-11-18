@@ -1,23 +1,106 @@
 {
   "$defs": {
-    "ConnectorDeviceSettings": {
+    "AgentAuthority": {
+      "additionalProperties": false,
+      "description": "What a supervisor may do to a session on a person's behalf; steering and closing by default.",
       "properties": {
+        "close": {
+          "default": true,
+          "title": "Close",
+          "type": "boolean"
+        },
+        "interrupt": {
+          "default": false,
+          "title": "Interrupt",
+          "type": "boolean"
+        },
+        "respondApproval": {
+          "default": false,
+          "title": "Respondapproval",
+          "type": "boolean"
+        },
+        "reviewPlan": {
+          "default": false,
+          "title": "Reviewplan",
+          "type": "boolean"
+        },
+        "steer": {
+          "default": true,
+          "title": "Steer",
+          "type": "boolean"
+        }
+      },
+      "title": "AgentAuthority",
+      "type": "object"
+    },
+    "AgentCollaborationInstance": {
+      "additionalProperties": false,
+      "description": "One runtime instance's switches (keyed by its ``runtimeId``).",
+      "properties": {
+        "authority": {
+          "$ref": "#/$defs/AgentAuthority"
+        },
+        "crossDevice": {
+          "default": false,
+          "title": "Crossdevice",
+          "type": "boolean"
+        },
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        }
+      },
+      "title": "AgentCollaborationInstance",
+      "type": "object"
+    },
+    "AgentCollaborationSettings": {
+      "additionalProperties": false,
+      "description": "``GET/PUT /api/v2/agent-collaboration/settings``; also the device settings key ``agentCollaboration``.\n\nAn instance is on only when the account and the instance are enabled; it may reach other devices only when\nboth ``crossDevice`` flags are on as well.",
+      "properties": {
+        "crossDevice": {
+          "default": false,
+          "title": "Crossdevice",
+          "type": "boolean"
+        },
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "instances": {
+          "additionalProperties": {
+            "$ref": "#/$defs/AgentCollaborationInstance"
+          },
+          "title": "Instances",
+          "type": "object"
+        }
+      },
+      "title": "AgentCollaborationSettings",
+      "type": "object"
+    },
+    "DeviceSettingsPayload": {
+      "description": "What a device gets (``device.settings.apply``, ``LinkWelcome.desired.deviceSettings``): its own settings and\nthe account's agent collaboration settings, which every device of the account shares.",
+      "properties": {
+        "agentCollaboration": {
+          "$ref": "#/$defs/AgentCollaborationSettings"
+        },
         "confirmQuitOnShutdown": {
           "default": false,
           "title": "Confirmquitonshutdown",
           "type": "boolean"
         }
       },
-      "title": "ConnectorDeviceSettings",
+      "title": "DeviceSettingsPayload",
       "type": "object"
     }
   },
   "$id": "urn:agents-anywhere:device-meshcall:1.0:device-settings-apply-command",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "``device.settings.apply``: the whole settings object, as ``LinkWelcome.desired`` has it.",
+  "description": "``device.settings.apply``: the whole settings object, as ``LinkWelcome.desired`` has it (the device's own\nsettings and the account's ``agentCollaboration``).",
   "properties": {
     "settings": {
-      "$ref": "#/$defs/ConnectorDeviceSettings"
+      "$ref": "#/$defs/DeviceSettingsPayload"
     }
   },
   "required": [

@@ -581,7 +581,7 @@
       "model": "DeviceSettingsApplyCommand",
       "path": "schemas/device-settings-apply-command.schema.json",
       "pydanticMode": "validation",
-      "sha256": "cd927191f09b4c3c2476fa3859733ead1d787e9eb5e9f47c351938d4797a25cb",
+      "sha256": "6e473d1e26cbf796b82f75169bafd50087eb9ec73c7689327a4283231e92d440",
       "slug": "device-settings-apply-command"
     },
     {
@@ -678,7 +678,7 @@
   "extras": [
     {
       "path": "device.meshcall.json",
-      "sha256": "b30301fe1ac7954f427c3f4b52a22faee1f5d9c9ee8df185eaa0bf4266c147cc"
+      "sha256": "29a8b15f0deebc4d631fba8b986e360bf780a4cb2900c49d08cfa08a53bbbf8f"
     },
     {
       "path": "mesh-errors.json",

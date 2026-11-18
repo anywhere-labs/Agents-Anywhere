@@ -14,7 +14,7 @@ from agent_server.core.e2ee_settings import requires_secure_channel
 API_MODULES = (
     "connectors", "connector_files", "connector_runtimes", "runtime_workflows", "connector_shell",
     "connector_terminal", "client_ws", "sessions", "session_planning", "session_queue", "session_goals",
-    "sessions_fs", "sessions_terminal", "shares",
+    "sessions_fs", "sessions_terminal", "shares", "session_collab",
 )
 
 
