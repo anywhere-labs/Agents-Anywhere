@@ -551,6 +551,19 @@ def wait_session(e2e: E2E, session_id: str, status: str, timeout: float = 30.0) 
                     f"session {status}")
 
 
+def wait_first_turn_reported(e2e: E2E, session_id: str, timeout: float = 30.0) -> dict[str, Any]:
+    """Waits until the Server holds the device's summary of the session's finished first turn.
+
+    ``wait_session(..., "idle")`` alone also matches the directory row the Server creates before the device's
+    first ``session.summary`` arrives; until the outbox delivers it the stored state can still change
+    (pending, running, idle). A turn end (``latestTurnEndSeq``) only comes with the device's report.
+    """
+    return wait_for(
+        lambda: (s := session_meta(e2e, session_id))["status"] == "idle" and s["latestTurnEndSeq"] > 0 and s,
+        timeout, 0.2, "the device's summary of the finished first turn",
+    )
+
+
 def new_session(e2e: E2E, content: str) -> str:
     created = e2e.api.post(
         "/sessions/create-and-start",

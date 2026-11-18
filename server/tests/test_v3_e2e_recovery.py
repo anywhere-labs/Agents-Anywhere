@@ -42,6 +42,7 @@ from v3_e2e_harness import (
     session_meta,
     skip_reason,
     texts,
+    wait_first_turn_reported,
     wait_for,
     wait_session,
     wait_text,
@@ -77,7 +78,9 @@ def recovery(request: pytest.FixtureRequest) -> Iterator[E2E]:
             create_project(env)
             env.session_id = new_session(env, "hello recovery")
             wait_text(env, env.session_id, "echo: hello recovery")
-            wait_session(env, env.session_id, "idle")
+            # The first turn's summaries are on the Server before a kill: with them still in the outbox, the
+            # Server's state after a restart lags until the device has resent them.
+            wait_first_turn_reported(env, env.session_id)
             yield env
     finally:
         if redis is not None:
