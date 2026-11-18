@@ -451,7 +451,14 @@ class DeviceLinkService:
             message = {"sessionId": session_id, "queueState": payload["queue"]}
         elif method == "runtime.notice.updated" and isinstance(payload.get("notice"), dict):
             notice = payload["notice"]
-            message = {"sessionId": session_id, "notices": [notice], "nextSeq": int(notice.get("updatedSeq") or 0)}
+            sequence = int(notice.get("updatedSeq") or 0)
+            # A v3 device's notice is live state without a session sequence: forwarded as such
+            # instead of being dropped for its missing sequence.
+            message = (
+                {"sessionId": session_id, "notices": [notice], "nextSeq": sequence}
+                if sequence > 0
+                else {"sessionId": session_id, "liveNotices": [notice]}
+            )
         elif method == "runtime.status":
             # v2 planning/goal state events ride in ``RuntimeStatusEvent.status`` as
             # ``{event: <v2 name>, revision, state: <client-shaped state>}``.

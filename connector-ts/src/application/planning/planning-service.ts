@@ -49,6 +49,9 @@ export class PlanningService {
           state = observeMode(state, mode)
           break
         }
+        case 'submit_task':
+          // Plan mode and the task's delivery: `MessageService.submitPlanTask`.
+          throw new UseCaseError('invalid_argument', 'submit_task carries a task to send; it is not a mode switch.')
         case 'approve_and_execute':
         case 'request_revision':
         case 'dismiss_review': {
@@ -88,6 +91,26 @@ export class PlanningService {
     if (binding.session.planning === undefined) throw new UseCaseError('planning_unavailable', 'This Runtime has no planning mode.')
     await binding.session.planning.setMode('plan')
     await this.savePlanning(sessionId, observeMode(await this.planningOf(sessionId), 'plan'))
+  }
+
+  /**
+   * `/plan <task>` on an open session: plan mode is switched on before the task is sent. A Runtime without a
+   * planning mode, or a switch that fails, is a rejection: nothing is sent and the client keeps the draft.
+   */
+  public async enterPlanForTask(sessionId: string): Promise<void> {
+    await this.kernel.serial(sessionId, async () => {
+      try {
+        await this.enterPlanForCreation(sessionId)
+      } catch (error) {
+        if (error instanceof UseCaseError) throw error
+        throw new UseCaseError('planning_unavailable', `Plan mode could not be switched on: ${(error as Error)?.message ?? String(error)}`)
+      }
+    })
+  }
+
+  /** The planning state of a session as a client reads it (`PlanningResponse.state`). */
+  public async wireState(sessionId: string): Promise<Record<string, unknown>> {
+    return planningWire(await this.planningOf(sessionId))
   }
 
   public async onPlanUpdated(sessionId: string, event: Extract<RuntimeEvent, { type: 'plan.updated' }>): Promise<void> {

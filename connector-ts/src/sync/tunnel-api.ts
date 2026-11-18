@@ -21,7 +21,7 @@ import type { AttachmentRef } from '../generated/device-meshcall/v1_0/client-cal
 import type { CommandAck } from '../generated/device-meshcall/v1_0/command-ack.js'
 import type { CommandCall } from '../generated/device-meshcall/v1_0/command-call.js'
 import { appCommandViews, commandText, commandViews, slashResult, type SessionCommand } from './client-api/commands.js'
-import { TunnelHttpError, conflict, errorBody, int, invalid, notFound, okBody, parse, record, statusOf, text, type Route } from './client-api/http.js'
+import { TunnelHttpError, conflict, errorBody, int, invalid, isRecord, notFound, okBody, parse, record, statusOf, text, type Route } from './client-api/http.js'
 import { NOTICE_GONE_CODES, capabilityUsable, findCapability, noticeAnswerInput, parsePlanCommand, sessionSourceError, unsupportedMediaType } from './client-api/rules.js'
 import { capabilitySetView, goalView, modelCatalogView, noticeView, permissionCatalogView, planningView, runtimeStateView } from './client-api/views.js'
 import { WorkspaceRoutes, type PreviewFacts, type RuntimeCatalogs, type TransferFacts, type WorkspaceCall } from './client-api/workspace-routes.js'
@@ -719,7 +719,19 @@ export class DeviceTunnelApi implements TunnelApi {
     if (typeof body.command === 'string' && PLAN_REVIEW_COMMANDS.has(body.command)) await this.requireCapability(session, call, 'session.plan_review')
     if (Array.isArray(body.attachments) && body.attachments.length > 0) await this.requireCapability(session, call, 'runtime.attachment')
     const operationId = call.command?.commandId ?? text(body.operationId)
-    return { status: 200, body: await this.commandAs(null, caller, call, 'sessionPlanning', { ...body, sessionId, ...(operationId !== null ? { operationId } : {}) }, operationId) }
+    let payload: Record<string, unknown> = { ...body, sessionId, ...(operationId !== null ? { operationId } : {}) }
+    if (body.command === 'submit_task') {
+      // The task goes out as a message: the same source, takeover and attachment checks as `POST runtime/messages`.
+      const source = sessionSourceError({ archived: this.archived(session, call), sourceAvailability: session.sourceAvailability })
+      if (source !== null) throw conflict(source.code, source.message)
+      this.requireTakeover(session, call)
+      if (typeof body.content !== 'string' || body.content.trim() === '') throw invalid('content is required')
+      const attachments = attachmentsOf(body, call.attachments)
+      await this.requireAttachmentTypes(session, call, attachments)
+      const { sealedAttachmentKeys: _keys, ...rest } = payload
+      payload = { ...rest, attachments }
+    }
+    return { status: 200, body: await this.commandAs(null, caller, call, 'sessionPlanning', payload, operationId) }
   }
 
   private async goal(caller: ChannelCaller, call: Call, sessionId: string, body: Record<string, unknown>): Promise<TunnelApiResponse> {
@@ -794,7 +806,7 @@ export class DeviceTunnelApi implements TunnelApi {
       }
     })()
     const stopFacts = this.deps.facts?.subscribe(sessionId, (method, payload) => {
-      emit(protocolEvent(sessionId, 0, method, payload, this.now()) as unknown as Record<string, unknown>)
+      emit(sessionFactEvent(sessionId, method, payload, this.now()) as unknown as Record<string, unknown>)
     })
     return () => {
       abort.abort()
@@ -824,3 +836,20 @@ export class DeviceTunnelApi implements TunnelApi {
   }
 }
 
+/**
+ * A live session fact as the client event the Server would forward for it in normal mode (`device_link`
+ * `_forward_session_event`): notices in their client shape, planning and goal state under their own event names.
+ * Live facts take sequence 0: they never move a client's cursor.
+ */
+export function sessionFactEvent(sessionId: string, method: string, payload: Record<string, unknown>, emittedAt: string): ReturnType<typeof protocolEvent> {
+  if (method === 'runtime.notice.updated') {
+    if (isRecord(payload.notice)) return protocolEvent(sessionId, 0, method, { notice: noticeView(payload.notice) }, emittedAt)
+  }
+  if (method === 'runtime.status') {
+    const status = record(payload.status)
+    if ((status.event === 'planning.state.updated' || status.event === 'goal.state.updated') && isRecord(status.state)) {
+      return protocolEvent(sessionId, 0, status.event, { state: status.state }, emittedAt)
+    }
+  }
+  return protocolEvent(sessionId, 0, method, payload, emittedAt)
+}

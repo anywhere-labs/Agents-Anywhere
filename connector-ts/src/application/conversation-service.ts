@@ -185,6 +185,10 @@ export class ConversationService implements SessionEventSink {
     return this.plans.planning(sessionId, request, receipt)
   }
 
+  public submitPlanTask(command: SendMessageCommand, context: CommandContext): Promise<Record<string, unknown>> {
+    return this.messages.submitPlanTask(command, context)
+  }
+
   public goal(sessionId: string, request: GoalRequest, receipt?: CommandReceipt | null): Promise<Record<string, unknown>> {
     return this.goals.goal(sessionId, request, receipt)
   }

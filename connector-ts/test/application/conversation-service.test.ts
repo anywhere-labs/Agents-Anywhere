@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { CommandInbox } from '../../src/application/inbound/index.js'
 import { ConversationService, platformUserItemId } from '../../src/application/index.js'
-import type { NewSessionSpec, RuntimeHandle, RuntimeHandles, OpenTarget } from '../../src/application/ports/index.js'
+import type { NewSessionSpec, PlanningPort, RuntimeHandle, RuntimeHandles, OpenTarget } from '../../src/application/ports/index.js'
 import { inProcessStore, openSqliteStore, type RemoteStore } from '../../src/store/index.js'
 import { DeviceReaders, MemoryChangeFeed, OutboxSignal, joinChunks, chunkJson, outboxStream, plainSealer, watchSession } from '../../src/sync/index.js'
 import { FakeRuntimeSession } from '../support/fake-runtime-session.js'
@@ -291,6 +291,84 @@ describe('runtime events', () => {
     expect((await store.timeline.get('sess_1', 'a1'))?.status).toBe('failed')
     expect((await store.timeline.get('sess_1', 'aa_turn_failed_t1'))?.content).toMatchObject({ kind: 'error' })
     expect(service.isBound('sess_1')).toBe(false)
+  })
+})
+
+describe('notices', () => {
+  it('tells every surface an answer is being handled, and opens the card again when forwarding fails', async () => {
+    await makeSession()
+    await service.binding('sess_1')
+    const runtime = sessions[0]!
+    runtime.emit({ type: 'turn.started', turnId: 't1', origin: 'user' })
+    runtime.emit({ type: 'interaction.opened', interactionId: 'perm1', kind: 'approval', title: 'Run ls?', options: [{ id: 'allow', label: 'Allow', kind: 'allow_once' }], turnId: 't1' })
+    await settle()
+    runtime.respond = async () => {
+      throw new Error('pipe closed')
+    }
+    await expect(service.respondNotice('sess_1', 'perm1', 'r1', { kind: 'option', optionId: 'allow' })).rejects.toThrow('pipe closed')
+    const statuses = () => live.filter(event => event.method === 'runtime.notice.updated').map(event => (event.payload.notice as { status: string; sessionId: string }))
+    expect(statuses().map(notice => notice.status)).toEqual(['open', 'responding', 'open'])
+    expect(statuses().every(notice => notice.sessionId === 'sess_1')).toBe(true)
+    runtime.emit({ type: 'turn.ended', turnId: 't1', reason: 'end_turn' })
+    await settle(40)
+    expect(statuses().at(-1)?.status).toBe('expired')
+  })
+})
+
+describe('plan tasks', () => {
+  async function planningSession(setMode: (mode: 'plan' | 'normal') => Promise<void>): Promise<{ modes: string[]; runtime: FakeRuntimeSession }> {
+    await makeSession()
+    await service.binding('sess_1')
+    const runtime = sessions[0]!
+    const modes: string[] = []
+    ;(runtime as { planning?: PlanningPort }).planning = {
+      setMode: async mode => {
+        modes.push(mode)
+        await setMode(mode)
+      },
+      current: async () => ({ mode: 'unknown' }),
+    }
+    return { modes, runtime }
+  }
+
+  const submit = (commandId: string, content = 'design the cache') => ({ commandId, deadline: 'x', p: { sessionId: 'sess_1', command: 'submit_task', operationId: commandId, content } })
+
+  it('switches an open session to plan mode, then sends the task once', async () => {
+    const { modes, runtime } = await planningSession(async () => undefined)
+    const inbox = new CommandInbox(store, clock, service)
+    const ack = await inbox.handle('sessionPlanning', submit('op1'))
+    expect(ack).toMatchObject({ outcome: 'accepted', r: { operationId: 'op1', outcome: 'applied', ok: true, state: { effectiveMode: 'plan' } } })
+    await settle()
+    expect(modes).toEqual(['plan'])
+    expect(runtime.calls.filter(call => call.method === 'prompt')).toMatchObject([{ input: { text: 'design the cache' }, delivery: { clientMessageId: 'op1' } }])
+    // The receipt replays; a retry that finds no receipt finds the delivery and sends nothing again.
+    expect(await inbox.handle('sessionPlanning', submit('op1'))).toMatchObject({ outcome: 'accepted', r: { ok: true } })
+    await service.submitPlanTask({ sessionId: 'sess_1', clientMessageId: 'op1', content: 'design the cache' }, ctx())
+    await settle()
+    expect(modes).toEqual(['plan'])
+    expect(runtime.calls.filter(call => call.method === 'prompt')).toHaveLength(1)
+    expect(live.some(event => event.method === 'runtime.status' && (event.payload.status as { event?: string }).event === 'planning.state.updated')).toBe(true)
+  })
+
+  it('sends nothing when plan mode cannot be switched on', async () => {
+    const { runtime } = await planningSession(async () => {
+      throw new Error('mode refused')
+    })
+    const inbox = new CommandInbox(store, clock, service)
+    expect(await inbox.handle('sessionPlanning', submit('op1'))).toMatchObject({ outcome: 'rejected', e: { code: 'planning_unavailable' } })
+    await settle()
+    expect(runtime.calls.filter(call => call.method === 'prompt')).toEqual([])
+    expect(await store.deliveries.get('sess_1', 'op1')).toBeNull()
+  })
+
+  it('refuses a busy session before switching modes, and an empty task', async () => {
+    const { modes, runtime } = await planningSession(async () => undefined)
+    const inbox = new CommandInbox(store, clock, service)
+    expect(await inbox.handle('sessionPlanning', submit('op0', '  '))).toMatchObject({ outcome: 'rejected', e: { code: 'invalid_argument' } })
+    runtime.emit({ type: 'turn.started', turnId: 't1', origin: 'user' })
+    await settle()
+    expect(await inbox.handle('sessionPlanning', submit('op1'))).toMatchObject({ outcome: 'rejected', e: { code: 'session_busy' } })
+    expect(modes).toEqual([])
   })
 })
 

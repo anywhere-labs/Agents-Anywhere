@@ -49,7 +49,7 @@ export class TurnLifecycle {
     const at = deps.clock.nowIso()
     const before = await deps.store.sessions.get(sessionId)
     const closed = await deps.store.interactions.expireBlocking(sessionId, 'turn_ended', at)
-    for (const interaction of closed) this.kernel.emitNotice(interaction, 'expired')
+    for (const interaction of closed) this.kernel.emitNotice(interaction)
     await this.kernel.patchSession(sessionId, { status: after.status, activeTurn: null, turnEnded: true, lastActivityAt: at })
     if (before !== null) {
       for (const interaction of closed) this.kernel.countApprovalClosed(before, interaction)

@@ -37,6 +37,7 @@ from agent_server.core.device_meshcall import (
     READ_PAYLOADS,
     RuntimeStatusEvent,
 )
+from agent_server.core.events import events_from_invalidation
 from agent_server.core.goal.models import GoalState
 from agent_server.core.planning.models import PlanDocument, PlanningState
 from agent_server.core.protocol import ProtocolCapabilitySet
@@ -73,6 +74,39 @@ def test_planning_and_goal_events_of_a_real_device_reach_subscribers() -> None:
         PlanningState.model_validate(planning["planningState"])
         assert goal["goalState"] == SHAPES["event.goal"]["status"]["state"]
         GoalState.model_validate(goal["goalState"])
+
+    asyncio.run(scenario())
+
+
+def test_a_device_notice_without_a_sequence_reaches_subscribers_live() -> None:
+    published: list[tuple[str, dict[str, Any]]] = []
+
+    class Broker:
+        async def publish(self, session_id: str, message: dict[str, Any]) -> None:
+            published.append((session_id, message))
+
+    notice = {
+        "noticeId": "perm1",
+        "sessionId": SID,
+        "type": "interaction",
+        "interactionType": "approval",
+        "title": "Run ls?",
+        "status": "open",
+        "responseRequired": True,
+        "actions": [{"actionId": "allow", "label": "Allow", "style": "primary"}],
+        "blocking": {"scope": "session", "targetId": SID},
+    }
+
+    async def scenario() -> None:
+        service = DeviceLinkService(None, None, SimpleNamespace(), None, Broker())  # type: ignore[arg-type]
+        await service.handle_event("conn_shape", "runtime.notice.updated", {"sessionId": SID, "notice": notice})
+        [(session_id, message)] = published
+        assert session_id == SID
+        [event] = events_from_invalidation(message)
+        assert event.type == "runtime.notice.updated"
+        assert event.sequence == 0
+        assert event.payload["notice"]["noticeId"] == "perm1"
+        assert event.payload["notice"]["actions"][0]["input"]["required"] is False
 
     asyncio.run(scenario())
 

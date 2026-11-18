@@ -166,6 +166,9 @@ export const REQUEST_PARSERS = {
       ...(expectedRevision !== undefined ? { expectedRevision } : {}),
       ...optional('epoch'),
       ...optional('feedback'),
+      // `submit_task`: the task to plan and its attachments.
+      ...(p.content !== undefined ? { content: optionalString(p.content) } : {}),
+      ...(Array.isArray(p.attachments) ? { attachments: p.attachments as NonNullable<Planning['attachments']> } : {}),
     }
   },
   'session.goal': (p): Goal => ({

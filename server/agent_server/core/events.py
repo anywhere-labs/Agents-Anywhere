@@ -4,6 +4,9 @@ import hashlib
 import json
 from typing import Any
 
+from pydantic import ValidationError
+
+from agent_server.core.models import NoticeIn
 from agent_server.core.protocol import (
     PROTOCOL_MAX_REVISION,
     ProtocolEventEnvelope,
@@ -258,6 +261,22 @@ def events_from_invalidation(payload: dict[str, Any]) -> list[ProtocolEventEnvel
                     )
                 )
 
+    # Notices of v3 devices: live state with no session sequence of their own (``Link/attach``
+    # ``runtime.notice.updated``). Sequence 0 so they never move a client's cursor; clients order a
+    # notice by its status and revision.
+    live_notices = payload.get("liveNotices")
+    if isinstance(live_notices, list):
+        for notice in live_notices:
+            if isinstance(notice, dict):
+                events.append(
+                    protocol_event(
+                        session_id,
+                        sequence=0,
+                        event_type="runtime.notice.updated",
+                        payload={"notice": client_notice(notice)},
+                    )
+                )
+
     catalogs = payload.get("catalogs")
     if isinstance(catalogs, dict) and next_sequence > 0:
         for catalog_type, catalog in catalogs.items():
@@ -302,3 +321,10 @@ def notice_with_event_sequence(
     }
 
 
+def client_notice(notice: dict[str, Any]) -> dict[str, Any]:
+    """A device notice with the defaults clients expect (``NoticeIn``: source, severity, action input)."""
+
+    try:
+        return NoticeIn.model_validate(notice).model_dump(mode="json", by_alias=True)
+    except ValidationError:
+        return notice

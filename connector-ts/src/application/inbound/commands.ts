@@ -113,7 +113,9 @@ export class CommandInbox {
       register('session.creation.respond', workflow(values => preparations.respondCreation(values)))
       register('session.creation.cancel', workflow(values => preparations.cancelCreation(values)))
     }
-    register('session.planning', async (p, context) => untyped<'session.planning'>(service.planning(p.sessionId, {
+    register('session.planning', async (p, context) => p.command === 'submit_task'
+      ? untyped<'session.planning'>(service.submitPlanTask({ sessionId: p.sessionId, clientMessageId: p.operationId, content: p.content ?? '', attachments: (p.attachments ?? []) as unknown as AttachmentRef[] }, context))
+      : untyped<'session.planning'>(service.planning(p.sessionId, {
       command: p.command,
       operationId: p.operationId,
       ...(p.reviewId !== undefined ? { reviewId: p.reviewId } : {}),

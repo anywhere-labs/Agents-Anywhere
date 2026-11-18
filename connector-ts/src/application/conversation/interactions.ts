@@ -18,11 +18,15 @@ export class InteractionService {
     const store = this.kernel.deps.store
     const decision = await store.interactions.respond(sessionId, noticeId, responseId)
     if (decision.kind === 'duplicate') return { status: decision.interaction.state }
+    // Every surface sees the answer is being handled, and the card opens again if forwarding fails.
+    this.kernel.emitNotice(decision.interaction)
     try {
       const binding = await this.bindings.binding(sessionId)
       await binding.session.respond(noticeId, answer)
     } catch (error) {
-      await store.interactions.save(interactionRules.reopen(decision.interaction))
+      const reopened = interactionRules.reopen(decision.interaction)
+      await store.interactions.save(reopened)
+      this.kernel.emitNotice(reopened)
       throw error
     }
     return { status: 'responding' }
@@ -71,6 +75,6 @@ export class InteractionService {
     const session = await this.kernel.requireSession(sessionId)
     if (interactionRules.isActive(current)) this.kernel.countApprovalClosed(session, next)
     if (session.status === 'waiting_approval' && (await deps.store.interactions.list(sessionId, true)).length === 0) await this.kernel.patchSession(sessionId, { status: 'running' })
-    this.kernel.emitNotice(next, next.state === 'resolved' ? 'resolved' : 'expired')
+    this.kernel.emitNotice(next)
   }
 }

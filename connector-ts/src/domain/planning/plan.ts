@@ -307,7 +307,7 @@ export interface PlanningCapabilities {
 
 /**
  * The commands a session accepts, from the Runtime's capabilities: `session.planning` (switch the mode) and
- * `session.plan_review` (answer a review). `submit_task` is the Server's creation flow, never a device command.
+ * `session.plan_review` (answer a review). `submit_task` (plan mode, then the task as a message) is not listed: it is accepted wherever `enter_plan` is.
  */
 export function planningCapabilities(input: { readonly modes: boolean; readonly review: boolean }): PlanningCapabilities {
   const actions: PlanningAction[] = [

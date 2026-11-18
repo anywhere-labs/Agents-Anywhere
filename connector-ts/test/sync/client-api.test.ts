@@ -18,6 +18,7 @@ import {
   terminalV2View,
 } from '../../src/sync/client-api/views.js'
 import type { Session } from '../../src/domain/conversation/index.js'
+import { sessionFactEvent } from '../../src/sync/tunnel-api.js'
 
 const NOW = '2026-11-17T00:00:00.000Z'
 
@@ -214,5 +215,23 @@ describe('client views', () => {
     roots.prune('browse_d', new Set())
     expect(roots.get('t1')).toBeNull()
     expect(roots.get('t2')).not.toBeNull()
+  })
+})
+
+describe('live session facts on a secure channel (sessionFactEvent)', () => {
+  const at = '2026-11-18T00:00:00.000Z'
+
+  it('sends notices in their client shape and planning and goal state under their own event names', () => {
+    const notice = sessionFactEvent('sess_1', 'runtime.notice.updated', { sessionId: 'sess_1', notice: { noticeId: 'n1', sessionId: 'sess_1', type: 'interaction', title: 'Run ls?', status: 'open', actions: [{ actionId: 'allow', label: 'Allow' }] } }, at)
+    expect(notice).toMatchObject({ type: 'runtime.notice.updated', sequence: 0, sessionId: 'sess_1', payload: { notice: { noticeId: 'n1', status: 'open', actions: [{ actionId: 'allow', input: { required: false } }] } } })
+    const state = { sessionId: 'sess_1', effectiveMode: 'plan', revision: 3 }
+    expect(sessionFactEvent('sess_1', 'runtime.status', { runtimeId: 'rti', sessionId: 'sess_1', status: { event: 'planning.state.updated', revision: 3, state } }, at)).toMatchObject({ type: 'planning.state.updated', sequence: 0, payload: { state } })
+    expect(sessionFactEvent('sess_1', 'runtime.status', { runtimeId: 'rti', sessionId: 'sess_1', status: { event: 'goal.state.updated', state: { goalId: 'g' } } }, at)).toMatchObject({ type: 'goal.state.updated', payload: { state: { goalId: 'g' } } })
+  })
+
+  it('passes any other fact through as is', () => {
+    const queue = { sessionId: 'sess_1', queue: { items: [] } }
+    expect(sessionFactEvent('sess_1', 'runtime.queue.updated', queue, at)).toMatchObject({ type: 'runtime.queue.updated', sequence: 0, payload: queue })
+    expect(sessionFactEvent('sess_1', 'runtime.status', { runtimeId: 'rti', sessionId: 'sess_1', status: { event: 'session.status' } }, at)).toMatchObject({ type: 'runtime.status' })
   })
 })

@@ -236,3 +236,29 @@ def test_notice_invalidation_adds_event_sequence_for_live_notice() -> None:
     assert events[0].payload["notice"]["updatedSeq"] == 8
 
 
+
+
+def test_live_notice_without_sequence_becomes_a_client_shaped_live_event() -> None:
+    events = events_from_invalidation(
+        {
+            "sessionId": "session-1",
+            "liveNotices": [
+                {
+                    "noticeId": "notice-1",
+                    "type": "interaction",
+                    "sessionId": "session-1",
+                    "title": "Run ls?",
+                    "status": "responding",
+                    "actions": [{"actionId": "allow", "label": "Allow", "style": "primary"}],
+                }
+            ],
+        }
+    )
+
+    assert len(events) == 1
+    assert events[0].type == "runtime.notice.updated"
+    assert events[0].sequence == 0
+    notice = events[0].payload["notice"]
+    assert notice["status"] == "responding"
+    assert notice["severity"] == "info"
+    assert notice["actions"][0]["input"] == {"required": False, "schema": None, "uiSchema": None}

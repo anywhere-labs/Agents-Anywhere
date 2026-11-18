@@ -68,6 +68,22 @@ import Testing
         #expect(projection.data.cursor == "seq:10")
     }
 
+    @Test func liveDeviceNoticesApplyBehindTheCursorWithoutMovingIt() throws {
+        var projection = V2SessionProjection(snapshot: try snapshot(), maximumItems: 100)
+        func notice(_ status: String) -> [String: Any] {
+            ["noticeId": "perm1", "type": "interaction", "sessionId": "session", "title": "Run ls?", "status": status,
+             "actions": [["actionId": "allow", "label": "Allow", "input": ["required": false]]]]
+        }
+        func statuses() -> [V2RuntimeNoticeStatus] { projection.data.notices.filter { $0.noticeId == "perm1" }.map(\.status) }
+        try projection.apply(event("runtime.notice.updated", seq: 0, id: "open", payload: ["notice": notice("open")]))
+        #expect(statuses() == [.open])
+        try projection.apply(event("runtime.notice.updated", seq: 0, id: "responding", payload: ["notice": notice("responding")]))
+        #expect(statuses() == [.responding])
+        try projection.apply(event("runtime.notice.updated", seq: 0, id: "open", payload: ["notice": notice("open")]))
+        #expect(statuses() == [.open])
+        #expect(projection.data.cursor == "seq:10")
+    }
+
     @Test func timelineUsesRevisionAndHistoryDoesNotAcknowledgeEvents() throws {
         var projection = V2SessionProjection(snapshot: try snapshot(hasMore: true), maximumItems: 3)
         let newer = try itemObject(revision: 3, seq: 11, text: "Streamed")

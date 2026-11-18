@@ -167,6 +167,28 @@ export class MessageService {
   }
 
   /**
+   * `/plan <task>` on an open session (`session.planning` `submit_task`): plan mode first, then the task as a message.
+   * A busy session or a failed mode switch rejects it before anything is sent, so the client keeps the draft. The
+   * operation id is the delivery's `clientMessageId`: a retry of the same operation never sends the task twice.
+   */
+  public async submitPlanTask(command: SendMessageCommand, context: CommandContext): Promise<Record<string, unknown>> {
+    if (command.content.trim() === '') throw new UseCaseError('invalid_argument', 'The task to plan cannot be empty.')
+    const deps = this.kernel.deps
+    const existing = await deps.store.deliveries.get(command.sessionId, command.clientMessageId)
+    if (existing === null) {
+      const session = await this.kernel.requireSession(command.sessionId)
+      if (session.archived) throw new UseCaseError('session_archived', 'the session is archived')
+      const queue = await deps.store.queues.get(command.sessionId)
+      const admission = admitMessage({ status: session.status, queueLength: queue.items.length, queue: null, queueAvailable: false })
+      if (admission.kind === 'reject') throw new UseCaseError('session_busy', 'The session is busy.', { legacy: admission.legacy, status: admission.status })
+      await this.planning.enterPlanForTask(command.sessionId)
+    }
+    // The planning command's receipt holds its `PlanningResponse`; the delivery record makes a replay a duplicate.
+    await this.sendMessage({ ...command, queue: null }, { ...context, inputDigest: null, receipt: null })
+    return { operationId: command.clientMessageId, outcome: 'applied', ok: true, execution: 'accepted', state: await this.planning.wireState(command.sessionId) }
+  }
+
+  /**
    * The Runtime hand-off of an accepted delivery, after the ack (and again after a restart, from what the
    * delivery kept). `open` creates the Runtime session first (a new session's first message).
    */

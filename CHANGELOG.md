@@ -26,6 +26,8 @@
 
 ### 会话创建与消息交付
 
+- 连接 v3 Connector 的设备上，Agent 请求审批或提交计划审阅时，Web、Desktop、Android 和 iOS 不用刷新就能看到卡片，回答后的「处理中」、发送失败后重新可答和关闭状态也实时更新；开启端到端加密时，计划和目标状态同样实时更新。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
+- 连接 v3 Connector 的设备上，在已有会话里输入 `/plan 任务` 会先进入规划模式再把任务发给 Agent，不再报错；进入规划模式失败或会话正忙时任务不会发出、草稿保留，同一次操作重试不会重复发送。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 连接 v3 Connector 的设备上：在 Web、Desktop 和 Android 打开会话不再报服务器错误；回答审批时选项无效不再让这一轮卡住，可以重新回答；附件文件缺失时发送会直接提示失败，之后还能继续发消息；Agent 进程意外退出不再让 Connector 一起崩溃；Hermes 和其他通用 ACP Agent 第二轮的回复不再覆盖上一轮的最后一条回复；Connector 在执行完操作、还没记下结果时重启，Server 重试同一操作不会再执行一次；通用 ACP Agent 的会话再次打开或读取历史时在会话自己的目录里进行，不再落到 Connector 的启动目录；Connector 重启后，Codex 和 Claude 的新建会话页仍能列出上次用过的模型，不用先打开一个已有会话；在设备上新建的 Pi 和 Claude 会话再次打开后，发过的用户消息不再显示两遍。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 连接 v3 Connector 的设备上：会话里可以切换模型、权限和思考强度，模型和权限列表正常显示，刷新后显示当前的选择；计划和目标状态正常显示并可以操作，计划可以下载为 Markdown；用 `/plan`、`/goal` 开始的新会话会先进入规划或设置目标，不再被当成普通消息；接管电脑上已有的会话后可以排队发消息，设备离线时切换的接管开关会在设备上线后生效；电脑上的原始记录恢复后，「不可用」提示会消失；斜杠命令菜单可以列出和执行 Agent 提供的命令。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 连接 v3 Connector 的设备上，新建通用 ACP Agent、Hermes 或 Pi 会话时，选好目录后会先在这个目录里启动 Agent，新建会话页能直接选该 Agent 提供的模型、思考强度和权限，发出首条消息时不用再等 Agent 启动；Agent 需要登录等确认时可以在新建会话页回答；Connector 在准备期间重启后，已准备好但还没发出的会话会提示重新开始，不会留下多余的 Agent 进程。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）

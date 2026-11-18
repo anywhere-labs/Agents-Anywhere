@@ -121,9 +121,18 @@ export class SessionKernel {
     }, () => undefined)
   }
 
-  /** `runtime.notice.updated` of a stored interaction under a new status; the rest of the notice is its stored payload. */
-  public emitNotice(interaction: Interaction, status: 'resolved' | 'expired'): void {
-    const notice = { ...interaction.payload, noticeId: interaction.noticeId, status } as NoticeIn
+  /**
+   * `runtime.notice.updated` of a stored interaction in its current state (open, responding, resolved, expired); the
+   * rest of the notice is its stored payload.
+   */
+  public emitNotice(interaction: Interaction): void {
+    const notice = {
+      ...interaction.payload,
+      noticeId: interaction.noticeId,
+      sessionId: interaction.sessionId,
+      status: interaction.state,
+      ...(interaction.resolvedAt !== null ? { resolvedAt: interaction.resolvedAt } : {}),
+    } as NoticeIn
     this.deps.live.emit('runtime.notice.updated', { sessionId: interaction.sessionId, notice })
   }
 

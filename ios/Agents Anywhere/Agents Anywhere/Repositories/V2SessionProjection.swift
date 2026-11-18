@@ -107,6 +107,16 @@ struct V2SessionProjection {
         data.state = state
     }
 
+    /// A notice replaces the one with its id unless its revision is lower.
+    mutating func applyNotice(_ notice: V2RuntimeNotice) {
+        guard notice.sessionId == data.session.id else { return }
+        if let index = data.notices.firstIndex(where: { $0.id == notice.id }) {
+            if notice.revision >= data.notices[index].revision { data.notices[index] = notice }
+        } else {
+            data.notices.append(notice)
+        }
+    }
+
     /// The queue is replaced whole; a lower revision never wins.
     @discardableResult mutating func applyQueue(_ queue: V2SessionQueueState) -> Bool {
         guard queue.sessionId == data.session.id,
@@ -121,6 +131,12 @@ struct V2SessionProjection {
             // Ordered by its own revision. The envelope borrows the session's
             // current sequence, so it never advances the cursor or deduplicates.
             applyQueue(try payload("queue", in: event))
+            return
+        }
+        if event.type == "runtime.notice.updated", event.sequence == 0 {
+            // A v3 device's notice is live state with no session sequence: it
+            // never moves the cursor or deduplicates, and its revision orders it.
+            applyNotice(try payload("notice", in: event))
             return
         }
         guard event.sequence >= sequence else { return }
@@ -141,11 +157,7 @@ struct V2SessionProjection {
         case "runtime.notice.updated":
             let notice: V2RuntimeNotice = try payload("notice", in: event)
             guard notice.sessionId == data.session.id else { return }
-            if let index = data.notices.firstIndex(where: { $0.id == notice.id }) {
-                if notice.revision >= data.notices[index].revision { data.notices[index] = notice }
-            } else {
-                data.notices.append(notice)
-            }
+            applyNotice(notice)
         case "runtime.catalog.updated":
             break // Catalog reads are independently cached and invalidated by the repository.
         case "session.subscribed", "session.refetch_required", V2SessionEvent.catchupRequired,
