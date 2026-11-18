@@ -7,6 +7,8 @@
 //   contains "#serve": starts a dev server as its own child process (127.0.0.1, a free port), reports a tool call that
 //     printed its URL, then replies "serving <port>";
 //   contains "#exit": replies, then the Agent process exits (the device loses its sessions);
+//   contains "#big <n>": reports one completed tool call whose content is the n lines "row 0".."row <n-1>" joined by
+//     "\n" and a PNG of 2048 bytes of 0x07 (both large enough to go to the device's blob store), then replies;
 //   otherwise: replies "echo: <text> [model=<model> permission=<permission>] sessions-in-cwd=<session/new calls in that cwd>",
 //   followed by " attachments=<n>" when the prompt carries n non-text blocks (it accepts images).
 // After session/new it reports the slash command catalog (available_commands_update).
@@ -115,6 +117,14 @@ async function prompt(message) {
     update(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `serving ${port}` } })
     send({ id: message.id, result: { stopReason: 'end_turn' } })
     return
+  }
+  const big = /#big (\d+)/u.exec(text)
+  if (big !== null) {
+    const lines = Array.from({ length: Number(big[1]) }, (_, index) => `row ${index}`).join('\n')
+    update(sessionId, { sessionUpdate: 'tool_call', toolCallId: `big-${process.pid}-${message.id}`, title: 'Dump the log', kind: 'read', status: 'completed', content: [
+      { type: 'content', content: { type: 'text', text: lines } },
+      { type: 'content', content: { type: 'image', mimeType: 'image/png', data: Buffer.alloc(2048, 7).toString('base64') } },
+    ] })
   }
   if (text.includes('#plan')) {
     update(sessionId, { sessionUpdate: 'plan_update', plan: { type: 'markdown', planId: 'plan-e2e', content: '# E2E plan\n\n1. Read the code\n2. Fix the bug\n' } })

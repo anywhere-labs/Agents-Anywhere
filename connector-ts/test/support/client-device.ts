@@ -11,7 +11,7 @@ import { ConversationService } from '../../src/application/index.js'
 import type { Catalogs, ConfigChange, NativeAppCommandsApi, ConfigOption, ConfigResult, RuntimeCapabilities, RuntimeHandle, RuntimeHandles, SessionCapabilities } from '../../src/application/ports/index.js'
 import type { TunnelApiResponse, TunnelCallContext } from '../../src/application/inbound/tunnel-api.js'
 import { capabilitySet } from '../../src/application/runtimes/capabilities.js'
-import { uploadPreparedDownload } from '../../src/link/index.js'
+import { blobLookup, blobSlices, uploadPreparedDownload } from '../../src/link/index.js'
 import { inProcessStore, openSqliteStore, type RemoteStore } from '../../src/store/index.js'
 import { SessionCommandCatalog } from '../../src/sync/client-api/commands.js'
 import { DeviceReaders, DeviceTunnelApi, MemoryChangeFeed } from '../../src/sync/index.js'
@@ -169,6 +169,7 @@ export async function testDevice(options: { platform?: NodeJS.Platform; nativeAp
     },
     platform: options.platform ?? 'linux',
     agent: service,
+    blobs: blobSlices(blobLookup({ blobs: store.blobs, attachment: async () => null })),
   })
   const caller = { clientId: 'cl_test', label: 'Test', platform: 'web' }
   const testDevice: TestDevice = {

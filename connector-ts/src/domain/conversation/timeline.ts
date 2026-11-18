@@ -145,8 +145,9 @@ export type UpsertDecision =
  * Decides what an upsert does. Identical state (same hash and position) does not tick the clock, so
  * replaying a history page or a duplicate runtime event produces no client traffic.
  */
-export function decideUpsert(sessionId: string, existing: TimelineItem | undefined, draft: TimelineDraft): UpsertDecision {
-  validateDraft(draft)
+export function decideUpsert(sessionId: string, existing: TimelineItem | undefined, incoming: TimelineDraft): UpsertDecision {
+  validateDraft(incoming)
+  const draft = keepAttachments(existing, incoming)
   const contentHash = timelineContentHash(draft.type, draft.status, draft.role, draft.content)
   if (existing === undefined) {
     return { kind: 'insert', item: { ...withoutUndefined(draft), sessionId, revision: 1, contentHash } }
@@ -171,6 +172,19 @@ export function decideUpsert(sessionId: string, existing: TimelineItem | undefin
       contentHash,
     },
   }
+}
+
+/**
+ * A user message's attachments are what the platform recorded when it was sent. A projection that does not name
+ * them (native history, a Runtime echo) keeps the stored ones, so every Runtime shows them.
+ */
+function keepAttachments(existing: TimelineItem | undefined, draft: TimelineDraft): TimelineDraft {
+  if (existing === undefined || draft.type !== 'message' || draft.role !== 'user' || existing.role !== 'user') return draft
+  const stored = existing.content.attachments
+  if (!Array.isArray(stored) || stored.length === 0) return draft
+  const named = draft.content.attachments
+  if (Array.isArray(named) && named.length > 0) return draft
+  return { ...draft, content: { ...draft.content, attachments: stored } }
 }
 
 function sameSource(left: TimelineSource, right: TimelineSource): boolean {

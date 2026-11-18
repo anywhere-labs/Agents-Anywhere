@@ -2,7 +2,7 @@ import { queue as queueRules, type QueueAttachment, type SessionQueue } from '..
 import { UseCaseError } from '../errors.js'
 import type { CommandReceipt, PromptAttachment, QueueOp } from '../ports/index.js'
 import type { RuntimeBindings } from '../session/bindings.js'
-import type { DeliveryRecords } from '../session/deliveries.js'
+import { attachmentInfo, type DeliveryRecords } from '../session/deliveries.js'
 import type { SessionKernel } from '../session/kernel.js'
 import { withResult } from '../session/receipts.js'
 import type { TurnLifecycle, TurnQueue } from '../session/turns.js'
@@ -89,11 +89,11 @@ export class QueueService implements TurnQueue {
       acceptance = { outcome: 'unknown' as const, error: { code: 'delivery_outcome_unknown', message: (error as Error).message } }
     }
     if (acceptance.outcome === 'accepted') {
-      await this.deliveries.writeUserMessage(sessionId, clientMessageId, content, acceptance.userItemId ?? null)
+      await this.deliveries.writeUserMessage(sessionId, clientMessageId, content, acceptance.userItemId ?? null, attachments.map(attachmentInfo))
       if (acceptance.turnId !== undefined) await this.turns.onTurnStarted(sessionId, acceptance.turnId, clientMessageId)
       return 'started'
     }
-    await this.deliveries.writeFailedUserMessage(sessionId, clientMessageId, content, acceptance.error.code, acceptance.error.message)
+    await this.deliveries.writeFailedUserMessage(sessionId, clientMessageId, content, acceptance.error.code, acceptance.error.message, attachments.map(attachmentInfo))
     return acceptance.outcome === 'rejected' ? 'rejected' : 'unknown'
   }
 

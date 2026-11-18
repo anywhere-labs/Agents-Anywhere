@@ -24,7 +24,7 @@ export {
 export { ProxyError, egressAgent, openTunnel, trustedCAs } from './tunnel.js'
 export { connectOrigin, requestBytes, requestJson, uploadStream, HttpError, type BytesRequest, type JsonRequest, type UploadRequest } from './http.js'
 export { deviceAttachmentFetcher, deviceTransferUploader, type BlobTransfer, type TransferUpload, type UploadFile } from './device-files.js'
-export { blobLookup, type BlobLookupDeps, type FindAttachment, type LocalBlob } from './blobs.js'
+export { blobLookup, blobSlices, type BlobLookupDeps, type BlobSlice, type FindAttachment, type LocalBlob } from './blobs.js'
 export { ControlPlane, CredentialRejected, MESH_MAX_FRAME_BYTES, meshGrant, type ControlPlaneOptions, type DeviceCredential, type MeshGrant } from './control-plane.js'
 export { RouterBridge, rewriteUpgradeHead } from './bridge.js'
 export { ATTACH_EVENTS, ATTACH_STALL_MS, AttachHub, HEARTBEAT_MS, MAX_PENDING_EVENTS, type AttachEnd, type AttachHubOptions } from './attach.js'

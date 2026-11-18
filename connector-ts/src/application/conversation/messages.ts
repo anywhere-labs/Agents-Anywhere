@@ -5,7 +5,7 @@ import type { PlanningService } from '../planning/planning-service.js'
 import type { PromptAttachment } from '../ports/index.js'
 import type { QueueService } from '../queue/queue-service.js'
 import type { CreationIntent, OpenSpec, RuntimeBindings } from '../session/bindings.js'
-import type { DeliveryRecords } from '../session/deliveries.js'
+import { attachmentInfo, type DeliveryRecords } from '../session/deliveries.js'
 import type { AttachmentRef, SessionKernel } from '../session/kernel.js'
 import { digestOf, withResult, type CommandContext } from '../session/receipts.js'
 import type { TurnLifecycle } from '../session/turns.js'
@@ -203,7 +203,7 @@ export class MessageService {
         if (open?.planningIntent !== undefined) await this.planning.enterPlanForCreation(sessionId)
         await this.deliver(sessionId, clientMessageId, content, refs)
       } catch (error) {
-        await this.failDelivery(sessionId, clientMessageId, content, error)
+        await this.failDelivery(sessionId, clientMessageId, content, refs, error)
       }
     })
   }
@@ -220,7 +220,7 @@ export class MessageService {
     } catch (error) {
       const code = typeof (error as { code?: unknown })?.code === 'string' ? String((error as { code: string }).code) : 'attachment_unavailable'
       await deps.store.deliveries.transition(sessionId, clientMessageId, 'rejected', { at: deps.clock.nowIso(), errorCode: code })
-      await this.deliveries.writeFailedUserMessage(sessionId, clientMessageId, content, code, (error as Error)?.message ?? code)
+      await this.deliveries.writeFailedUserMessage(sessionId, clientMessageId, content, code, (error as Error)?.message ?? code, refs.map(attachmentInfo))
       return 'rejected'
     }
     const at = deps.clock.nowIso()
@@ -233,17 +233,17 @@ export class MessageService {
     }
     if (acceptance.outcome === 'accepted') {
       await this.deliveries.settleDeliveryStarted(sessionId, clientMessageId, acceptance.userItemId ?? null, content)
-      await this.deliveries.writeUserMessage(sessionId, clientMessageId, content, acceptance.userItemId ?? null)
+      await this.deliveries.writeUserMessage(sessionId, clientMessageId, content, acceptance.userItemId ?? null, refs.map(attachmentInfo))
       if (acceptance.turnId !== undefined) await this.turns.onTurnStarted(sessionId, acceptance.turnId, clientMessageId)
       return 'started'
     }
     const state = acceptance.outcome === 'rejected' ? 'rejected' : 'unknown'
     await deps.store.deliveries.transition(sessionId, clientMessageId, state, { at: deps.clock.nowIso(), errorCode: acceptance.error.code })
-    await this.deliveries.writeFailedUserMessage(sessionId, clientMessageId, content, acceptance.error.code, acceptance.error.message)
+    await this.deliveries.writeFailedUserMessage(sessionId, clientMessageId, content, acceptance.error.code, acceptance.error.message, refs.map(attachmentInfo))
     return state
   }
 
-  private async failDelivery(sessionId: string, clientMessageId: string, content: string, error: unknown): Promise<void> {
+  private async failDelivery(sessionId: string, clientMessageId: string, content: string, refs: readonly AttachmentRef[], error: unknown): Promise<void> {
     const deps = this.kernel.deps
     this.kernel.reportError(sessionId, error)
     const current = await deps.store.deliveries.get(sessionId, clientMessageId)
@@ -256,6 +256,6 @@ export class MessageService {
     } else {
       return
     }
-    await this.deliveries.writeFailedUserMessage(sessionId, clientMessageId, content, code, (error as Error).message ?? String(error))
+    await this.deliveries.writeFailedUserMessage(sessionId, clientMessageId, content, code, (error as Error).message ?? String(error), refs.map(attachmentInfo))
   }
 }

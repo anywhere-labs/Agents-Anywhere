@@ -23,7 +23,7 @@ import {
 } from '../application/index.js'
 import type { LiveEvent, LiveEvents, Log, RuntimeHandle, RuntimeHandleEvent, RuntimeProvider } from '../application/ports/index.js'
 import { legacyDataDir, type ConnectorRuntime, type ConnectorSettings, type RuntimeFactory } from '../host/index.js'
-import { ControlPlane, DeviceLink, blobLookup, deviceAttachmentFetcher, deviceTransferUploader, readSystemProxySettings, resolveEgress, type Egress, type LinkLogger, type WorkspaceServiceDeps } from '../link/index.js'
+import { ControlPlane, DeviceLink, blobLookup, blobSlices, deviceAttachmentFetcher, deviceTransferUploader, readSystemProxySettings, resolveEgress, type Egress, type LinkLogger, type WorkspaceServiceDeps } from '../link/index.js'
 import { openStoreWorker, inProcessStore, openSqliteStore, type RemoteStore } from '../store/index.js'
 import { DeviceReaders, DeviceTunnelApi, MemoryChangeFeed, OutboxSignal, SessionCommandCatalog, plainSealer, type RuntimeFacts, type SessionFacts } from '../sync/index.js'
 import { browseScope } from '../sync/client-api/views.js'
@@ -287,6 +287,7 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
           upload: deviceTransferUploader(settings.serverUrl, handshake, egress),
           onUploadError: (transferId, error) => log('warn', `file download ${transferId} failed: ${message(error)}`),
         }
+        const findBlob = blobLookup({ blobs: store.blobs, attachment: (sessionId, fileId) => attachments.find(sessionId, fileId) })
         const tunnel = new DeviceTunnelApi({
           deviceId: settings.connectorId,
           store,
@@ -310,6 +311,7 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
           transferUpload: preparedDownloadUpload(workspaceService),
           platform: process.platform,
           agent: conversation,
+          blobs: blobSlices(findBlob),
         })
         if (options.trust !== false) {
           trust = await DeviceTrust.open({
@@ -343,7 +345,7 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
             watch,
             readers,
             blobs: {
-              find: blobLookup({ blobs: store.blobs, attachment: (sessionId, fileId) => attachments.find(sessionId, fileId) }),
+              find: findBlob,
               upload: deviceTransferUploader(settings.serverUrl, handshake, egress),
             },
             workspace: workspaceService,

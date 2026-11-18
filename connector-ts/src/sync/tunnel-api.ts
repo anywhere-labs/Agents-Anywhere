@@ -45,6 +45,25 @@ export interface SessionFacts {
   subscribe(sessionId: string, listener: (method: string, payload: Record<string, unknown>) => void): () => void
 }
 
+/** A slice of a blob the device keeps for a session, and what the blob is. */
+export interface SessionBlobSlice {
+  readonly name: string
+  readonly mediaType: string
+  /** Total size of the blob. */
+  readonly size: number
+  /** The bytes at `[offset, offset + bytes.length)`. */
+  readonly bytes: Uint8Array
+}
+
+/**
+ * Reads `[offset, offset + length)` of a blob of the session: a field moved to the blob store (`blob_…`, only when
+ * an item of this session points at it) or an attachment of the session on this device. Null when there is none.
+ */
+export type SessionBlobReader = (sessionId: string, blobRef: string, offset: number, length: number) => Promise<SessionBlobSlice | null>
+
+/** Largest slice `GET sessions/{id}/blobs/{blobRef}` returns (protocol 1.2 `SESSION_BLOB_CHUNK_MAX_BYTES`). */
+export const SESSION_BLOB_CHUNK_MAX_BYTES = 4 * 1024 * 1024
+
 /** An uploaded attachment as the Server recorded it (`AttachmentRef` of `Client/call`). */
 export type AttachmentFacts = AttachmentRef
 
@@ -114,6 +133,8 @@ export interface DeviceTunnelApiDeps {
   readonly platform?: NodeJS.Platform
   /** Reads of a session's Agent session (`runtime-workflows/sessions/{id}/configuration`, `tree`). */
   readonly agent?: AgentSessionReads
+  /** `GET sessions/{id}/blobs/{blobRef}`; absent: every blob is 404. */
+  readonly blobs?: SessionBlobReader
 }
 
 const READ_ONLY = 'session is read-only until takeover is enabled'
@@ -265,6 +286,30 @@ export class DeviceTunnelApi implements TunnelApi {
   }
 
   // ------------------------------------------------------------------------------------------- sessions
+
+  /** `GET sessions/{id}/blobs/{blobRef}?offset&length`: one base64 slice (protocol 1.2 `SessionBlobChunk`). */
+  private async blob(sessionId: string, blobRef: string, route: Route): Promise<TunnelApiResponse> {
+    await this.requireSession(sessionId)
+    const offset = int(route.query.get('offset'), 0, 0, Number.MAX_SAFE_INTEGER)
+    const length = int(route.query.get('length'), SESSION_BLOB_CHUNK_MAX_BYTES, 1, SESSION_BLOB_CHUNK_MAX_BYTES)
+    const slice = this.deps.blobs === undefined ? null : await this.deps.blobs(sessionId, blobRef, offset, length)
+    if (slice === null) throw new TunnelHttpError(404, 'blob_not_found', `${blobRef} is not on this device`)
+    if (offset > slice.size) throw invalid(`offset ${offset} is past the end of ${blobRef} (${slice.size} bytes)`)
+    const end = offset + slice.bytes.length
+    return {
+      status: 200,
+      body: {
+        blobRef,
+        name: slice.name,
+        mediaType: slice.mediaType,
+        encoding: 'base64',
+        data: Buffer.from(slice.bytes.buffer, slice.bytes.byteOffset, slice.bytes.byteLength).toString('base64'),
+        offset,
+        size: slice.size,
+        eof: end >= slice.size,
+      },
+    }
+  }
 
   private async requireSession(sessionId: string): Promise<Session> {
     const session = await this.deps.store.sessions.get(sessionId)
@@ -513,6 +558,7 @@ export class DeviceTunnelApi implements TunnelApi {
       if (rest.length === 4) return { status: 200, body: String(document.markdown ?? ''), contentType: 'text/markdown; charset=utf-8' }
       return { status: 200, body: document }
     }
+    if (rest[0] === 'blobs' && rest.length === 2 && route.method === 'GET') return this.blob(sessionId, rest[1]!, route)
     if (rest[0] === 'terminals') {
       const session = await this.requireSession(sessionId)
       return this.files.sessionTerminals(route, sessionId, session.cwd)
