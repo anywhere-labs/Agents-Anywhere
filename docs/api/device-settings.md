@@ -8,6 +8,8 @@
 | --- | --- | --- | --- |
 | `confirmQuitOnShutdown` | boolean | `false` | Desktop 设备在电脑关机、重启或注销时，是否先弹窗确认再退出。`false` 时 Desktop 直接停止本机连接并退出，不阻止关机。用户在 Desktop 里手动退出（菜单、托盘、`Cmd+Q`）不受这个设置影响。 |
 
+下发给设备的 `settings` 还带有 `agentCollaboration`：账号的 [Agent 协作设置](agent-collaboration.md)，账号下的所有设备相同，只能通过 `/api/v2/agent-collaboration/settings` 修改，不出现在本页的读取和修改接口里。
+
 这项设置只对 `connectorKind` 为 `desktop` 的设备有意义。客户端只在这类设备上显示开关；Server 不按 `connectorKind` 拒绝写入，其他设备保存后不产生效果。
 
 ## 客户端接口
