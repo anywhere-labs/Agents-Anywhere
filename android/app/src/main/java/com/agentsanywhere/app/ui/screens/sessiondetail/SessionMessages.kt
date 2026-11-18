@@ -100,6 +100,7 @@ import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeNotice
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeNoticeAction
 import com.agentsanywhere.app.feature.sessiondetail.TimelineAttachment
+import com.agentsanywhere.app.feature.sessiondetail.TimelineCollabAuthor
 import com.agentsanywhere.app.feature.sessiondetail.TimelineAgentCallAction
 import com.agentsanywhere.app.feature.sessiondetail.TimelineMessage
 import com.agentsanywhere.app.feature.sessiondetail.TimelineMessageKind
@@ -282,6 +283,8 @@ internal fun MessageList(
     respondingNoticeIds: Set<String> = emptySet(),
     noticeResponseErrors: Map<String, String> = emptyMap(),
     bottomContentPadding: Dp = 168.dp,
+    topContentPadding: Dp = 74.dp,
+    sessionLinks: TimelineSessionLinks = TimelineSessionLinks(find = { null }, open = {}),
     hasMore: Boolean,
     loadingOlder: Boolean,
     historyError: Boolean = false,
@@ -325,7 +328,7 @@ internal fun MessageList(
     var returnToLatestJob by remember(sessionId) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val scrollButtonBottomPadding = bottomContentPadding.coerceAtLeast(24.dp)
     val density = LocalDensity.current
-    val topReadingInset = with(density) { 74.dp.toPx() }
+    val topReadingInset = with(density) { topContentPadding.toPx() }
     val bottomReadingInset = with(density) { bottomContentPadding.toPx() }
 
     val hasPlanningItem = planningContent != null || planPlacement.end.isNotEmpty()
@@ -445,7 +448,11 @@ internal fun MessageList(
     }
 
     val blobAccess = remember(sessionId, controller) { TimelineBlobAccess(sessionId, controller) }
-    CompositionLocalProvider(LocalTimelineReading provides reading, LocalTimelineBlobAccess provides blobAccess) {
+    CompositionLocalProvider(
+        LocalTimelineReading provides reading,
+        LocalTimelineBlobAccess provides blobAccess,
+        LocalTimelineSessionLinks provides sessionLinks,
+    ) {
         Box(Modifier.fillMaxSize()) {
             SessionSelectionContainer(modifier = Modifier.fillMaxSize()) {
                 LazyColumn(
@@ -591,7 +598,7 @@ internal fun MessageList(
                             }
                         }
                     }
-                    item(key = "top-space") { Spacer(Modifier.height(74.dp)) }
+                    item(key = "top-space") { Spacer(Modifier.height(topContentPadding)) }
                 }
             }
 
@@ -822,6 +829,8 @@ private fun TimelineMessage.agentCopyText(): String {
 }
 
 private fun TimelineMessage.isToolRunItem(): Boolean {
+    // Collaboration tool calls stay on their own row so their session link is visible.
+    if (collabTool != null) return false
     return kind == TimelineMessageKind.Reasoning ||
         kind == TimelineMessageKind.Command ||
         kind == TimelineMessageKind.FileChange ||
@@ -1252,6 +1261,19 @@ private fun TimelineMessageRow(
         }
         return
     }
+    if (message.escalation != null) {
+        EscalationCard(message)
+        return
+    }
+    if (message.collabTool != null && interaction == null) {
+        CollabToolRow(message)
+        return
+    }
+    val collabAuthor = message.collabAuthor.takeIf { message.kind == TimelineMessageKind.Text && message.author == MessageAuthor.User }
+    if (collabAuthor?.kind == TimelineCollabAuthor.Kind.Supervision) {
+        SupervisionNoticeCard(message)
+        return
+    }
     when (message.kind) {
         TimelineMessageKind.Reasoning -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             ReasoningSection(
@@ -1299,16 +1321,18 @@ private fun TimelineMessageRow(
             TimelineBlobRefs(refs = message.blobRefs, darkMode = darkMode, modifier = Modifier.padding(horizontal = 4.dp))
         }
         TimelineMessageKind.Text -> when (message.author) {
-            MessageAuthor.User -> UserBubble(
-                message,
-                darkMode,
-                sessionId,
-                controller,
-                onPreviewAttachment,
-                onOpenAttachment,
-                onCopyMessage,
-                onFailedMessage,
-            )
+            MessageAuthor.User -> if (collabAuthor == null) {
+                UserBubble(message, darkMode, sessionId, controller, onPreviewAttachment, onOpenAttachment, onCopyMessage, onFailedMessage)
+            } else {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    AgentSentLabel(collabAuthor)
+                    UserBubble(message, darkMode, sessionId, controller, onPreviewAttachment, onOpenAttachment, onCopyMessage, onFailedMessage)
+                }
+            }
             MessageAuthor.Agent -> AgentMessageContent(
                 message = message,
                 darkMode = darkMode,

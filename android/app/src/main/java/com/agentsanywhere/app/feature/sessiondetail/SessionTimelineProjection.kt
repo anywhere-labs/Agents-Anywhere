@@ -117,6 +117,12 @@ private fun latestTimelineItemsById(incoming: List<RemoteTimelineItem>): List<Re
 }
 
 private fun RemoteTimelineItem.toToolMessages(): List<TimelineMessage> {
+    content.collabTool()?.let { collabTool ->
+        return listOf(
+            toToolCallMessage(title = collabTool.rawTool, subtitle = content.toolTargetText().orEmpty())
+                .copy(collabTool = collabTool),
+        )
+    }
     return when (content.text("kind")) {
         "command" -> listOf(toCommandMessage())
         "file_change" -> toFileChangeMessages()
@@ -177,6 +183,7 @@ private fun RemoteTimelineItem.toMessageOrNull(): TimelineMessage? {
         updatedSeq = updatedSeq,
         clientMessageId = source.text("clientMessageId"),
         contentHash = contentHash,
+        collabAuthor = if (author == MessageAuthor.User) content.collabAuthor() else null,
         sourceRuntime = source.text("runtime"),
         sourceItemType = source.text("itemType"),
         sourceReplacedBy = source.text("replacedBy"),
@@ -227,6 +234,13 @@ private fun RemoteTimelineItem.toSystemMessage(): TimelineMessage {
         )
     }
     if (kind == "compact") return toCompactMessage()
+    content.collabEscalation()?.let { escalation ->
+        return baseInformationalMessage(
+            kind = TimelineMessageKind.System,
+            title = kind,
+            text = escalation.question,
+        ).copy(escalation = escalation)
+    }
     val message = content.firstText("message", "text", "rawText") ?: kind
     return TimelineMessage(
         id = id,

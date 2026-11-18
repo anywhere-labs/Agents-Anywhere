@@ -82,6 +82,10 @@ data class TimelineMessage(
     val toolError: String = "",
     val fileChanges: List<TimelineFileChange> = emptyList(),
     val agentCall: TimelineAgentCall? = null,
+    /** Agent collaboration: who sent a user message, an escalation card, or a collaboration tool call. */
+    val collabAuthor: TimelineCollabAuthor? = null,
+    val escalation: TimelineEscalation? = null,
+    val collabTool: TimelineCollabTool? = null,
     val rawContent: String = "",
     val workspaceImages: List<String> = emptyList(),
     /** Large fields of the source item kept on the device; set on the first row of the item only. */

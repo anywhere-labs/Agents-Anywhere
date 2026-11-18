@@ -66,6 +66,8 @@ import com.agentsanywhere.app.feature.sessions.SessionListIndicator
 import com.agentsanywhere.app.feature.sessions.SessionsState
 import com.agentsanywhere.app.feature.sessions.listIndicator
 import com.agentsanywhere.app.feature.sessions.pinnedSessions
+import com.agentsanywhere.app.feature.sessions.SessionCollabIndicator
+import com.agentsanywhere.app.feature.sessions.collabIndicator
 import com.agentsanywhere.app.feature.sessions.recentSessions
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentProject
@@ -75,7 +77,9 @@ import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.screens.common.AppEmptyState
 import com.agentsanywhere.app.ui.screens.devices.DeviceRow
 import com.agentsanywhere.app.ui.screens.devices.sortedForDevicesPage
+import com.composables.icons.lucide.Bot
 import com.composables.icons.lucide.ChevronDown
+import com.composables.icons.lucide.Eye
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Monitor
 import com.composables.icons.lucide.Plus
@@ -494,18 +498,50 @@ internal fun RowScope.HomeSessionRowContent(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        if (contextLabel.isNotBlank()) {
-            Text(
-                text = contextLabel,
-                color = metaColor,
-                fontSize = 11.2.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+        val collab = session.collabIndicator
+        if (contextLabel.isNotBlank() || collab != null) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (collab != null) SessionCollabMarks(collab, metaColor)
+                if (contextLabel.isNotBlank()) {
+                    Text(
+                        text = contextLabel,
+                        color = metaColor,
+                        fontSize = 11.2.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
         }
     }
     SessionRowTrailing(session = session, indicator = indicator, timeColor = metaColor)
+}
+
+/** Small marks for a session created by an Agent and for a supervised session. */
+@Composable
+private fun SessionCollabMarks(indicator: SessionCollabIndicator, tint: Color) {
+    if (indicator.agentCreated) {
+        val description = stringResource(R.string.collab_indicator_agent_created)
+        Icon(
+            imageVector = Lucide.Bot,
+            contentDescription = description,
+            tint = tint,
+            modifier = Modifier.size(12.dp),
+        )
+    }
+    if (indicator.supervised) {
+        val description = stringResource(R.string.collab_indicator_supervised)
+        Icon(
+            imageVector = Lucide.Eye,
+            contentDescription = description,
+            tint = tint,
+            modifier = Modifier.size(12.dp),
+        )
+    }
 }
 
 internal fun AgentSession.sidebarContextLabel(projectName: String?, deviceName: String?): String {

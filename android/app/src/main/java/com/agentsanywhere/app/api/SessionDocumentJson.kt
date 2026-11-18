@@ -1,5 +1,8 @@
 package com.agentsanywhere.app.api
 
+import com.agentsanywhere.app.model.SessionOrigin
+import com.agentsanywhere.app.model.SupervisionEdge
+import org.json.JSONArray
 import org.json.JSONObject
 
 /*
@@ -38,6 +41,28 @@ internal fun RemoteSession.toProtocolJson(): JSONObject = JSONObject()
     .put("goalState", goalState)
     .putNullable("displayDevice", displayDevice?.toProtocolJson())
     .putNullable("displayUser", displayUser?.toProtocolJson())
+    .putNullable("origin", origin?.toProtocolJson())
+    .put("supervisors", supervisors.toProtocolJson())
+    .put("supervised", supervised.toProtocolJson())
+
+private fun SessionOrigin.toProtocolJson(): JSONObject = JSONObject()
+    .put("kind", SESSION_ORIGIN_KIND_AGENT)
+    .put("bySessionId", bySessionId)
+    .putNullable("byDeviceId", byDeviceId)
+    .put("depth", depth)
+
+private fun List<SupervisionEdge>.toProtocolJson(): JSONArray = JSONArray().also { array ->
+    forEach { edge ->
+        array.put(
+            JSONObject()
+                .put("supervisionId", edge.supervisionId)
+                .put("supervisorSessionId", edge.supervisorSessionId)
+                .put("targetSessionId", edge.targetSessionId)
+                .put("state", edge.state.wireValue)
+                .putNullable("createdBy", edge.createdBy?.wireValue),
+        )
+    }
+}
 
 private fun RemoteDisplayEnvelope.toProtocolJson(): JSONObject = JSONObject()
     .put("mode", mode)

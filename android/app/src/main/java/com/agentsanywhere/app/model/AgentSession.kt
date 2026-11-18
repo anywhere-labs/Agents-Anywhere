@@ -39,6 +39,10 @@ data class AgentSession(
     /** E2EE: the envelope could not be opened; [title] / [workspaceLabel] hold the "Encrypted" placeholder and [cwd] is null. */
     val titleLocked: Boolean = false,
     val cwdLocked: Boolean = false,
+    /** Protocol 1.2 agent collaboration: who created this session and the supervision edges around it. */
+    val origin: SessionOrigin? = null,
+    val supervisors: List<SupervisionEdge> = emptyList(),
+    val supervised: List<SupervisionEdge> = emptyList(),
 ) {
     val runtimeLabels: RuntimeInstanceLabels
         get() = runtimeInstanceLabels(runtimeName, runtimeType)
