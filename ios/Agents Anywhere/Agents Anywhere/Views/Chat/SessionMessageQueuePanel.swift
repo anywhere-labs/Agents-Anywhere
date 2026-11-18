@@ -16,7 +16,7 @@ struct SessionMessageQueuePanel: View {
             let canControl = chat.canManageQueue
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
-                    Image(systemName: "tray.full").accessibilityHidden(true)
+                    AppSymbol("tray.and.arrow.up").accessibilityHidden(true)
                     Text(String(localized: "\(items.count) 条消息排队中")).font(.caption.weight(.semibold))
                     Spacer(minLength: 0)
                     if pause == .error, canControl {
@@ -67,7 +67,7 @@ struct SessionMessageQueuePanel: View {
                 if item.status == .sending || chat.queueBusyID == item.id {
                     ProgressView().controlSize(.mini)
                 } else if failed {
-                    Image(systemName: "exclamationmark.circle")
+                    AppSymbol("exclamationmark.circle")
                 } else {
                     Text("#\(item.position)").monospacedDigit()
                 }
@@ -96,7 +96,7 @@ struct SessionMessageQueuePanel: View {
                         Task { await chat.queueAction(.delete(messageId: item.id)) }
                     }
                 } label: {
-                    Image(systemName: "ellipsis").frame(width: 28, height: 28).contentShape(Rectangle())
+                    AppSymbol("ellipsis").frame(width: 28, height: 28).contentShape(Rectangle())
                 }
                 .accessibilityLabel(String(localized: "排队消息操作"))
             }

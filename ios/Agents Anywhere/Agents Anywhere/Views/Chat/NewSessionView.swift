@@ -57,7 +57,7 @@ struct NewSessionView: View, Equatable {
                             ? ChatControlMetrics.expandedHorizontalInset : ChatControlMetrics.collapsedHorizontalInset)
                         .padding(.leading, 6)
                         .padding(.bottom, 6)
-                if model.goalCreation {HStack{Text(String(localized:"目标"));Button {model.goalCreation=false} label:{Image(systemName:"xmark")}.accessibilityLabel(String(localized:"退出目标输入"))}.font(.caption).padding(.horizontal)}
+                if model.goalCreation {HStack{Text(String(localized:"目标"));Button {model.goalCreation=false} label:{AppSymbol("xmark")}.accessibilityLabel(String(localized:"退出目标输入"))}.font(.caption).padding(.horizontal)}
                 if model.planningCreation { Text(String(localized: "新会话将使用计划模式")).font(.caption).foregroundStyle(.secondary).padding(.horizontal) }
                 ChatComposerDock(draft: model.draft, settings: model.settings,
                     // 上游同款：随内容增高（本屏 ~2 行封顶），超上限

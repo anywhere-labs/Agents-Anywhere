@@ -12,7 +12,7 @@ struct SessionGoalPanel: View {
           state.freshness == "fresh" && chat.goalUsable && chat.session.metadata?.takeover == true
           ? state.capabilities?.actions ?? [] : []
         HStack(spacing: 8) {
-          Image(systemName: "target").accessibilityHidden(true)
+          AppSymbol("sparkles").accessibilityHidden(true)
           Text(status(goal.status)).font(.caption)
           Button {
             objective = goal.objective
@@ -33,7 +33,7 @@ struct SessionGoalPanel: View {
             Button {
               Task { _ = await chat.goalAction("pause") }
             } label: {
-              Image(systemName: "pause")
+              AppSymbol("square.fill")
             }.accessibilityLabel(String(localized: "暂停目标"))
           }
           if ["paused", "blocked", "usageLimited"].contains(goal.status), actions.contains("resume")
@@ -41,14 +41,14 @@ struct SessionGoalPanel: View {
             Button {
               resuming = true
             } label: {
-              Image(systemName: "play")
+              AppSymbol("arrow.right")
             }.accessibilityLabel(String(localized: "恢复目标"))
           }
           if actions.contains("clear") {
             Button {
               Task { _ = await chat.goalAction("clear") }
             } label: {
-              Image(systemName: "xmark")
+              AppSymbol("xmark")
             }.accessibilityLabel(String(localized: "清除目标"))
           }
         }.buttonStyle(.plain).padding(.horizontal, 16).padding(.vertical, 8).disabled(
@@ -60,7 +60,7 @@ struct SessionGoalPanel: View {
           Button {
             chat.goalMode = false
           } label: {
-            Image(systemName: "xmark")
+            AppSymbol("xmark")
           }.accessibilityLabel(String(localized: "退出目标输入"))
           Spacer()
         }.font(.caption).padding(.horizontal, 16)
