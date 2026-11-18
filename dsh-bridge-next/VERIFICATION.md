@@ -1,5 +1,20 @@
 # DSH Bridge Next 验证记录
 
+## DSH 0.2.2-rc.5 测试基线（2026-11-18）
+
+`@deepseek-ai/dsh-*` 开发依赖从 `0.2.2-rc.4` 升到 `0.2.2-rc.5`。rc.4 到 rc.5 各包的 `package.json` 只改了版本号：Cordis 4.1.0、Schemastery 3.19.0 不变，不需要新增开发依赖，peer 范围不变。只升依赖、不改其他文件，检查全部通过，测试和插件 `src/**` 都无需改动。
+
+本机 Node 22.23.3（CI 为 22.23.2）上 `corepack yarn check`（check:deps、typecheck、build、check:build、test）exit 0，251 项全部通过，没有跳过，包括需要 PostgreSQL 的探针；Node 24.14.0 上 `corepack yarn test` 同样 251 项全部通过。在全新临时 `DSH_HOME` 中，用官方 `@deepseek-ai/dsh@0.2.2-rc.5` 执行 `dsh plugin --profile aa-025-smoke add "link:$PWD"` 成功，`--dump-config` 包含 `agents-anywhere-bridge-next` 配置行，`web` 行只剩 `fetchProvider: http`（即 rc.5 的新默认）；除 pnpm 对 `link:` 依赖的通用 peer 提示外没有报错。
+
+rc.4 到 rc.5 只有 3 个提交，核对过、无需改动：
+
+- 网页搜索不再固定使用 DeepSeek Search API（DSH 仓库 `docs/upgrade-guide/v0.2.2-rc.4/web-search-deepseek-model-default/`）：基础组合去掉了 `web.searchProvider`，由 `dsh-web` 按模型路由选择。使用 DeepSeek 模型的会话改用旧版 Messages 搜索，每次搜索向会话日志追加一条 `web/deepseek-search-llm-request` 事件。这个事件类型从会话格式的初始基线起就有，插件的历史投影不为它生成时间线条目；同步队列按字节计入它，超过上限时与其他事件一样折叠为一次重新校准。插件不引用任何网页搜索相关的包。
+- 实验性 liveshare 的一个测试改用真实时钟，不影响运行时。
+
+上一节记下的三项 master 变化（Client 模块改由 renderer 安装样式、Cordis 4.0.0-rc.12、Connection 默认 Token 登录迁入 Provider 插件）都还没有进入 rc.5。
+
+未做：DSH Desktop、Windows、手机端实机验收。
+
 ## DSH 0.2.2-rc.4 测试基线（2026-11-18）
 
 `@deepseek-ai/dsh-*` 开发依赖从 `0.2.2-rc.3` 升到 `0.2.2-rc.4`。rc.3 到 rc.4 各包的 `package.json` 只改了版本号：Cordis 4.1.0、Schemastery 3.19.0 不变，不需要新增开发依赖，peer 范围不变。只升依赖、不改其他文件，检查全部通过，测试和插件 `src/**` 都无需改动。
