@@ -478,6 +478,7 @@ def render_client_routes() -> dict[str, Any]:
             "decorate": list(route.decorate),
             "e2ee": route.e2ee,
             "sealedUpload": route.sealed_upload,
+            "agent": route.agent,
             "forward": route.forward,
         }
         for route in cr.CLIENT_ROUTES

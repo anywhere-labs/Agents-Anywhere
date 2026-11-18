@@ -92,6 +92,9 @@ class ClientRoute:
     sealed_upload: bool = False
     #: ``via == "server"``: the route whose ``Client/call`` answers the device's part.
     forward: str | None = None
+    #: An Agent with a delegation token may call it (agent collaboration, docs/agent-collaboration.md).
+    #: Everything else answers 403 ``agent_route_denied`` to a delegated caller.
+    agent: bool = False
 
     @property
     def writes_command_id(self) -> bool:
@@ -141,42 +144,42 @@ CLIENT_ROUTES: tuple[ClientRoute, ...] = (
     # -- sessions: creation ------------------------------------------------------------------------
     _route("session.create", "POST", f"{API}/sessions", "server", "command", "server", timeout="command"),
     _route("session.createAndStart", "POST", f"{API}/sessions/create-and-start", "hybrid", "command",
-           command_id="clientMessageId", timeout="create", decorate=("session",)),
+           command_id="clientMessageId", timeout="create", decorate=("session",), agent=True),
     # -- sessions: directory entry (Server-owned, allowed in plaintext) --------------------------------
-    _route("session.meta.get", "GET", f"{SESSION}/meta", "server", "read", "server", e2ee="plain"),
+    _route("session.meta.get", "GET", f"{SESSION}/meta", "server", "read", "server", e2ee="plain", agent=True),
     _route("session.meta.update", "PATCH", f"{SESSION}/meta", "server", "command", "server", e2ee="plain"),
     # -- sessions: content reads -----------------------------------------------------------------------
     _route("session.snapshot", "GET", f"{SESSION}/snapshot", "hybrid", "read", offline=True,
-           decorate=("session", "catalogs", "effectiveCapabilities")),
-    _read("session.timeline", f"{SESSION}/timeline", offline=True),
-    _read("session.events", f"{SESSION}/events", offline=True),
-    _read("session.runtime.state", f"{SESSION}/runtime/state", offline=True, e2ee="plain"),
-    _read("session.runtime.capabilities", f"{SESSION}/runtime/capabilities", offline=True, e2ee="plain"),
-    _route("session.runtime.notices", "GET", f"{SESSION}/runtime/notices", "device", "critical"),
-    _read("session.runtime.queue", f"{SESSION}/runtime/queue", offline=True),
+           decorate=("session", "catalogs", "effectiveCapabilities"), agent=True),
+    _read("session.timeline", f"{SESSION}/timeline", offline=True, agent=True),
+    _read("session.events", f"{SESSION}/events", offline=True, agent=True),
+    _read("session.runtime.state", f"{SESSION}/runtime/state", offline=True, e2ee="plain", agent=True),
+    _read("session.runtime.capabilities", f"{SESSION}/runtime/capabilities", offline=True, e2ee="plain", agent=True),
+    _route("session.runtime.notices", "GET", f"{SESSION}/runtime/notices", "device", "critical", agent=True),
+    _read("session.runtime.queue", f"{SESSION}/runtime/queue", offline=True, agent=True),
     _read("session.runtime.commands", f"{SESSION}/runtime/commands"),
     _read("session.runtime.catalogs.model", f"{SESSION}/runtime/catalogs/model", decorate=("channelCatalog",)),
     _read("session.runtime.catalogs.permission", f"{SESSION}/runtime/catalogs/permission"),
-    _read("session.planning.get", f"{SESSION}/planning", offline=True),
-    _read("session.goal.get", f"{SESSION}/goal", offline=True),
-    _read("session.plans.list", f"{SESSION}/plans"),
-    _read("session.plans.get", f"{SESSION}/plans/{{plan_id}}/{{revision}}"),
-    _read("session.plans.markdown", f"{SESSION}/plans/{{plan_id}}/{{revision}}/markdown"),
+    _read("session.planning.get", f"{SESSION}/planning", offline=True, agent=True),
+    _read("session.goal.get", f"{SESSION}/goal", offline=True, agent=True),
+    _read("session.plans.list", f"{SESSION}/plans", agent=True),
+    _read("session.plans.get", f"{SESSION}/plans/{{plan_id}}/{{revision}}", agent=True),
+    _read("session.plans.markdown", f"{SESSION}/plans/{{plan_id}}/{{revision}}/markdown", agent=True),
     _route("session.planning.operation", "GET", f"{SESSION}/planning/operations/{{operation_id}}", "hybrid", "read",
            "server", forward="session.planning.get"),
     _route("session.goal.operation", "GET", f"{SESSION}/goal/operations/{{operation_id}}", "hybrid", "read",
            "server", forward="session.goal.get"),
     # -- sessions: commands ------------------------------------------------------------------------------
-    _command("session.runtime.messages", "POST", f"{SESSION}/runtime/messages", "clientMessageId"),
-    _command("session.runtime.steer", "POST", f"{SESSION}/runtime/steer", "clientMessageId"),
+    _command("session.runtime.messages", "POST", f"{SESSION}/runtime/messages", "clientMessageId", agent=True),
+    _command("session.runtime.steer", "POST", f"{SESSION}/runtime/steer", "clientMessageId", agent=True),
     _route("session.runtime.interrupt", "POST", f"{SESSION}/runtime/interrupt", "device", "critical",
-           command_id=GENERATED_COMMAND_ID, timeout="command"),
+           command_id=GENERATED_COMMAND_ID, timeout="command", agent=True),
     _route("session.runtime.notices.respond", "POST", f"{SESSION}/runtime/notices/{{notice_id}}/respond", "device",
-           "critical", command_id="responseId", timeout="command"),
+           "critical", command_id="responseId", timeout="command", agent=True),
     _command("session.runtime.selections", "PATCH", f"{SESSION}/runtime/selections", GENERATED_COMMAND_ID),
     _command("session.runtime.commands.execute", "POST", f"{SESSION}/runtime/commands", "operationId"),
     _command("session.sync", "POST", f"{SESSION}/sync", GENERATED_COMMAND_ID),
-    _command("session.planning.execute", "POST", f"{SESSION}/planning", "operationId"),
+    _command("session.planning.execute", "POST", f"{SESSION}/planning", "operationId", agent=True),
     _command("session.goal.execute", "POST", f"{SESSION}/goal", "operationId"),
     _command("session.runtime.queue.clear", "DELETE", f"{SESSION}/runtime/queue", GENERATED_COMMAND_ID),
     _command("session.runtime.queue.reorder", "PUT", f"{SESSION}/runtime/queue/order", GENERATED_COMMAND_ID),
@@ -188,6 +191,11 @@ CLIENT_ROUTES: tuple[ClientRoute, ...] = (
              GENERATED_COMMAND_ID),
     _command("session.runtime.queue.sendNow", "POST", f"{SESSION}/runtime/queue/{{message_id}}/send-now",
              GENERATED_COMMAND_ID),
+    # -- sessions: agent collaboration (the supervisor's device answers) ------------------------------------
+    _read("session.collab.get", f"{SESSION}/collab", agent=True),
+    _command("session.collab.supervise", "POST", f"{SESSION}/collab/supervisions", "operationId"),
+    _command("session.collab.supervision.update", "PATCH", f"{SESSION}/collab/supervisions/{{supervision_id}}",
+             "operationId"),
     # -- sessions: realtime, shares and attachments --------------------------------------------------------
     _route("session.ws", "WS", f"{SESSION}/ws", "device", "stream", "watch"),
     _route("session.shares.create", "POST", f"{SESSION}/shares", "hybrid", "command", "share", timeout="command"),
