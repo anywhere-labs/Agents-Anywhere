@@ -207,4 +207,47 @@ describe('native history projection', () => {
       await service.close()
     }
   })
+
+  describe('a session started on this device', () => {
+    /** Stores what the live turns of a session sent from here left: user messages under the Runtime's ids, the replies. */
+    async function sentFromHere(sessionId: string, turns: { userId: string; clientMessageId: string; text: string; replyId: string }[]): Promise<void> {
+      await store.sessions.create({ sessionId, runtimeType: 'pi', runtimeId: 'rti_pi', externalSessionId: 'a', cwd: '/w', nativeTitle: null, status: 'idle', sourceAvailability: 'available', takeover: true, at: clock.nowIso() })
+      let index = ORDER_ANCHOR_INDEX
+      const upserts = turns.flatMap(turn => [
+        { id: turn.userId, type: 'message' as const, status: 'done' as const, role: 'user' as const, orderSeq: index++ * ORDER_SUB_SLOTS, content: { kind: 'markdown', text: turn.text, clientMessageId: turn.clientMessageId }, source: { runtime: 'platform', clientMessageId: turn.clientMessageId }, createdAt: clock.nowIso() },
+        { id: turn.replyId, type: 'message' as const, status: 'done' as const, role: 'assistant' as const, orderSeq: index++ * ORDER_SUB_SLOTS, content: { kind: 'markdown', text: 'reply' }, source: { runtime: 'pi' }, createdAt: clock.nowIso() },
+      ])
+      await store.timeline.apply(sessionId, { upserts, at: clock.nowIso() })
+    }
+
+    it('does not repeat a user message the native record names by entry but carries the client message id of (Pi)', async () => {
+      await sentFromHere('sess_x', [{ userId: 'aa_u1', clientMessageId: 'cm1', text: 'hello', replyId: 'a_r1' }])
+      native.records.set('a', [
+        { type: 'message.completed', itemId: 'a_entry1', role: 'user', text: 'hello', clientMessageId: 'cm1', replay: true },
+        { type: 'message.completed', itemId: 'a_r1', role: 'assistant', text: 'reply', replay: true },
+      ])
+      await history.ensureLatest('sess_x')
+      expect(await ids('sess_x')).toEqual(['aa_u1', 'a_r1'])
+    })
+
+    it('does not repeat a user message the native record names by its own id only (Claude), however often it is projected', async () => {
+      await sentFromHere('sess_x', [
+        { userId: 'aa_u1', clientMessageId: 'cm1', text: 'again', replyId: 'a_r1' },
+        { userId: 'aa_u2', clientMessageId: 'cm2', text: 'again', replyId: 'a_r2' },
+      ])
+      native.records.set('a', [
+        { type: 'message.completed', itemId: 'a_uuid1', role: 'user', text: 'again', replay: true },
+        { type: 'message.completed', itemId: 'a_r1', role: 'assistant', text: 'reply', replay: true },
+        { type: 'message.completed', itemId: 'a_uuid2', role: 'user', text: ' again ', replay: true },
+        { type: 'message.completed', itemId: 'a_r2', role: 'assistant', text: 'reply', replay: true },
+      ])
+      const history10 = new NativeHistory({ store, feed, runtimes, clock, pageLimit: 10, sessionIdFor: (_h, runtimeId, ref) => `sess_${runtimeId}_${ref.nativeSessionId}`, isBound: id => bound.has(id) })
+      await history10.ensureLatest('sess_x')
+      expect(await ids('sess_x')).toEqual(['aa_u1', 'a_r1', 'aa_u2', 'a_r2'])
+      // The record grows from elsewhere (the CLI): the new message is projected, the matched ones stay matched.
+      native.records.get('a')!.push({ type: 'message.completed', itemId: 'a_uuid3', role: 'user', text: 'again', replay: true })
+      await history10.catchUp('sess_x', 'u2')
+      expect(await ids('sess_x')).toEqual(['aa_u1', 'a_r1', 'aa_u2', 'a_r2', 'a_uuid3'])
+    })
+  })
 })

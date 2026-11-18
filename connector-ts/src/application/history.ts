@@ -1,4 +1,4 @@
-import { ORDER_ANCHOR_INDEX, ORDER_SUB_SLOTS, summarize, type Session, type SummaryFacts, type TimelineDraft } from '../domain/conversation/index.js'
+import { ORDER_ANCHOR_INDEX, ORDER_SUB_SLOTS, summarize, type JsonObject, type Session, type SummaryFacts, type TimelineDraft } from '../domain/conversation/index.js'
 import type {
   ChangeFeed,
   Clock,
@@ -42,6 +42,18 @@ export interface NativeHistoryDeps {
 const stateKey = (sessionId: string): string => `history:${sessionId}`
 /** The permission the Runtime reported for a native session not open here (`NativeSessionSummary.permission`). */
 const permissionKey = (sessionId: string): string => `native-permission:${sessionId}`
+/** Native user message item id -> the stored user item it is (`NativeHistory.sameUserMessages`). */
+const aliasKey = (sessionId: string): string => `history-aliases:${sessionId}`
+/** How many of the newest stored items are searched for the user message a native one repeats. */
+const USER_MATCH_WINDOW = 500
+
+function text(content: JsonObject): string {
+  return typeof content.text === 'string' ? content.text.trim() : ''
+}
+
+function isUserMessage(item: TimelineDraft): boolean {
+  return item.type === 'message' && item.role === 'user'
+}
 
 /**
  * When native history is projected into the local store (04-connector.md §6.6):
@@ -217,7 +229,10 @@ export class NativeHistory {
     const ordered = [...drafts.values()].sort((a, b) => a.orderSeq - b.orderSeq)
     const fresh: TimelineDraft[] = []
     const upserts: TimelineDraft[] = []
+    const same = where === 'replace' ? null : await this.sameUserMessages(session, ordered)
     for (const draft of ordered) {
+      // A user message this device already stored (sent from here, under its own id) stays as it was stored.
+      if (same?.has(draft.id) === true) continue
       const stored = where === 'replace' ? null : await this.deps.store.timeline.get(session.sessionId, draft.id)
       if (stored !== null) upserts.push({ ...draft, orderSeq: stored.orderSeq })
       else fresh.push(draft)
@@ -253,6 +268,52 @@ export class NativeHistory {
       this.deps.feed.publish({ sessionId: session.sessionId, fromSeq: commit.fromSeq, toSeq: commit.toSeq, resetSeq: commit.session.clock.resetSeq, reset: commit.reset })
     }
     return commit
+  }
+
+  /**
+   * The native user messages in `drafts` that repeat a user message this device stored itself. A message sent from
+   * this device is stored under the id the Runtime gave it when it was sent; the native record names the same
+   * message differently (Pi by its entry, Claude by its JSONL uuid), so it is matched by the client message id when
+   * the record carries it (Pi), else by its text against a stored message sent from here that no native message
+   * matched yet. Matches are kept, so a message is matched once however often its page is projected.
+   */
+  private async sameUserMessages(session: Session, drafts: readonly TimelineDraft[]): Promise<Set<string>> {
+    const same = new Set<string>()
+    const timeline = this.deps.store.timeline
+    const stored = (await this.deps.store.kv.get(session.runtimeId, aliasKey(session.sessionId))) as Record<string, string> | null | undefined
+    const aliases: Record<string, string> = { ...(stored ?? {}) }
+    let changed = false
+    let candidates: TimelineDraft[] | null = null
+    for (const draft of drafts) {
+      if (!isUserMessage(draft)) continue
+      if (aliases[draft.id] !== undefined) {
+        same.add(draft.id)
+        continue
+      }
+      if ((await timeline.get(session.sessionId, draft.id)) !== null) continue
+      const clientMessageId = typeof draft.content.clientMessageId === 'string' ? draft.content.clientMessageId : null
+      let match: string | null = null
+      if (clientMessageId !== null) {
+        const item = await timeline.findByClientMessageId(session.sessionId, clientMessageId)
+        if (item !== null && item.id !== draft.id && isUserMessage(item)) match = item.id
+      } else if (text(draft.content) !== '') {
+        if (candidates === null) {
+          const claimed = new Set(Object.values(aliases))
+          const page = await timeline.read(session.sessionId, 'latest', null, USER_MATCH_WINDOW, Number.MAX_SAFE_INTEGER)
+          candidates = page.items
+            .filter(item => isUserMessage(item) && item.status !== 'failed' && typeof item.content.clientMessageId === 'string' && !claimed.has(item.id))
+            .sort((a, b) => a.orderSeq - b.orderSeq)
+        }
+        const index = candidates.findIndex(item => text(item.content) === text(draft.content))
+        if (index >= 0) match = candidates.splice(index, 1)[0]!.id
+      }
+      if (match === null) continue
+      aliases[draft.id] = match
+      same.add(draft.id)
+      changed = true
+    }
+    if (changed) await this.deps.store.kv.set(session.runtimeId, aliasKey(session.sessionId), aliases)
+    return same
   }
 
   /**
