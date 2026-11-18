@@ -1,6 +1,8 @@
 /* eslint-disable */
 /** Generated from contracts/device-meshcall/1.0/payloads.json. Do not edit; run `yarn contracts:generate`. */
 
+import type { AgentOperateCommand } from "./agent-operate-command.js"
+import type { AgentOperationResult } from "./agent-operation-result.js"
 import type { AttachmentConsumedOut } from "./attachment-consumed-out.js"
 import type { ChangesEvent } from "./changes-event.js"
 import type { ChannelSwitchCommand } from "./channel-switch-command.js"
@@ -23,6 +25,7 @@ import type { InterruptResult } from "./interrupt-result.js"
 import type { PlanningResponse } from "../../protocol/v1_2/planning-response.js"
 import type { PortClosedEvent } from "../../preview/v1_0/port-closed-event.js"
 import type { PortListeningEvent } from "../../preview/v1_0/port-listening-event.js"
+import type { PositionSelectCommand } from "./position-select-command.js"
 import type { PreparationCancelCommand } from "./preparation-cancel-command.js"
 import type { PreparationGetRequest } from "./preparation-get-request.js"
 import type { PreparationReserveCommand } from "./preparation-reserve-command.js"
@@ -48,10 +51,16 @@ import type { SelectCommand } from "./select-command.js"
 import type { SelectResult } from "./select-result.js"
 import type { SendMessageCommand } from "./send-message-command.js"
 import type { SendMessageResult } from "./send-message-result.js"
+import type { SessionCloseCommand } from "./session-close-command.js"
+import type { SessionCloseResult } from "./session-close-result.js"
 import type { SessionCommand } from "./session-command.js"
+import type { SessionConfigureCommand } from "./session-configure-command.js"
+import type { SessionConfigureResult } from "./session-configure-result.js"
 import type { SessionGoalCommand } from "./session-goal-command.js"
 import type { SessionInventoryOut } from "./session-inventory-out.js"
 import type { SessionPlanningCommand } from "./session-planning-command.js"
+import type { SessionRecoverCommand } from "./session-recover-command.js"
+import type { SessionRecoverResult } from "./session-recover-result.js"
 import type { SessionSummaryOut } from "./session-summary-out.js"
 import type { SessionSyncCommand } from "./session-sync-command.js"
 import type { SessionSyncResult } from "./session-sync-result.js"
@@ -70,12 +79,16 @@ export interface CommandPayloads {
   "preview.close": { request: PreviewCloseCommand; response: PreviewCloseResult }
   "preview.open": { request: PreviewOpenCommand; response: PreviewOpenResult }
   "runtime.apply": { request: RuntimeApplyCommand; response: RuntimeApplyResult }
+  "session.agent.operate": { request: AgentOperateCommand; response: AgentOperationResult }
+  "session.close": { request: SessionCloseCommand; response: SessionCloseResult }
+  "session.configuration.update": { request: SessionConfigureCommand; response: SessionConfigureResult }
   "session.creation.begin": { request: CreationBeginCommand; response: WorkflowState }
   "session.creation.cancel": { request: CreationCancelCommand; response: WorkflowState }
   "session.creation.respond": { request: CreationRespondCommand; response: WorkflowState }
   "session.goal": { request: SessionGoalCommand; response: GoalResponse }
   "session.interrupt": { request: SessionCommand; response: InterruptResult }
   "session.planning": { request: SessionPlanningCommand; response: PlanningResponse }
+  "session.position.select": { request: PositionSelectCommand; response: AgentOperationResult }
   "session.queue.clear": { request: SessionCommand; response: QueueResult }
   "session.queue.delete": { request: QueueItemCommand; response: QueueResult }
   "session.queue.reorder": { request: QueueReorderCommand; response: QueueResult }
@@ -83,6 +96,7 @@ export interface CommandPayloads {
   "session.queue.retry": { request: QueueItemCommand; response: QueueResult }
   "session.queue.sendNow": { request: QueueItemCommand; response: QueueResult }
   "session.queue.update": { request: QueueItemCommand; response: QueueResult }
+  "session.recover": { request: SessionRecoverCommand; response: SessionRecoverResult }
   "session.respondNotice": { request: RespondNoticeCommand; response: RespondNoticeResult }
   "session.select": { request: SelectCommand; response: SelectResult }
   "session.sendMessage": { request: SendMessageCommand; response: SendMessageResult }
@@ -136,12 +150,16 @@ export const COMMAND_ROUTES = {
   "preview.close": "aa.device.v1.Commands/previewClose",
   "preview.open": "aa.device.v1.Commands/previewOpen",
   "runtime.apply": "aa.device.v1.Commands/runtimeApply",
+  "session.agent.operate": "aa.device.v1.Commands/sessionAgentOperate",
+  "session.close": "aa.device.v1.Commands/sessionClose",
+  "session.configuration.update": "aa.device.v1.Commands/sessionConfigurationUpdate",
   "session.creation.begin": "aa.device.v1.Commands/sessionCreationBegin",
   "session.creation.cancel": "aa.device.v1.Commands/sessionCreationCancel",
   "session.creation.respond": "aa.device.v1.Commands/sessionCreationRespond",
   "session.goal": "aa.device.v1.Commands/sessionGoal",
   "session.interrupt": "aa.device.v1.Commands/sessionInterrupt",
   "session.planning": "aa.device.v1.Commands/sessionPlanning",
+  "session.position.select": "aa.device.v1.Commands/sessionPositionSelect",
   "session.queue.clear": "aa.device.v1.Commands/sessionQueueClear",
   "session.queue.delete": "aa.device.v1.Commands/sessionQueueDelete",
   "session.queue.reorder": "aa.device.v1.Commands/sessionQueueReorder",
@@ -149,6 +167,7 @@ export const COMMAND_ROUTES = {
   "session.queue.retry": "aa.device.v1.Commands/sessionQueueRetry",
   "session.queue.sendNow": "aa.device.v1.Commands/sessionQueueSendNow",
   "session.queue.update": "aa.device.v1.Commands/sessionQueueUpdate",
+  "session.recover": "aa.device.v1.Commands/sessionRecover",
   "session.respondNotice": "aa.device.v1.Commands/sessionRespondNotice",
   "session.select": "aa.device.v1.Commands/sessionSelect",
   "session.sendMessage": "aa.device.v1.Commands/sessionSendMessage",

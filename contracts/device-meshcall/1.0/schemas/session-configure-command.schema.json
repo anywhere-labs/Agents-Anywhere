@@ -1,0 +1,74 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:session-configure-command",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "``session.configuration.update``: Agent options by id, applied only while ``expectedRevision`` is current.",
+  "properties": {
+    "expectedRevision": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "title": "Expectedrevision",
+      "type": "integer"
+    },
+    "operationId": {
+      "minLength": 1,
+      "title": "Operationid",
+      "type": "string"
+    },
+    "runtime": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Runtime"
+    },
+    "runtimeId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Runtimeid"
+    },
+    "sessionId": {
+      "minLength": 1,
+      "title": "Sessionid",
+      "type": "string"
+    },
+    "values": {
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "boolean"
+          }
+        ]
+      },
+      "maxProperties": 128,
+      "title": "Values",
+      "type": "object"
+    }
+  },
+  "required": [
+    "sessionId",
+    "operationId",
+    "expectedRevision",
+    "values"
+  ],
+  "title": "SessionConfigureCommand",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

@@ -112,6 +112,8 @@ class E2eeContentRoutingTest {
         assertEquals(ContentTarget.Session("s1"), E2eeContentPaths.classify("/api/v2/sessions/s1/runtime/messages"))
         assertEquals(ContentTarget.Session("s1"), E2eeContentPaths.classify("/sessions/s1/runtime/queue/m1/send-now"))
         assertEquals(ContentTarget.Session("s 1"), E2eeContentPaths.classify("/sessions/s%201/timeline"))
+        assertEquals(ContentTarget.Session("s1"), E2eeContentPaths.classify("/runtime-workflows/sessions/s1/recover"))
+        assertNull(E2eeContentPaths.classify("/runtime-workflows/preparations"))
         assertNull(E2eeContentPaths.classify("/sessions/s1/meta"))
         assertNull(E2eeContentPaths.classify("/sessions/s1/runtime/state"))
         assertNull(E2eeContentPaths.classify("/sessions/s1/runtime/capabilities"))

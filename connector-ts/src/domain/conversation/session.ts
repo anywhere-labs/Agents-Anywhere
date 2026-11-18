@@ -137,6 +137,14 @@ export function summaryChanged(before: SummaryFacts | null, after: SummaryFacts)
  * The v2 `SessionRuntimeState` of a session (`GET runtime/state`, `state` of a selection update). `selections`
  * is what the device knows: the Runtime's report or the values just applied; absent when it knows none.
  */
+/**
+ * The fence of a request made against a session's Agent session (`metadata.ownerGeneration`): the native session the
+ * client saw. Null while the session has none.
+ */
+export function ownerGeneration(session: Pick<Session, 'externalSessionId'>): string | null {
+  return session.externalSessionId
+}
+
 export function runtimeStateWire(session: Session, selections: Readonly<Record<string, string>> | null): Record<string, unknown> {
   return {
     sessionId: session.sessionId,
@@ -147,7 +155,7 @@ export function runtimeStateWire(session: Session, selections: Readonly<Record<s
     createdAt: session.createdAt,
     updatedAt: session.lastActivityAt,
     updatedSeq: session.clock.headSeq,
-    metadata: { activeTurnId: session.activeTurn?.turnId ?? null },
+    metadata: { activeTurnId: session.activeTurn?.turnId ?? null, ...(ownerGeneration(session) !== null ? { ownerGeneration: ownerGeneration(session) } : {}) },
     ...(selections !== null ? { selections: { ...selections } } : {}),
   }
 }

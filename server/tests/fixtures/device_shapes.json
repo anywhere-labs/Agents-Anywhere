@@ -62,7 +62,8 @@
       "updatedAt": "2026-11-16T00:00:00.000Z",
       "updatedSeq": 0,
       "metadata": {
-        "activeTurnId": null
+        "activeTurnId": null,
+        "ownerGeneration": "thr_sess_shape"
       },
       "selections": {
         "model": "gpt-5-mini",

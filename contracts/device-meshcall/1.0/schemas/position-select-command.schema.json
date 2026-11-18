@@ -1,0 +1,76 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:position-select-command",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "``session.position.select``: the leaf of the Agent's session tree the next turn continues from.",
+  "properties": {
+    "fileEntriesDigest": {
+      "minLength": 1,
+      "title": "Fileentriesdigest",
+      "type": "string"
+    },
+    "leafId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Leafid"
+    },
+    "positionRevision": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "title": "Positionrevision",
+      "type": "integer"
+    },
+    "runtime": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Runtime"
+    },
+    "runtimeId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Runtimeid"
+    },
+    "sessionId": {
+      "minLength": 1,
+      "title": "Sessionid",
+      "type": "string"
+    },
+    "sourceEpoch": {
+      "minLength": 1,
+      "title": "Sourceepoch",
+      "type": "string"
+    }
+  },
+  "required": [
+    "sessionId",
+    "fileEntriesDigest",
+    "sourceEpoch",
+    "positionRevision"
+  ],
+  "title": "PositionSelectCommand",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

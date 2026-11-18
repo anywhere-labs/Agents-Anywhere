@@ -4,6 +4,7 @@ import Synchronization
 /// 加密模式下哪些请求是「内容」，要按设备走安全通道。与 Server 的 `requires_secure_channel` 一致：
 /// - `POST /api/v2/sessions`、`POST /api/v2/sessions/create-and-start`（带首条消息）；
 /// - `/api/v2/sessions/{id}/` 下除 `meta`、`runtime/state`、`runtime/capabilities` 以外的全部路由；
+/// - `/api/v2/runtime-workflows/sessions/{id}/…` (the Agent session behind a session: configuration, operations, close, recover);
 /// - `/api/v2/connectors/{id}/fs|shell|terminals|terminals-v2/…` 与 `/api/v2/connectors/fs/…`。
 /// 其余（账号、设备、项目、会话目录、归档/已读、模型配置……）是元数据，照常走明文 HTTP。
 nonisolated enum E2EEContentTarget: Hashable, Sendable {
@@ -32,6 +33,9 @@ nonisolated enum E2EEContentTarget: Hashable, Sendable {
             let suffix = rest.dropFirst(2).joined(separator: "/")
             if suffix.isEmpty || ["meta", "runtime/state", "runtime/capabilities"].contains(suffix) { return .metadata }
             return .session(rest[1].removingPercentEncoding ?? rest[1])
+        case "runtime-workflows":
+            guard rest.count >= 4, rest[1] == "sessions", !rest[2].isEmpty else { return .metadata }
+            return .session(rest[2].removingPercentEncoding ?? rest[2])
         case "connectors":
             guard rest.count >= 3, !rest[1].isEmpty else { return .metadata }
             if rest[1] == "fs" { return .unknownDevice }

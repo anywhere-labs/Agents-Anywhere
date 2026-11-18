@@ -28,6 +28,7 @@ import type {
   ConfigResult,
   DeliveryRef,
   InteractionAnswer,
+  JsonObject,
   NewSessionSpec,
   PlanningPort,
   PromptAcceptance,
@@ -69,6 +70,12 @@ const PLAN_CAPABILITIES: readonly Capability[] = [
   { id: 'session.planning', supported: true, parameters: { preparedCreation: true } },
   { id: 'session.plan_document', supported: true },
   { id: 'session.plan_review', supported: true },
+]
+
+/** Agent operations Pi answers from what this adapter knows (`operate`). */
+const AGENT_CAPABILITIES: readonly Capability[] = [
+  { id: 'session.authentication.read', supported: true },
+  { id: 'session.resources.read', supported: true },
 ]
 
 const PERMISSION_LABELS: Readonly<Record<PiPermission, string>> = { ask: '写入与命令审批', ask_all: '全部工具审批', readonly: '只读' }
@@ -186,6 +193,8 @@ export class PiRuntimeSession implements RuntimeSession {
   private permission: PiPermission = 'ask'
   private planMode = false
   private lastCapabilities: readonly Capability[] = []
+  /** The slash commands Pi reported last (`resources.get`). */
+  private commands: readonly { readonly name: string; readonly description?: string }[] = []
   private capabilityRevision = 1
   private readonly toolItems = new Map<string, string>()
   private readonly synthetic = new Map<string, Synthetic>()
@@ -233,7 +242,8 @@ export class PiRuntimeSession implements RuntimeSession {
 
   get capabilities(): SessionCapabilities {
     const items = [...(this.active?.inner.capabilities.items ?? this.lastCapabilities)]
-    return { revision: this.capabilityRevision, items: [...items.filter(item => !PLAN_CAPABILITIES.some(plan => plan.id === item.id)), ...PLAN_CAPABILITIES] }
+    const own = [...PLAN_CAPABILITIES, ...AGENT_CAPABILITIES]
+    return { revision: this.capabilityRevision, items: [...items.filter(item => !own.some(entry => entry.id === item.id)), ...own] }
   }
 
   get configOptions(): readonly ConfigOption[] {
@@ -522,6 +532,9 @@ export class PiRuntimeSession implements RuntimeSession {
         this.planMode = event.mode === 'plan'
         this.events.push({ type: 'config.updated', options: this.configOptions })
         return event
+      case 'commands.updated':
+        this.commands = event.commands.map(command => ({ name: command.name, ...(command.description !== undefined ? { description: command.description } : {}) }))
+        return event
       case 'capabilities.changed':
         this.lastCapabilities = event.capabilities.items
         this.capabilityRevision += 1
@@ -733,6 +746,14 @@ export class PiRuntimeSession implements RuntimeSession {
       return { ok: false, error: runtimeError(error) }
     }
     return active.inner.command(name, args)
+  }
+
+  /** `authentication.status` (where Pi's model credentials come from) and `resources.get` (its slash commands). */
+  async operate(operation: string, _values: JsonObject): Promise<JsonObject> {
+    this.touch()
+    if (operation === 'authentication.status') return { message: '模型认证来自此 Pi 执行来源的原生配置与环境。' }
+    if (operation === 'resources.get') return { commands: this.commands.map(command => ({ ...command })) }
+    fail('unsupported_operation', 'Pi 尚未提供此操作。')
   }
 
   async close(): Promise<void> {

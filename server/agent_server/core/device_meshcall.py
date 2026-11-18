@@ -1011,6 +1011,115 @@ class SessionSyncResult(DeviceModel):
     headSeq: Seq
 
 
+# Agent session controls (``runtime-workflows/sessions/{id}/*``): the session's own Agent options, the Agent's
+# optional operations, and releasing or reopening the Agent session. ``ownerGeneration`` / ``expectedGeneration``
+# name the native session the client saw (``SessionRuntimeState.metadata.ownerGeneration``).
+
+
+class AgentConfigOptionValue(DeviceModel):
+    value: str
+    name: str
+    description: str | None = None
+
+
+class AgentConfigOption(DeviceModel):
+    """One option of the Agent session as the Agent reports it (the same shape as a prepared workspace's)."""
+
+    id: NonEmpty
+    name: str
+    description: str | None = None
+    category: str
+    type: Literal["select", "boolean"]
+    currentValue: str | bool
+    options: list[AgentConfigOptionValue] | None = None
+
+
+class AgentConfiguration(DeviceModel):
+    """``revision`` changes whenever the options or their values change."""
+
+    revision: Seq
+    options: list[AgentConfigOption] = Field(default_factory=list)
+
+
+class AgentAction(DeviceModel):
+    """An Agent operation the session can run now, as the configuration panel lists it."""
+
+    operation: NonEmpty
+    title: NonEmpty
+
+
+class AgentConfigurationView(DeviceModel):
+    """``GET runtime-workflows/sessions/{id}/configuration``."""
+
+    configuration: AgentConfiguration
+    ownerGeneration: str | None = None
+    actions: list[AgentAction] = Field(default_factory=list)
+
+
+class SessionConfigureCommand(SessionCommand):
+    """``session.configuration.update``: Agent options by id, applied only while ``expectedRevision`` is current."""
+
+    operationId: NonEmpty
+    expectedRevision: Seq
+    values: dict[str, str | bool] = Field(max_length=128)
+
+
+class SessionConfigureResult(AgentConfigurationView):
+    operationId: NonEmpty
+    phase: Literal["completed"]
+
+
+class AgentOperateCommand(SessionCommand):
+    """``session.agent.operate``: an operation the Agent declares a capability for (``AgentOperationRequest``)."""
+
+    operation: NonEmpty
+    operationId: NonEmpty
+    expectedGeneration: NonEmpty
+    values: dict[str, Any] = Field(default_factory=dict, max_length=128)
+
+
+class AgentOperationResult(DeviceModel):
+    operationId: NonEmpty
+    phase: Literal["accepted", "running", "completed", "rejected", "cancelled", "outcome_unknown"]
+    result: dict[str, Any] | None = None
+    failure: WorkflowFailure | None = None
+
+
+class PositionSelectCommand(SessionCommand):
+    """``session.position.select``: the leaf of the Agent's session tree the next turn continues from."""
+
+    fileEntriesDigest: NonEmpty
+    sourceEpoch: NonEmpty
+    positionRevision: Seq
+    leafId: str | None = None
+
+
+class SessionCloseCommand(SessionCommand):
+    """``session.close``: releases the Agent session (its native record stays); the next operation reopens it."""
+
+    ownerGeneration: NonEmpty
+    closeOperationId: str | None = None
+
+
+class SessionCloseResult(DeviceModel):
+    closed: bool
+
+
+class SessionRecoverCommand(SessionCommand):
+    """``session.recover``: reopens an Agent session the Agent lost, now instead of on the next message."""
+
+    operationId: NonEmpty
+    expectedGeneration: NonEmpty
+    cliExited: bool = False
+    sourceRevision: str | None = None
+
+
+class SessionRecoverResult(DeviceModel):
+    operationId: NonEmpty
+    phase: Literal["completed"]
+    state: dict[str, Any] | None = None
+
+
 class RuntimeApplyResult(DeviceModel):
     """The instance after ``runtime.apply`` / ``channel.switch``."""
 
@@ -1235,6 +1344,12 @@ DEVICE_COMMANDS: tuple[str, ...] = (
     "session.queue.reorder",
     "session.queue.clear",
     "session.sync",
+    # Agent session controls (runtime-workflows/sessions/{id}/*).
+    "session.configuration.update",
+    "session.agent.operate",
+    "session.position.select",
+    "session.close",
+    "session.recover",
     "runtime.apply",
     "device.settings.apply",
     "channel.switch",
@@ -1413,6 +1528,11 @@ COMMAND_PAYLOADS: dict[str, MethodPayloads] = {
     "session.queue.reorder": MethodPayloads(QueueReorderCommand, QueueResult),
     "session.queue.clear": MethodPayloads(SessionCommand, QueueResult),
     "session.sync": MethodPayloads(SessionSyncCommand, SessionSyncResult),
+    "session.configuration.update": MethodPayloads(SessionConfigureCommand, SessionConfigureResult),
+    "session.agent.operate": MethodPayloads(AgentOperateCommand, AgentOperationResult),
+    "session.position.select": MethodPayloads(PositionSelectCommand, AgentOperationResult),
+    "session.close": MethodPayloads(SessionCloseCommand, SessionCloseResult),
+    "session.recover": MethodPayloads(SessionRecoverCommand, SessionRecoverResult),
     "runtime.apply": MethodPayloads(RuntimeApplyCommand, RuntimeApplyResult),
     "device.settings.apply": MethodPayloads(DeviceSettingsApplyCommand, DeviceSettingsApplyResult),
     "channel.switch": MethodPayloads(ChannelSwitchCommand, RuntimeApplyResult),

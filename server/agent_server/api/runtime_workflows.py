@@ -2,16 +2,26 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from agent_server.api.client_forward import forward_session, session_facts
+from agent_server.core.device_meshcall import (
+    AgentConfigurationView,
+    AgentOperationResult,
+    ClientServerFacts,
+    SessionCloseResult,
+    SessionConfigureResult,
+    SessionRecoverResult,
+)
+from agent_server.core.models import SessionView
 from agent_server.core.runtime_workflows import (
-    BeginCreationRequest,
     AgentOperationRequest,
-    RecoverRuntimeSessionRequest,
+    BeginCreationRequest,
     CloseRuntimeSessionRequest,
     PositionSelectionRequest,
     PrepareWorkspaceRequest,
+    RecoverRuntimeSessionRequest,
     UpdateAgentConfigurationRequest,
     WorkflowInteractionResponse,
     WorkflowView,
@@ -102,100 +112,99 @@ async def cancel(
     )
 
 
-@router.get("/sessions/{session_id}/configuration")
+# The Agent session behind a session lives on the device: these routes go to it with ``Client/call`` (in E2EE mode
+# clients send them through the secure channel instead). Sessions on v2 Connectors answer 409
+# ``device_upgrade_required``.
+
+
+async def _facts(session: SessionView) -> ClientServerFacts:
+    return session_facts(session)
+
+
+@router.get("/sessions/{session_id}/configuration", response_model=AgentConfigurationView)
 async def get_configuration(
+    request: Request,
     session_id: str,
-    service: Annotated[RuntimeWorkflowService, Depends(get_runtime_workflow_service)],
     user_id: Annotated[str, Depends(current_user_id)],
 ):
-    return await invoke(
-        service.session_action(
-            session_id, "session.configuration.get", {}, user_id=user_id
-        )
+    return await forward_session(
+        request, "workflow.session.configuration.get", user_id=user_id, session_id=session_id,
+        response_model=AgentConfigurationView, server=_facts,
     )
 
 
-@router.post("/sessions/{session_id}/configuration")
+@router.post("/sessions/{session_id}/configuration", response_model=SessionConfigureResult)
 async def update_configuration(
+    request: Request,
     session_id: str,
     payload: UpdateAgentConfigurationRequest,
-    service: Annotated[RuntimeWorkflowService, Depends(get_runtime_workflow_service)],
     user_id: Annotated[str, Depends(current_user_id)],
 ):
-    return await invoke(
-        service.session_action(
-            session_id,
-            "session.configuration.update",
-            payload.model_dump(),
-            user_id=user_id,
-        )
+    return await forward_session(
+        request, "workflow.session.configuration.update", user_id=user_id, session_id=session_id,
+        response_model=SessionConfigureResult, server=_facts,
     )
 
 
 @router.get("/sessions/{session_id}/tree")
 async def session_tree(
+    request: Request,
     session_id: str,
-    service: Annotated[RuntimeWorkflowService, Depends(get_runtime_workflow_service)],
     user_id: Annotated[str, Depends(current_user_id)],
     cursor: str | None = None,
 ):
-    return await invoke(
-        service.session_action(
-            session_id,
-            "session.tree",
-            {"limit": 500, **({"cursor": cursor} if cursor else {})},
-            user_id=user_id,
-        )
+    return await forward_session(
+        request, "workflow.session.tree", user_id=user_id, session_id=session_id, server=_facts,
     )
 
 
-@router.post("/sessions/{session_id}/position")
+@router.post("/sessions/{session_id}/position", response_model=AgentOperationResult)
 async def select_position(
+    request: Request,
     session_id: str,
     payload: PositionSelectionRequest,
-    service: Annotated[RuntimeWorkflowService, Depends(get_runtime_workflow_service)],
     user_id: Annotated[str, Depends(current_user_id)],
 ):
-    return await invoke(
-        service.session_action(
-            session_id, "session.position.select", payload.model_dump(), user_id=user_id
-        )
+    return await forward_session(
+        request, "workflow.session.position", user_id=user_id, session_id=session_id,
+        response_model=AgentOperationResult, server=_facts,
     )
 
 
-@router.post("/sessions/{session_id}/close")
+@router.post("/sessions/{session_id}/close", response_model=SessionCloseResult)
 async def close_session(
+    request: Request,
     session_id: str,
     payload: CloseRuntimeSessionRequest,
-    service: Annotated[RuntimeWorkflowService, Depends(get_runtime_workflow_service)],
     user_id: Annotated[str, Depends(current_user_id)],
 ):
-    return await invoke(
-        service.session_action(
-            session_id, "session.close", payload.model_dump(), user_id=user_id
-        )
+    return await forward_session(
+        request, "workflow.session.close", user_id=user_id, session_id=session_id,
+        response_model=SessionCloseResult, server=_facts,
     )
 
 
-@router.post("/sessions/{session_id}/operations", status_code=202)
+@router.post("/sessions/{session_id}/operations", status_code=202, response_model=AgentOperationResult)
 async def agent_operation(
+    request: Request,
     session_id: str,
     payload: AgentOperationRequest,
-    service: Annotated[RuntimeWorkflowService, Depends(get_runtime_workflow_service)],
     user_id: Annotated[str, Depends(current_user_id)],
 ):
-    return await invoke(service.session_action(
-        session_id, "session.agent.operate", payload.model_dump(), user_id=user_id,
-    ))
+    return await forward_session(
+        request, "workflow.session.operations", user_id=user_id, session_id=session_id,
+        response_model=AgentOperationResult, server=_facts,
+    )
 
 
-@router.post("/sessions/{session_id}/recover", status_code=202)
+@router.post("/sessions/{session_id}/recover", status_code=202, response_model=SessionRecoverResult)
 async def recover_session(
+    request: Request,
     session_id: str,
     payload: RecoverRuntimeSessionRequest,
-    service: Annotated[RuntimeWorkflowService, Depends(get_runtime_workflow_service)],
     user_id: Annotated[str, Depends(current_user_id)],
 ):
-    return await invoke(service.session_action(
-        session_id, "session.recover", payload.model_dump(), user_id=user_id,
-    ))
+    return await forward_session(
+        request, "workflow.session.recover", user_id=user_id, session_id=session_id,
+        response_model=SessionRecoverResult, server=_facts,
+    )

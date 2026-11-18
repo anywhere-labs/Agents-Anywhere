@@ -62,6 +62,10 @@ export const CAPABILITIES: SessionCapabilities = {
 
 export class ConfigurableSession extends FakeRuntimeSession {
   public readonly current: Record<string, string> = { mode: 'default', model: 'm1', permission: 'ask' }
+  public readonly planningOptionId = 'mode'
+  public get configOptions(): readonly ConfigOption[] {
+    return configOptions(this.current)
+  }
   public override async configure(change: ConfigChange): Promise<ConfigResult> {
     await super.configure(change)
     this.current[change.optionId] = String(change.value)
@@ -134,7 +138,9 @@ export async function testDevice(options: { platform?: NodeJS.Platform; nativeAp
   const readers = new DeviceReaders(store, clock.nowIso, {
     sessionCapabilities: async sessionId => {
       const bound = service.boundSession(sessionId)
-      return bound === null ? null : (capabilitySet(bound.capabilities, { runtime: 'opencode', sessionId }) as never)
+      if (bound === null) return null
+      const items = [...bound.capabilities.items, ...(await service.lifecycleCapabilities(sessionId))]
+      return capabilitySet({ revision: bound.capabilities.revision, items }, { runtime: 'opencode', sessionId }) as never
     },
     catalogs: async sessionId => catalogs(sessionId) as never,
   })
@@ -162,6 +168,7 @@ export async function testDevice(options: { platform?: NodeJS.Platform; nativeAp
       return uploadPreparedDownload({ preparedFile: p => files.preparedFile(p), upload: async () => undefined }, params)
     },
     platform: options.platform ?? 'linux',
+    agent: service,
   })
   const caller = { clientId: 'cl_test', label: 'Test', platform: 'web' }
   const testDevice: TestDevice = {

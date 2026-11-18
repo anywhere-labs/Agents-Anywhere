@@ -75,6 +75,20 @@ describe('Pi session', () => {
     await handle.stop()
   })
 
+  it('answers the Agent operations it declares: where credentials come from and its slash commands', async () => {
+    const { handle, world, work } = setup()
+    const session = await handle.open({ kind: 'new', spec: { cwd: work } }, { sessionId: 'aa_ops', replay: 'none' }) as PiRuntimeSession
+    const events = collect(session)
+    const ids = session.capabilities.items.filter(c => c.supported).map(c => c.id)
+    expect(ids).toEqual(expect.arrayContaining(['session.authentication.read', 'session.resources.read']))
+    world.agents[0]!.update(session.nativeSessionId, { sessionUpdate: 'available_commands_update', availableCommands: [{ name: 'compact', description: 'Compact the context' }] })
+    await until(() => of(events, 'commands.updated').length > 0)
+    expect(await session.operate('resources.get', {})).toEqual({ commands: [{ name: 'compact', description: 'Compact the context' }] })
+    expect(await session.operate('authentication.status', {})).toMatchObject({ message: expect.any(String) })
+    await expect(session.operate('tools.set', {})).rejects.toMatchObject({ error: { code: 'unsupported_operation' } })
+    await handle.stop()
+  })
+
   it('refuses a Pi whose approval guard did not load', async () => {
     const { handle, world, work } = setup()
     world.guardLoaded = false

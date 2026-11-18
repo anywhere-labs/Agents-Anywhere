@@ -151,6 +151,16 @@ export class CommandInbox {
       void service.dispatchNext(p.sessionId).catch(error => service.reportError(p.sessionId, error))
       return { headSeq: commit.session.clock.headSeq }
     })
+    register('session.configuration.update', async p => untyped<'session.configuration.update'>(service.configureAgent(p.sessionId, { operationId: p.operationId, expectedRevision: p.expectedRevision, values: p.values })))
+    register('session.agent.operate', async p => untyped<'session.agent.operate'>(service.agentOperate(p.sessionId, {
+      operation: p.operation, operationId: p.operationId, expectedGeneration: p.expectedGeneration, values: p.values as never,
+    })))
+    register('session.position.select', async (p, context) => {
+      const { sessionId, runtime: _runtime, runtimeId: _runtimeId, ...values } = p
+      return untyped<'session.position.select'>(service.selectAgentPosition(sessionId, context.commandId, values as never))
+    })
+    register('session.close', async p => service.closeAgentSession(p.sessionId, p.ownerGeneration))
+    register('session.recover', async p => untyped<'session.recover'>(service.recoverAgentSession(p.sessionId, p.operationId, p.expectedGeneration)))
     for (const method of Object.keys(extra) as CommandMethod[]) {
       const handler = extra[method]
       if (handler !== undefined) register(method, handler as InboxHandler<typeof method>)

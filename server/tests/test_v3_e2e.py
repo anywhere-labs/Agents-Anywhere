@@ -416,6 +416,59 @@ def test_takeover_switch(e2e: E2E) -> None:
     assert api.post(f"/sessions/{sid}/takeover")["session"]["takeover"] is True
 
 
+def _capability(e2e: E2E, sid: str, capability_id: str) -> dict[str, Any]:
+    items = e2e.api.get(f"/sessions/{sid}/runtime/capabilities")["capabilitySet"]["capabilities"]
+    return next((item for item in items if item["capabilityId"] == capability_id), {})
+
+
+def test_agent_configuration_close_and_recovery(e2e: E2E) -> None:
+    """The Agent configuration panel, Agent operations and the session's Agent session: released, lost, recovered."""
+
+    api = e2e.api
+    sid = e2e.need("session_id")
+    base = f"/runtime-workflows/sessions/{sid}"
+    view = api.get(f"{base}/configuration")
+    options = {option["id"]: option for option in view["configuration"]["options"]}
+    assert {"model", "permission"} <= set(options), view
+    generation = view["ownerGeneration"]
+    assert generation and api.get(f"/sessions/{sid}/runtime/state")["state"]["metadata"]["ownerGeneration"] == generation
+    body = {"operationId": f"op_{uuid.uuid4().hex}", "expectedRevision": view["configuration"]["revision"],
+            "values": {"model": "m1"}}
+    updated = api.post(f"{base}/configuration", body)
+    assert updated["phase"] == "completed" and updated["operationId"] == body["operationId"], updated
+    assert {o["id"]: o["currentValue"] for o in updated["configuration"]["options"]}["model"] == "m1", updated
+    # The operation id is the receipt: a retry replays the answer.
+    assert api.post(f"{base}/configuration", body) == updated
+    stale = api.call("POST", f"{base}/configuration", json={**body, "operationId": f"op_{uuid.uuid4().hex}"}, expect=409)
+    assert stale.json()["detail"]["code"] == "configuration_changed", stale.text
+    _send(e2e, sid, "after the panel")
+    _wait_text(e2e, sid, "echo: after the panel [model=m1")
+    # The fake Agent declares no Agent operation and no session tree.
+    refused = api.call("POST", f"{base}/operations", json={
+        "operation": "resources.get", "operationId": f"op_{uuid.uuid4().hex}", "expectedGeneration": generation,
+    }, expect=409)
+    assert refused.json()["detail"]["code"] == "agent_capability_unsupported", refused.text
+    assert api.call("GET", f"{base}/tree", expect=409).json()["detail"]["code"] == "capability_unavailable"
+    # Released on purpose: the next message opens it again; nothing to recover.
+    assert _capability(e2e, sid, "session.close")["available"] is True
+    assert api.post(f"{base}/close", {"ownerGeneration": generation, "closeOperationId": "close-1"}) == {"closed": True}
+    assert _capability(e2e, sid, "session.recover")["available"] is False
+    # The Agent process exits: recovery is offered, and reopens the same native session.
+    _send(e2e, sid, "bye #exit")
+    _wait_text(e2e, sid, "echo: bye #exit")
+    _wait(lambda: _capability(e2e, sid, "session.recover").get("available") is True, 30, 0.2, "recovery offered")
+    snapshot = api.get(f"/sessions/{sid}/snapshot", params={"limit": 1})
+    effective = {c["capabilityId"]: c for c in snapshot["effectiveCapabilities"]["capabilities"]}
+    assert effective["session.recover"]["available"] and effective["session.recover"]["allowed"], effective
+    request = {"operationId": f"op_{uuid.uuid4().hex}", "expectedGeneration": generation}
+    recovered = api.post(f"{base}/recover", request, expect=202)
+    assert recovered["phase"] == "completed" and recovered["state"]["metadata"]["ownerGeneration"] == generation, recovered
+    assert api.post(f"{base}/recover", request, expect=202) == recovered
+    assert _capability(e2e, sid, "session.recover")["available"] is False
+    _send(e2e, sid, "after recovery")
+    _wait_text(e2e, sid, "echo: after recovery")
+
+
 def test_device_settings_change(e2e: E2E) -> None:
     api = e2e.api
     current = api.get(f"{e2e.dev}/device-settings")

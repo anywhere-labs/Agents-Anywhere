@@ -121,7 +121,8 @@ export function reportContentTransportRequired(sessionId: string | null, code: s
   }
 }
 
-const SESSION_CONTENT_PATH = /^(?:\/api\/v\d+)?\/sessions\/([^/?#]+)(?:\/[^?#]*)?$/
+// A session's own routes, and those of the Agent session behind it (`/runtime-workflows/sessions/{id}/...`).
+const SESSION_CONTENT_PATH = /^(?:\/api\/v\d+)?(?:\/runtime-workflows)?\/sessions\/([^/?#]+)(?:\/[^?#]*)?$/
 // Account-level collections under /sessions; every other segment is a session ID.
 const NOT_SESSION_IDS: ReadonlySet<string> = new Set([
   "list", "read", "archive", "unarchive", "archive-all", "create", "create-and-start", "inventory",

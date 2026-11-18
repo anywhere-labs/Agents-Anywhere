@@ -155,7 +155,7 @@ Codex **不声明** JetBrains AIR：codex-acp 对 AIR 客户端会改用另一�
   - `_aa/operate` 的配置、命令、插话、计划、目标等写操作 → `RuntimeSession` 端口方法，背后是标准 ACP 或第 2 节登记的扩展。操作身份与「结果未知不重发」由 `contracts/device-meshcall/1.0` 的 Commands（`commandId` 幂等、`command_outcome_unknown`）承担，ACP 层不再有 `operationId` / `expectedGeneration`。
   - `_aa/observe` 没有对应实现。
   - `_meta.aa.unavailableCapabilities` 不再读取：能力只来自 initialize 协商和方言声明（第 3 节）。
-- **1.1 的平台 API**（`/api/v2/runtime-workflows/sessions/{id}/operations`、`/recover`）属于 `runtime-workflows` 契约，2.0 不再描述。v3 Connector 尚未迁移 Pi，也没有实现这两个接口的设备侧。
+- **1.1 的平台 API**（`/api/v2/runtime-workflows/sessions/{id}/configuration`、`/operations`、`/tree`、`/position`、`/close`、`/recover`）属于 `runtime-workflows` 契约，2.0 不再描述。v3 Connector 在设备上实现它们（`contracts/device-meshcall/1.0` 的 `session.configuration.update`、`session.agent.operate`、`session.position.select`、`session.close`、`session.recover` 命令）：Agent 操作和会话树交给声明了对应能力的 `RuntimeSession.operate`，目前只有 Pi 提供 `authentication.status`、`resources.get`；没有 Agent 声明会话树（`session.execution_position.*`），这两个接口答 409 `capability_unavailable`。`ownerGeneration` 是会话当前的原生会话 ID。
 - **保留**：`_meta.aa.timelineItem`、`_meta.aa.guarantees` 的 `stable_native_identity`；新增 `_meta.aa.selectionCategory` 的登记（v2 已在使用）。
 - **新增**：协议版本协商规则、第 2 节的扩展注册清单、第 3 节的能力映射表、第 5 节的接纳语义。
 

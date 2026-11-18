@@ -13,6 +13,10 @@ test("only per-session paths are session content", () => {
   assert.equal(transport.sessionIdOfContentPath("/api/v2/sessions/sess_a/snapshot"), "sess_a")
   assert.equal(transport.sessionIdOfContentPath("/api/v2/sessions/sess%2Fb/events?after=seq:1"), "sess/b")
   assert.equal(transport.sessionIdOfContentPath("/api/v2/sessions/sess_a"), "sess_a")
+  // The Agent session behind a session (configuration, operations, close, recover) goes to the same device.
+  assert.equal(transport.sessionIdOfContentPath("/api/v2/runtime-workflows/sessions/sess_a/recover"), "sess_a")
+  assert.equal(transport.sessionIdOfContentPath("/api/v2/runtime-workflows/preparations"), null)
+  assert.equal(transport.sessionIdOfContentPath("/api/v2/runtime-workflows/creation/op_1"), null)
   for (const path of ["/api/v2/sessions/list", "/api/v2/sessions/read", "/api/v2/sessions/create-and-start", "/api/v2/connectors", "/api/v2/sessions"])
     assert.equal(transport.sessionIdOfContentPath(path), null, path)
 })

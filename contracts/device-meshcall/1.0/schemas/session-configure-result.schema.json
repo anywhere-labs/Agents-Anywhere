@@ -1,0 +1,198 @@
+{
+  "$defs": {
+    "AgentAction": {
+      "description": "An Agent operation the session can run now, as the configuration panel lists it.",
+      "properties": {
+        "operation": {
+          "minLength": 1,
+          "title": "Operation",
+          "type": "string"
+        },
+        "title": {
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "operation",
+        "title"
+      ],
+      "title": "AgentAction",
+      "type": "object"
+    },
+    "AgentConfigOption": {
+      "description": "One option of the Agent session as the Agent reports it (the same shape as a prepared workspace's).",
+      "properties": {
+        "category": {
+          "title": "Category",
+          "type": "string"
+        },
+        "currentValue": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "boolean"
+            }
+          ],
+          "title": "Currentvalue"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "options": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/AgentConfigOptionValue"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Options"
+        },
+        "type": {
+          "enum": [
+            "select",
+            "boolean"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "category",
+        "type",
+        "currentValue"
+      ],
+      "title": "AgentConfigOption",
+      "type": "object"
+    },
+    "AgentConfigOptionValue": {
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "name"
+      ],
+      "title": "AgentConfigOptionValue",
+      "type": "object"
+    },
+    "AgentConfiguration": {
+      "description": "``revision`` changes whenever the options or their values change.",
+      "properties": {
+        "options": {
+          "items": {
+            "$ref": "#/$defs/AgentConfigOption"
+          },
+          "title": "Options",
+          "type": "array"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Revision",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "revision"
+      ],
+      "title": "AgentConfiguration",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:session-configure-result",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "actions": {
+      "items": {
+        "$ref": "#/$defs/AgentAction"
+      },
+      "title": "Actions",
+      "type": "array"
+    },
+    "configuration": {
+      "$ref": "#/$defs/AgentConfiguration"
+    },
+    "operationId": {
+      "minLength": 1,
+      "title": "Operationid",
+      "type": "string"
+    },
+    "ownerGeneration": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Ownergeneration"
+    },
+    "phase": {
+      "const": "completed",
+      "title": "Phase",
+      "type": "string"
+    }
+  },
+  "required": [
+    "configuration",
+    "operationId",
+    "phase"
+  ],
+  "title": "SessionConfigureResult",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

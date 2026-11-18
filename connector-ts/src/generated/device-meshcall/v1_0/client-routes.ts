@@ -1386,11 +1386,11 @@ export const CLIENT_ROUTES = [
     "path": "/api/v2/runtime-workflows/sessions/{session_id}/tree",
     "sealedUpload": false,
     "timeout": "read",
-    "via": "unsupported",
+    "via": "call",
     "writesCommandId": false
   },
   {
-    "commandId": null,
+    "commandId": "commandId",
     "decorate": [],
     "e2ee": "channel",
     "forward": null,
@@ -1401,12 +1401,12 @@ export const CLIENT_ROUTES = [
     "owner": "device",
     "path": "/api/v2/runtime-workflows/sessions/{session_id}/position",
     "sealedUpload": false,
-    "timeout": "read",
-    "via": "unsupported",
+    "timeout": "command",
+    "via": "call",
     "writesCommandId": false
   },
   {
-    "commandId": null,
+    "commandId": "commandId",
     "decorate": [],
     "e2ee": "channel",
     "forward": null,
@@ -1417,8 +1417,8 @@ export const CLIENT_ROUTES = [
     "owner": "device",
     "path": "/api/v2/runtime-workflows/sessions/{session_id}/close",
     "sealedUpload": false,
-    "timeout": "read",
-    "via": "unsupported",
+    "timeout": "command",
+    "via": "call",
     "writesCommandId": false
   },
   {
@@ -1434,11 +1434,11 @@ export const CLIENT_ROUTES = [
     "path": "/api/v2/runtime-workflows/sessions/{session_id}/configuration",
     "sealedUpload": false,
     "timeout": "read",
-    "via": "unsupported",
+    "via": "call",
     "writesCommandId": false
   },
   {
-    "commandId": null,
+    "commandId": "operationId",
     "decorate": [],
     "e2ee": "channel",
     "forward": null,
@@ -1449,12 +1449,12 @@ export const CLIENT_ROUTES = [
     "owner": "device",
     "path": "/api/v2/runtime-workflows/sessions/{session_id}/configuration",
     "sealedUpload": false,
-    "timeout": "read",
-    "via": "unsupported",
-    "writesCommandId": false
+    "timeout": "command",
+    "via": "call",
+    "writesCommandId": true
   },
   {
-    "commandId": null,
+    "commandId": "operationId",
     "decorate": [],
     "e2ee": "channel",
     "forward": null,
@@ -1465,12 +1465,12 @@ export const CLIENT_ROUTES = [
     "owner": "device",
     "path": "/api/v2/runtime-workflows/sessions/{session_id}/operations",
     "sealedUpload": false,
-    "timeout": "read",
-    "via": "unsupported",
-    "writesCommandId": false
+    "timeout": "command",
+    "via": "call",
+    "writesCommandId": true
   },
   {
-    "commandId": null,
+    "commandId": "operationId",
     "decorate": [],
     "e2ee": "channel",
     "forward": null,
@@ -1481,9 +1481,9 @@ export const CLIENT_ROUTES = [
     "owner": "device",
     "path": "/api/v2/runtime-workflows/sessions/{session_id}/recover",
     "sealedUpload": false,
-    "timeout": "read",
-    "via": "unsupported",
-    "writesCommandId": false
+    "timeout": "create",
+    "via": "call",
+    "writesCommandId": true
   }
 ] as const
 

@@ -1,0 +1,19 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:session-close-result",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "closed": {
+      "title": "Closed",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "closed"
+  ],
+  "title": "SessionCloseResult",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

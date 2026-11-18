@@ -217,10 +217,13 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
           sessionCapabilities: async sessionId => {
             const session = await store.sessions.get(sessionId)
             if (session === null) return null
+            // Releasing and reopening the Agent session are the session engine's, whatever the Runtime.
+            const lifecycle = await conversation.lifecycleCapabilities(sessionId)
             const bound = conversation.boundSession(sessionId)
-            if (bound !== null) return withPreview(capabilitySet(bound.capabilities, { runtime: session.runtimeType, sessionId }), { runtime: session.runtimeType, sessionId })
+            if (bound !== null) return withPreview(capabilitySet({ revision: bound.capabilities.revision, items: [...bound.capabilities.items, ...lifecycle] }, { runtime: session.runtimeType, sessionId }), { runtime: session.runtimeType, sessionId })
             const handle = await runtimes.started(session.runtimeId)
-            return withPreview(capabilitySet(runtimeCapabilities(session.runtimeType, handle?.capabilities() ?? null), { runtime: session.runtimeType, sessionId: null }), { runtime: session.runtimeType, sessionId: null })
+            const runtime = runtimeCapabilities(session.runtimeType, handle?.capabilities() ?? null)
+            return withPreview(capabilitySet({ revision: runtime.revision, items: [...runtime.items, ...lifecycle] }, { runtime: session.runtimeType, sessionId: null }), { runtime: session.runtimeType, sessionId: null })
           },
           selections: sessionId => history.nativeSelections(sessionId),
           catalogs: async sessionId => {
@@ -306,6 +309,7 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
           runtimes: instanceCatalogs(runtimes, catalogMemory),
           transferUpload: preparedDownloadUpload(workspaceService),
           platform: process.platform,
+          agent: conversation,
         })
         if (options.trust !== false) {
           trust = await DeviceTrust.open({

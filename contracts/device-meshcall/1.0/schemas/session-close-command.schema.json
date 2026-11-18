@@ -1,0 +1,63 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:session-close-command",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "``session.close``: releases the Agent session (its native record stays); the next operation reopens it.",
+  "properties": {
+    "closeOperationId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Closeoperationid"
+    },
+    "ownerGeneration": {
+      "minLength": 1,
+      "title": "Ownergeneration",
+      "type": "string"
+    },
+    "runtime": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Runtime"
+    },
+    "runtimeId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Runtimeid"
+    },
+    "sessionId": {
+      "minLength": 1,
+      "title": "Sessionid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "sessionId",
+    "ownerGeneration"
+  ],
+  "title": "SessionCloseCommand",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

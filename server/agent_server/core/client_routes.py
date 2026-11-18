@@ -258,20 +258,17 @@ CLIENT_ROUTES: tuple[ClientRoute, ...] = (
            "workflow", timeout="command"),
     _route("workflow.cancel", "POST", f"{WORKFLOWS}/{{kind}}/{{identifier}}/cancel", "hybrid", "critical", "workflow",
            timeout="command"),
-    _route("workflow.session.tree", "GET", f"{WORKFLOWS}/sessions/{{session_id}}/tree", "device", "read",
-           "unsupported"),
-    _route("workflow.session.position", "POST", f"{WORKFLOWS}/sessions/{{session_id}}/position", "device", "command",
-           "unsupported"),
-    _route("workflow.session.close", "POST", f"{WORKFLOWS}/sessions/{{session_id}}/close", "device", "command",
-           "unsupported"),
-    _route("workflow.session.configuration.get", "GET", f"{WORKFLOWS}/sessions/{{session_id}}/configuration",
-           "device", "read", "unsupported"),
-    _route("workflow.session.configuration.update", "POST", f"{WORKFLOWS}/sessions/{{session_id}}/configuration",
-           "device", "command", "unsupported"),
-    _route("workflow.session.operations", "POST", f"{WORKFLOWS}/sessions/{{session_id}}/operations", "device",
-           "command", "unsupported"),
-    _route("workflow.session.recover", "POST", f"{WORKFLOWS}/sessions/{{session_id}}/recover", "device", "command",
-           "unsupported"),
+    # Agent session controls of one session: the device answers them from the session's open Agent session.
+    _read("workflow.session.tree", f"{WORKFLOWS}/sessions/{{session_id}}/tree"),
+    _command("workflow.session.position", "POST", f"{WORKFLOWS}/sessions/{{session_id}}/position", GENERATED_COMMAND_ID),
+    _command("workflow.session.close", "POST", f"{WORKFLOWS}/sessions/{{session_id}}/close", GENERATED_COMMAND_ID),
+    _read("workflow.session.configuration.get", f"{WORKFLOWS}/sessions/{{session_id}}/configuration"),
+    _command("workflow.session.configuration.update", "POST", f"{WORKFLOWS}/sessions/{{session_id}}/configuration",
+             "operationId"),
+    _command("workflow.session.operations", "POST", f"{WORKFLOWS}/sessions/{{session_id}}/operations", "operationId"),
+    # Reopening the Agent session can take as long as opening a new one.
+    _command("workflow.session.recover", "POST", f"{WORKFLOWS}/sessions/{{session_id}}/recover", "operationId",
+             timeout="create"),
 )
 
 ROUTE_FAMILIES: tuple[RouteFamily, ...] = (

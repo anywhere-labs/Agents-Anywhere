@@ -1,0 +1,39 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:session-recover-result",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "operationId": {
+      "minLength": 1,
+      "title": "Operationid",
+      "type": "string"
+    },
+    "phase": {
+      "const": "completed",
+      "title": "Phase",
+      "type": "string"
+    },
+    "state": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "State"
+    }
+  },
+  "required": [
+    "operationId",
+    "phase"
+  ],
+  "title": "SessionRecoverResult",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

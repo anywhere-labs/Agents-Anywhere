@@ -238,6 +238,8 @@ export class RuntimeBindings {
   private readonly opening = new Map<string, Promise<SessionBinding>>()
   /** Prepared Runtime sessions waiting for their session to open (workspace preparation), by session id. */
   private readonly prepared = new Map<string, PreparedHandOver>()
+  /** Sessions whose Runtime session ended under them and has not been opened again since. */
+  private readonly lost = new Set<string>()
 
   public constructor(private readonly kernel: SessionKernel, private readonly sink: SessionEventSink) {}
 
@@ -265,7 +267,25 @@ export class RuntimeBindings {
   public take(sessionId: string): SessionBinding | undefined {
     const binding = this.bindings.get(sessionId)
     this.bindings.delete(sessionId)
+    this.lost.add(sessionId)
     return binding
+  }
+
+  /** Whether the Runtime lost the session's Runtime session and nothing opened it again since. */
+  public wasLost(sessionId: string): boolean {
+    return this.lost.has(sessionId) && !this.bindings.has(sessionId)
+  }
+
+  /**
+   * Closes the open Runtime session on purpose (its native record stays) so another writer can continue it; the next
+   * operation opens it again. False when it was not open.
+   */
+  public async release(sessionId: string): Promise<boolean> {
+    const binding = this.bindings.get(sessionId)
+    if (binding === undefined) return false
+    this.bindings.delete(sessionId)
+    await binding.close()
+    return true
   }
 
   /** A workspace preparation hands its Runtime session over to the session it creates (opened on first use). */
@@ -329,6 +349,7 @@ export class RuntimeBindings {
     }
     const binding = new SessionBinding(this.kernel, this.sink, runtimeSession, session.runtimeType, await deps.store.timeline.latest(sessionId), events ?? runtimeSession.events)
     this.bindings.set(sessionId, binding)
+    this.lost.delete(sessionId)
     binding.start()
     return binding
   }

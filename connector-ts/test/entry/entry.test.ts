@@ -257,11 +257,14 @@ describe.skipIf(binary === null)('entry: rpc, CLI and the composition root', () 
       // A client snapshot reads the projected history and the Runtime's facts.
       const snapshot = (await clientCall({ route: 'session.snapshot', method: 'GET', path: `/api/v2/sessions/${sessionId}/snapshot` })).body as { timeline: { items: { id: string }[] }; runtimeCapabilities: { revision: number; capabilities: { capabilityId: string }[] } }
       expect(snapshot.timeline.items.map(item => item.id)).toEqual(['m1'])
-      // Codex's declared capabilities, with the handle's live ones on top.
+      // Codex's declared capabilities with the handle's live ones on top, plus the session engine's releasing and
+      // reopening of the Agent session (neither applies to a session never opened).
       expect(snapshot.runtimeCapabilities.revision).toBe(3)
       expect(snapshot.runtimeCapabilities.capabilities).toEqual(expect.arrayContaining([
         expect.objectContaining({ capabilityId: 'runtime.steer', scope: 'runtime' }),
         expect.objectContaining({ capabilityId: 'session.planning', supported: true, scope: 'runtime' }),
+        expect.objectContaining({ capabilityId: 'session.close', supported: true, available: false }),
+        expect.objectContaining({ capabilityId: 'session.recover', supported: true, available: false }),
       ]))
       expect(opened).toEqual([])
       const dev = `/api/v2/connectors/${credential.deviceId}`

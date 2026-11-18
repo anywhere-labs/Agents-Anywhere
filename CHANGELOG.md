@@ -30,6 +30,7 @@
 - 连接 v3 Connector 的设备上：会话里可以切换模型、权限和思考强度，模型和权限列表正常显示，刷新后显示当前的选择；计划和目标状态正常显示并可以操作，计划可以下载为 Markdown；用 `/plan`、`/goal` 开始的新会话会先进入规划或设置目标，不再被当成普通消息；接管电脑上已有的会话后可以排队发消息，设备离线时切换的接管开关会在设备上线后生效；电脑上的原始记录恢复后，「不可用」提示会消失；斜杠命令菜单可以列出和执行 Agent 提供的命令。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 连接 v3 Connector 的设备上，新建通用 ACP Agent、Hermes 或 Pi 会话时，选好目录后会先在这个目录里启动 Agent，新建会话页能直接选该 Agent 提供的模型、思考强度和权限，发出首条消息时不用再等 Agent 启动；Agent 需要登录等确认时可以在新建会话页回答；Connector 在准备期间重启后，已准备好但还没发出的会话会提示重新开始，不会留下多余的 Agent 进程。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 连接 v3 Connector 的设备上，Agent 刚安装或启用、还没运行过时（包括 Connector 重启后），新建会话页和会话里也会按该 Agent 支持的能力显示计划模式、附件、模型和权限选择、引导等功能，不再全部隐藏，Agent 运行后再按它的实际能力更新。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
+- 连接 v3 Connector 的设备上，Agent 进程意外退出后会话里会出现恢复提示，点一下就重新接上原会话（直接发消息也会自动接上）；读取和修改会话的 Agent 配置、执行 Agent 提供的操作、释放会话在普通模式和加密模式下都可以使用，不再提示设备不支持。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 设备上的 Connector 在收下消息、还没交给 Agent 时重启，重启后会接着发出这条消息，不再一直停在已接收却没有发出的状态。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 连接 v3 Connector 的设备上可以新建会话并发出第一条消息，带附件也可以；网络不稳重试时不会建出重复的会话，设备拒绝或离线时不留下空会话。（[#732](https://github.com/anywhere-labs/Agents-Anywhere/pull/732)）
 - 连接 v3 Connector 的设备上，运行中排队的消息改由设备保存和按序发出，Server 不再保存消息内容；设备离线时排队区显示为空并提示设备离线。（[#718](https://github.com/anywhere-labs/Agents-Anywhere/pull/718)）

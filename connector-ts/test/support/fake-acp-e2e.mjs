@@ -6,6 +6,7 @@
 //   contains "#bulk <n>": reports n completed tool calls (one timeline item each), then replies;
 //   contains "#serve": starts a dev server as its own child process (127.0.0.1, a free port), reports a tool call that
 //     printed its URL, then replies "serving <port>";
+//   contains "#exit": replies, then the Agent process exits (the device loses its sessions);
 //   otherwise: replies "echo: <text> [model=<model> permission=<permission>] sessions-in-cwd=<session/new calls in that cwd>",
 //   followed by " attachments=<n>" when the prompt carries n non-text blocks (it accepts images).
 // After session/new it reports the slash command catalog (available_commands_update).
@@ -122,6 +123,7 @@ async function prompt(message) {
   const created = createdIn.get(cwdOf.get(sessionId) ?? '') ?? 0
   update(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `echo: ${text} [model=${current.model} permission=${current.permission}] sessions-in-cwd=${created}${attachments > 0 ? ` attachments=${attachments}` : ''}` } })
   send({ id: message.id, result: { stopReason: 'end_turn' } })
+  if (text.includes('#exit')) setTimeout(() => process.exit(0), 50)
 }
 
 const stopServers = () => {

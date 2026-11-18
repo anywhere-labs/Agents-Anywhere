@@ -195,6 +195,45 @@ export const REQUEST_PARSERS = {
       ...(archived !== undefined ? { archived } : {}),
     }
   },
+  'session.configuration.update': (p): CommandRequest<'session.configuration.update'> & { values: Record<string, string | boolean> } => {
+    const values = object(p.values ?? {}, 'values')
+    for (const [key, value] of Object.entries(values)) {
+      if (typeof value !== 'string' && typeof value !== 'boolean') throw invalid(`value of ${key} must be a string or a boolean`)
+    }
+    const expectedRevision = optionalNumber(p.expectedRevision)
+    if (expectedRevision === undefined || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw invalid('expectedRevision is required')
+    return { sessionId: text(p.sessionId, 'sessionId'), operationId: text(p.operationId, 'operationId'), expectedRevision, values: values as Record<string, string | boolean> }
+  },
+  'session.agent.operate': (p): CommandRequest<'session.agent.operate'> & { values: Record<string, unknown> } => ({
+    sessionId: text(p.sessionId, 'sessionId'),
+    operation: text(p.operation, 'operation'),
+    operationId: text(p.operationId, 'operationId'),
+    expectedGeneration: text(p.expectedGeneration, 'expectedGeneration'),
+    values: p.values === undefined || p.values === null ? {} : object(p.values, 'values'),
+  }),
+  'session.position.select': (p): CommandRequest<'session.position.select'> => {
+    const positionRevision = optionalNumber(p.positionRevision)
+    if (positionRevision === undefined || !Number.isSafeInteger(positionRevision) || positionRevision < 0) throw invalid('positionRevision is required')
+    return {
+      sessionId: text(p.sessionId, 'sessionId'),
+      fileEntriesDigest: text(p.fileEntriesDigest, 'fileEntriesDigest'),
+      sourceEpoch: text(p.sourceEpoch, 'sourceEpoch'),
+      positionRevision,
+      leafId: optionalString(p.leafId),
+    }
+  },
+  'session.close': (p): CommandRequest<'session.close'> => ({
+    sessionId: text(p.sessionId, 'sessionId'),
+    ownerGeneration: text(p.ownerGeneration, 'ownerGeneration'),
+    closeOperationId: optionalString(p.closeOperationId),
+  }),
+  'session.recover': (p): CommandRequest<'session.recover'> => ({
+    sessionId: text(p.sessionId, 'sessionId'),
+    operationId: text(p.operationId, 'operationId'),
+    expectedGeneration: text(p.expectedGeneration, 'expectedGeneration'),
+    cliExited: optionalBoolean(p.cliExited) ?? false,
+    sourceRevision: optionalString(p.sourceRevision),
+  }),
   'runtime.apply': checkedBy<CommandRequest<'runtime.apply'>>(),
   'channel.switch': checkedBy<CommandRequest<'channel.switch'>>(),
   'device.settings.apply': checkedBy<CommandRequest<'device.settings.apply'>>(),

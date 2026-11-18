@@ -263,18 +263,6 @@ class RuntimeWorkflowService:
         )
         return self._view(row, result)
 
-    async def session_action(
-        self, session_id: str, method: str, values: dict[str, Any], *, user_id: str
-    ) -> dict[str, Any]:
-        """Runtime session tree, position, configuration and Agent operations: device-meshcall carries none of
-        them, so they answer ``workflow_unsupported``."""
-
-        del method, values
-        await self.store.get_session(session_id, user_id=user_id)
-        raise WorkflowError(
-            "workflow_unsupported", "这台设备的 Connector 不支持该操作，请改用直接新建会话或升级设备。", 409
-        )
-
     async def _call(
         self, row: dict[str, Any], method: str, values: dict[str, Any]
     ) -> dict[str, Any]:

@@ -1,0 +1,74 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:session-recover-command",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "``session.recover``: reopens an Agent session the Agent lost, now instead of on the next message.",
+  "properties": {
+    "cliExited": {
+      "default": false,
+      "title": "Cliexited",
+      "type": "boolean"
+    },
+    "expectedGeneration": {
+      "minLength": 1,
+      "title": "Expectedgeneration",
+      "type": "string"
+    },
+    "operationId": {
+      "minLength": 1,
+      "title": "Operationid",
+      "type": "string"
+    },
+    "runtime": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Runtime"
+    },
+    "runtimeId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Runtimeid"
+    },
+    "sessionId": {
+      "minLength": 1,
+      "title": "Sessionid",
+      "type": "string"
+    },
+    "sourceRevision": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sourcerevision"
+    }
+  },
+  "required": [
+    "sessionId",
+    "operationId",
+    "expectedGeneration"
+  ],
+  "title": "SessionRecoverCommand",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

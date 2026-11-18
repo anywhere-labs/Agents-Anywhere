@@ -1,11 +1,12 @@
 import type { GoalRequest, GoalState } from '../domain/goals/index.js'
+import { AgentSessionControls, type AgentConfigurationUpdate, type AgentOperation } from './conversation/agent-session.js'
 import { InteractionService } from './conversation/interactions.js'
 import { MessageService, type CreateSessionCommand, type SendMessageCommand, type SendResult } from './conversation/messages.js'
 import { Recovery } from './conversation/recovery.js'
 import { SessionControls } from './conversation/controls.js'
 import { GoalService } from './goals/goal-service.js'
 import { PlanningService, type PlanningRequest } from './planning/planning-service.js'
-import type { CommandReceipt, ConversationStore, RuntimeEvent, RuntimeSession, SessionCommit } from './ports/index.js'
+import type { Capability, CommandReceipt, ConversationStore, JsonObject, RuntimeEvent, RuntimeSession, SessionCommit } from './ports/index.js'
 import type { LiveFact } from './session/bindings.js'
 import { QueueService, type ClientQueueOp } from './queue/queue-service.js'
 import { RuntimeBindings, type PreparedHandOver, type SessionBinding, type SessionEventSink } from './session/bindings.js'
@@ -15,6 +16,7 @@ import type { CommandContext } from './session/receipts.js'
 import { TurnLifecycle } from './session/turns.js'
 
 export { UseCaseError } from './errors.js'
+export type { AgentConfigurationUpdate, AgentOperation } from './conversation/agent-session.js'
 export type { CreateSessionCommand, SendMessageCommand, SendResult } from './conversation/messages.js'
 export type { CreationIntent, PreparedHandOver, SessionBinding } from './session/bindings.js'
 export { platformUserItemId } from './session/deliveries.js'
@@ -38,6 +40,7 @@ export class ConversationService implements SessionEventSink {
   private readonly controls: SessionControls
   private readonly interactions: InteractionService
   private readonly recovery: Recovery
+  private readonly agent: AgentSessionControls
 
   public constructor(deps: ConversationDeps) {
     this.kernel = new SessionKernel(deps)
@@ -55,6 +58,7 @@ export class ConversationService implements SessionEventSink {
     this.controls = new SessionControls(this.kernel, this.bindings, this.deliveries)
     this.interactions = new InteractionService(this.kernel, this.bindings, this.plans)
     this.recovery = new Recovery(this.kernel, this.deliveries, this.turns, this.queue, this.messages)
+    this.agent = new AgentSessionControls(this.kernel, this.bindings)
   }
 
   /** Errors swallowed by background work (event loops, dispatch); exposed for logs and tests. */
@@ -130,6 +134,41 @@ export class ConversationService implements SessionEventSink {
 
   public respondNotice(sessionId: string, noticeId: string, responseId: string, answer: Parameters<RuntimeSession['respond']>[1]): Promise<{ status: string }> {
     return this.interactions.respondNotice(sessionId, noticeId, responseId, answer)
+  }
+
+  // ---------------------------------------------------------------- the Agent session behind a session
+
+  /** `session.close` / `session.recover` as the session can use them now. */
+  public lifecycleCapabilities(sessionId: string): Promise<Capability[]> {
+    return this.agent.lifecycleCapabilities(sessionId)
+  }
+
+  public agentConfiguration(sessionId: string): Promise<Record<string, unknown>> {
+    return this.agent.configuration(sessionId)
+  }
+
+  public configureAgent(sessionId: string, update: AgentConfigurationUpdate): Promise<Record<string, unknown>> {
+    return this.agent.configure(sessionId, update)
+  }
+
+  public agentOperate(sessionId: string, request: AgentOperation): Promise<Record<string, unknown>> {
+    return this.agent.operate(sessionId, request)
+  }
+
+  public agentTree(sessionId: string, values: JsonObject): Promise<JsonObject> {
+    return this.agent.tree(sessionId, values)
+  }
+
+  public selectAgentPosition(sessionId: string, operationId: string, values: JsonObject): Promise<Record<string, unknown>> {
+    return this.agent.selectPosition(sessionId, operationId, values)
+  }
+
+  public closeAgentSession(sessionId: string, expectedGeneration: string): Promise<{ closed: boolean }> {
+    return this.agent.close(sessionId, expectedGeneration)
+  }
+
+  public recoverAgentSession(sessionId: string, operationId: string, expectedGeneration: string): Promise<Record<string, unknown>> {
+    return this.agent.recover(sessionId, operationId, expectedGeneration)
   }
 
   // ---------------------------------------------------------------- queue, planning, goals

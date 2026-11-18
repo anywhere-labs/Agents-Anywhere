@@ -453,6 +453,42 @@ def test_slash_commands(secure: Secure) -> None:
     secure.wait_reply(sid, f"echo: /review {argument}")
 
 
+def test_agent_configuration_and_recovery_through_the_channel(secure: Secure) -> None:
+    sid = secure.ensure_session()
+    client = secure.client
+    base = f"/api/v2/runtime-workflows/sessions/{sid}"
+    view = client.ok("GET", f"{base}/configuration")
+    generation = view["ownerGeneration"]
+    assert generation and "model" in [option["id"] for option in view["configuration"]["options"]], view
+    updated = client.ok("POST", f"{base}/configuration", {
+        "operationId": f"op_{uuid.uuid4().hex}", "expectedRevision": view["configuration"]["revision"],
+        "values": {"model": "m1"},
+    })
+    assert updated["phase"] == "completed", updated
+    text = f"panel {secure.canary('panel')}"
+    secure.send(sid, text)
+    secure.wait_reply(sid, f"echo: {text} [model=m1")
+    status, refused = client.request("POST", f"{base}/operations", {
+        "operation": "resources.get", "operationId": f"op_{uuid.uuid4().hex}", "expectedGeneration": generation,
+    })
+    assert status == 409 and refused["detail"]["code"] == "agent_capability_unsupported", refused
+    assert client.ok("POST", f"{base}/close", {"ownerGeneration": generation, "closeOperationId": "c1"}) == {"closed": True}
+    secure.send(sid, "bye #exit")
+    secure.wait_reply(sid, "echo: bye #exit")
+
+    def recover_offered() -> bool:
+        items = client.ok("GET", f"/api/v2/sessions/{sid}/runtime/capabilities")["capabilitySet"]["capabilities"]
+        return any(item["capabilityId"] == "session.recover" and item["available"] for item in items)
+
+    wait_for(recover_offered, 30, 0.2, "recovery offered")
+    status, recovered = client.request("POST", f"{base}/recover", {"operationId": f"op_{uuid.uuid4().hex}",
+                                                                    "expectedGeneration": generation})
+    assert status == 202 and recovered["phase"] == "completed", recovered
+    text = f"recovered {secure.canary('recovered')}"
+    secure.send(sid, text)
+    secure.wait_reply(sid, f"echo: {text}")
+
+
 def test_usage_statistics_come_from_the_device(secure: Secure) -> None:
     # Required mode: the Server sees no message, so messages, sessions and turns all come from usage.report.
     secure.ensure_session()

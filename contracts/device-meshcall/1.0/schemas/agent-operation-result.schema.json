@@ -1,0 +1,78 @@
+{
+  "$defs": {
+    "WorkflowFailure": {
+      "properties": {
+        "code": {
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "WorkflowFailure",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:agent-operation-result",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "failure": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WorkflowFailure"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "operationId": {
+      "minLength": 1,
+      "title": "Operationid",
+      "type": "string"
+    },
+    "phase": {
+      "enum": [
+        "accepted",
+        "running",
+        "completed",
+        "rejected",
+        "cancelled",
+        "outcome_unknown"
+      ],
+      "title": "Phase",
+      "type": "string"
+    },
+    "result": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Result"
+    }
+  },
+  "required": [
+    "operationId",
+    "phase"
+  ],
+  "title": "AgentOperationResult",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

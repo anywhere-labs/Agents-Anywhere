@@ -11,6 +11,7 @@
 
 import { randomBytes } from 'node:crypto'
 
+import type { AgentSessionReads } from '../application/inbound/agent-session.js'
 import { CREATE_AND_START_METHOD, type CommandInbox } from '../application/inbound/commands.js'
 import type { NativeAppCommandsApi } from '../application/ports/index.js'
 import type { ChannelCaller, TunnelApi, TunnelApiRequest, TunnelApiResponse, TunnelCallContext, TunnelSubscription } from '../application/inbound/tunnel-api.js'
@@ -111,6 +112,8 @@ export interface DeviceTunnelApiDeps {
   readonly transferUpload?: (params: Record<string, unknown>) => Promise<unknown>
   /** The platform the workspace runs on; default this process's. */
   readonly platform?: NodeJS.Platform
+  /** Reads of a session's Agent session (`runtime-workflows/sessions/{id}/configuration`, `tree`). */
+  readonly agent?: AgentSessionReads
 }
 
 const READ_ONLY = 'session is read-only until takeover is enabled'
@@ -120,6 +123,8 @@ const QUEUE_MODES: ReadonlySet<string> = new Set(['auto', 'interrupt', 'never'])
 const SLASH_COMMAND = /^[A-Za-z][A-Za-z0-9_-]*$/u
 const COMMAND_UNAVAILABLE = '命令目录已变化，请刷新。'
 const COMMAND_MISMATCH = '命令与原始输入不一致。'
+/** Agent operations that only read (allowed on a session the platform does not drive). */
+const READ_OPERATIONS: ReadonlySet<string> = new Set(['authentication.status', 'resources.get', 'queue.get'])
 
 /** `seq:N` (the cursor format clients send); anything else starts from the beginning. */
 function cursorSeq(cursor: string | null): number {
@@ -243,6 +248,7 @@ export class DeviceTunnelApi implements TunnelApi {
       const [area, id] = route.segments
       if (area === 'sessions' && id === 'create-and-start' && route.segments.length === 2 && route.method === 'POST') return await this.createAndStart(caller, call, route.body)
       if (area === 'sessions' && id !== undefined && route.segments.length >= 3) return await this.session(caller, call, id, route)
+      if (area === 'runtime-workflows' && id === 'sessions' && route.segments.length === 4) return await this.agentSession(caller, call, route.segments[2] as string, route)
       if (area === 'connectors' && id !== undefined) {
         if (id !== this.deps.deviceId) throw notFound(`connector ${id} is not this device`)
         return await this.files.device(route, call.transfer, call.preview)
@@ -334,11 +340,63 @@ export class DeviceTunnelApi implements TunnelApi {
     return capability as Record<string, unknown>
   }
 
+  /** A 409 unless the Runtime supports a read-only session capability and it is available now (no takeover needed). */
+  private async requireReadCapability(session: Session, capabilityId: string): Promise<void> {
+    if (!capabilityUsable(findCapability(await this.capabilities(session.sessionId), capabilityId), true)) throw conflict('capability_unavailable', `session capability is unavailable: ${capabilityId}`)
+  }
+
   private async requireAttachmentTypes(session: Session, call: Call, attachments: readonly Record<string, unknown>[]): Promise<void> {
     if (attachments.length === 0) return
     const capability = await this.requireCapability(session, call, 'runtime.attachment')
     const refused = unsupportedMediaType(capability, attachments.map(item => String(item.mediaType ?? '')))
     if (refused !== null) throw conflict('attachment_type_unsupported', `attachment type is not supported by this runtime: ${refused}`)
+  }
+
+  // ------------------------------------------------------------------------------------- agent session
+
+  /**
+   * `runtime-workflows/sessions/{id}/*`: the Agent session behind a session. Reads need no takeover (the session's
+   * Agent session is not opened for them unless the platform drives it); changes do, and run as commands.
+   */
+  private async agentSession(caller: ChannelCaller, call: Call, sessionId: string, route: Route): Promise<TunnelApiResponse> {
+    const body = route.body
+    const path = `${route.method} ${route.segments[3]}`
+    const agent = this.deps.agent
+    const session = await this.requireSession(sessionId)
+    switch (path) {
+      case 'GET configuration':
+        if (agent === undefined) throw notFound('agent session reads are not served by this device')
+        await this.requireReadCapability(session, 'session.configuration.read')
+        return { status: 200, body: await agent.agentConfiguration(sessionId) }
+      case 'GET tree': {
+        if (agent === undefined) throw notFound('agent session reads are not served by this device')
+        await this.requireReadCapability(session, 'session.execution_position.read')
+        const cursor = route.query.get('cursor')
+        return { status: 200, body: await agent.agentTree(sessionId, { limit: int(route.query.get('limit'), 500, 1, 500), ...(cursor !== null && cursor !== '' ? { cursor } : {}) }) }
+      }
+      case 'POST configuration':
+        this.requireTakeover(session, call)
+        await this.requireCapability(session, call, 'session.configuration.update')
+        return { status: 200, body: await this.commandAs(null, caller, call, 'sessionConfigurationUpdate', { ...body, sessionId }, text(body.operationId)) }
+      case 'POST operations': {
+        // Read-only operations (authentication.status, resources.get, queue.get) need no takeover; the rest do.
+        if (!READ_OPERATIONS.has(String(body.operation ?? ''))) this.requireTakeover(session, call)
+        return { status: 202, body: await this.commandAs(null, caller, call, 'sessionAgentOperate', { ...body, sessionId }, text(body.operationId)) }
+      }
+      case 'POST position':
+        this.requireTakeover(session, call)
+        await this.requireCapability(session, call, 'session.execution_position.select')
+        return { status: 200, body: await this.commandAs(null, caller, call, 'sessionPositionSelect', { ...body, sessionId }, null) }
+      case 'POST close':
+        await this.requireCapability(session, call, 'session.close')
+        return { status: 200, body: await this.commandAs(null, caller, call, 'sessionClose', { ...body, sessionId }, null) }
+      case 'POST recover':
+        // A session the platform does not drive yet is taken over first (the client enables takeover, then recovers).
+        this.requireTakeover(session, call)
+        return { status: 202, body: await this.commandAs(null, caller, call, 'sessionRecover', { ...body, sessionId }, text(body.operationId)) }
+      default:
+        throw notFound(`${route.method} runtime-workflows/sessions/${sessionId}/${route.segments[3]} is not served by this device`)
+    }
   }
 
   private async session(caller: ChannelCaller, call: Call, sessionId: string, route: Route): Promise<TunnelApiResponse> {

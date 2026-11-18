@@ -385,3 +385,62 @@ describe('Runtime catalogs', () => {
     expect(permissions.body).toMatchObject({ catalog: { runtime: 'opencode', permissions: [] } })
   })
 })
+
+describe('the Agent session behind a session', () => {
+  const W = `/runtime-workflows/sessions/${S}`
+
+  it('reads the Agent options without takeover and applies them with it, once per operation', async () => {
+    await device.start(S)
+    const read = await device.request('GET', `${W}/configuration`, undefined, { server: { takeover: false } })
+    expect(read.status, JSON.stringify(read.body)).toBe(200)
+    const view = read.body as { configuration: { revision: number; options: { id: string }[] }; ownerGeneration: string; actions: unknown[] }
+    expect(view.configuration.options.map(option => option.id)).toEqual(['model', 'permission'])
+    expect(view.ownerGeneration).toBe('native-1')
+    expect(view.actions).toEqual([])
+    const body = { operationId: 'op_cfg', expectedRevision: view.configuration.revision, values: { model: 'm2' } }
+    const readOnly = await device.request('POST', `${W}/configuration`, body, { server: { takeover: false } })
+    expect(readOnly.status).toBe(409)
+    expect(detail(readOnly.body).code).toBe('session_read_only')
+    const updated = await device.request('POST', `${W}/configuration`, body)
+    expect(updated.status, JSON.stringify(updated.body)).toBe(200)
+    expect(updated.body).toMatchObject({ operationId: 'op_cfg', phase: 'completed', configuration: { options: [{ id: 'model', currentValue: 'm2' }, { id: 'permission' }] } })
+    const configures = device.sessions[0]!.calls.filter(call => call.method === 'configure').length
+    // The operation id is the receipt: a retry replays it.
+    expect((await device.request('POST', `${W}/configuration`, body)).body).toEqual(updated.body)
+    expect(device.sessions[0]!.calls.filter(call => call.method === 'configure')).toHaveLength(configures)
+    const stale = await device.request('POST', `${W}/configuration`, { ...body, operationId: 'op_cfg2' })
+    expect(stale.status).toBe(409)
+    expect(detail(stale.body).code).toBe('configuration_changed')
+  })
+
+  it('answers Agent operations and the session tree the Agent does not offer with 409', async () => {
+    await device.start(S)
+    const operation = await device.request('POST', `${W}/operations`, { operation: 'resources.get', operationId: 'op_res', expectedGeneration: 'native-1', values: {} }, { server: { takeover: false } })
+    expect(operation.status).toBe(409)
+    expect(detail(operation.body).code).toBe('agent_capability_unsupported')
+    const write = await device.request('POST', `${W}/operations`, { operation: 'session.fork', operationId: 'op_fork', expectedGeneration: 'native-1', values: {} }, { server: { takeover: false } })
+    expect(detail(write.body).code).toBe('session_read_only')
+    const tree = await device.request('GET', `${W}/tree`)
+    expect(tree.status).toBe(409)
+    expect(detail(tree.body)).toEqual({ code: 'capability_unavailable', message: 'session capability is unavailable: session.execution_position.read' })
+    const position = await device.request('POST', `${W}/position`, { fileEntriesDigest: 'd', sourceEpoch: 'e', positionRevision: 0, leafId: null })
+    expect(position.status).toBe(409)
+  })
+
+  it('releases the Agent session, then reopens it on recovery', async () => {
+    await device.start(S)
+    const stale = await device.request('POST', `${W}/close`, { ownerGeneration: 'native-0', closeOperationId: 'x' })
+    expect(stale.status).toBe(409)
+    expect(detail(stale.body).code).toBe('owner_changed')
+    const closed = await device.request('POST', `${W}/close`, { ownerGeneration: 'native-1', closeOperationId: 'x' })
+    expect(closed.status, JSON.stringify(closed.body)).toBe(200)
+    expect(closed.body).toEqual({ closed: true })
+    expect(device.sessions[0]!.calls.at(-1)).toEqual({ method: 'close' })
+    const recovered = await device.request('POST', `${W}/recover`, { operationId: 'op_rec', expectedGeneration: 'native-1' })
+    expect(recovered.status, JSON.stringify(recovered.body)).toBe(202)
+    expect(recovered.body).toMatchObject({ operationId: 'op_rec', phase: 'completed', state: { sessionId: S } })
+    expect(device.sessions).toHaveLength(2)
+    expect((await device.request('POST', `${W}/recover`, { operationId: 'op_rec2', expectedGeneration: 'native-1' }, { server: { takeover: false } })).status).toBe(409)
+    expect((await device.request('GET', `${W}/unknown`)).status).toBe(404)
+  })
+})

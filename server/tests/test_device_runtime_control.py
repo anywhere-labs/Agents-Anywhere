@@ -380,14 +380,6 @@ def test_workflows_on_a_v3_device_answer_definitely() -> None:
                 )
             # The device reported no ``runtime.workspace.prepare``: clients create the session directly.
             assert prepare.value.code == "workflow_unsupported" and prepare.value.status == 422
-            session = await app.state.store.create_session(
-                connector_id=device_id, project_id=project.id, runtime="claude",
-                external_session_id="ext_1", title="Work", cwd="/repo",
-            )
-            # device-meshcall carries no runtime session actions (tree, position, recovery, ...).
-            with pytest.raises(WorkflowError) as call:
-                await workflows.session_action(session.id, "session.tree", {}, user_id=user_id)
-            assert call.value.code == "workflow_unsupported" and call.value.status == 409
 
     asyncio.run(scenario())
 

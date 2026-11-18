@@ -72,6 +72,13 @@ export type Route =
   | "connector.runtime.catalogs.model"
   | "connector.runtime.catalogs.permission"
   | "connector.runtime.commands"
+  | "workflow.session.tree"
+  | "workflow.session.position"
+  | "workflow.session.close"
+  | "workflow.session.configuration.get"
+  | "workflow.session.configuration.update"
+  | "workflow.session.operations"
+  | "workflow.session.recover"
 /**
  * whether the session is archived in the directory
  */

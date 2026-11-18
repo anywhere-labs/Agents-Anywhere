@@ -474,6 +474,86 @@
     },
     {
       "direction": "bidirectional",
+      "model": "AgentConfigurationView",
+      "path": "schemas/agent-configuration-view.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "fa505c7f7a4a26f1e8417663112fc5ae50c06429b6c57e18b101b1ced77b504d",
+      "slug": "agent-configuration-view"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "SessionConfigureCommand",
+      "path": "schemas/session-configure-command.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "5879314529641490dd5354269f508147ab157ab21c54dc95686ef1e1349d175f",
+      "slug": "session-configure-command"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "SessionConfigureResult",
+      "path": "schemas/session-configure-result.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "b782997efba9382e6d6817d1fa8974f3ca6e14312d106b509f09dd43d7e8ec8a",
+      "slug": "session-configure-result"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "AgentOperateCommand",
+      "path": "schemas/agent-operate-command.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "02f733c743de6b6e3f2694c4b63055d86a5bdffc9ce972e6c9c41308baa72c0f",
+      "slug": "agent-operate-command"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "AgentOperationResult",
+      "path": "schemas/agent-operation-result.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "d600039084c8550b59f1e7bef9dc2390f34fd9a973e37ceb82176fac5ae1e534",
+      "slug": "agent-operation-result"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "PositionSelectCommand",
+      "path": "schemas/position-select-command.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "1c55fdb4c96519aaa617d88e6c6ff4883581df04990a835eea7a06fe9b7c4324",
+      "slug": "position-select-command"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "SessionCloseCommand",
+      "path": "schemas/session-close-command.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "e161cb384cb5af740ae0a0ae329b87d1cfbb7cecb4c5597cb27bc8839dec0c0a",
+      "slug": "session-close-command"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "SessionCloseResult",
+      "path": "schemas/session-close-result.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "ee8362e46affa1d72f3a06f6b61e4fd060e57f237b9df7a8907d61a31ae9da70",
+      "slug": "session-close-result"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "SessionRecoverCommand",
+      "path": "schemas/session-recover-command.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "00610c5fab2b39eaeca1e1ed7cbb7508d6050510fd8b2d4a6bd4e855babcfed6",
+      "slug": "session-recover-command"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "SessionRecoverResult",
+      "path": "schemas/session-recover-result.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "ca2b95e45d6c50910d3f23b910c7b4687872be5ff46e992a0a20761039f3b734",
+      "slug": "session-recover-result"
+    },
+    {
+      "direction": "bidirectional",
       "model": "RuntimeApplyCommand",
       "path": "schemas/runtime-apply-command.schema.json",
       "pydanticMode": "validation",
@@ -533,7 +613,7 @@
       "model": "ClientCallRequest",
       "path": "schemas/client-call-request.schema.json",
       "pydanticMode": "validation",
-      "sha256": "89f58c17a06338558ec2dc6f8fa1acc07feb0375d027c10d3e251c62e1476dfe",
+      "sha256": "940ec21dfc0a84729a59c10bf552e7f2b361cb554e5bae3af9af7f2f4c97aa36",
       "slug": "client-call-request"
     },
     {
@@ -566,7 +646,7 @@
   "extras": [
     {
       "path": "device.meshcall.json",
-      "sha256": "d4896a26948625428007aadefc119c8349354830fc30c09fbba1c17e3cefa05b"
+      "sha256": "ba115ad0d3399f943e6096e17e46d3601b61cbf26e740a7ca26e062dbf2db885"
     },
     {
       "path": "mesh-errors.json",
@@ -578,11 +658,11 @@
     },
     {
       "path": "payloads.json",
-      "sha256": "4fa600f5805a867f92730b3ecc3def0d2f852578acf83625bbc98c7f437a9040"
+      "sha256": "9b57cb781c10122c604c39d6825deab994e0ad41a4a7c63e09d51b6dd78cdc67"
     },
     {
       "path": "client-routes.json",
-      "sha256": "6de1d8bdf7e5765b535891bebccd6ecf3fce41a5a25ec02e8140e517ba7968af"
+      "sha256": "d7e77aea130913d38a39ec685b24e0ab1f966db50cd737b0e0e4c1dba889eb8c"
     },
     {
       "path": "client-errors.json",

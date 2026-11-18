@@ -75,6 +75,51 @@
       },
       "route": "aa.device.v1.Commands/runtimeApply"
     },
+    "session.agent.operate": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "AgentOperateCommand",
+        "slug": "agent-operate-command",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "AgentOperationResult",
+        "slug": "agent-operation-result",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Commands/sessionAgentOperate"
+    },
+    "session.close": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "SessionCloseCommand",
+        "slug": "session-close-command",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "SessionCloseResult",
+        "slug": "session-close-result",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Commands/sessionClose"
+    },
+    "session.configuration.update": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "SessionConfigureCommand",
+        "slug": "session-configure-command",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "SessionConfigureResult",
+        "slug": "session-configure-result",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Commands/sessionConfigurationUpdate"
+    },
     "session.creation.begin": {
       "request": {
         "contract": "device-meshcall",
@@ -164,6 +209,21 @@
         "version": "1.2"
       },
       "route": "aa.device.v1.Commands/sessionPlanning"
+    },
+    "session.position.select": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "PositionSelectCommand",
+        "slug": "position-select-command",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "AgentOperationResult",
+        "slug": "agent-operation-result",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Commands/sessionPositionSelect"
     },
     "session.queue.clear": {
       "request": {
@@ -269,6 +329,21 @@
         "version": "1.0"
       },
       "route": "aa.device.v1.Commands/sessionQueueUpdate"
+    },
+    "session.recover": {
+      "request": {
+        "contract": "device-meshcall",
+        "model": "SessionRecoverCommand",
+        "slug": "session-recover-command",
+        "version": "1.0"
+      },
+      "response": {
+        "contract": "device-meshcall",
+        "model": "SessionRecoverResult",
+        "slug": "session-recover-result",
+        "version": "1.0"
+      },
+      "route": "aa.device.v1.Commands/sessionRecover"
     },
     "session.respondNotice": {
       "request": {

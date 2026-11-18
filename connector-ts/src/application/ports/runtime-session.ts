@@ -51,6 +51,12 @@ export type CapabilityId =
   | 'session.rename'
   | 'session.list'
   | 'session.history.native'
+  | 'session.close'
+  | 'session.recover'
+  | 'session.authentication.read'
+  | 'session.resources.read'
+  | 'session.execution_position.read'
+  | 'session.execution_position.select'
   | 'runtime.attachment'
   | 'runtime.app_open'
   | 'runtime.owner_release'
@@ -426,6 +432,16 @@ export interface RuntimeSession {
   respond(interactionId: string, answer: InteractionAnswer): Promise<void>
   /** Changes config options such as model, permission, mode and effort. */
   configure(change: ConfigChange): Promise<ConfigResult>
+  /** The session's current config options as the Runtime reported them last; absent when the Runtime does not list them. */
+  readonly configOptions?: readonly ConfigOption[]
+  /** The option that carries plan mode (switched through planning, never as a plain option); null or absent when there is none. */
+  readonly planningOptionId?: string | null
+  /**
+   * An Agent operation behind a capability the session declares (`session.authentication.read`,
+   * `session.resources.read`, `session.execution_position.read` ...): answers the operation's result. Absent when the
+   * Runtime offers none.
+   */
+  operate?(operation: string, values: JsonObject): Promise<JsonObject>
   /** Slash command, e.g. /compact. */
   command(name: string, args?: string): Promise<CommandResult>
   readonly goal?: GoalPort

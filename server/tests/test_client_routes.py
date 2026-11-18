@@ -140,3 +140,24 @@ def test_client_errors_cover_every_case_once() -> None:
 def test_encrypted_mode_registers_no_client_service() -> None:
     assert "aa.device.v1.Client" in dl.registered_services("off")
     assert "aa.device.v1.Client" not in dl.registered_services("required")
+
+
+def test_agent_session_routes_reach_the_device() -> None:
+    """The Agent session behind a session: reads by ``Client/call``, changes as commands under a receipt."""
+
+    reads = ("workflow.session.tree", "workflow.session.configuration.get")
+    for route_id in reads:
+        route = cr.ROUTES_BY_ID[route_id]
+        assert (route.via, route.kind, route.command_id) == ("call", "read", None)
+    receipts = {
+        "workflow.session.configuration.update": "operationId",
+        "workflow.session.operations": "operationId",
+        "workflow.session.recover": "operationId",
+        "workflow.session.position": cr.GENERATED_COMMAND_ID,
+        "workflow.session.close": cr.GENERATED_COMMAND_ID,
+    }
+    for route_id, command_id in receipts.items():
+        route = cr.ROUTES_BY_ID[route_id]
+        assert (route.via, route.kind, route.command_id) == ("call", "command", command_id)
+    assert cr.ROUTES_BY_ID["workflow.session.recover"].timeout == "create"
+    assert not [route.id for route in cr.CLIENT_ROUTES if route.via == "unsupported" and route.id.startswith("workflow.")]
