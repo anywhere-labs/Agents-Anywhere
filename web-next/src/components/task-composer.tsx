@@ -787,15 +787,16 @@ export function TaskComposer() {
   const selectorsLoading = runtimeInventoryLoading
   const catalogFailure = catalogError?.scope === catalogScope ? catalogError.failure : null
   const runtimeStarting = selectedRuntime?.status === "starting"
-  const showCatalogStatus = Boolean(hasOnlineDevice && selectedRuntime && !needsPreparation && (
-    runtimeStarting || catalogsLoading || !capabilitiesReady || (requiresModelSelection && models.length === 0)
-  ))
+  const preparationPhase = preparation.operation?.state.phase
+  const missingModels = requiresModelSelection && models.length === 0
+  const showCatalogStatus = Boolean(hasOnlineDevice && selectedRuntime && (needsPreparation
+    ? preparationPhase === "ready" && missingModels
+    : runtimeStarting || catalogsLoading || !capabilitiesReady || missingModels))
   const catalogStatusLabel = runtimeStarting
     ? t("modelCatalogStarting", { agent: runtimeInstanceName(selectedRuntime!) })
     : catalogsLoading || (!capabilitiesReady && !catalogFailure)
       ? t("modelCatalogLoading")
       : catalogFailure ? t("modelCatalogLoadFailed") : t("modelCatalogEmpty")
-  const preparationPhase = preparation.operation?.state.phase
   const preparationStopped = ["failed", "cancelled", "expired", "consumed"].includes(preparationPhase ?? "")
   const preparationNeedsAttention = preparation.error || preparation.operation?.state.failure || preparationStopped
     || preparation.operation?.state.interactions.some(request => request.status === "open")
@@ -819,7 +820,6 @@ export function TaskComposer() {
     if (recoveryTargetUnavailable || workspace.connectorId !== selectedConnector.id) return
     if (!prompt.trim() && attachments.length === 0) return
     if (!capabilitiesReady || catalogsLoading || (needsPreparation && preparation.operation?.state.phase !== "ready")) return
-    if (useGoal && needsPreparation) { toast.error(tGoal("workspaceUnsupported")); return }
     if (useGoal && !goalObjective) return
     if (requiresModelSelection && !selectedModelSelection) return
     if (requiresPermissionSelection && !selectedPermissionSelection) return
@@ -950,7 +950,7 @@ export function TaskComposer() {
           ...(usePlanning ? { planningIntent: { mode: "plan" as const, operationId: clientMessageId } } : {}),
           selections, clientMessageId,
         },
-        ...(needsPreparation && preparation.operation ? { preparedWorkspace: { preparationId: preparation.operation.id,
+        ...(needsPreparation && !useGoal && preparation.operation ? { preparedWorkspace: { preparationId: preparation.operation.id,
           expectedRevision: preparation.operation.state.revision, catalogRevision: preparation.operation.state.catalogRevision!, ...(preparation.operation.state.configuration ? { configuration: preparedConfiguration } : {}) } } : {}),
       }, optimisticMessage, (id) => toolSidebarStore.migrateSession(localSessionId, id))
     } catch (err) {
@@ -1251,8 +1251,8 @@ export function TaskComposer() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    disabled={catalogsLoading}
-                    onClick={() => setCatalogRefreshKey((key) => key + 1)}
+                    disabled={catalogsLoading || preparation.pending}
+                    onClick={needsPreparation ? preparation.retry : () => setCatalogRefreshKey((key) => key + 1)}
                   >{tCommon("retry")}</Button>
                 ) : null}
               </div>

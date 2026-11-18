@@ -18,7 +18,8 @@ describe('declaredRuntimeCapabilities', () => {
     ]))
     expect(codex.get('session.goal')?.parameters).toEqual({ actions: ['set', 'pause', 'resume', 'clear'] })
     expect(codex.get('runtime.attachment')?.parameters).toEqual({ image: true })
-    expect(codex.has('runtime.workspace.prepare')).toBe(false)
+    expect(codex.get('runtime.workspace.prepare')).toEqual({ id: 'runtime.workspace.prepare', supported: true, parameters: { workflowVersion: '1.2' } })
+    expect(codex.get('session.planning')?.parameters).toEqual({ preparedCreation: true })
   })
 
   it('Claude: plan mode and attachments, no steering, goals left to the negotiation', () => {
@@ -28,6 +29,8 @@ describe('declaredRuntimeCapabilities', () => {
       'session.send_message', 'session.planning', 'session.plan_review', 'runtime.attachment', 'catalog.model', 'catalog.permission',
     ]))
     expect(claude.has('session.goal')).toBe(false)
+    expect(claude.get('runtime.workspace.prepare')).toEqual({ id: 'runtime.workspace.prepare', supported: true, parameters: { workflowVersion: '1.2' } })
+    expect(claude.get('session.planning')?.parameters).toEqual({ preparedCreation: true })
   })
 
   it('Pi: plan mode from a prepared workspace and workspace preparation', () => {

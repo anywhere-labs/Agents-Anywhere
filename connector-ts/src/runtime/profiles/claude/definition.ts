@@ -29,6 +29,7 @@ export const CLAUDE: AcpAgentDefinition = {
   adapterVersion: ['--version'],
   settings: [{ key: 'claudeExecutable', title: '本机 Claude Code 路径（可选）', environment: 'CLAUDE_CODE_EXECUTABLE' }],
   permissionCatalog: claudePermissionCatalog,
+  workspacePreparation: true,
   metadata: { localInstallation: true, nativeHistory: true, package: '@agentclientprotocol/claude-agent-acp', packageVersion: CLAUDE_AGENT_ACP_VERSION },
   environment: (env, instance) => claudeEnvironment(env, instance.modelGateway),
   dialect: () => claudeDialect(),

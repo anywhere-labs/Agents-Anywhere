@@ -329,7 +329,7 @@ export class AcpRuntimeHandle implements RuntimeHandle {
    * Creates the native session in `spec.cwd` ahead of its AA session (its id is the preparation's until `adopt`).
    * Errors carry `details.definite` when the Agent never got the session request (the process did not start).
    */
-  async prepare(spec: NewSessionSpec, options: PrepareOptions): Promise<PreparedSession> {
+  async prepare(spec: NewSessionSpec, options: PrepareOptions, onOpen?: (session: AcpRuntimeSession) => void): Promise<PreparedSession> {
     if (this.options.workspacePreparation !== true) throw new RuntimeFailure({ code: 'workflow_unsupported', message: 'this Runtime does not prepare workspaces' })
     try {
       await this.connection(spec.cwd)
@@ -342,6 +342,7 @@ export class AcpRuntimeHandle implements RuntimeHandle {
     } catch (error) {
       throw prepareFailure(error, false)
     }
+    onOpen?.(session)
     return preparedSession(session, {
       catalogs: () => this.catalogs(session.sessionId),
       ...(this.options.dialect.selections !== undefined ? { codec: this.options.dialect.selections } : {}),

@@ -39,6 +39,7 @@ const BASE: AcpAgentDefinition = {
     { key: 'codexPath', title: '本机 Codex CLI 路径（可选）', environment: 'CODEX_PATH' },
   ],
   permissionCatalog: codexPermissionCatalog,
+  workspacePreparation: true,
   // Always running: codex-acp keeps following Codex App sessions and receiving history replacements; reclaiming
   // it when idle would lose the follow state.
   idleMs: 0,

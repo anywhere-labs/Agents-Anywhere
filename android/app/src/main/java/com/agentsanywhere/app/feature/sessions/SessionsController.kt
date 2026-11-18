@@ -176,8 +176,8 @@ class SessionsController(
             } catch (error: Exception) {
                 return@withContext NewSessionCreateOutcome.Failed(error)
             }
+            val prepared = draft.preparedWorkspace.takeUnless { goal }
             try {
-                val prepared = draft.preparedWorkspace
                 if (prepared != null && sessionsApi.isEncryptedDevice(serverUrl, accessToken, draft.connectorId)) {
                     // A configured creation is prepared and run by the Server: never send its content in plaintext.
                     throw sessionsApi.e2eeRefusal(com.agentsanywhere.app.api.e2ee.E2eeClientErrorCodes.CREATE_UNSUPPORTED)
@@ -225,7 +225,7 @@ class SessionsController(
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
-                if (draft.preparedWorkspace != null) {
+                if (prepared != null) {
                     val state = workflows.operation.value?.optJSONObject("state")
                     val rejected = state?.has("messageAccepted") == true && !state.isNull("messageAccepted") &&
                         !state.optBoolean("messageAccepted") && state.optString("phase") in setOf("failed", "rejected", "cancelled", "expired")

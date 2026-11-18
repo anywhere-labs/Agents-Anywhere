@@ -306,11 +306,14 @@ def test_runtime_capabilities_of_an_agent_that_never_ran() -> None:
             for capability_id in (
                 "session.send_message", "session.interrupt", "session.planning", "session.plan_review",
                 "runtime.attachment", "catalog.model", "catalog.permission",
+                "runtime.workspace.prepare", "runtime.session.async_create",
             ):
                 assert usable(declared[capability_id]), declared
             assert not declared["session.steer"]["supported"]
-            # The same facts in end-to-end encrypted mode (nothing here is a plaintext workflow).
-            assert (await read("required")).keys() == declared.keys()
+            assert declared["session.planning"]["parameters"] == {"preparedCreation": True}
+            assert (await read("required")).keys() == declared.keys() - {
+                "runtime.workspace.prepare", "runtime.session.async_create",
+            }
 
             # Once the Agent negotiated, the device sends its live set merged with the declared one.
             live = {
@@ -359,7 +362,17 @@ def test_workflows_on_a_v3_device_answer_definitely() -> None:
     async def scenario() -> None:
         fixture = _fixture()
         async with v3_device() as (app, user_id, device_id, service, _manager, commands):
-            commands.answer = lambda kind, payload: {**fixture.get("results", {}).get("runtimeApply", {}), "runtimeId": payload["runtimeId"]}
+            result = fixture["results"]["runtimeApply"]
+            capabilities = result["capabilities"]
+            result["capabilities"] = {
+                **capabilities,
+                "capabilities": [
+                    item
+                    for item in capabilities["capabilities"]
+                    if item["capabilityId"] not in {"runtime.workspace.prepare", "runtime.session.async_create"}
+                ],
+            }
+            commands.answer = lambda kind, payload: {**result, "runtimeId": payload["runtimeId"]}
             runtime = await service.create_runtime(
                 device_id, runtime_type="claude", name="Work", config=CONFIG, active=True, user_id=user_id
             )

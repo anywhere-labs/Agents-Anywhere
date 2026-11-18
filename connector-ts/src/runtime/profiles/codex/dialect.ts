@@ -94,7 +94,7 @@ export function codexDialect(options: CodexDialectOptions = {}): AcpDialect {
     capabilities: info => [
       ...negotiatedCapabilities(info, { steer: asRecord(info.meta.steering).supported === true, permissionCatalog: true })
         .map(capability => (capability.id === 'runtime.attachment' && !codexLocalImageLinks(info) ? { id: capability.id, supported: false } : capability)),
-      { id: 'session.planning', supported: true },
+      { id: 'session.planning', supported: true, parameters: { preparedCreation: true } },
       { id: 'session.plan_document', supported: true },
       { id: 'session.plan_review', supported: true },
       { id: 'session.goal', supported: true, parameters: { actions: ['set', 'pause', 'resume', 'clear'] } },

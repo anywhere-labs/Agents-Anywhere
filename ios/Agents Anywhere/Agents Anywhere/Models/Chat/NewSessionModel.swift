@@ -452,7 +452,7 @@ final class NewSessionModel {
                 if draft.text.isEmpty, draft.attachments.isEmpty { draft.text = text; draft.attachments = files }
             }
         }
-        if preparedWorkflow == nil { await onStaged?(submission) }
+        if useGoal || preparedWorkflow == nil { await onStaged?(submission) }
         guard isValid, !Task.isCancelled else { return nil }
         let target = (project.connectorId, runtime.id, project.id)
         let chosenSelections = settings.selections
@@ -480,7 +480,7 @@ final class NewSessionModel {
             }
             didSubmit = true
             let response: V2SessionCreateResponse
-            if let preparedWorkflow, let workflowAPI {
+            if !useGoal, let preparedWorkflow, let workflowAPI {
                 guard let catalogRevision = preparedWorkflow.state.catalogRevision else { throw HTTPError.invalidResponse }
                 var body: [String: JSONValue] = ["preparationId": .string(preparedWorkflow.id), "createOperationId": .string(submission.pending.id),
                     "expectedRevision": .number(Double(preparedWorkflow.state.revision)), "catalogRevision": .number(Double(catalogRevision)),

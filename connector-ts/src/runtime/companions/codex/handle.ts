@@ -29,11 +29,14 @@ import type {
   NativeHistoryPage,
   NativeSessionPage,
   NativeSessionRef,
+  NewSessionSpec,
   OpenOptions,
   OpenTarget,
   OwnerReleaseOutcome,
   OwnerReleasePort,
   OwnerReleasePrepareResult,
+  PreparedSession,
+  PrepareOptions,
   RuntimeCapabilities,
   RuntimeHandle,
   RuntimeSession,
@@ -218,6 +221,10 @@ export class CodexRuntimeHandle implements RuntimeHandle {
 
   readNativeHistory(ref: NativeSessionRef, window: HistoryWindow): Promise<NativeHistoryPage> {
     return this.inner.readNativeHistory(ref, window)
+  }
+
+  prepare(spec: NewSessionSpec, options: PrepareOptions): Promise<PreparedSession> {
+    return this.inner.prepare(spec, options, session => this.track(session))
   }
 
   async open(target: OpenTarget, options: OpenOptions): Promise<AcpRuntimeSession> {

@@ -173,6 +173,9 @@
             "capabilityId": "session.planning",
             "supported": true,
             "available": true,
+            "parameters": {
+              "preparedCreation": true
+            },
             "runtime": "claude",
             "scope": "runtime",
             "sessionId": null
@@ -189,6 +192,28 @@
             "capabilityId": "session.plan_review",
             "supported": true,
             "available": true,
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          },
+          {
+            "capabilityId": "runtime.workspace.prepare",
+            "supported": true,
+            "available": true,
+            "parameters": {
+              "workflowVersion": "1.2"
+            },
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          },
+          {
+            "capabilityId": "runtime.session.async_create",
+            "supported": true,
+            "available": true,
+            "parameters": {
+              "workflowVersion": "1.2"
+            },
             "runtime": "claude",
             "scope": "runtime",
             "sessionId": null
@@ -329,6 +354,9 @@
             "capabilityId": "session.planning",
             "supported": true,
             "available": true,
+            "parameters": {
+              "preparedCreation": true
+            },
             "runtime": "claude",
             "scope": "runtime",
             "sessionId": null
@@ -345,6 +373,28 @@
             "capabilityId": "session.plan_review",
             "supported": true,
             "available": true,
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          },
+          {
+            "capabilityId": "runtime.workspace.prepare",
+            "supported": true,
+            "available": true,
+            "parameters": {
+              "workflowVersion": "1.2"
+            },
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          },
+          {
+            "capabilityId": "runtime.session.async_create",
+            "supported": true,
+            "available": true,
+            "parameters": {
+              "workflowVersion": "1.2"
+            },
             "runtime": "claude",
             "scope": "runtime",
             "sessionId": null

@@ -95,7 +95,7 @@ export function claudeDialect(): AcpDialect {
       const goal = goalControlMethod(info) !== undefined
       return [
         ...negotiatedCapabilities(info, { steer: asRecord(info.meta.steering).supported === true, permissionCatalog: true }),
-        { id: 'session.planning', supported: true },
+        { id: 'session.planning', supported: true, parameters: { preparedCreation: true } },
         { id: 'session.plan_document', supported: true },
         { id: 'session.plan_review', supported: true },
         { id: 'session.goal', supported: goal, ...(goal ? { parameters: { actions: (asRecord(air(info).goal).actions ?? ['set', 'clear']) as string[] } } : {}) },

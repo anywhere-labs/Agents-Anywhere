@@ -38,7 +38,11 @@ const WORKSPACE_PREPARATION: readonly DeclaredCapability[] = [
   on('runtime.session.async_create', { workflowVersion: '1.2' }),
 ]
 
-const PLANNING: readonly DeclaredCapability[] = [on('session.planning'), on('session.plan_document'), on('session.plan_review')]
+const PLANNING: readonly DeclaredCapability[] = [
+  on('session.planning', { preparedCreation: true }),
+  on('session.plan_document'),
+  on('session.plan_review'),
+]
 
 /** Native sessions listed and read back, and image attachments. */
 const NATIVE_HISTORY: readonly DeclaredCapability[] = [on('session.list'), on('session.history.native')]
@@ -55,6 +59,7 @@ const DECLARED: Readonly<Record<string, readonly DeclaredCapability[]>> = {
     on('catalog.model'),
     on('catalog.permission'),
     ...PLANNING,
+    ...WORKSPACE_PREPARATION,
     on('session.goal', { actions: ['set', 'pause', 'resume', 'clear'] }),
   ],
   claude: [
@@ -65,16 +70,14 @@ const DECLARED: Readonly<Record<string, readonly DeclaredCapability[]>> = {
     on('catalog.model'),
     on('catalog.permission'),
     ...PLANNING,
+    ...WORKSPACE_PREPARATION,
   ],
   pi: [
     ...ACP_SESSION.filter(item => item.id !== 'session.commands' && item.id !== 'session.interaction.form'),
     ...NATIVE_HISTORY,
     ATTACHMENTS,
     on('catalog.permission'),
-    // A new Pi session can start in plan mode from a prepared workspace.
-    on('session.planning', { preparedCreation: true }),
-    on('session.plan_document'),
-    on('session.plan_review'),
+    ...PLANNING,
     ...WORKSPACE_PREPARATION,
   ],
   hermes: [
