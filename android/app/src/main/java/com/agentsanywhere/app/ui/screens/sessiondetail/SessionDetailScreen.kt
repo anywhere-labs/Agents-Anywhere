@@ -2254,7 +2254,8 @@ private fun SessionDetailVisit(
                                 }
                                 val previewSession = state.session
                                 if (planTarget == null && !isPreparedSession && previewSession != null &&
-                                    state.listeningPorts.isNotEmpty()
+                                    state.listeningPorts.isNotEmpty() &&
+                                    state.capabilities.portPreviewAvailable(runtimeId, runtimeType)
                                 ) {
                                     SessionPortPreviewCard(
                                         sessionId = previewSession.id,

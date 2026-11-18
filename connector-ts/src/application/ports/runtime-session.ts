@@ -170,7 +170,20 @@ export interface RuntimeHandle {
    * Two steps: first draft a plan to show the user; execute only after the user explicitly agrees in the AA session that triggered it.
    */
   readonly ownerRelease?: OwnerReleasePort
+  /**
+   * The Agent processes this instance runs on this computer and the AA sessions each one serves, the session with
+   * a turn in progress first. Port preview associates a listening port with a session through them. A Runtime
+   * whose Agent runs in another program (DSH) leaves it out.
+   */
+  agentProcesses?(): readonly AgentProcessInfo[]
   stop(): Promise<void>
+}
+
+/** One Agent process of a Runtime instance (`RuntimeHandle.agentProcesses`). */
+export interface AgentProcessInfo {
+  readonly pid: number
+  /** AA session ids (a prepared session's preparation id until it is adopted); empty when no session is open. */
+  readonly sessionIds: readonly string[]
 }
 
 /**

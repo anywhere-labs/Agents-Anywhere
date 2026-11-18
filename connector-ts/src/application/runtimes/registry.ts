@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 
 import { sessionNamespace } from '../../domain/identity/index.js'
-import type { Log, ProviderFacts, RuntimeHandle, RuntimeHandleEvent, RuntimeHandles, RuntimeProvider } from '../ports/index.js'
+import type { AgentProcessInfo, Log, ProviderFacts, RuntimeHandle, RuntimeHandleEvent, RuntimeHandles, RuntimeProvider } from '../ports/index.js'
 import { RuntimeApplyError, runtimeSpecFrom, switchFenceOf, type InstanceReport, type RuntimeInstanceSpec } from './instances.js'
 
 function failureOf(error: unknown): { code: string; message: string } {
@@ -174,6 +174,18 @@ export class RuntimeRegistry implements RuntimeHandles {
   /** Whether the instance has a started handle (runtime-level facts come from it). */
   public started(runtimeId: string): Promise<RuntimeHandle | null> | null {
     return this.running.get(runtimeId)?.handle ?? null
+  }
+
+  /** The Agent processes of every started instance (port preview's session association); starts nothing. */
+  public async agentProcesses(): Promise<AgentProcessInfo[]> {
+    const handles = await Promise.all([...this.running.values()].map(running => running.handle.catch(() => null)))
+    return handles.flatMap(handle => {
+      try {
+        return [...(handle?.agentProcesses?.() ?? [])]
+      } catch {
+        return []
+      }
+    })
   }
 
   /** Installation facts of every instance's type; never starts an Agent. */

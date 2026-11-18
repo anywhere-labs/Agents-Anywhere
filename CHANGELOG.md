@@ -46,7 +46,7 @@
 ### Desktop
 
 - 第一次启动不再下载 Python 和依赖，也不会再停在「正在准备运行环境」；设置页的「运行环境」改为只设置「Connector 网络」。（[#748](https://github.com/anywhere-labs/Agents-Anywhere/pull/748)）
-- Desktop 安装包自带端口预览需要的 frp 客户端：会话里启动的本机服务可以直接从其他设备预览，端口停止监听后对应的预览会自动关闭。（[#749](https://github.com/anywhere-labs/Agents-Anywhere/pull/749)）
+- Desktop 安装包自带端口预览需要的 frp 客户端：会话里 Agent 或终端启动的本机服务（包括启动它的命令已经结束、或只在输出里打印过地址的服务）可以直接从其他设备预览，端口停止监听后对应的预览会自动关闭。（[#749](https://github.com/anywhere-labs/Agents-Anywhere/pull/749)、[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 这台电脑上已有更新版本的 Connector（命令行或 DSH 插件）在运行时，Desktop 会让它继续连接服务器并在侧栏和设置页说明原因，界面照常可用，只有本机连接相关的操作暂不可用，对方退出后自动接回，不再报「已有其他 Connector 在运行」；更新版本的 Connector 启动时，Desktop 内置的 Connector 会自动交接给它。（[#748](https://github.com/anywhere-labs/Agents-Anywhere/pull/748)、[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - Desktop 安装包自带 Pi 运行环境，第一次启动只需在本地复制，不再下载 Node 和 npm 依赖；准备失败时也不再停在启动页、点「重试」也进不去，Pi 会在第一次使用时再次准备并在会话里提示错误。（[#657](https://github.com/anywhere-labs/Agents-Anywhere/pull/657)）
 
@@ -54,6 +54,7 @@
 
 - 连接 v3 Connector 的电脑上，持续增长的长输出（如长时间运行的命令）在运行期间只保存预览，结束后才保存一份完整内容，不再留下几百份中间版本占用磁盘；内容被修改、删除后不再使用的文件会自动删除，启动时也会清理之前残留的文件。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 设备连接半断（连接还在但不再有心跳）时，所有 Server 实例会在一分钟内一致显示离线；设备上报的会话摘要遇到 Server 存储出错时由设备重发，不再丢失；设备删除本地数据或重装后重建的会话，新消息不会被客户端当成已经看过的旧消息；Connector 的本地存储意外退出时会停止并报错，不再整体卡住。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
+- 命令行 Connector 找到 `frpc`（`PATH` 上，或用 `AA_FRPC_BINARY` 指定）时也能在手机上预览会话启动的网页服务；设备没有 frp 客户端或不支持端口预览时，各端不再显示「在手机上预览」，不会点了才报错。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 系统钥匙串锁定或暂时不可用时，Connector 不再生成新密钥覆盖旧的（以前会导致设备身份和加密配对全部失效），第一次运行且没有可用钥匙串时改用仅本人可读的文件保存；密钥也不再出现在命令行参数里。端口预览只开放属于会话的端口；加密模式下端口通知不再带进程名和网址路径，普通模式下网址里的令牌参数也会被去掉。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 连接 v3 Connector 的设备在不开启端到端加密时，也可以浏览、编辑、下载设备上的文件，使用终端（多标签、重连后补回输出）和执行 Shell 命令；运行超过 30 秒的 Shell 命令不再超时失败，两种模式下都可以在后台运行命令，再等待它的输出和退出码或取消它。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 连接 v3 Connector 的设备上，可以看到可用的 Agent 类型，启用、停用 Agent 实例并修改配置、切换模型渠道和修改设备设置；设备离线时的修改会在设备上线后自动生效，不会被之前的旧修改覆盖。Agent 配置和模型密钥不再随操作记录保存在 Server 上。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）

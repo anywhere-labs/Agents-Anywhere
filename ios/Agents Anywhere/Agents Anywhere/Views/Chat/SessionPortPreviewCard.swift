@@ -3,8 +3,9 @@ import SwiftUI
 import UIKit
 
 /// "检测到 http://localhost:5173 · 预览" above the composer (preview 1.0, PV-5).
-/// Shown only while this session's processes listen on a port and the instance
-/// has port preview; a 404 or `preview_disabled` hides it for this app run.
+/// Shown only while this session's processes listen on a port, the device declares
+/// `session.port_preview` as available and the instance has port preview; a 404 or
+/// `preview_disabled` hides it for this app run.
 struct SessionPortPreviewCard: View {
     let session: V2SessionModel
     let store: PortPreviewStore
@@ -27,16 +28,20 @@ struct SessionPortPreviewCard: View {
         session.metadata?.connectorStatus == .online && session.network.availability != .offline
     }
 
+    private var hidden: Bool {
+        store.isDisabled || !session.runtime.portPreviewAvailable || session.listeningPorts.isEmpty
+    }
+
     var body: some View {
         // The container stays mounted so an open browser survives the card hiding.
         VStack(alignment: .leading, spacing: 6) {
             let ports = V3SessionPorts.visible(session.listeningPorts)
-            if !store.isDisabled, !ports.isEmpty {
+            if !hidden, !ports.isEmpty {
                 ForEach(ports) { row($0) }
             }
         }
-        .padding(.horizontal, store.isDisabled || session.listeningPorts.isEmpty ? 0 : 16)
-        .padding(.vertical, store.isDisabled || session.listeningPorts.isEmpty ? 0 : 8)
+        .padding(.horizontal, hidden ? 0 : 16)
+        .padding(.vertical, hidden ? 0 : 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityIdentifier("chat.portPreview")
         .onChange(of: Set(session.listeningPorts.keys)) { _, ports in

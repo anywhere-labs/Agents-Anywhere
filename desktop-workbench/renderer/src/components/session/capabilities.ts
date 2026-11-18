@@ -18,6 +18,7 @@ export const CAPABILITY = {
   modelCatalog: "catalog.model",
   permissionCatalog: "catalog.permission",
   effortCatalog: "catalog.effort",
+  portPreview: "session.port_preview",
 } as const
 
 export type KnownCapabilityId = (typeof CAPABILITY)[keyof typeof CAPABILITY]
@@ -53,6 +54,19 @@ export function capabilityIsUsable(
 ): boolean {
   const capability = findCapability(capabilitySet, capabilityId, runtime)
   return Boolean(capability?.supported && capability.available && capability.allowed)
+}
+
+/**
+ * The device can open port previews for this session: it declares the
+ * capability and has its frp client. Not tied to takeover: a preview only
+ * exposes a port the session's own processes serve.
+ */
+export function portPreviewAvailable(
+  capabilitySet: ProtocolCapabilitySet | null | undefined,
+  runtime?: RuntimeCapabilityScope,
+): boolean {
+  const capability = findCapability(capabilitySet, CAPABILITY.portPreview, runtime)
+  return Boolean(capability?.supported && capability.available)
 }
 
 /** Omitted MIME restrictions preserve existing runtimes; an empty list allows no files. */

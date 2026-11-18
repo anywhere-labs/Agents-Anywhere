@@ -124,6 +124,11 @@ async function socketOwners(): Promise<Map<string, { pid: number; name: string }
   return owners
 }
 
+/** lsof lives in /usr/sbin on macOS, which a service's or a test's PATH may leave out. */
+function lsofPath(): string {
+  return existsSync('/usr/sbin/lsof') ? '/usr/sbin/lsof' : 'lsof'
+}
+
 async function portsFromTools(platform: NodeJS.Platform): Promise<ListeningPort[]> {
   try {
     if (platform === 'win32') {
@@ -134,7 +139,7 @@ async function portsFromTools(platform: NodeJS.Platform): Promise<ListeningPort[
       const names = parseTasklist(tasklist.stdout)
       return parseNetstat(netstat.stdout).map(s => ({ ...s, process: names.get(s.pid) ?? '' }))
     }
-    const { stdout } = await run('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN', '-F', 'pcn'], { encoding: 'utf8', timeout: 5000 })
+    const { stdout } = await run(lsofPath(), ['-nP', '-iTCP', '-sTCP:LISTEN', '-F', 'pcn'], { encoding: 'utf8', timeout: 5000 })
     return parseLsof(stdout)
   } catch (error) {
     // lsof exits 1 when nothing is listening.

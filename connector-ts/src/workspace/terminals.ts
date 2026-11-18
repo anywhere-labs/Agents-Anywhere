@@ -38,6 +38,8 @@ export interface TerminalOptions {
   readonly policy: RootPolicy
   readonly spawn: SpawnPty
   readonly notify?: TerminalSink
+  /** Every terminal's output as text, by terminal and scope (port preview reads the local URLs it prints). */
+  readonly observeOutput?: (sessionId: string, terminalId: string, text: string) => void
   readonly now?: () => number
   readonly platform?: NodeJS.Platform
   readonly env?: NodeJS.ProcessEnv
@@ -355,6 +357,11 @@ export class Terminals {
     }
   }
 
+  /** The shell process of every running terminal and the scope (session) it was opened in. */
+  public processes(): { pid: number; sessionId: string }[] {
+    return [...this.records.values()].filter(record => !record.closed).map(record => ({ pid: record.pty.pid, sessionId: record.sessionId }))
+  }
+
   /** Kills every terminal (shutdown). */
   public shutdown(): void {
     if (this.reaper !== undefined) clearInterval(this.reaper)
@@ -379,6 +386,13 @@ export class Terminals {
       record.scrollbackBaseSeq = record.chunks.length > 0 ? record.chunks[0]!.seq - 1 : record.seq
     }
     record.scrollback = scrollback
+    if (this.options.observeOutput !== undefined) {
+      try {
+        this.options.observeOutput(record.sessionId, record.id, data.toString('utf8'))
+      } catch {
+        // An observer never breaks the terminal.
+      }
+    }
     this.emit(record, 'terminal.output', { terminalId: record.id, sessionId: record.sessionId, seq: record.seq, dataBase64: data.toString('base64') })
   }
 

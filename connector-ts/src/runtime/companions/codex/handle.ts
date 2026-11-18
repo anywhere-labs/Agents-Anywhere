@@ -19,6 +19,7 @@ import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import type {
+  AgentProcessInfo,
   Catalogs,
   HistoryWindow,
   NativeHistoryPage,
@@ -201,6 +202,10 @@ export class CodexRuntimeHandle implements RuntimeHandle {
     } finally {
       this.routes.delete(threadId)
     }
+  }
+
+  agentProcesses(): AgentProcessInfo[] {
+    return this.inner.agentProcesses()
   }
 
   async stop(): Promise<void> {

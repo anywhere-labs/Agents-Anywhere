@@ -144,6 +144,42 @@ describe('previewHost', () => {
     await host.close()
   })
 
+  it('keeps a port\'s session after its process left the session\'s tree, while the same process listens', async () => {
+    const f = fixture([])
+    let ports = [port(7000, 400)]
+    // The dev server (pid 400) was started by a shell under the Agent (pid 100); the shell then exits.
+    let parents = new Map([[400, 100]])
+    const host = previewHost({
+      frpcPath: null, dataDir: '/nonexistent', deviceId: () => 'conn_1', transport: f.transport,
+      list: async () => ports, parents: async () => parents, intervalMs: 60_000, refreshMs: 60_000,
+      // Read asynchronously, as the Connector's Runtime registry answers.
+      hints: async () => ({ roots: new Map([[100, 'ses_a']]), mentioned: new Map() }),
+    })
+    host.onLink(f.link)
+    await settle()
+    expect(f.events.at(-1)!.payload.ports).toMatchObject([{ port: 7000, sessionId: 'ses_a' }])
+    parents = new Map([[400, 1]])
+    const open = (previewId: string) => host.commands['preview.open']!({ previewId, slug: previewId, port: 7000, frpToken: 't', tokenExpiresAt: 'z', frpsAddr: 'f:1' }, ctx(previewId))
+    await expect(open('prv_1')).resolves.toMatchObject({ port: 7000 })
+    // Another process on the port is not the one the session started.
+    ports = [port(7000, 500)]
+    parents = new Map([[500, 1]])
+    await expect(open('prv_2')).rejects.toMatchObject({ code: 'preview_port_not_allowed', details: { reason: 'not_session' } })
+    await host.close()
+  })
+
+  it('refuses every port while the hints cannot be read', async () => {
+    const f = fixture([])
+    const host = previewHost({
+      frpcPath: null, dataDir: '/nonexistent', deviceId: () => 'conn_1', transport: f.transport,
+      list: async () => [port(7000, 400)], parents: async () => new Map([[400, 100]]), intervalMs: 60_000, refreshMs: 60_000,
+      hints: async () => { throw new Error('store closed') },
+    })
+    await expect(host.commands['preview.open']!({ previewId: 'p', slug: 'p', port: 7000, frpToken: 't', tokenExpiresAt: 'z', frpsAddr: 'f:1' }, ctx('p')))
+      .rejects.toMatchObject({ code: 'preview_port_not_allowed', details: { reason: 'not_session' } })
+    await host.close()
+  })
+
   it('repeats a non-empty port list so a reconnected Server has it', async () => {
     const f = fixture([])
     const host = previewHost({

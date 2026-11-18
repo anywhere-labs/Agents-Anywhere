@@ -57,7 +57,7 @@ import { needsOlderTimelinePage } from "@/components/session/timeline-autofill"
 import { createTimelineScrollFollow } from "@/components/session/timeline-scroll-follow"
 import { createSessionController, type SessionController } from "@/components/session/session-controller"
 import { traceSessionSwitch } from "@/components/session/session-switch-performance"
-import { CAPABILITY, capabilityIsUsable, findCapability } from "@/components/session/capabilities"
+import { CAPABILITY, capabilityIsUsable, findCapability, portPreviewAvailable } from "@/components/session/capabilities"
 import { SessionComposer, type AttachedFile } from "@/components/session/session-composer"
 import { commandResult, commandTransportFailure, type CommandOutcome } from "@/components/session/runtime-command-model"
 import { useRuntimeCommands } from "@/components/session/use-runtime-commands"
@@ -1472,7 +1472,7 @@ function SessionDetailVisit({
               </Alert>
             </div>
           ) : null}
-          {session && !session.archived ? (
+          {session && !session.archived && portPreviewAvailable(effectiveCapabilities, sessionRuntimeScope) ? (
             <PortPreviewCard token={token} sessionId={session.id} deviceId={session.connectorId}
               ports={remote.listeningPorts} canPreview={session.connectorStatus === "online"} />
           ) : null}

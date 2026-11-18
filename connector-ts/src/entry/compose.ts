@@ -23,9 +23,12 @@ import { legacyDataDir, type ConnectorRuntime, type ConnectorSettings, type Runt
 import { ControlPlane, DeviceLink, blobLookup, deviceAttachmentFetcher, deviceTransferUploader, readSystemProxySettings, resolveEgress, type Egress, type LinkLogger, type WorkspaceServiceDeps } from '../link/index.js'
 import { openStoreWorker, inProcessStore, openSqliteStore, type RemoteStore } from '../store/index.js'
 import { DeviceReaders, DeviceTunnelApi, MemoryChangeFeed, OutboxSignal, SessionCommandCatalog, plainSealer, type RuntimeFacts, type SessionFacts } from '../sync/index.js'
-import { AttachmentCache, FileOps, RootPolicy, ShellOps, Terminals, nodePtySpawner, rootsFromEnv, workspaceMethods } from '../workspace/index.js'
+import { browseScope } from '../sync/client-api/views.js'
+import type { ProtocolCapabilitySet } from '../generated/protocol/v1_2/capability-set.js'
+import { AttachmentCache, FileOps, PrintedUrls, RootPolicy, ShellOps, Terminals, nodePtySpawner, previewHost, rootsFromEnv, workspaceMethods, type PreviewHost, type TerminalOptions } from '../workspace/index.js'
 import { instanceCatalogs, preparedDownloadUpload } from './client-api.js'
 import { importLegacyV2 } from './legacy-import.js'
+import { sessionHintsSource, watchTimelineUrls, withPortPreview, type PreviewWiring } from './preview.js'
 import { builtinProviders } from './runtimes.js'
 import { DeviceTrust, openSealedUpload, type DeviceTrustOptions } from './trust.js'
 
@@ -57,6 +60,12 @@ export interface ComposeOptions {
   readonly legacyDataDir?: string | false
   /** Told when a link exists (the host wires port events and other live sources to `link.attach`). */
   readonly onLink?: (link: DeviceLink) => void
+  /**
+   * Port preview (09-port-preview.md): the `preview.open` / `preview.close` commands, `port.listening` /
+   * `port.closed` on the link, and the `session.port_preview` capability. A null `frpcPath` declares it unavailable;
+   * leaving this out leaves preview out (the capability is not declared and the commands are unknown).
+   */
+  readonly preview?: PreviewWiring | null
 }
 
 const EGRESS_REFRESH_MS = 60_000
@@ -115,7 +124,17 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
       const sessionFacts = new SessionFactsHub()
       const outboxSignal = new OutboxSignal()
       const sessionCommands = new SessionCommandCatalog()
-      const live = liveFanOut({ sessionCommands, sessionFacts, outboxSignal, attach: () => link?.attach ?? null })
+      const previewWiring = options.preview ?? null
+      const printed = new PrintedUrls()
+      const withPreview = (set: ProtocolCapabilitySet, scope: { readonly runtime: string; readonly sessionId: string | null }): ProtocolCapabilitySet =>
+        previewWiring === null ? set : withPortPreview(set, previewWiring.frpcPath !== null, scope)
+      const live = liveFanOut({
+        sessionCommands,
+        sessionFacts,
+        outboxSignal,
+        attach: () => link?.attach ?? null,
+        ...(previewWiring !== null ? { sessionCapabilities: (set, scope) => withPreview(set, scope) } : {}),
+      })
       const feed = new MemoryChangeFeed()
       const log = options.log
       // Assigned below; Runtime events only arrive after an instance started, which needs the service.
@@ -148,9 +167,11 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
       const scans = new RuntimeScans(history, ids, log)
       const policy = new RootPolicy({ roots: options.workspaceRoots ?? rootsFromEnv() })
       const files = new FileOps(policy)
-      const terminals = await openTerminals(policy, options.terminals !== false, log)
+      const terminals = await openTerminals(policy, options.terminals !== false, log, previewWiring === null ? undefined : (sessionId, terminalId, text) => printed.observe(sessionId, text, terminalId))
       const shell = new ShellOps(policy)
       let trust: DeviceTrust | null = null
+      let preview: PreviewHost | null = null
+      let stopTimelineUrls: (() => void) | null = null
       try {
         const egress = await egressFor(settings, signal, options.log)
         const handshake = new ControlPlane({
@@ -193,9 +214,10 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
             const session = await store.sessions.get(sessionId)
             if (session === null) return null
             const bound = conversation.boundSession(sessionId)
-            if (bound !== null) return capabilitySet(bound.capabilities, { runtime: session.runtimeType, sessionId })
+            if (bound !== null) return withPreview(capabilitySet(bound.capabilities, { runtime: session.runtimeType, sessionId }), { runtime: session.runtimeType, sessionId })
             const handle = await runtimes.started(session.runtimeId)
-            return handle === null || handle === undefined ? null : capabilitySet(handle.capabilities(), { runtime: session.runtimeType, sessionId: null })
+            if (handle === null || handle === undefined) return null
+            return withPreview(capabilitySet(handle.capabilities(), { runtime: session.runtimeType, sessionId: null }), { runtime: session.runtimeType, sessionId: null })
           },
           selections: sessionId => history.nativeSelections(sessionId),
           catalogs: async sessionId => {
@@ -229,7 +251,26 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
         prepared.start()
         // Runtime Control 3.0 (runtime.apply, channel.switch, device.settings.apply); a host's own handlers win.
         const control = runtimeControlCommands({ registry: runtimes, deviceSettings: settings => hooks.deviceSettings(settings) })
-        const inbox = new CommandInbox(store, clock, conversation, { ...control, ...(options.commands ?? {}) }, prepared)
+        if (previewWiring !== null) {
+          const ownScope = browseScope(settings.connectorId)
+          stopTimelineUrls = watchTimelineUrls({ feed, timeline: store.timeline, printed, log: text => log('debug', text) })
+          preview = previewHost({
+            ...previewWiring,
+            proxyUrl: previewWiring.proxyUrl ?? egress().proxy,
+            dataDir: options.dataDir,
+            deviceId: () => settings.connectorId,
+            hints: sessionHintsSource({
+              agents: () => runtimes.agentProcesses(),
+              terminals: () => terminals?.processes() ?? [],
+              printed,
+              isSession: sessionId => sessionId !== ownScope,
+            }),
+            // The link's mode once welcomed; before that this device's own policy.
+            e2eeMode: () => link?.e2eeMode ?? trust?.localMode() ?? 'off',
+            log: previewWiring.log ?? ((level, text) => log(level, `preview: ${text}`)),
+          })
+        }
+        const inbox = new CommandInbox(store, clock, conversation, { ...control, ...(preview?.commands ?? {}), ...(options.commands ?? {}) }, prepared)
         const readers = new DeviceReaders(store, clock.nowIso, facts, history, prepared)
         const watch = { store, feed, now: clock.nowIso }
         const workspace = workspaceMethods(files, shell, terminals ?? undefined)
@@ -310,6 +351,7 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
             if (state === 'online') void announceRuntimes(runtimes, live, log, options.scanOnStart !== false ? spec => void scans.now(spec.runtimeId) : undefined)
           },
         })
+        preview?.onLink(link)
         options.onLink?.(link)
         await link.run(signal)
         if (storeFailure !== null) throw storeFailure
@@ -318,6 +360,8 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
         throw storeFailure ?? error
       } finally {
         outer.removeEventListener('abort', onOuterAbort)
+        stopTimelineUrls?.()
+        await preview?.close().catch(() => undefined)
         scans.close()
         if (trust !== null) track?.trust?.(null)
         await trust?.close().catch(() => undefined)
@@ -341,6 +385,8 @@ export interface LiveFanOutTargets {
   readonly outboxSignal: OutboxSignal
   /** The current link's attach hub; null before the link exists. */
   readonly attach: () => LiveEvents | null
+  /** Adds this device's own session capabilities (port preview) to a session's `capabilities.changed` set. */
+  readonly sessionCapabilities?: (set: ProtocolCapabilitySet, scope: { readonly runtime: string; readonly sessionId: string }) => ProtocolCapabilitySet
 }
 
 /**
@@ -350,7 +396,8 @@ export interface LiveFanOutTargets {
  */
 export function liveFanOut(targets: LiveFanOutTargets): LiveEvents {
   return {
-    emit: (method, payload) => {
+    emit: (method, raw) => {
+      const payload = withDeviceCapabilities(method, raw, targets.sessionCapabilities)
       targets.sessionCommands.observe(method, payload)
       const event = { method, payload } as LiveEvent
       if (event.method !== 'port.listening' && event.method !== 'port.closed' && typeof event.payload.sessionId === 'string') {
@@ -362,6 +409,15 @@ export function liveFanOut(targets: LiveFanOutTargets): LiveEvents {
       if (event.method === 'runtime.status' && 'event' in event.payload.status && event.payload.status.event === 'session.status') targets.outboxSignal.poke()
     },
   }
+}
+
+/** A session-scoped `runtime.status` capability set with the device's own capabilities added; any other event as is. */
+function withDeviceCapabilities<T extends Record<string, unknown>>(method: string, payload: T, add: LiveFanOutTargets['sessionCapabilities']): T {
+  if (add === undefined || method !== 'runtime.status' || typeof payload.sessionId !== 'string') return payload
+  const set = payload.capabilities as ProtocolCapabilitySet | undefined
+  if (set === undefined || set === null || typeof set !== 'object') return payload
+  const runtime = set.capabilities?.find(item => typeof item.runtime === 'string')?.runtime ?? ''
+  return { ...payload, capabilities: add(set, { runtime, sessionId: payload.sessionId }) }
 }
 
 /** Live session facts by session, for secure channel subscribers (`SessionFacts`). */
@@ -387,10 +443,10 @@ export class SessionFactsHub implements SessionFacts {
 }
 
 /** Terminals when node-pty loads; a device without it still serves files and sessions. */
-async function openTerminals(policy: RootPolicy, wanted: boolean, log: Log): Promise<Terminals | null> {
+async function openTerminals(policy: RootPolicy, wanted: boolean, log: Log, observeOutput?: TerminalOptions['observeOutput']): Promise<Terminals | null> {
   if (!wanted) return null
   try {
-    return new Terminals({ policy, spawn: await nodePtySpawner() })
+    return new Terminals({ policy, spawn: await nodePtySpawner(), ...(observeOutput !== undefined ? { observeOutput } : {}) })
   } catch (error) {
     log('warn', `terminals are unavailable: ${message(error)}`)
     return null

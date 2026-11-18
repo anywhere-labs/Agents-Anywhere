@@ -33,6 +33,27 @@ import Testing
         .server(statusCode: status, message: "failed", detail: code.map { .object(["code": .string($0), "message": .string("failed")]) })
     }
 
+    // MARK: Capability
+
+    @Test func theCardNeedsTheDevicesAvailablePortPreviewCapability() throws {
+        func snapshot(_ extra: [String: Any]?) throws -> V2RuntimeCapabilitySnapshot {
+            var capabilities: [[String: Any]] = [[
+                "capabilityId": "session.interrupt", "version": "1", "scope": "session", "runtime": "claude", "sessionId": "session",
+                "supported": true, "available": true, "allowed": true, "unavailableReason": NSNull(), "parameters": [:],
+            ]]
+            if let extra {
+                capabilities.append([
+                    "capabilityId": "session.port_preview", "version": "1", "scope": "session", "runtime": "claude", "sessionId": "session",
+                    "supported": true, "available": true, "allowed": false, "unavailableReason": NSNull(), "parameters": [:],
+                ].merging(extra) { _, new in new })
+            }
+            return try JSONDecoder().decode(V2RuntimeCapabilitySnapshot.self, from: json(["revision": 1, "capabilities": capabilities]))
+        }
+        #expect(try snapshot([:]).portPreviewAvailable)
+        #expect(try !snapshot(["available": false, "unavailableReason": "preview_unavailable"]).portPreviewAvailable)
+        #expect(try !snapshot(nil).portPreviewAvailable)
+    }
+
     // MARK: Event reduction
 
     @Test func listeningReplacesTheSessionsPortsAndSkipsOtherSessions() throws {

@@ -6,6 +6,7 @@ import { realpathSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 import type {
+  AgentProcessInfo,
   Capability,
   Catalogs,
   ConfigOption,
@@ -342,6 +343,18 @@ export class AcpRuntimeHandle implements RuntimeHandle {
       throw error
     }
   }
+  /** The live adapter process of each pool and the sessions open on it, busy ones first. */
+  agentProcesses(): AgentProcessInfo[] {
+    const processes: AgentProcessInfo[] = []
+    for (const pool of this.pools.values()) {
+      const connection = pool.live()
+      if (connection?.pid === undefined) continue
+      const sessions = [...(this.sessions.get(connection) ?? [])]
+      processes.push({ pid: connection.pid, sessionIds: [...sessions.filter(s => s.busy), ...sessions.filter(s => !s.busy)].map(s => s.sessionId) })
+    }
+    return processes
+  }
+
   async stop(): Promise<void> {
     await Promise.all([...this.pools.values()].map(pool => pool.shutdown()))
     this.events.close()

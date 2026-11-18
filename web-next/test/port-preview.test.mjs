@@ -8,6 +8,7 @@ const { apiPath } = await import("../src/lib/api/client.ts")
 const { PreviewApi } = await import("../src/features/preview/api.ts")
 const { createSessionController } = await import("../src/components/session/session-controller.ts")
 const { dashboardApi } = await import("../src/features/dashboard/api.ts")
+const { portPreviewAvailable } = await import("../src/components/session/capabilities.ts")
 
 const listening = (...list) => ({ deviceId: "connector", ports: list })
 const port = (number, sessionId = "a", extra = {}) => ({ port: number, pid: 100 + number, processName: "node", sessionId, ...extra })
@@ -25,6 +26,14 @@ test("a port report keeps only this session's ports and is stable when nothing c
   assert.equal(closed.size, 0)
   assert.equal(ports.applySessionPortEvent(closed, "port.closed", { deviceId: "connector", port: 5173 }, "a"), closed)
   assert.equal(ports.applySessionPortEvent(empty, "port.listening", { deviceId: "connector" }, "a"), empty)
+})
+
+test("the preview card needs the device's port preview capability, available, but not takeover", () => {
+  const preview = (extra) => ({ revision: 1, capabilities: [{ capabilityId: "session.port_preview", runtime: "claude", supported: true, available: true, allowed: false, ...extra }] })
+  assert.equal(portPreviewAvailable(preview({}), "claude"), true)
+  assert.equal(portPreviewAvailable(preview({ available: false, unavailableReason: "preview_unavailable" }), "claude"), false)
+  assert.equal(portPreviewAvailable({ revision: 1, capabilities: [] }, "claude"), false)
+  assert.equal(portPreviewAvailable(null, "claude"), false)
 })
 
 test("versioned API paths are not prefixed with the v2 namespace", () => {

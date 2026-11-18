@@ -23,8 +23,8 @@ export interface PreviewHostOptions {
   readonly deviceId: () => string
   /** frpc's outbound proxy; the device link's egress when the host knows it. */
   readonly proxyUrl?: string | null
-  /** Root processes of sessions and URLs they printed (the Runtime and terminals provide them). */
-  readonly hints?: () => SessionHints
+  /** Root processes of sessions and URLs they printed (the Runtime and terminals provide them), read when needed. */
+  readonly hints?: () => SessionHints | Promise<SessionHints>
   /**
    * The link's E2EE mode, read for every `port.listening`. Under `required` the event carries only the port and its
    * session (11-e2ee-noise.md §10): process ids and names and printed URLs stay on the device. Omitted means `off`.
@@ -65,13 +65,38 @@ export function previewHost(options: PreviewHostOptions): PreviewHost {
     log: message => log('info', message),
   })
   const readParents = (): Promise<ProcessParents> => (options.parents ?? (() => processParents()))().catch(() => new Map<number, number>())
+  const readHints = async (): Promise<SessionHints> => {
+    try {
+      return (await options.hints?.()) ?? NO_HINTS
+    } catch (error) {
+      log('warn', `session hints unavailable: ${(error as Error).message}`)
+      return NO_HINTS
+    }
+  }
+  // The session each port was last associated with, by the process listening on it. A dev server whose launching
+  // shell exited is re-parented away from the session's tree; the association made while the tree held stays until
+  // that process stops listening.
+  const associated = new Map<number, { pid: number; sessionId: string }>()
+  const associate = (port: number, pids: readonly (number | null)[], hints: SessionHints, parents: ProcessParents): string | null => {
+    const found = sessionOfPort(port, pids, hints, parents)
+    const pid = pids.find((value): value is number => value !== null) ?? null
+    if (found !== null) {
+      if (pid !== null) associated.set(port, { pid, sessionId: found })
+      return found
+    }
+    const known = associated.get(port)
+    if (known !== undefined && pids.includes(known.pid)) return known.sessionId
+    associated.delete(port)
+    return null
+  }
   const preview = previewCommands({
     transport,
     listening: list,
     // A preview opens only for a port a session on this device started or printed (PortShare, 09 §4.1).
     sessionOf: async bindings => {
       if (bindings.length === 0) return null
-      return sessionOfPort(bindings[0]!.port, bindings.map(b => b.pid), options.hints?.() ?? NO_HINTS, await readParents())
+      const [hints, parents] = await Promise.all([readHints(), readParents()])
+      return associate(bindings[0]!.port, bindings.map(b => b.pid), hints, parents)
     },
   })
   let stop: (() => void) | null = null
@@ -80,8 +105,12 @@ export function previewHost(options: PreviewHostOptions): PreviewHost {
   const annotated = async (payload: Record<string, unknown>): Promise<Record<string, unknown>> => {
     const wire = Array.isArray(payload.ports) ? (payload.ports as { port: number; pid: number | null; processName: string | null }[]) : []
     const ports: ListeningPort[] = wire.map(port => ({ port: port.port, address: '', pid: port.pid, process: port.processName ?? '' }))
-    const parents = await readParents()
-    return { deviceId: payload.deviceId, ports: annotatePorts(ports, options.hints?.() ?? NO_HINTS, parents, options.e2eeMode?.() ?? 'off') }
+    const [hints, parents] = await Promise.all([readHints(), readParents()])
+    for (const port of associated.keys()) if (!ports.some(entry => entry.port === port)) associated.delete(port)
+    return {
+      deviceId: payload.deviceId,
+      ports: annotatePorts(ports, hints, parents, options.e2eeMode?.() ?? 'off', port => associate(port.port, [port.pid], hints, parents)),
+    }
   }
 
   const watch = (emit: Emit, deviceId: string): (() => void) => {
@@ -96,6 +125,7 @@ export function previewHost(options: PreviewHostOptions): PreviewHost {
         queue = queue.then(async () => {
           if (method === 'port.closed') {
             const port = Number(payload.port)
+            associated.delete(port)
             const closed = await preview.portClosed(port).catch(() => [] as string[])
             if (closed.length > 0) log('info', `port ${port} stopped listening; closed preview ${closed.join(', ')}`)
             emit('port.closed', payload)

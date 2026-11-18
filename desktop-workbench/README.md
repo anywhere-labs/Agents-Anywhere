@@ -165,16 +165,17 @@ MESHCALL_ROUTER_BINARY=/absolute/path/to/meshcall-router yarn dev
 ```
 
 Desktop's Connector entry is `connector-entry/desktop-main.mts`: connector-ts's
-desktop-host plus port preview (`previewHost` from
-`connector-ts/src/workspace/preview`), which registers the `preview.open` /
-`preview.close` commands and sends `port.listening` / `port.closed` on
-`Link/attach`. Previews run on the frp client `yarn bundle:frpc` places in
+desktop-host with port preview turned on (`ComposeOptions.preview`), which
+registers the `preview.open` / `preview.close` commands, sends `port.listening` /
+`port.closed` on `Link/attach` and declares the `session.port_preview`
+capability. Previews run on the frp client `yarn bundle:frpc` places in
 `build/frpc/<platform>-<arch>/` (frp 0.72.0, sha256 pinned in
 `scripts/prepare-frpc.mjs`, cached under `.cache/frp`; packaged as
-`resources/frpc`, `FRPC_BUNDLE_TARGETS` like the Router). Without it every
-preview is refused. A custom proxy in the Connector network setting is frpc's
-proxy too; the system proxy is not applied to frpc yet. `bundle:connector`
-type-checks the entry with connector-ts's TypeScript before bundling.
+`resources/frpc`, `FRPC_BUNDLE_TARGETS` like the Router). Without it the
+capability is unavailable and every preview is refused. A custom proxy in the
+Connector network setting is frpc's proxy; otherwise frpc leaves the way the
+device link does (system proxy included). `bundle:connector` type-checks the
+entry with connector-ts's TypeScript before bundling.
 
 The Connector keeps using Desktop's `userData/connector/connector.json`, so an
 upgraded Desktop keeps its device credential and binding. Its data lives in the

@@ -15,6 +15,7 @@ const val SESSION_COMMAND_EXECUTE_CAPABILITY = "session.command.execute"
 const val SESSION_MODEL_CATALOG_CAPABILITY = "catalog.model"
 const val SESSION_PERMISSION_CATALOG_CAPABILITY = "catalog.permission"
 const val SESSION_ATTACHMENT_CAPABILITY = "runtime.attachment"
+const val SESSION_PORT_PREVIEW_CAPABILITY = "session.port_preview"
 
 data class SessionRuntimeState(
     val sessionId: String? = null,
@@ -89,6 +90,12 @@ data class EffectiveCapabilities(
         runtimeType: String? = null,
     ): Boolean {
         return find(capabilityId, runtimeId, runtimeType)?.usable == true
+    }
+
+    /** The device can open port previews for this session (declared, frp client present); takeover not needed. */
+    fun portPreviewAvailable(runtimeId: String? = null, runtimeType: String? = null): Boolean {
+        val capability = find(SESSION_PORT_PREVIEW_CAPABILITY, runtimeId, runtimeType)
+        return capability?.supported == true && capability.available
     }
 }
 

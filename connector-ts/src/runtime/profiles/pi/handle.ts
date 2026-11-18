@@ -10,6 +10,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import type {
+  AgentProcessInfo,
   Capability,
   Catalogs,
   ConfigOption,
@@ -192,6 +193,11 @@ export class PiRuntimeHandle implements RuntimeHandle {
       throw prepareFailure(error, false)
     }
     return preparedSession(session, { catalogs: async () => this.catalogsOf(session.configOptions), canPlan: true })
+  }
+
+  /** Each Pi session runs its own process. */
+  agentProcesses(): AgentProcessInfo[] {
+    return [...this.sessions].flatMap(session => session.agentProcesses())
   }
 
   async stop(): Promise<void> {

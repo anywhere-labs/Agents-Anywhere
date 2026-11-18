@@ -17,6 +17,7 @@ import {
   type TerminalConfirmer,
 } from '../host/index.js'
 import { startHostProcess, CONNECTOR_VERSION, type HostProcess, type HostProcessOptions } from './host-process.js'
+import { findFrpc } from './preview.js'
 import { terminalQr } from './qr.js'
 import { runRpc } from './rpc.js'
 
@@ -40,7 +41,10 @@ export interface CliOptions {
   /** The OS user's home (tests). */
   readonly home?: string
   readonly routerBinary?: string
-  /** Composition overrides (tests run the store in-process). */
+  /**
+   * Composition overrides (tests run the store in-process). Port preview defaults to the frpc `findFrpc` finds;
+   * `preview: null` leaves it out.
+   */
   readonly compose?: HostProcessOptions['compose']
   /** Resolves to end a foreground command (tests); default SIGINT/SIGTERM. */
   readonly until?: Promise<void>
@@ -201,7 +205,8 @@ export async function runCli(argv: readonly string[], options: CliOptions = {}):
   const exit = new Promise<void>(resolve => {
     handedOver = resolve
   })
-  const host = await startHostProcess({ kind: 'cli', ...(options.compose !== undefined ? { compose: options.compose } : {}), ...(configPath !== undefined ? { configPath } : {}), debug, ...(options.home !== undefined ? { home: options.home } : {}), ...(options.routerBinary !== undefined ? { routerBinary: options.routerBinary } : {}), echo: (level, message) => io.err(`[${level}] ${message}`), onHandedOver: () => handedOver() })
+  const compose: HostProcessOptions['compose'] = { preview: { frpcPath: findFrpc() }, ...options.compose }
+  const host = await startHostProcess({ kind: 'cli', compose, ...(configPath !== undefined ? { configPath } : {}), debug, ...(options.home !== undefined ? { home: options.home } : {}), ...(options.routerBinary !== undefined ? { routerBinary: options.routerBinary } : {}), echo: (level, message) => io.err(`[${level}] ${message}`), onHandedOver: () => handedOver() })
   const stop = Promise.race([until, exit])
   // This process hosts the Connector: approvals are confirmed on its terminal (none without a TTY: refused).
   const confirm = options.confirm === undefined ? defaultConfirm() : options.confirm

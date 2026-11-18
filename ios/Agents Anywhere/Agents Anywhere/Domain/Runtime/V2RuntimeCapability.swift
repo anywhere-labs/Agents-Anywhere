@@ -34,4 +34,10 @@ nonisolated struct V2RuntimeCapabilitySnapshot: Decodable, Hashable {
     func capability(id: V2CapabilityID) -> V2RuntimeCapability? {
         capabilities.first { capability in capability.capabilityId == id }
     }
+
+    /// `session.port_preview` is declared and usable (the device has its frp client); takeover is not needed.
+    var portPreviewAvailable: Bool {
+        guard let capability = capability(id: "session.port_preview") else { return false }
+        return capability.supported && capability.available
+    }
 }

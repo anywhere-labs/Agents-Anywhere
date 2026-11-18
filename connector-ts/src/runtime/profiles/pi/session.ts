@@ -20,6 +20,7 @@ import { access, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promis
 import { join } from 'node:path'
 
 import type {
+  AgentProcessInfo,
   Capability,
   CommandResult,
   ConfigChange,
@@ -253,6 +254,11 @@ export class PiRuntimeSession implements RuntimeSession {
 
   get busy(): boolean {
     return this.active?.inner.busy === true || this.synthetic.size > 0
+  }
+
+  /** This session's Pi process while it is awake (`RuntimeHandle.agentProcesses`). */
+  agentProcesses(): AgentProcessInfo[] {
+    return (this.active?.handle.agentProcesses() ?? []).map(process => ({ pid: process.pid, sessionIds: [this.sessionId] }))
   }
 
   // ------------------------------------------------------------------------------------------

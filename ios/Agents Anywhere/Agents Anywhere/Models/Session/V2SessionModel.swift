@@ -23,6 +23,10 @@ final class V2SessionRuntimeModel {
         return capability.supported && capability.available && capability.allowed
     }
 
+    /// The device can open port previews for this session: it declares `session.port_preview` and has its frp
+    /// client. Takeover is not needed; a preview only exposes a port the session's own processes serve.
+    var portPreviewAvailable: Bool { capabilities?.portPreviewAvailable ?? false }
+
     /// Returns whether the notice list changed, so forms are rebuilt only then.
     @discardableResult func update(_ data: V2SessionData?, connected: Bool) -> Bool {
         if state != data?.state { state = data?.state }

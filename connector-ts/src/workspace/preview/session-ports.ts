@@ -69,13 +69,20 @@ export function originOf(url: string): string | null {
   return m === null ? null : `${m[1]!.toLowerCase()}://${m[2]!.toLowerCase()}:${m[3]}`
 }
 
+/** Every local URL in `text` in order, with query and fragment removed, and the offset where its match ends. */
+export function localUrlMatches(text: string): { port: number; url: string; end: number }[] {
+  const found: { port: number; url: string; end: number }[] = []
+  for (const m of text.matchAll(LOCAL_URL)) {
+    const port = Number(m[1])
+    if (port > 0 && port <= 65535) found.push({ port, url: withoutQuery(m[0]), end: m.index + m[0].length })
+  }
+  return found
+}
+
 /** Local URLs printed by a tool or terminal (`http://localhost:5173/`), by port, with query and fragment removed. */
 export function localUrlsIn(text: string): Map<number, string> {
   const urls = new Map<number, string>()
-  for (const m of text.matchAll(LOCAL_URL)) {
-    const port = Number(m[1])
-    if (port > 0 && port <= 65535 && !urls.has(port)) urls.set(port, withoutQuery(m[0]))
-  }
+  for (const { port, url } of localUrlMatches(text)) if (!urls.has(port)) urls.set(port, url)
   return urls
 }
 
@@ -116,10 +123,11 @@ export function annotatePorts(
   hints: SessionHints,
   parents: ProcessParents,
   e2eeMode: 'off' | 'required' = 'off',
+  sessionOf: (port: ListeningPort) => string | null = port => sessionOfPort(port.port, [port.pid], hints, parents),
 ): AnnotatedPort[] {
   return ports.map(port => {
     const mention = hints.mentioned.get(port.port)
-    const sessionId = sessionOfPort(port.port, [port.pid], hints, parents)
+    const sessionId = sessionOf(port)
     const fallback = `http://localhost:${port.port}`
     if (e2eeMode === 'required') {
       return { port: port.port, pid: null, processName: null, sessionId, url: (mention === undefined ? null : originOf(mention.url)) ?? fallback }

@@ -4,11 +4,14 @@
 //   contains "#plan": sends a Markdown plan (plan_update), then replies;
 //   contains "#later": replies after 3 seconds (a turn that ends while the test has the link down);
 //   contains "#bulk <n>": reports n completed tool calls (one timeline item each), then replies;
+//   contains "#serve": starts a dev server as its own child process (127.0.0.1, a free port), reports a tool call that
+//     printed its URL, then replies "serving <port>";
 //   otherwise: replies "echo: <text> [model=<model> permission=<permission>] sessions-in-cwd=<session/new calls in that cwd>",
 //   followed by " attachments=<n>" when the prompt carries n non-text blocks (it accepts images).
 // After session/new it reports the slash command catalog (available_commands_update).
 // When the session's directory holds `.e2e-slow-config` (a number of milliseconds), session/set_config_option answers
 // after that delay and appends `<configId>=<value>` to `.e2e-config-calls` there, so a test can count the calls.
+import { spawn } from 'node:child_process'
 import { appendFileSync, existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -54,6 +57,23 @@ function announceCommands(sessionId) {
   setTimeout(() => update(sessionId, { sessionUpdate: 'available_commands_update', availableCommands: COMMANDS }), 20)
 }
 
+const DEV_SERVER = "require('http').createServer((q, s) => s.end('dev server')).listen(0, '127.0.0.1', function () { console.log(this.address().port) })"
+/** @type {import('node:child_process').ChildProcess[]} */
+const servers = []
+
+/** Starts a dev server under this process and resolves with its port. */
+function serve() {
+  const child = spawn(process.execPath, ['-e', DEV_SERVER], { stdio: ['ignore', 'pipe', 'ignore'] })
+  servers.push(child)
+  return new Promise((resolve, reject) => {
+    child.once('error', reject)
+    createInterface({ input: child.stdout }).once('line', line => {
+      child.stdout.destroy()
+      resolve(Number(line))
+    })
+  })
+}
+
 /** @param {unknown} prompt */
 function promptText(prompt) {
   return (Array.isArray(prompt) ? prompt : []).filter(block => block?.type === 'text').map(block => String(block.text)).join('\n')
@@ -88,6 +108,13 @@ async function prompt(message) {
     const output = `step ${index}: ${'lorem ipsum dolor sit amet '.repeat(6)}`
     update(sessionId, { sessionUpdate: 'tool_call', toolCallId: `bulk-${process.pid}-${message.id}-${index}`, title: `Read file ${index}`, kind: 'read', status: 'completed', content: [{ type: 'content', content: { type: 'text', text: output } }] })
   }
+  if (text.includes('#serve')) {
+    const port = await serve()
+    update(sessionId, { sessionUpdate: 'tool_call', toolCallId: `serve-${process.pid}-${message.id}`, title: 'npm run dev', kind: 'execute', status: 'completed', content: [{ type: 'content', content: { type: 'text', text: `  VITE ready\n  ➜  Local:   http://localhost:${port}/\n` } }] })
+    update(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `serving ${port}` } })
+    send({ id: message.id, result: { stopReason: 'end_turn' } })
+    return
+  }
   if (text.includes('#plan')) {
     update(sessionId, { sessionUpdate: 'plan_update', plan: { type: 'markdown', planId: 'plan-e2e', content: '# E2E plan\n\n1. Read the code\n2. Fix the bug\n' } })
   }
@@ -97,7 +124,18 @@ async function prompt(message) {
   send({ id: message.id, result: { stopReason: 'end_turn' } })
 }
 
-createInterface({ input: process.stdin }).on('line', line => {
+const stopServers = () => {
+  for (const server of servers) server.kill()
+}
+process.on('exit', stopServers)
+for (const signal of ['SIGTERM', 'SIGINT']) {
+  process.on(signal, () => {
+    stopServers()
+    process.exit(0)
+  })
+}
+
+createInterface({ input: process.stdin }).on('close', () => process.exit(0)).on('line', line => {
   const message = JSON.parse(line)
   const params = message.params ?? {}
   switch (message.method) {

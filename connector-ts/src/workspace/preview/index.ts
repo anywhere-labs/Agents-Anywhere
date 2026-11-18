@@ -4,8 +4,10 @@ export { previewCommands, type PreviewCommandDeps, type PreviewOpenResult } from
 export { parseFrpsAddr, renderFrpcConfig, type FrpcConfig, type FrpsEndpoint, type PreviewProxy } from './frpc-config.js'
 export { FrpcManager, freeLoopbackPort, type ChildLike, type FrpcManagerOptions, type PreviewSpec, type PreviewTransport } from './frpc-manager.js'
 export { MAX_OPEN_PREVIEWS, decidePortShare, loopbackTarget, type PortShareDecision } from './port-share.js'
+export { PRINTED_PORTS_MAX, PrintedUrls, sessionHints, stripAnsi, type SessionProcess } from './session-hints.js'
 export {
   annotatePorts,
+  localUrlMatches,
   localUrlsIn,
   originOf,
   parsePs,
