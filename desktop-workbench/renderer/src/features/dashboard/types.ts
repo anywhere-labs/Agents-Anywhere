@@ -20,6 +20,8 @@ import type {
   Goalstate,
   Historysource,
   Planstate,
+  SessionOrigin,
+  SupervisionEdge,
 } from "@/generated/protocol/v1_2/session-snapshot-response";
 
 export type { ProtocolEventEnvelope } from "@/generated/protocol/v1_2/event-recovery-response";
@@ -353,6 +355,12 @@ export type SessionView = {
   /** Protocol 1.2 status-only enums that stay visible while the device is offline. */
   planState?: SessionPlanState;
   goalState?: SessionGoalState;
+  /** Protocol 1.2 Agent collaboration: set when an Agent created this session. */
+  origin?: SessionOrigin | null;
+  /** Supervision edges where this session is watched. */
+  supervisors?: SupervisionEdge[];
+  /** Supervision edges where this session watches another. */
+  supervised?: SupervisionEdge[];
 };
 
 export type ConnectorListResponse = {

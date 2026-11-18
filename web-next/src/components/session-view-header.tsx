@@ -19,6 +19,7 @@ import { useTranslations } from "next-intl"
 import type { SessionView as SessionViewModel } from "@/lib/demo-api"
 import { runtimeLabel } from "@/components/session/session-utils"
 import { sessionRuntimeType } from "@/features/dashboard/runtime-instances"
+import { SessionCollabBadges, SessionCollabButton } from "@/components/session/session-collab"
 
 type SessionViewHeaderProps = {
   session: SessionViewModel
@@ -127,7 +128,9 @@ export function SessionViewHeader({
         onExportRemoteTimeline={onExportRemoteTimeline}
         exporting={exporting}
       />
+      <SessionCollabBadges session={session} />
       <div className="ml-auto flex items-center gap-1">
+        <SessionCollabButton key={session.id} session={session} />
         {!toolsOpen ? (
           <WorkspaceSidebarToggleButton side="right" aria-expanded={false}
             aria-label={tSession("tools.toggle")} title={tSession("tools.toggle")}

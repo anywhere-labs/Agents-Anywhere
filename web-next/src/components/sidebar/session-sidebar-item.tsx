@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Archive, ArchiveRestore, Copy, FolderOpen, Pencil, Pin, PinOff } from "lucide-react"
+import { Archive, ArchiveRestore, Bot, Copy, Eye, FolderOpen, Pencil, Pin, PinOff } from "lucide-react"
 import { toast } from "sonner"
 import {
   ContextMenu,
@@ -37,6 +37,7 @@ import { cn } from "@/lib/utils"
 import { useTranslations } from "next-intl"
 import { useWorkspace } from "@/components/workspace-context"
 import { sessionWorkState, type SessionWorkState } from "@/components/sidebar/session-work-state"
+import { sessionCollabIndicator } from "@/features/collab/model"
 
 
 export function SessionSidebarItem({
@@ -50,7 +51,7 @@ export function SessionSidebarItem({
   onToggleArchive,
   onRename,
 }: {
-  item: { runtime: string; runtimeType?: string; id: string; connectorId: string; projectId?: string | null; cwd?: string | null; title?: string | null; status: string; unread: boolean; pinned: boolean; archived: boolean; planState?: string; goalState?: string }
+  item: { runtime: string; runtimeType?: string; id: string; connectorId: string; projectId?: string | null; cwd?: string | null; title?: string | null; status: string; unread: boolean; pinned: boolean; archived: boolean; planState?: string; goalState?: string; origin?: unknown; supervisors?: unknown }
   /** Optional `device · agent` identity line for sessions shown outside projects. */
   meta?: string | null
   inset?: boolean
@@ -147,6 +148,7 @@ export function SessionSidebarItem({
                 <span className="flex min-w-0 w-full items-center gap-2">
                   <SessionAgentIcon runtime={item.runtime} runtimeType={item.runtimeType} />
                   <OverflowMarquee text={item.title ?? ""} active={nameHovered} />
+                  <SessionCollabMarks item={item} />
                   <SessionSidebarIndicator
                     busy={isBusy}
                     unreadIdle={isUnreadIdle}
@@ -365,4 +367,25 @@ function SessionSidebarIndicator({
     )
   }
   return null
+}
+
+/** Marks a session an Agent created or one that is being supervised. */
+function SessionCollabMarks({ item }: { item: { origin?: unknown; supervisors?: unknown } }) {
+  const t = useTranslations("collab.indicator")
+  const indicator = sessionCollabIndicator(item)
+  if (!indicator) return null
+  return (
+    <span className="flex shrink-0 items-center gap-0.5 text-muted-foreground/80" data-slot="session-collab-marks">
+      {indicator.createdByAgent ? (
+        <Bot className="size-3" role="img" aria-label={t("createdByAgent")}>
+          <title>{t("createdByAgent")}</title>
+        </Bot>
+      ) : null}
+      {indicator.supervised ? (
+        <Eye className="size-3" role="img" aria-label={t("supervised")}>
+          <title>{t("supervised")}</title>
+        </Eye>
+      ) : null}
+    </span>
+  )
 }

@@ -137,6 +137,10 @@ export type Lastitemorderseq = number | null
 export type Lastreadseq = number
 export type Lastsyncedat = string | null
 export type Latestturnendseq = number
+export type Bydeviceid = string | null
+export type Bysessionid = string
+export type Depth = number
+export type Kind1 = "agent"
 export type Pinned = boolean
 export type Pinnedat = string | null
 export type Planstate = "none" | "planning" | "awaiting_review"
@@ -149,6 +153,19 @@ export type Sourceavailabilityupdatedat = string | null
 export type Sourceobservationorigin = ("event" | "inventory" | "operation") | null
 export type Sourceobservedat = string | null
 export type Status4 = "idle" | "waiting" | "pending" | "running" | "stopping" | "waiting_approval" | "error" | "blocked"
+export type Createdby1 = "human" | "agent"
+export type State = "active" | "paused" | "ended"
+export type Supervisionid = string
+export type Supervisorsessionid = string
+export type Targetsessionid = string
+/**
+ * edges where this session is the supervisor
+ */
+export type Supervised = SupervisionEdge[]
+/**
+ * edges where this session is the target
+ */
+export type Supervisors = SupervisionEdge[]
 export type Takeover = boolean
 export type Title2 = string | null
 export type Unread = boolean
@@ -406,6 +423,7 @@ export interface SessionViewV12 {
   lastReadSeq?: Lastreadseq
   lastSyncedAt?: Lastsyncedat
   latestTurnEndSeq?: Latestturnendseq
+  origin?: SessionOrigin | null
   pinned?: Pinned
   pinnedAt?: Pinnedat
   planState?: Planstate
@@ -418,6 +436,8 @@ export interface SessionViewV12 {
   sourceObservationOrigin?: Sourceobservationorigin
   sourceObservedAt?: Sourceobservedat
   status: Status4
+  supervised?: Supervised
+  supervisors?: Supervisors
   takeover: Takeover
   title?: Title2
   unread?: Unread
@@ -436,6 +456,28 @@ export interface DisplayEnvelope {
   keyId: Keyid
   mode: Mode
   payload: Payload1
+  [k: string]: unknown
+}
+/**
+ * Who created a session when it was not a person: an Agent working through the collaboration tools
+ * (docs/agent-collaboration.md). Only ids and the depth, never content; immutable once reported.
+ */
+export interface SessionOrigin {
+  byDeviceId: Bydeviceid
+  bySessionId: Bysessionid
+  depth: Depth
+  kind: Kind1
+  [k: string]: unknown
+}
+/**
+ * One supervision edge as the session directory keeps it: who watches whom, and its state.
+ */
+export interface SupervisionEdge {
+  createdBy: Createdby1
+  state: State
+  supervisionId: Supervisionid
+  supervisorSessionId: Supervisorsessionid
+  targetSessionId: Targetsessionid
   [k: string]: unknown
 }
 export interface SessionRuntimeState {

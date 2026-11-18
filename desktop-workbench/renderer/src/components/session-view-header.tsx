@@ -26,6 +26,7 @@ import { useTranslations } from "next-intl"
 import type { SessionView as SessionViewModel } from "@/lib/demo-api"
 import { runtimeLabel } from "@/components/session/session-utils"
 import { sessionRuntimeType } from "@/features/dashboard/runtime-instances"
+import { SessionCollabBadges, SessionCollabButton } from "@/components/session/session-collab"
 
 type SessionViewHeaderProps = {
   session: SessionViewModel
@@ -173,8 +174,17 @@ export function SessionViewHeader({
               </button>
             )}
             {metaBadge}
+            <div className="aa-window-no-drag flex min-w-0 shrink items-center">
+              <SessionCollabBadges session={session} />
+            </div>
           </div>,
           desktopPortalTargets.session,
+        )}
+        {createPortal(
+          <div className="aa-window-no-drag flex items-center gap-1">
+            <SessionCollabButton key={session.id} session={session} />
+          </div>,
+          desktopPortalTargets.actions,
         )}
         {createPortal(
           <TooltipProvider delayDuration={800}>
@@ -249,7 +259,9 @@ export function SessionViewHeader({
         )}
       </div>
       {metaBadge}
+      <SessionCollabBadges session={session} />
       <div className="ml-auto flex items-center gap-1">
+        <SessionCollabButton key={session.id} session={session} />
         <MobileFilesButton />
       </div>
     </WorkspaceHeader>
