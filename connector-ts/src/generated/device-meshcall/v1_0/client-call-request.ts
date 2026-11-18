@@ -43,6 +43,7 @@ export type Route =
   | "session.runtime.queue.delete"
   | "session.runtime.queue.retry"
   | "session.runtime.queue.sendNow"
+  | "session.blobs.read"
   | "session.terminals.create"
   | "session.terminals.list"
   | "session.terminals.close"

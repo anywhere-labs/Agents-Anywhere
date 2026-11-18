@@ -196,6 +196,8 @@ CLIENT_ROUTES: tuple[ClientRoute, ...] = (
     _route("session.attachments.get", "GET", f"{SESSION}/attachments/{{file_id}}", "hybrid", "read", "blob"),
     _route("session.attachments.open", "GET", f"{SESSION}/attachments/{{file_id}}/open", "hybrid", "read", "blob"),
     _route("session.attachments.thumb", "GET", f"{SESSION}/attachments/{{file_id}}/thumb", "hybrid", "read", "blob"),
+    # A slice of a blob the device kept for this session (a timeline item's ``blobRefs`` or an attachment).
+    _read("session.blobs.read", f"{SESSION}/blobs/{{blob_ref}}"),
     # -- sessions: terminals scoped to a session (aliases of the device terminals) -----------------------------
     _command("session.terminals.create", "POST", f"{SESSION}/terminals", None),
     _read("session.terminals.list", f"{SESSION}/terminals"),

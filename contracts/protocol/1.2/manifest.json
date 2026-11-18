@@ -125,7 +125,7 @@
       "model": "ProtocolSessionSnapshotResponseV12",
       "path": "schemas/session-snapshot-response.schema.json",
       "pydanticMode": "serialization",
-      "sha256": "6209619e1213f975cb0f755e868e61f5cf6b9b15551aea5e00520977d5db9805",
+      "sha256": "9a21f53dbaa92c2ab0bb06d47ef43978693ddd64a0d37232e793f14dcfe3357a",
       "slug": "session-snapshot-response"
     },
     {
@@ -133,7 +133,7 @@
       "model": "ProtocolTimelineResponseV12",
       "path": "schemas/timeline-response.schema.json",
       "pydanticMode": "serialization",
-      "sha256": "9390268f602ab87460aba36957c329b3990f899b140170f9eb23647714df6ee9",
+      "sha256": "176f6240e0487850a7a1e2008eb32f3c7bed9b51fd48b5d5156e35f95483337f",
       "slug": "timeline-response"
     },
     {
@@ -191,6 +191,14 @@
       "pydanticMode": "validation",
       "sha256": "63f95ff7415c078fce49dcb10f2c22acab692ee853beb5a8f5e47c3b69cf0950",
       "slug": "display-user-update-request"
+    },
+    {
+      "direction": "egress",
+      "model": "SessionBlobChunk",
+      "path": "schemas/session-blob-chunk.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "a596da292ba55557914042b245464288240933c31bed927611d5d82dd0857413",
+      "slug": "session-blob-chunk"
     }
   ],
   "contract": "protocol",

@@ -17,12 +17,10 @@ from pydantic import ValidationError
 
 from agent_server.core.events import event_cursor
 from agent_server.core.models import SessionView
-from agent_server.core.protocol import (
-    ProtocolCapabilitySet,
-    ProtocolTimelineSnapshot,
-)
+from agent_server.core.protocol import ProtocolCapabilitySet
 from agent_server.core.protocol_v1_2 import (
     ProtocolSessionSnapshotResponseV12,
+    ProtocolTimelineSnapshotV12,
     SessionViewV12,
 )
 from agent_server.core.utc import utc_now
@@ -64,7 +62,7 @@ async def offline_snapshot(
     return ProtocolSessionSnapshotResponseV12(
         session=await session_view_v12(db, session),
         state=None,
-        timeline=ProtocolTimelineSnapshot(items=[], nextSeq=int(fields.get("headSeq") or 0), hasMore=False),
+        timeline=ProtocolTimelineSnapshotV12(items=[], nextSeq=int(fields.get("headSeq") or 0), hasMore=False),
         notices=[],
         effectiveCapabilities=effective_capabilities,
         runtimeCapabilities=runtime_capabilities,

@@ -4,7 +4,7 @@ import asyncio
 import mimetypes
 import urllib.parse
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import (
     APIRouter,
@@ -23,6 +23,7 @@ from fastapi.responses import (
     StreamingResponse,
 )
 
+from agent_server.api.client_forward import forward_session
 from agent_server.api.device_session_reads import device_read_http_error
 from agent_server.api.device_transfers import get_device_blobs
 from agent_server.api.v2_compat import V3_SESSION_ONLY
@@ -31,6 +32,10 @@ from agent_server.core.models import (
     FsDownloadResponse,
     UploadedAttachment,
     UserUploadResponse,
+)
+from agent_server.core.protocol_v1_2 import (
+    SESSION_BLOB_CHUNK_MAX_BYTES,
+    SessionBlobChunk,
 )
 from agent_server.core.utc import utc_now
 from agent_server.deps import (
@@ -66,6 +71,9 @@ MAX_UPLOAD_FILES_PER_REQUEST = 5
 MAX_UPLOAD_FILE_BYTES = 25 * 1024 * 1024  # 25 MiB
 
 _BACKGROUND_TASKS: set[asyncio.Task[None]] = set()
+
+#: Ids a v3 device answers ``Store/readBlob`` for: attachments it fetched and fields it moved to its blob store.
+DEVICE_BLOB_PREFIXES = ("file_", "blob_")
 
 
 @router.get("/{session_id}/attachments/{file_id}", response_model=FsDownloadResponse)
@@ -140,7 +148,7 @@ async def _device_attachment(
         session = await db.get_session(session_id, user_id=user_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="file not found") from None
-    if not file_id.startswith("file_") or not await reads.is_v3_device(session.connectorId):
+    if not file_id.startswith(DEVICE_BLOB_PREFIXES) or not await reads.is_v3_device(session.connectorId):
         raise HTTPException(status_code=404, detail="file not found")
     try:
         blob = await blobs.open_blob(session.connectorId, session_id, file_id)
@@ -160,6 +168,22 @@ async def _device_attachment(
     if blob.sha256:
         headers["ETag"] = f'"{blob.sha256}"'
     return StreamingResponse(blob.chunks, media_type=blob.media_type, headers=headers)
+
+
+@router.get("/{session_id}/blobs/{blob_ref}", response_model=SessionBlobChunk, dependencies=V3_SESSION_ONLY)
+async def session_blob_read(
+    request: Request,
+    session_id: str,
+    blob_ref: str,
+    user_id: Annotated[str, Depends(current_user_id)],
+    offset: Annotated[int, Query(ge=0)] = 0,
+    length: Annotated[int, Query(ge=1, le=SESSION_BLOB_CHUNK_MAX_BYTES)] = SESSION_BLOB_CHUNK_MAX_BYTES,
+) -> Response:
+    """A slice of a blob the device keeps for the session; the device checks that the blob is the session's."""
+
+    return await forward_session(
+        request, "session.blobs.read", user_id=user_id, session_id=session_id, response_model=SessionBlobChunk
+    )
 
 
 @router.get("/{session_id}/attachments/{file_id}/thumb")

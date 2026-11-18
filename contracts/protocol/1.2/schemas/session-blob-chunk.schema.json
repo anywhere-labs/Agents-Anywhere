@@ -1,0 +1,62 @@
+{
+  "$id": "urn:agents-anywhere:protocol:1.2:session-blob-chunk",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "``GET /sessions/{id}/blobs/{blobRef}?offset=…&length=…``: a slice of a blob the device keeps for the session.\n\n``blobRef`` is a ``blobRefs[].blobId`` of one of the session's items, or the ``fileId`` of an attachment of the\nsession the device holds; anything else is 404 ``blob_not_found``. ``length`` is at most\n``SESSION_BLOB_CHUNK_MAX_BYTES`` and the device may return less; clients read on from ``offset + len`` until\n``eof``. The device serves it, so it works the same through the Server and through a secure channel.",
+  "properties": {
+    "blobRef": {
+      "minLength": 1,
+      "title": "Blobref",
+      "type": "string"
+    },
+    "data": {
+      "description": "base64 (standard alphabet) of the bytes at [offset, offset + len)",
+      "title": "Data",
+      "type": "string"
+    },
+    "encoding": {
+      "const": "base64",
+      "default": "base64",
+      "title": "Encoding",
+      "type": "string"
+    },
+    "eof": {
+      "title": "Eof",
+      "type": "boolean"
+    },
+    "mediaType": {
+      "title": "Mediatype",
+      "type": "string"
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "offset": {
+      "minimum": 0,
+      "title": "Offset",
+      "type": "integer"
+    },
+    "size": {
+      "description": "total size of the blob",
+      "minimum": 0,
+      "title": "Size",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "blobRef",
+    "name",
+    "mediaType",
+    "encoding",
+    "data",
+    "offset",
+    "size",
+    "eof"
+  ],
+  "title": "SessionBlobChunk",
+  "type": "object",
+  "x-contract": "protocol",
+  "x-direction": "egress",
+  "x-protocol-version": "1.2",
+  "x-pydantic-mode": "serialization"
+}

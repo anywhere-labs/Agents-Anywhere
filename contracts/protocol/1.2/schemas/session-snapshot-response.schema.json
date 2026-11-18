@@ -949,7 +949,7 @@
       "title": "ProtocolCapabilitySet",
       "type": "object"
     },
-    "ProtocolTimelineSnapshot": {
+    "ProtocolTimelineSnapshotV12": {
       "properties": {
         "hasMore": {
           "default": false,
@@ -958,7 +958,7 @@
         },
         "items": {
           "items": {
-            "$ref": "#/$defs/TimelineItem"
+            "$ref": "#/$defs/TimelineItemV12"
           },
           "title": "Items",
           "type": "array"
@@ -973,7 +973,7 @@
         "nextSeq",
         "hasMore"
       ],
-      "title": "ProtocolTimelineSnapshot",
+      "title": "ProtocolTimelineSnapshotV12",
       "type": "object"
     },
     "SessionQueueAttachment": {
@@ -1609,8 +1609,64 @@
       "title": "SessionViewV12",
       "type": "object"
     },
-    "TimelineItem": {
+    "TimelineBlobRef": {
+      "description": "A field of a timeline item the device moved to its local blob store; the item keeps a preview at ``path``.\n\nA ``text/*`` blob is the full UTF-8 text of the string previewed at ``path``. Any other blob is media whose\n``data`` (or ``blob``) key was removed from the block at ``path``'s parent, or a ``data:`` URL string replaced\nby a short description.",
       "properties": {
+        "blobId": {
+          "minLength": 1,
+          "title": "Blobid",
+          "type": "string"
+        },
+        "bytes": {
+          "minimum": 0,
+          "title": "Bytes",
+          "type": "integer"
+        },
+        "mediaType": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mediatype"
+        },
+        "path": {
+          "description": "RFC 6901 JSON pointer into the item's content",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "blobId",
+        "bytes",
+        "mediaType"
+      ],
+      "title": "TimelineBlobRef",
+      "type": "object"
+    },
+    "TimelineItemV12": {
+      "properties": {
+        "blobRefs": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/TimelineBlobRef"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "present only when fields were moved to the device's blob store",
+          "title": "Blobrefs"
+        },
         "completedAt": {
           "anyOf": [
             {
@@ -1717,7 +1773,7 @@
         "updatedAt",
         "updatedSeq"
       ],
-      "title": "TimelineItem",
+      "title": "TimelineItemV12",
       "type": "object"
     },
     "TimelineSource": {
@@ -1903,7 +1959,7 @@
       "default": null
     },
     "timeline": {
-      "$ref": "#/$defs/ProtocolTimelineSnapshot"
+      "$ref": "#/$defs/ProtocolTimelineSnapshotV12"
     }
   },
   "required": [

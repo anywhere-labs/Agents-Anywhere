@@ -231,6 +231,7 @@ PROTOCOL_1_2 = Contract(
         _a("session-catchup-required-payload", p12.SessionCatchupRequiredPayload, "egress"),
         _a("session-queue-state", p12.SessionQueueStateV12, "egress"),
         _a("display-user-update-request", p12.DisplayUserUpdateRequest, "ingress"),
+        _a("session-blob-chunk", p12.SessionBlobChunk, "egress"),
     ),
 )
 

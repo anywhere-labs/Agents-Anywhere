@@ -613,7 +613,7 @@
       "model": "ClientCallRequest",
       "path": "schemas/client-call-request.schema.json",
       "pydanticMode": "validation",
-      "sha256": "940ec21dfc0a84729a59c10bf552e7f2b361cb554e5bae3af9af7f2f4c97aa36",
+      "sha256": "a2a00b74d944a2cd0e2d8122d241fd6095ea74d05522233dd4b1cc53fbff1be0",
       "slug": "client-call-request"
     },
     {
@@ -646,7 +646,7 @@
   "extras": [
     {
       "path": "device.meshcall.json",
-      "sha256": "ba115ad0d3399f943e6096e17e46d3601b61cbf26e740a7ca26e062dbf2db885"
+      "sha256": "90c89c58a052d3a33bf51b9ce539907ab895bc49fd9a7143b42645be59359c0a"
     },
     {
       "path": "mesh-errors.json",
@@ -662,7 +662,7 @@
     },
     {
       "path": "client-routes.json",
-      "sha256": "d7e77aea130913d38a39ec685b24e0ab1f966db50cd737b0e0e4c1dba889eb8c"
+      "sha256": "61cc8e144a149e4be4c6a9fd267b72dd0e2369963bebb95806d1da110f56656b"
     },
     {
       "path": "client-errors.json",
