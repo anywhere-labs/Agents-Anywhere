@@ -20,6 +20,8 @@ struct TimelineRowStructure: Equatable {
         if item.type == .tool, item.raw["content"]?["kind"] == .string("agent_call"),
            let parent = TimelineText.first(item.raw["content"]?["parentItemId"]) { groupKind = .agents(parent) }
         else if TimelineGrouping.reconnectMessage(item) != nil { groupKind = .reconnect }
+        // Collaboration tools stay visible on their own row with their session action.
+        else if item.collabTool != nil { groupKind = .single }
         else if item.isReasoning || [.tool, .fileChange, .artifact].contains(item.type) { groupKind = .tools }
         else { groupKind = .single }
         reconnectAttempt = TimelineGrouping.reconnectMessage(item).flatMap { message in

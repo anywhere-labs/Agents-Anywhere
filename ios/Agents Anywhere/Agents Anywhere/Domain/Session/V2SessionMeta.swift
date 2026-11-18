@@ -87,6 +87,11 @@ nonisolated struct V2SessionMeta: Codable, Identifiable, Hashable {
     /// Client-side only, never sent by the Server: an envelope this phone cannot open
     /// (no key for its `keyId`, or decryption failed). Views show the locked placeholder.
     var displayLocked: Bool? = nil
+    /// Protocol 1.2 Agent collaboration; nil from older Servers. `supervisors` are the
+    /// edges where this session is the target, `supervised` where it is the supervisor.
+    var origin: V2SessionOrigin? = nil
+    var supervisors: [V2SupervisionEdge]? = nil
+    var supervised: [V2SupervisionEdge]? = nil
 
     var effectiveRuntimeId: V2RuntimeID { runtimeId ?? runtime }
 }

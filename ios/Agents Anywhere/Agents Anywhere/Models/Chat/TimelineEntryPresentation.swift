@@ -82,11 +82,15 @@ struct TimelineEntryPresentation: Hashable {
             detail = item.status == .failed ? raw : nil
         } else if item.type == .tool || wireKind == "file_change" || item.type == .fileChange {
             kind = .tool
-            symbol = ["command": "terminal", "file_change": "doc.badge.gearshape", "agent_call": "person.2", "web_search": "magnifyingglass", "mcp": "puzzlepiece.extension"][wireKind] ?? "hammer"
+            symbol = item.collabTool != nil ? "person.2" : ["command": "terminal", "file_change": "doc.badge.gearshape", "agent_call": "person.2", "web_search": "magnifyingglass", "mcp": "puzzlepiece.extension"][wireKind] ?? "hammer"
             let targetPath = filePath ?? TimelineText.first(toolInput?["file_path"], toolInput?["notebook_path"], toolInput?["path"])
             let target = targetPath.map { TimelineText.displayPath($0, cwd: cwd) }
                 ?? TimelineText.first(raw["query"], toolInput?["query"], raw["url"], toolInput?["url"])
-            if wireKind == "file_change" {
+            if let collab = item.collabTool {
+                title = SessionCollaborationPresentation.toolLabel(collab.tool)
+                    ?? [TimelineText.first(raw["toolName"], raw["name"], raw["tool"], raw["title"]), target].compactMap { $0 }.joined(separator: " ").nonempty
+                    ?? collab.tool
+            } else if wireKind == "file_change" {
                 let added = !self.rawChanges.isEmpty && self.rawChanges.allSatisfy { TimelineFileChange.action($0) == .add }
                 let path = self.rawChanges.count == 1 ? TimelineText.path(self.rawChanges[0]).map { TimelineText.displayPath($0, cwd: cwd) } : nil
                 let target = path.flatMap { $0.count <= 60 ? $0 : nil } ?? String(localized: "文件")

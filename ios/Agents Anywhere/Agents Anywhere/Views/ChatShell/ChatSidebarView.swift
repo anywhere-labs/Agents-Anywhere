@@ -375,6 +375,7 @@ struct ChatSidebarSessionRow: View {
                     Text(session.title ?? String(localized: "Untitled session"))
                         .font(.body).foregroundStyle(.primary)
                         .lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+                    SessionCollaborationListMarks(indicator: session.collaboration)
                     ChatSidebarSessionIndicator(indicator: session.presentation.indicator)
                 }
                 if let context {

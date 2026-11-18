@@ -21,9 +21,14 @@ struct SessionTimelineRow: View, Equatable {
             switch row.value.content {
             case let .message(message):
                 let files = chat.session.attachmentPreviews.resolve(message.attachments, clientID: row.value.source["clientMessageId"]?.stringValue)
-                if row.value.role == .user {
+                if row.value.role == .user, message.author?.kind == .supervision {
+                    SupervisionNoticeCard(row: row, disclosures: disclosures)
+                } else if row.value.role == .user {
                     VStack(alignment: .trailing, spacing: 8) {
                         UserMessageBubble(text: row.text, attachments: files, onAttachment: onAttachment, loadThumbnail: chat.thumbnail)
+                        if let author = message.author, author.kind == .agent {
+                            CollaborationAuthorLabel(author: author)
+                        }
                         if !row.value.blobRefs.isEmpty {
                             TimelineBlobRefsView(item: row.value, blobs: chat.blobs, onOpen: onAttachment).frame(maxWidth: 320)
                         }

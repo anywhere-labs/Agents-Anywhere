@@ -831,6 +831,9 @@ class SessionsApi(
             goalState = optNullableString("goalState") ?: "none",
             displayDevice = optDisplayEnvelope("displayDevice"),
             displayUser = optDisplayEnvelope("displayUser"),
+            origin = optJSONObject("origin")?.toSessionOrigin(),
+            supervisors = optJSONArray("supervisors").toSupervisionEdges(),
+            supervised = optJSONArray("supervised").toSupervisionEdges(),
         )
     }
 

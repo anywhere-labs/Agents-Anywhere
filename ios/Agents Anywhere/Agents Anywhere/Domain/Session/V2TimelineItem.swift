@@ -176,9 +176,12 @@ nonisolated struct V2MessageContent: Hashable {
     let text: String
     let format: String?
     let attachments: [V2AttachmentContent]
+    /// Protocol 1.2 `content.author`; nil for messages a person typed.
+    let author: V2MessageAuthor?
     let raw: JSONValue
 
     init(rawContent: JSONValue) {
+        author = V2MessageAuthor(rawContent["author"])
         text = ["text", "content", "message", "rawText"].compactMap { rawContent[$0]?.stringValue }.first { !$0.isEmpty } ?? ""
         format = rawContent["format"]?.stringValue
         attachments = rawContent["attachments"]?.arrayValue?.map(V2AttachmentContent.init(rawContent:)) ?? []
@@ -202,9 +205,12 @@ nonisolated struct V2ToolContent: Hashable {
     let name: String?
     let input: JSONValue?
     let output: JSONValue?
+    /// Set when the tool is one of the Agent collaboration tools.
+    let collabTool: V2CollabToolRef?
     let raw: JSONValue
 
     init(rawContent: JSONValue) {
+        collabTool = V2CollabToolRef(rawContent["collabTool"])
         name = rawContent["name"]?.stringValue ?? rawContent["toolName"]?.stringValue
         input = rawContent["input"]
         output = rawContent["output"]
@@ -232,9 +238,12 @@ nonisolated struct V2MarkerContent: Hashable {
     let title: String
     let subtitle: String?
     let variant: String?
+    /// Set for `collab_escalation` system items.
+    let escalation: V2CollabEscalation?
     let raw: JSONValue
 
     init(rawContent: JSONValue) {
+        escalation = V2CollabEscalation(rawContent)
         title = rawContent["title"]?.stringValue ?? rawContent["text"]?.stringValue ?? "Event"
         subtitle = rawContent["subtitle"]?.stringValue ?? rawContent["description"]?.stringValue
         variant = rawContent["variant"]?.stringValue

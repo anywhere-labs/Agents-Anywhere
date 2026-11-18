@@ -25,6 +25,7 @@ struct ChatSidebarSession: Identifiable, Equatable {
     let archived: Bool
     let pinned: Bool
     let presentation: SessionSidebarPresentation
+    let collaboration: SessionCollaborationPresentation.ListIndicator
 
     init(session: V2SessionMeta) {
         id = session.id
@@ -39,6 +40,7 @@ struct ChatSidebarSession: Identifiable, Equatable {
         archived = session.archived
         pinned = session.pinned
         presentation = SessionSidebarPresentation(session)
+        collaboration = SessionCollaborationPresentation.indicator(for: session)
     }
 }
 

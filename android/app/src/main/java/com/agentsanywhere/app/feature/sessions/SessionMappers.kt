@@ -71,6 +71,9 @@ internal fun RemoteSession.toAgentSession(devicesById: Map<String, AgentDevice>)
         encryptedDisplay = display.encrypted,
         titleLocked = display.titleLocked,
         cwdLocked = display.cwdLocked,
+        origin = origin,
+        supervisors = supervisors,
+        supervised = supervised,
     )
 }
 

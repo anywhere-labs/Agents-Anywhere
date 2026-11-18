@@ -137,6 +137,7 @@ struct SessionChatView: View, Equatable {
                     VStack(alignment: .leading, spacing: 4) {
                         // Metadata can arrive after history. Transient controls
                         // float below the header instead of resizing its inset.
+                        SessionCollaborationBadges(session: session.metadata)
                         if requiresTakeover {
                             takeoverPill.frame(maxWidth: .infinity, alignment: .center)
                         }

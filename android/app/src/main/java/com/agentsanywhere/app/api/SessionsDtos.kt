@@ -1,5 +1,7 @@
 package com.agentsanywhere.app.api
 
+import com.agentsanywhere.app.model.SessionOrigin
+import com.agentsanywhere.app.model.SupervisionEdge
 import org.json.JSONObject
 
 data class RemoteSession(
@@ -35,6 +37,10 @@ data class RemoteSession(
     /** Protocol 1.2 display envelopes (`SessionView.displayDevice` / `displayUser`); null when the Server does not send them. */
     val displayDevice: RemoteDisplayEnvelope? = null,
     val displayUser: RemoteDisplayEnvelope? = null,
+    /** Protocol 1.2 agent collaboration; null / empty from older Servers. */
+    val origin: SessionOrigin? = null,
+    val supervisors: List<SupervisionEdge> = emptyList(),
+    val supervised: List<SupervisionEdge> = emptyList(),
 )
 
 /**

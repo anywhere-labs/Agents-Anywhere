@@ -178,6 +178,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.agentsanywhere.app.feature.sessions.collaborationBadges
 import java.util.UUID
 import java.io.File
 import java.security.MessageDigest
@@ -211,6 +212,8 @@ fun SessionDetailScreen(
     composerDraftStore: SessionComposerDraftStore,
     backHandlingEnabled: Boolean = true,
     onSessionChanged: (AgentSession) -> Unit = {},
+    sessionLookup: (String) -> AgentSession? = { null },
+    onOpenSession: (AgentSession) -> Unit = {},
 ) {
     androidx.compose.runtime.key(controller.visitKey(), sessionId, preparedSession?.localSessionId) {
         val visit = remember { sessionId?.let(controller::openVisit) }
@@ -233,6 +236,8 @@ fun SessionDetailScreen(
             composerDraftStore = composerDraftStore,
             backHandlingEnabled = backHandlingEnabled,
             onSessionChanged = { if (active.get() && (visit == null || controller.isCurrentVisit(visit))) onSessionChanged(it) },
+            sessionLookup = sessionLookup,
+            onOpenSession = onOpenSession,
             visit = visit,
             isVisitActive = { active.get() && (visit == null || controller.isCurrentVisit(visit)) },
         )
@@ -264,6 +269,8 @@ private fun SessionDetailVisit(
     composerDraftStore: SessionComposerDraftStore,
     backHandlingEnabled: Boolean,
     onSessionChanged: (AgentSession) -> Unit = {},
+    sessionLookup: (String) -> AgentSession?,
+    onOpenSession: (AgentSession) -> Unit,
     visit: com.agentsanywhere.app.feature.sessiondetail.SessionVisit?,
     isVisitActive: () -> Boolean,
 ) {
@@ -2151,6 +2158,13 @@ private fun SessionDetailVisit(
                         val latestPlanRevisions = remember(planDocs) { com.agentsanywhere.app.feature.sessiondetail.latestPlanRevisions(planDocs) }
                         val hidePlanEcho = remember(planning, planDocs) { { message: TimelineMessage -> com.agentsanywhere.app.feature.sessiondetail.isPlanEcho(planning, planDocs, message) } }
                         PlanReaderDialog(planReader, darkMode)
+                        val currentOnOpenSession by rememberUpdatedState(onOpenSession)
+                        val collabBadges = remember(state.session, sessionLookup) {
+                            state.session?.collaborationBadges(sessionLookup).orEmpty()
+                        }
+                        val sessionLinks = remember(sessionLookup) {
+                            TimelineSessionLinks(find = sessionLookup, open = { currentOnOpenSession(it) })
+                        }
                         when {
                             sessionId == null && !isPreparedSession -> EmptyDetailMessage(stringResource(R.string.session_open_from_list))
                             state.timeline.isLoading && state.messages.isEmpty() -> {
@@ -2207,6 +2221,8 @@ private fun SessionDetailVisit(
                                 respondingNoticeIds = state.respondingNoticeIds,
                                 noticeResponseErrors = noticeResponseErrors,
                                 bottomContentPadding = timelineBottomPadding,
+                                topContentPadding = if (collabBadges.isEmpty()) 74.dp else 104.dp,
+                                sessionLinks = sessionLinks,
                                 // Offline, the device holds the older pages: no automatic paging.
                                 hasMore = state.hasMore && !state.historyUnavailable,
                                 loadingOlder = state.timeline.loadingOlder,
@@ -2365,6 +2381,13 @@ private fun SessionDetailVisit(
                             onLeftClick = ::openRuntimeSettings,
                             onRightClick = { scope.launch { pagerState.animateScrollToPage(1) } },
                             modifier = Modifier.align(Alignment.TopCenter),
+                        )
+                        SessionCollabBadgeRow(
+                            badges = collabBadges,
+                            onOpenSession = { currentOnOpenSession(it) },
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .padding(top = 62.dp),
                         )
                         if (previewImage == null) {
                             AAToastHost(

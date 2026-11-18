@@ -1,5 +1,6 @@
 package com.agentsanywhere.app.app
 
+import com.agentsanywhere.app.feature.sessions.sessionLookup
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -359,6 +360,14 @@ internal fun AgentsAnywhereNavHost(
                                     composerDraftStore = sessionComposerDraftStore,
                                     backHandlingEnabled = !profileOpen,
                                     onSessionChanged = onSessionChanged,
+                                    sessionLookup = remember(sessionsState.sessions, sessionsState.archivedSessions, projectSessionsById) {
+                                        sessionLookup(
+                                            sessionsState.sessions,
+                                            sessionsState.archivedSessions,
+                                            projectSessionsById.values.flatten(),
+                                        )
+                                    },
+                                    onOpenSession = onOpenSession,
                                 )
                             },
                         )
