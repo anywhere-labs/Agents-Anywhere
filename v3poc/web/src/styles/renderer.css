@@ -1,0 +1,91 @@
+/*
+ * The mobile renderer (renderer.html): only the thread, inside a WKWebView / Android WebView, under native glass
+ * toolbars. The document itself scrolls (the WebView's own scroller: tap-to-top, rubber-banding, scroll-edge effect).
+ */
+@import "tailwindcss";
+@import "./theme.css";
+
+@source not "../web";
+
+@theme inline {
+  /* The system font, so the thread blends with native SF / Roboto text around it. */
+  --font-sans: -apple-system, system-ui, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Helvetica Neue", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+}
+
+/* The native page background (UIColor.systemBackground): the seams under the glass must not show. */
+:root {
+  --aa-page-bg: #ffffff;
+  --aa-top: 0px;
+  --aa-bottom: 0px;
+  --background: var(--aa-page-bg);
+}
+.dark {
+  --aa-page-bg: #000000;
+  --background: var(--aa-page-bg);
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+  /* Older pages are prepended with a manual offset correction; native scroll anchoring would correct twice. */
+  overflow-anchor: none;
+  background: var(--aa-page-bg);
+}
+body {
+  margin: 0;
+  background: var(--aa-page-bg);
+  padding-top: var(--aa-top);
+  padding-bottom: var(--aa-bottom);
+  -webkit-touch-callout: none;
+}
+a,
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+/* Long-press selects text in the thread, not the chrome around it. */
+button {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+html.reduce-motion *,
+html.reduce-motion *::before,
+html.reduce-motion *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* The root is 16 × 17/14 px (iOS body size for text-sm, see surroundings.ts). Monospace reads larger than the system
+   font at the same size; on a 402 pt wide phone the step lines' commands and paths are kept near 15 px. */
+[data-slot="trace-title"] .font-mono {
+  font-size: 0.86em;
+}
+/* Tables on a 402 pt wide phone: every column stays in view. The table fills the reply's width; a cell is at least
+   6em wide, and long inline code in it (a command, a path) breaks inside the cell rather than pushing the other
+   columns out of the scroller (nowrap code made the first column wider than the screen in WKWebView). Wider tables
+   still scroll sideways inside Streamdown's wrapper, which is made explicit here for WebKit. */
+[data-streamdown="table-wrapper"] {
+  width: 100%;
+  min-width: 0;
+}
+[data-streamdown="table-wrapper"] > div:has(> table),
+[data-streamdown="table-wrapper"] div:has(> [data-streamdown="table"]) {
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+[data-streamdown="table"] {
+  width: 100%;
+}
+[data-streamdown="table-header-cell"],
+[data-streamdown="table-cell"] {
+  min-width: 6em;
+}
+[data-streamdown="table-cell"] code {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

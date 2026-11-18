@@ -1,0 +1,7 @@
+node_modules/
+dist/
+*.tsbuildinfo
+xcuserdata/
+
+# Built by `npm run build` in web/ (16 MB); iOS and Android both read it from here.
+ios/AAv3PoC/Renderer/renderer.html
