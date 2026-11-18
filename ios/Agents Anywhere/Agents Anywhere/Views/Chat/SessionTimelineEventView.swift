@@ -66,7 +66,14 @@ struct SessionTimelineEventView: View {
     var body: some View {
         let value = row.entry(cwd: cwd)
         VStack(alignment: .leading, spacing: 4) {
-            event(value)
+            if let escalation = row.value.collabEscalation {
+                CollaborationEscalationCard(escalation: escalation)
+            } else {
+                event(value)
+            }
+            if let sessionId = row.value.collabTool?.sessionId {
+                CollaborationOpenSessionButton(sessionId: sessionId).padding(.leading, 24)
+            }
             // Tool rows list their blob references inside the expanded details.
             if value.kind != .tool, let blobs, !row.value.blobRefs.isEmpty {
                 TimelineBlobRefsView(item: row.value, blobs: blobs, onOpen: onOpenBlob).padding(.leading, 24)
@@ -217,7 +224,7 @@ private struct ActiveMarkerShimmer: ViewModifier {
     }
 }
 
-private struct TimelineFold<Content: View>: View {
+struct TimelineFold<Content: View>: View {
     let id: String
     let title: String
     let symbol: String

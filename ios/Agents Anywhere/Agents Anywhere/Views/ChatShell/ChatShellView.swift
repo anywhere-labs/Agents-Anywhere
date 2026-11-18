@@ -167,6 +167,8 @@ struct ChatShellView: View {
         } content: { safeAreaInsets in
             mainContent
                 .modifier(ChatDetailNavigation(insets: safeAreaInsets))
+                .environment(\.sessionCollaboration, SessionCollaborationContext(
+                    directory: SessionCollaborationDirectory(sessions: appState.sessions), open: openSession))
         }
     }
 
