@@ -3,6 +3,7 @@
 //   dist/anywhere-cli.js    the `anywhere-cli` executable (DSH runs it with its own Node)
 //   dist/desktop-main.js    Desktop's utility process (`utilityProcess.fork`)
 //   dist/worker-entry.js    the store worker thread both of them start (`new URL('./worker-entry.js', import.meta.url)`)
+//   dist/agent-tools.js     the `aa` tool server Runtimes start for sessions with collaboration on
 //   dist/assets/, dist/dependencies.json   files Runtime profiles read next to their module
 //   dist/router/            the MeshCall Router for the package's platform, from router/<target>/ (scripts/fetch-router.mjs)
 //
@@ -36,6 +37,8 @@ await build({
     'anywhere-cli': 'src/entry/main.ts',
     'desktop-main': 'src/entry/desktop-main.ts',
     'worker-entry': 'src/store/worker-entry.ts',
+    // The collaboration tool server a Runtime starts per session (agent collaboration); kept small to start fast.
+    'agent-tools': 'src/entry/agent-tools.ts',
   },
   outdir,
   bundle: true,

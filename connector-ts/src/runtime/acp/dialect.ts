@@ -18,6 +18,7 @@ import type {
   RuntimeError,
   RuntimeEvent,
   RuntimeType,
+  ToolServerSpec,
 } from '../../application/ports/runtime-session.js'
 import type { AcpClient, AgentInfo, JsonRecord } from './client.js'
 import type { LegacyModesSpec } from './config.js'
@@ -98,6 +99,15 @@ export interface AcpDialect {
   identity?(context: SessionContext): ItemIdentity
   /** Extra params for session/new (`_meta`, etc.). */
   newSessionParams?(spec: NewSessionSpec): JsonRecord
+  /**
+   * The Runtime takes injected tool servers (`mcpServers`) and they work (measured, docs/agent-collaboration.md
+   * §12): it may host the collaboration tools and declares `runtime.agent_tools.host`.
+   */
+  readonly agentTools?: boolean
+  /** Extra params of session/new, load and resume so injected tool servers run without asking (merged deeply). */
+  toolServerParams?(servers: readonly ToolServerSpec[]): JsonRecord
+  /** Extra fields of one injected server's `mcpServers` entry (Codex's per-server approval mode). */
+  toolServerEntry?(server: ToolServerSpec): JsonRecord
   /** Extra params for session/load / session/resume (Codex's `codexIpc.mode: auto`). */
   openParams?(ref: NativeSessionRef): JsonRecord
   /** Extra params for session/prompt (Codex's `codexIpc.clientMessageId`). */

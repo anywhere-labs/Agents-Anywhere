@@ -14,6 +14,8 @@ import type {
   TimelineItem,
   ActiveTurn,
 } from '../../domain/conversation/index.js'
+import type { AgentAction, AgentGrant, Supervision } from '../../domain/collab/index.js'
+import type { MessageAuthor, SessionOrigin } from '../../domain/conversation/index.js'
 import type { Preparation } from '../../domain/creation/index.js'
 import type { GoalState } from '../../domain/goals/index.js'
 import type { PlanDocument, PlanningState } from '../../domain/planning/index.js'
@@ -37,6 +39,7 @@ export interface ConversationStore {
   readonly blobs: BlobRepository
   readonly kv: RuntimeKv
   readonly preparations: PreparationRepository
+  readonly collab: CollabRepository
   close(): Promise<void>
 }
 
@@ -48,6 +51,8 @@ export interface NewSession {
   cwd: string | null
   /** See `Session.projectId`. */
   projectId?: string | null
+  /** See `Session.origin`. */
+  origin?: SessionOrigin | null
   nativeTitle: string | null
   status: SessionStatus
   sourceAvailability: SourceAvailability
@@ -352,4 +357,47 @@ export interface PreparationRepository {
   unsettled(): Promise<Preparation[]>
   /** Deletes settled preparations last changed before `before` (ISO time); returns how many. */
   prune(before: string): Promise<number>
+}
+
+/** A session an Agent created through `aa_spawn` (on this device or another). */
+export interface SpawnedChild {
+  readonly childSessionId: string
+  readonly childDeviceId: string
+  readonly grantId: string
+  readonly supervisorSessionId: string
+  readonly depth: number
+  readonly closed: boolean
+  readonly createdAt: string
+}
+
+/**
+ * Agent collaboration state on this device (docs/agent-collaboration.md): grants, supervisions, the audit of agent
+ * actions, the children Agents spawned, and message authors. A supervision change and its outbox record commit in
+ * one transaction.
+ */
+export interface CollabRepository {
+  putGrant(grant: AgentGrant, outbox: StoredOutboxPayloads['collab.grant.changed'] | null, at: string): Promise<void>
+  grant(grantId: string): Promise<AgentGrant | null>
+  grantBySecret(secretDigest: string): Promise<AgentGrant | null>
+  /** The active grant of a supervisor session, if any. */
+  activeGrantOf(supervisorSessionId: string): Promise<AgentGrant | null>
+  activeGrants(): Promise<AgentGrant[]>
+  putSupervision(supervision: Supervision, outbox: StoredOutboxPayloads['collab.supervision.changed'] | null, at: string): Promise<void>
+  supervision(supervisionId: string): Promise<Supervision | null>
+  /** Supervisions of a supervisor session, ended ones included when `all`. */
+  supervisionsOf(supervisorSessionId: string, all?: boolean): Promise<Supervision[]>
+  supervisionsOfTarget(targetSessionId: string): Promise<Supervision[]>
+  /** Every supervision that is not ended. */
+  liveSupervisions(): Promise<Supervision[]>
+  putAction(action: AgentAction): Promise<void>
+  action(actionId: string): Promise<AgentAction | null>
+  recentActions(supervisorSessionId: string, limit: number): Promise<AgentAction[]>
+  putChild(child: SpawnedChild): Promise<void>
+  child(childSessionId: string): Promise<SpawnedChild | null>
+  closeChild(childSessionId: string): Promise<void>
+  /** Sessions a supervisor session created that are not closed (across its grants). */
+  openChildren(supervisorSessionId: string): Promise<number>
+  childrenOf(supervisorSessionId: string): Promise<SpawnedChild[]>
+  putAuthor(sessionId: string, clientMessageId: string, author: MessageAuthor): Promise<void>
+  author(sessionId: string, clientMessageId: string): Promise<MessageAuthor | null>
 }

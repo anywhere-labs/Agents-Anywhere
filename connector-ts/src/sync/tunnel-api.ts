@@ -14,12 +14,14 @@ import { randomBytes } from 'node:crypto'
 import type { AgentSessionReads } from '../application/inbound/agent-session.js'
 import { CREATE_AND_START_METHOD, type CommandInbox } from '../application/inbound/commands.js'
 import type { NativeAppCommandsApi } from '../application/ports/index.js'
+import type { CollabClientApi } from '../application/inbound/collab-api.js'
 import type { ChannelCaller, TunnelApi, TunnelApiRequest, TunnelApiResponse, TunnelCallContext, TunnelSubscription } from '../application/inbound/tunnel-api.js'
 import type { Clock, ConversationStore } from '../application/ports/index.js'
 import { eventCursor, type Session } from '../domain/conversation/index.js'
 import type { AttachmentRef } from '../generated/device-meshcall/v1_0/client-call-request.js'
 import type { CommandAck } from '../generated/device-meshcall/v1_0/command-ack.js'
 import type { CommandCall } from '../generated/device-meshcall/v1_0/command-call.js'
+import { agentRouteAllowed } from './client-api/agent-routes.js'
 import { appCommandViews, commandText, commandViews, slashResult, type SessionCommand } from './client-api/commands.js'
 import { TunnelHttpError, conflict, errorBody, int, invalid, isRecord, notFound, okBody, parse, record, statusOf, text, type Route } from './client-api/http.js'
 import { NOTICE_GONE_CODES, capabilityUsable, findCapability, noticeAnswerInput, parsePlanCommand, sessionSourceError, unsupportedMediaType } from './client-api/rules.js'
@@ -135,9 +137,16 @@ export interface DeviceTunnelApiDeps {
   readonly agent?: AgentSessionReads
   /** `GET sessions/{id}/blobs/{blobRef}`; absent: every blob is 404. */
   readonly blobs?: SessionBlobReader
+  /** Agent collaboration routes (`sessions/{id}/collab*`); absent: they are 404. */
+  readonly collab?: CollabClientApi
 }
 
 const READ_ONLY = 'session is read-only until takeover is enabled'
+
+/** The depth an Agent caller gives a session it creates: its own depth + 1, between 1 and 8. */
+function originDepth(value: unknown): number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 8 ? value : 1
+}
 const SELECTION_CAPABILITIES: Readonly<Record<string, string>> = { model: 'catalog.model', permission: 'catalog.permission' }
 const PLAN_REVIEW_COMMANDS: ReadonlySet<string> = new Set(['approve_and_execute', 'request_revision', 'dismiss_review'])
 const QUEUE_MODES: ReadonlySet<string> = new Set(['auto', 'interrupt', 'never'])
@@ -231,6 +240,8 @@ function sessionView(deviceId: string, session: Session, title: string | null = 
     updatedSeq: session.clock.headSeq,
     planState: session.planState,
     goalState: session.goalState,
+    resetSeq: session.clock.resetSeq,
+    origin: session.origin ?? null,
     displayDevice: null,
     displayUser: null,
   }
@@ -267,6 +278,9 @@ export class DeviceTunnelApi implements TunnelApi {
       const call = callOf(context)
       const route = parse(request)
       const [area, id] = route.segments
+      if (caller.agent != null && !agentRouteAllowed(route.method, route.segments)) {
+        throw new TunnelHttpError(403, 'agent_route_denied', `${route.method} ${route.segments.join('/')} is not available to an Agent`)
+      }
       if (area === 'sessions' && id === 'create-and-start' && route.segments.length === 2 && route.method === 'POST') return await this.createAndStart(caller, call, route.body)
       if (area === 'sessions' && id !== undefined && route.segments.length >= 3) return await this.session(caller, call, id, route)
       if (area === 'runtime-workflows' && id === 'sessions' && route.segments.length === 4) return await this.agentSession(caller, call, route.segments[2] as string, route)
@@ -499,6 +513,12 @@ export class DeviceTunnelApi implements TunnelApi {
         return { status: 200, body: goalView((await reads.sessionState({ sessionId, part: 'goal' })).goal) }
       case 'GET plans':
         return { status: 200, body: (await reads.planDocument({ sessionId })).plans ?? [] }
+      case 'GET collab':
+        if (this.deps.collab === undefined) throw notFound('agent collaboration is not served by this device')
+        return { status: 200, body: await this.deps.collab.view(sessionId) }
+      case 'POST collab/supervisions':
+        if (this.deps.collab === undefined) throw notFound('agent collaboration is not served by this device')
+        return { status: 200, body: await this.deps.collab.supervise(caller, sessionId, body) }
       case 'POST runtime/messages':
         return this.sendMessage(caller, call, sessionId, body)
       case 'POST runtime/steer':
@@ -559,6 +579,10 @@ export class DeviceTunnelApi implements TunnelApi {
       return { status: 200, body: document }
     }
     if (rest[0] === 'blobs' && rest.length === 2 && route.method === 'GET') return this.blob(sessionId, rest[1]!, route)
+    if (rest[0] === 'collab' && rest[1] === 'supervisions' && rest.length === 3 && route.method === 'PATCH') {
+      if (this.deps.collab === undefined) throw notFound('agent collaboration is not served by this device')
+      return { status: 200, body: await this.deps.collab.updateSupervision(caller, sessionId, rest[2]!, body) }
+    }
     if (rest[0] === 'terminals') {
       const session = await this.requireSession(sessionId)
       return this.files.sessionTerminals(route, sessionId, session.cwd)
@@ -612,6 +636,7 @@ export class DeviceTunnelApi implements TunnelApi {
     if (queue !== null && (typeof queue !== 'string' || !QUEUE_MODES.has(queue))) throw invalid('queue must be auto, interrupt or never')
     const attachments = attachmentsOf(body, call.attachments)
     const clientMessageId = call.command?.commandId ?? text(body.clientMessageId) ?? this.newId('msg_')
+    await this.rememberAuthor(caller, sessionId, clientMessageId)
     return okBody(await this.commandAs(409, caller, call, 'sessionSendMessage', {
       sessionId,
       clientMessageId,
@@ -619,6 +644,16 @@ export class DeviceTunnelApi implements TunnelApi {
       ...(attachments.length > 0 ? { attachments } : {}),
       ...(queue !== null ? { queue } : {}),
     }, clientMessageId))
+  }
+
+  /** Who sent a message, when an Agent or a supervision wake did (`content.author` of the user message item). */
+  private async rememberAuthor(caller: ChannelCaller, sessionId: string, clientMessageId: string): Promise<void> {
+    const agent = caller.agent
+    if (agent == null) return
+    const author = agent.supervisionId != null
+      ? { kind: 'supervision' as const, sessionId: agent.sessionId, deviceId: agent.deviceId, supervisionId: agent.supervisionId }
+      : { kind: 'agent' as const, sessionId: agent.sessionId, deviceId: agent.deviceId }
+    await this.deps.store.collab?.putAuthor(sessionId, clientMessageId, author)
   }
 
   /** `POST runtime/steer`: only into a running turn, when the Runtime can steer and takes the attachments' types. */
@@ -631,6 +666,7 @@ export class DeviceTunnelApi implements TunnelApi {
     const attachments = attachmentsOf(body, call.attachments)
     await this.requireAttachmentTypes(session, call, attachments)
     const clientMessageId = call.command?.commandId ?? text(body.clientMessageId) ?? this.newId('msg_')
+    await this.rememberAuthor(caller, sessionId, clientMessageId)
     return okBody(await this.commandAs(502, caller, call, 'sessionSteer', {
       sessionId,
       clientMessageId,
@@ -827,7 +863,11 @@ export class DeviceTunnelApi implements TunnelApi {
       takeover: true,
       ...(body.planningIntent != null ? { planningIntent: body.planningIntent } : {}),
       ...(body.goalIntent != null ? { goalIntent: body.goalIntent } : {}),
+      // An Agent caller creates the session (agent collaboration): its origin and depth come from the trusted caller,
+      // never from an ordinary client's body.
+      ...(caller.agent != null ? { origin: { kind: 'agent', bySessionId: caller.agent.sessionId, byDeviceId: caller.agent.deviceId, depth: originDepth(body.originDepth) } } : {}),
     }
+    if (caller.agent != null) await this.rememberAuthor(caller, sessionId, clientMessageId)
     let result: Record<string, unknown>
     try {
       result = await this.settle(caller, call, CREATE_AND_START_METHOD, payload, clientMessageId, (command, actor) => this.deps.inbox.createAndStart(command, actor))

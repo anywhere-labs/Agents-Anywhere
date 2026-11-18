@@ -14,6 +14,9 @@ import type { GoalObservation } from '../../domain/goals/index.js'
 import type { ProtocolModelCatalog } from '../../generated/protocol/v1_2/model-catalog.js'
 import type { ProtocolPermissionCatalog } from '../../generated/protocol/v1_2/permission-catalog.js'
 import type { PlanDocument } from '../../generated/protocol/v1_2/plan-document.js'
+import type { ToolServerSpec } from './collab.js'
+
+export type { ToolServerSpec }
 
 // ---------------------------------------------------------------------------------------------
 // Basic vocabulary
@@ -379,6 +382,8 @@ export interface OpenOptions {
   readonly replay: 'none' | 'full'
   /** The last native item already in the local store, for incremental replay (when supported). */
   readonly replayAfter?: string
+  /** Tool servers to inject into the Agent session (ACP `mcpServers`); agent collaboration. */
+  readonly toolServers?: readonly ToolServerSpec[]
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -38,6 +38,7 @@ import type {
   RuntimeSession,
   SessionCapabilities,
   SteerResult,
+  ToolServerSpec,
 } from '../../../application/ports/runtime-session.js'
 import { acpFingerprint } from '../../../domain/identity/index.js'
 import { asRecord } from '../../acp/client.js'
@@ -211,6 +212,13 @@ export class PiRuntimeSession implements RuntimeSession {
   /** The AA session id; a prepared session starts with its preparation id and `rebind` gives it the real one. */
   sessionId: string
 
+  /** Collaboration tool servers, injected again whenever the inner Agent session is reopened. */
+  private toolServers: readonly ToolServerSpec[] = []
+
+  private innerOptions(): { sessionId: string; replay: 'none'; toolServers?: readonly ToolServerSpec[] } {
+    return { sessionId: this.sessionId, replay: 'none', ...(this.toolServers.length > 0 ? { toolServers: this.toolServers } : {}) }
+  }
+
   private constructor(sessionId: string, private readonly host: PiSessionHost) {
     this.sessionId = sessionId
     this.planning = {
@@ -222,8 +230,9 @@ export class PiRuntimeSession implements RuntimeSession {
   }
 
   /** Creates or attaches a session; on failure the process and lock have already been released. */
-  static async open(host: PiSessionHost, sessionId: string, target: PiOpenNew | PiOpenExisting): Promise<PiRuntimeSession> {
+  static async open(host: PiSessionHost, sessionId: string, target: PiOpenNew | PiOpenExisting, toolServers: readonly ToolServerSpec[] = []): Promise<PiRuntimeSession> {
     const session = new PiRuntimeSession(sessionId, host)
+    session.toolServers = toolServers
     try {
       if (target.kind === 'new') await session.startNew(target.spec)
       else await session.startExisting(target.source, target.replay)
@@ -287,7 +296,7 @@ export class PiRuntimeSession implements RuntimeSession {
     const handle = this.host.spawn({}, piDialect(dialectState))
     let inner: AcpRuntimeSession
     try {
-      inner = await handle.open({ kind: 'new', spec: { ...spec, selections } }, { sessionId: this.sessionId, replay: 'none' })
+      inner = await handle.open({ kind: 'new', spec: { ...spec, selections } }, this.innerOptions())
     } catch (error) {
       await handle.stop().catch(() => undefined)
       throw classifyOpen(error)
@@ -338,7 +347,7 @@ export class PiRuntimeSession implements RuntimeSession {
     let inner: AcpRuntimeSession
     try {
       // The generic engine uses the locator as the cwd of session/load|resume.
-      inner = await handle.open({ kind: 'existing', ref: { nativeSessionId: this.native, locator: history.cwd } }, { sessionId: this.sessionId, replay: 'none' })
+      inner = await handle.open({ kind: 'existing', ref: { nativeSessionId: this.native, locator: history.cwd } }, this.innerOptions())
       const reported = dialectState.sessionFiles.get(this.native)
       if (!reported || !(await samePath(reported, history.path))) fail('pi_source_mismatch', '恢复返回的原生历史位置不匹配，已停止执行。')
     } catch (error) {
@@ -433,7 +442,7 @@ export class PiRuntimeSession implements RuntimeSession {
     const handle = this.host.spawn({}, piDialect(dialectState))
     let inner: AcpRuntimeSession
     try {
-      inner = await handle.open({ kind: 'new', spec: { cwd: this.cwd } }, { sessionId: this.sessionId, replay: 'none' })
+      inner = await handle.open({ kind: 'new', spec: { cwd: this.cwd } }, this.innerOptions())
     } catch (error) {
       await handle.stop().catch(() => undefined)
       throw classifyOpen(error)

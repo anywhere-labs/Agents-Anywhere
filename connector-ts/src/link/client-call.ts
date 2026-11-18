@@ -31,7 +31,12 @@ export const CLIENT_CALL_REQUEST = z.looseObject({
   path: z.string().min(1),
   query: z.record(z.string(), z.string()).optional(),
   body: z.unknown().optional(),
-  caller: z.looseObject({ userId: z.string().min(1), clientId: z.string().nullable().optional(), platform: z.string().nullable().optional() }),
+  caller: z.looseObject({
+    userId: z.string().min(1),
+    clientId: z.string().nullable().optional(),
+    platform: z.string().nullable().optional(),
+    agent: z.looseObject({ deviceId: z.string().min(1), sessionId: z.string().min(1), grantId: z.string().min(1) }).nullable().optional(),
+  }),
   command: z.looseObject({ commandId: z.string().min(1), inputDigest: z.string().min(1), deadline: z.string() }).nullable().optional(),
   server: z.looseObject({}).nullable().optional(),
   byteBudget: z.number().int().nullable().optional(),
@@ -113,7 +118,13 @@ function commandOf(route: ClientRouteEntry, request: ClientCallRequest, body: Re
 
 function callerOf(request: ClientCallRequest): ChannelCaller {
   const caller = request.caller
-  return { clientId: caller.clientId ?? `user:${caller.userId}`, label: caller.userId, platform: caller.platform ?? null }
+  const agent = caller.agent
+  return {
+    clientId: caller.clientId ?? `user:${caller.userId}`,
+    label: caller.userId,
+    platform: caller.platform ?? null,
+    ...(agent !== null && agent !== undefined ? { agent: { deviceId: agent.deviceId, sessionId: agent.sessionId, grantId: agent.grantId } } : {}),
+  }
 }
 
 function pathWithQuery(path: string, query: Record<string, string> | undefined): string {

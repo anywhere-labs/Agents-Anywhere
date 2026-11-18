@@ -230,6 +230,59 @@ CREATE UNIQUE INDEX IF NOT EXISTS preparations_creation ON preparations(create_o
 CREATE INDEX IF NOT EXISTS preparations_phase ON preparations(phase);
 `,
   },
+  {
+    // Agent collaboration (docs/agent-collaboration.md): grants of supervisor sessions on this device, the
+    // supervisions they hold, the state-changing tool calls (append-only audit), the sessions an Agent created
+    // here, and who sent a user message when it was not a person.
+    version: 7,
+    breaksPrevious: false,
+    sql: `
+ALTER TABLE sessions ADD COLUMN origin_json TEXT;
+CREATE TABLE IF NOT EXISTS collab_grants (
+  grant_id TEXT PRIMARY KEY,
+  supervisor_session_id TEXT NOT NULL,
+  secret_digest TEXT NOT NULL,
+  state TEXT NOT NULL,
+  state_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS collab_grants_supervisor ON collab_grants(supervisor_session_id, state);
+CREATE UNIQUE INDEX IF NOT EXISTS collab_grants_secret ON collab_grants(secret_digest);
+CREATE TABLE IF NOT EXISTS collab_supervisions (
+  supervision_id TEXT PRIMARY KEY,
+  supervisor_session_id TEXT NOT NULL,
+  target_session_id TEXT NOT NULL,
+  state TEXT NOT NULL,
+  state_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS collab_supervisions_supervisor ON collab_supervisions(supervisor_session_id, state);
+CREATE INDEX IF NOT EXISTS collab_supervisions_target ON collab_supervisions(target_session_id, state);
+CREATE TABLE IF NOT EXISTS collab_actions (
+  action_id TEXT PRIMARY KEY,
+  supervisor_session_id TEXT NOT NULL,
+  state_json TEXT NOT NULL,
+  at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS collab_actions_supervisor ON collab_actions(supervisor_session_id, at);
+CREATE TABLE IF NOT EXISTS collab_children (
+  child_session_id TEXT PRIMARY KEY,
+  child_device_id TEXT NOT NULL,
+  grant_id TEXT NOT NULL,
+  supervisor_session_id TEXT NOT NULL,
+  depth INTEGER NOT NULL,
+  closed INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS collab_children_supervisor ON collab_children(supervisor_session_id, closed);
+CREATE TABLE IF NOT EXISTS message_authors (
+  session_id TEXT NOT NULL,
+  client_message_id TEXT NOT NULL,
+  author_json TEXT NOT NULL,
+  PRIMARY KEY (session_id, client_message_id)
+);
+`,
+  },
 ]
 
 export const SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]?.version ?? 0

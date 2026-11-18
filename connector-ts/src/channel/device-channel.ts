@@ -3,6 +3,7 @@
 
 import type { ChannelCaller, TunnelApi, TunnelSubscription } from '../application/inbound/tunnel-api.js'
 import type { ChannelTrust } from '../application/inbound/channel-trust.js'
+import type { AgentPeerKeyring, PinnedPeer } from '../application/ports/collab.js'
 import { TrustError, clientIdFor, type ClientPlatform } from '../domain/trust/index.js'
 import { HandshakeState, type NoiseCrypto, type NoiseKeyPair } from './noise/index.js'
 import {
@@ -23,7 +24,7 @@ import {
   type ChannelWire,
 } from './transport.js'
 
-const PLATFORMS: readonly ClientPlatform[] = ['web', 'desktop', 'android', 'ios', 'cli']
+const PLATFORMS: readonly ClientPlatform[] = ['web', 'desktop', 'android', 'ios', 'cli', 'agent']
 const json = (value: unknown): Uint8Array => Buffer.from(JSON.stringify(value), 'utf8')
 
 export interface DeviceChannelDeps {
@@ -34,6 +35,8 @@ export interface DeviceChannelDeps {
   readonly crypto: NoiseCrypto
   readonly api: TunnelApi
   readonly now?: () => number
+  /** The collaboration client's keys (agent collaboration in encrypted mode); absent: the routes answer 404. */
+  readonly peers?: AgentPeerKeyring
 }
 
 export interface SecureChannelOpen {
@@ -208,6 +211,23 @@ export class DeviceSecureChannel {
     })
   }
 
+  /**
+   * A request of another device's collaboration client (`platform: "agent"`): it names the supervisor session it acts
+   * for, and may read the directory key but never change trust (approve, revoke) or pair.
+   */
+  async #agentRequest(caller: ChannelCaller, method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', path: string, message: Record<string, unknown>): Promise<{ status: number; body: unknown }> {
+    if (path.startsWith('/e2ee/v1/')) {
+      if (method === 'GET' && path === '/e2ee/v1/directory-key') return this.#trustRequest(method, path, null)
+      return { status: 403, body: { error: { code: 'agent_route_denied', message: 'An Agent client cannot change this device\'s trust.' } } }
+    }
+    const agent = message['agent']
+    const actor = agent !== null && typeof agent === 'object' ? agent as Record<string, unknown> : null
+    if (actor === null || typeof actor['deviceId'] !== 'string' || typeof actor['sessionId'] !== 'string' || typeof actor['grantId'] !== 'string') {
+      return { status: 400, body: { error: { code: 'invalid_argument', message: 'An Agent request names its supervisor session (agent.deviceId, agent.sessionId, agent.grantId).' } } }
+    }
+    return this.#deps.api.request({ ...caller, agent: { deviceId: actor['deviceId'], sessionId: actor['sessionId'], grantId: actor['grantId'] } }, { method, path, body: message['body'] ?? null })
+  }
+
   async #dispatch(message: Record<string, unknown>): Promise<void> {
     if (this.#phase.kind !== 'open') return
     const { transport, caller } = this.#phase
@@ -219,9 +239,11 @@ export class DeviceSecureChannel {
         const method = message['method'] as 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
         const path = String(message['path'] ?? '')
         if (!id || !path) throw new ChannelProtocolError('malformed request')
-        const response = path.startsWith('/e2ee/v1/')
-          ? await this.#trustRequest(method, path, message['body'])
-          : await this.#deps.api.request(caller, { method, path, body: message['body'] ?? null })
+        const response = caller.platform === 'agent'
+          ? await this.#agentRequest(caller, method, path, message)
+          : path.startsWith('/e2ee/v1/')
+            ? await this.#trustRequest(method, path, message['body'])
+            : await this.#deps.api.request(caller, { method, path, body: message['body'] ?? null })
         await transport.sendMessage({ kind: 'response', id, status: response.status, body: response.body })
         return
       }
@@ -268,6 +290,23 @@ export class DeviceSecureChannel {
           await trust.revokeClient(clientId)
           return { status: 200, body: trust.trustList() }
         }
+        case 'GET /e2ee/v1/agent-identity': {
+          if (this.#deps.peers === undefined) return { status: 404, body: { code: 'not_found', message: route } }
+          return { status: 200, body: { deviceId: this.#deps.deviceId, identityPub: await this.#deps.peers.identityPub(), label: `${this.#deps.deviceLabel} Agent` } }
+        }
+        case 'GET /e2ee/v1/peers': {
+          if (this.#deps.peers === undefined) return { status: 404, body: { code: 'not_found', message: route } }
+          return { status: 200, body: { peers: (await this.#deps.peers.peers()).map(peerView) } }
+        }
+        case 'POST /e2ee/v1/peers/pin': {
+          if (this.#deps.peers === undefined) return { status: 404, body: { code: 'not_found', message: route } }
+          const request = body as Record<string, unknown> | null
+          const deviceId = String(request?.['deviceId'] ?? '')
+          const pub = fromB64url(String(request?.['deviceIdentityPub'] ?? ''))
+          if (deviceId === '' || deviceId === this.#deps.deviceId || pub.length !== 32) return { status: 400, body: { code: 'invalid_argument', message: 'deviceId and deviceIdentityPub' } }
+          await this.#deps.peers.pin({ deviceId, identityPub: b64url(pub), label: String(request?.['label'] ?? '') })
+          return { status: 200, body: { peers: (await this.#deps.peers.peers()).map(peerView) } }
+        }
         case 'POST /e2ee/v1/trust/approve': {
           const request = body as Record<string, unknown> | null
           const pub = fromB64url(String(request?.['clientIdentityPub'] ?? ''))
@@ -303,4 +342,8 @@ export class DeviceSecureChannel {
     this.#wire.end(code)
     for (const listener of this.#closeListeners) listener()
   }
+}
+
+function peerView(peer: PinnedPeer): Record<string, unknown> {
+  return { deviceId: peer.deviceId, identityPubFingerprint: peer.identityPubFingerprint, label: peer.label, pinnedAt: peer.pinnedAt }
 }

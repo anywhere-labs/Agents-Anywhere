@@ -106,6 +106,7 @@ export function piDialect(state: PiDialectState = piDialectState()): AcpDialect 
   return {
     ...genericDialect('pi', { permissionCatalog: true }),
     capabilities: piCapabilities,
+    agentTools: true,
     steer: 'extension',
     // Pi's message and tool IDs are stable across replays: updates with a messageId / toolCallId derive their item
     // from the native ID.

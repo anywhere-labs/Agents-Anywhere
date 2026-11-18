@@ -103,6 +103,12 @@ export function claudeDialect(): AcpDialect {
       ]
     },
     identity: claudeIdentity,
+    agentTools: true,
+    // claude-agent-acp: tools of the listed MCP servers run without a permission request.
+    toolServerParams: servers => {
+      const allowed = servers.filter(server => server.autoApprove).map(server => `mcp__${server.name}`)
+      return allowed.length === 0 ? {} : { _meta: { claudeCode: { options: { allowedTools: allowed } } } }
+    },
     steer: 'extension',
     selections: {
       modelSelectionId: claudeModelSelectionId,

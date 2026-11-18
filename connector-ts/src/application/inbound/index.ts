@@ -3,3 +3,5 @@
 export type * from './agent-session.js'
 export * from './commands.js'
 export * from './runtime-control.js'
+export type * from './collab-api.js'
+export type { AgentToolCalls, AgentToolOutcome } from './agent-tools.js'

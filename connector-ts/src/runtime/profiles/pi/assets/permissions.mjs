@@ -22,7 +22,9 @@ async function permission(ctx) {
 }
 
 const submitPlan = 'aa_submit_plan'
-const reads = ['read', 'ls', 'find', 'grep']
+const reads = ['read', 'ls', 'find', 'grep', 'tool_search']
+// The Agents Anywhere collaboration tools: their grant decides what they may do, in every mode.
+const collabPrefix = 'mcp__aa__'
 
 function planMarker(ctx) {
   const dir = process.env.AA_PI_PLANNING_DIR
@@ -100,6 +102,7 @@ export default function aaPermissions(pi) {
     const mode = await permission(ctx)
     freeze(event)
     const safeRead = reads.includes(event.toolName)
+    if (typeof event.toolName === 'string' && event.toolName.startsWith(collabPrefix)) return
     if (await isPlanning(ctx)) {
       if (event.toolName === submitPlan) return
       if (!safeRead) return { block: true, reason: 'Plan mode blocks implementation until the plan is approved.' }

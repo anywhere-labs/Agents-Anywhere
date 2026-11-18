@@ -27,6 +27,7 @@ export async function wireSummary(facts: SummaryFacts, sealer: DisplaySealer): P
     planState: facts.planState,
     goalState: facts.goalState,
     ...(facts.projectId !== undefined ? { projectId: facts.projectId } : {}),
+    ...(facts.origin !== undefined ? { origin: { ...facts.origin, byDeviceId: facts.origin.byDeviceId ?? null } } : {}),
     displayDevice: await sealer.seal(facts.display, facts.sessionId),
   }
 }

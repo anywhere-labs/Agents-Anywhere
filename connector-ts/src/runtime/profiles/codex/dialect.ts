@@ -113,6 +113,10 @@ export function codexDialect(options: CodexDialectOptions = {}): AcpDialect {
       ]
     },
     identity: codexIdentity,
+    agentTools: true,
+    // codex-acp passes the entry's approval mode on as the server's `default_tools_approval_mode`; older builds ignore
+    // it and the session answers the request itself (`autoApproval`).
+    toolServerEntry: server => (server.autoApprove ? { _meta: { codex: { defaultToolsApprovalMode: 'approve' } } } : {}),
     openParams: ref => (options.openRoute?.(ref) === 'plain' ? {} : { _meta: { codexIpc: { mode: 'auto' } } }),
     promptParams: delivery => ({ _meta: { codexIpc: { clientMessageId: delivery.clientMessageId } } }),
     steer: 'extension',

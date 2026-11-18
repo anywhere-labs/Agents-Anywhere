@@ -107,6 +107,8 @@ export interface AcpSessionOptions {
   readonly canClose: boolean
   /** How long an autonomous turn can go without updates before it counts as ended (ms). */
   readonly autonomousQuietMs?: number
+  /** Injected tool servers whose permission requests are answered here (the collaboration grant decides instead). */
+  readonly autoApproveServers?: readonly string[]
 }
 
 export class AcpRuntimeSession implements RuntimeSession {
@@ -551,6 +553,8 @@ export class AcpRuntimeSession implements RuntimeSession {
     if (handled !== undefined) return handled
     if (method !== 'session/request_permission' && method !== 'elicitation/create') throw JsonRpcError.methodNotFound(method)
     if (this.turn && !this.turn.accepted) this.accept(this.turn)
+    const automatic = method === 'session/request_permission' ? autoApproval(params, this.options.autoApproveServers ?? []) : undefined
+    if (automatic !== undefined) return automatic
     this.dialect.observeRequest?.(method, params, this.context)
     const kind = this.dialect.interactionKind?.(method, params) ?? (method === 'elicitation/create' ? 'form' : 'approval')
     const interactionId = `interaction_${randomUUID()}`
@@ -688,4 +692,24 @@ function attachmentBlock(attachment: PromptAttachment): JsonRecord {
 function fileUri(path: string): string {
   const normalized = path.replace(/\\/g, '/')
   return `file://${normalized.startsWith('/') ? '' : '/'}${normalized.split('/').map(encodeURIComponent).join('/')}`
+}
+
+/**
+ * The answer to a permission request of an injected tool server that runs without asking, or undefined. Runtimes name
+ * the server differently: Codex `rawInput.serverName`, Claude `_meta.claudeCode.mcpServer.name`, Pi and DSH the tool
+ * title `mcp__<server>__<tool>`.
+ */
+export function autoApproval(params: JsonRecord, servers: readonly string[]): JsonRecord | undefined {
+  if (servers.length === 0) return undefined
+  const toolCall = asRecord(params.toolCall)
+  const rawInput = asRecord(toolCall.rawInput)
+  const claude = asRecord(asRecord(asRecord(params._meta).claudeCode).mcpServer)
+  const title = typeof toolCall.title === 'string' ? toolCall.title : ''
+  const named = [rawInput.serverName, rawInput.server, claude.name].filter((value): value is string => typeof value === 'string')
+  const fromTitle = /^mcp__([A-Za-z0-9_-]+?)__/u.exec(title)?.[1] ?? /^mcp\.([A-Za-z0-9_-]+)\./u.exec(title)?.[1]
+  if (fromTitle !== undefined) named.push(fromTitle)
+  if (!named.some(name => servers.includes(name))) return undefined
+  const options = Array.isArray(params.options) ? params.options.map(asRecord) : []
+  const allow = options.find(option => option.kind === 'allow_once') ?? options.find(option => option.kind === 'allow_always')
+  return allow === undefined || allow.optionId === undefined ? undefined : { outcome: { outcome: 'selected', optionId: allow.optionId } }
 }

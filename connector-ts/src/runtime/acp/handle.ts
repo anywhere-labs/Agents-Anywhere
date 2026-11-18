@@ -25,6 +25,7 @@ import type {
   RuntimeHandle,
   RuntimeHandleEvent,
   RuntimeType,
+  ToolServerSpec,
 } from '../../application/ports/runtime-session.js'
 import { acpSelectionId } from '../../domain/identity/index.js'
 import type { ProtocolModelCatalog } from '../../generated/protocol/v1_2/model-catalog.js'
@@ -203,6 +204,7 @@ export class AcpRuntimeHandle implements RuntimeHandle {
     const items: Capability[] = this.info ? this.options.dialect.capabilities(this.info) : []
     // Known before any Agent process ran: the new-session page decides on it before a session exists.
     if (this.options.workspacePreparation === true) items.push(...WORKSPACE_PREPARATION_CAPABILITIES)
+    if (this.options.dialect.agentTools === true) items.push(AGENT_TOOLS_HOST)
     return { revision: 1, items }
   }
 
@@ -266,20 +268,24 @@ export class AcpRuntimeHandle implements RuntimeHandle {
     const connection = await this.connection(target.kind === 'new' ? target.spec.cwd : target.ref.locator ?? target.ref.cwd)
     const { client, info } = connection
     const dialect = this.options.dialect
+    // Collaboration tool servers (ACP stdio `mcpServers`), and what the dialect adds so they run without asking.
+    const tools = dialect.agentTools === true ? options.toolServers ?? [] : []
+    const mcpServers = tools.map(server => withToolParams(stdioMcpServer(server), dialect.toolServerEntry?.(server) ?? {}))
+    const toolParams = tools.length > 0 ? dialect.toolServerParams?.(tools) ?? {} : {}
     let nativeSessionId: string
     let response: JsonRecord
     let replayed: JsonRecord[] = []
     if (target.kind === 'new') {
-      response = asRecord(await client.request('session/new', {
+      response = asRecord(await client.request('session/new', withToolParams({
         cwd: target.spec.cwd,
-        mcpServers: [],
-        ...(target.spec.additionalDirectories?.length ? { additionalDirectories: target.spec.additionalDirectories } : {}),
+        mcpServers,
+        ...(target.spec.additionalDirectories?.length ? { additionalDirectories: [...target.spec.additionalDirectories] } : {}),
         ...(dialect.newSessionParams?.(target.spec) ?? {}),
-      }, { timeoutMs: 120_000 }))
+      }, toolParams), { timeoutMs: 120_000 }))
       nativeSessionId = String(response.sessionId)
     } else {
       nativeSessionId = target.ref.nativeSessionId
-      const params = { sessionId: nativeSessionId, cwd: target.ref.locator ?? target.ref.cwd ?? process.cwd(), mcpServers: [], ...(dialect.openParams?.(target.ref) ?? {}) }
+      const params = withToolParams({ sessionId: nativeSessionId, cwd: target.ref.locator ?? target.ref.cwd ?? process.cwd(), mcpServers, ...(dialect.openParams?.(target.ref) ?? {}) }, toolParams)
       const canResume = hasSessionCapability(info, 'resume')
       if (options.replay === 'none' && canResume) {
         response = asRecord(await client.request('session/resume', params, { timeoutMs: 120_000 }))
@@ -292,6 +298,7 @@ export class AcpRuntimeHandle implements RuntimeHandle {
     const config = normalizeConfig({ configOptions: response.configOptions, modes: response.modes, models: response.models }, dialect.legacyModes)
     const session = new AcpRuntimeSession({
       client, dialect, sessionId: options.sessionId, nativeSessionId, info, config, canClose: hasSessionCapability(info, 'close'),
+      autoApproveServers: tools.filter(server => server.autoApprove).map(server => server.name),
     })
     this.lastConfig = session.configOptions
     this.sessions.get(connection)?.add(session)
@@ -442,3 +449,37 @@ export function catalogsFromConfig(runtime: string, options: readonly ConfigOpti
   }
   return { models, selections }
 }
+
+/** A tool server as an ACP stdio `McpServer`. */
+export function stdioMcpServer(server: ToolServerSpec): JsonRecord {
+  return {
+    name: server.name,
+    command: server.command,
+    args: [...server.args],
+    env: Object.entries(server.env).map(([name, value]) => ({ name, value })),
+  }
+}
+
+/** `params` with the dialect's tool parameters merged in; `_meta` objects merge deeply, arrays are joined. */
+export function withToolParams(params: JsonRecord, extra: JsonRecord): JsonRecord {
+  if (Object.keys(extra).length === 0) return params
+  return mergeDeep(params, extra)
+}
+
+function mergeDeep(base: JsonRecord, extra: JsonRecord): JsonRecord {
+  const out: JsonRecord = { ...base }
+  for (const [key, value] of Object.entries(extra)) {
+    const current = out[key]
+    if (Array.isArray(current) && Array.isArray(value)) out[key] = [...new Set([...current, ...value])]
+    else if (isPlainRecord(current) && isPlainRecord(value)) out[key] = mergeDeep(current, value)
+    else out[key] = value
+  }
+  return out
+}
+
+function isPlainRecord(value: unknown): value is JsonRecord {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+/** The Runtime can host the collaboration tools (docs/agent-collaboration.md, AC11). */
+export const AGENT_TOOLS_HOST: Capability = Object.freeze({ id: 'runtime.agent_tools.host', supported: true })

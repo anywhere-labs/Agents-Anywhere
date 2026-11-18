@@ -23,6 +23,8 @@ export interface Session {
    * (encrypted mode, where the Server cannot see `cwd`). Null for sessions created through the Server or discovered.
    */
   readonly projectId?: string | null
+  /** An Agent created this session through the collaboration tools (reported as `SessionSummary.origin`). */
+  readonly origin?: SessionOrigin | null
   /** Title the Runtime reported (the user's override is a Server field). */
   readonly nativeTitle: string | null
   readonly status: SessionStatus
@@ -76,7 +78,16 @@ export interface SummaryFacts {
   goalState: GoalStateSummary
   /** Only for sessions a client created through a channel (`Session.projectId`); plain, it is not display text. */
   projectId?: string
+  origin?: SessionOrigin
   display: DisplayFields
+}
+
+/** `SessionSummary.origin`: ids and depth only, never content. */
+export interface SessionOrigin {
+  readonly kind: 'agent'
+  readonly bySessionId: string
+  readonly byDeviceId?: string | null
+  readonly depth: number
 }
 
 const PREVIEW_CHARS = 200
@@ -111,6 +122,7 @@ export function summarize(session: Session, latestItem: TimelineItem | null): Su
     planState: session.planState,
     goalState: session.goalState,
     ...(typeof session.projectId === 'string' ? { projectId: session.projectId } : {}),
+    ...(session.origin != null ? { origin: session.origin } : {}),
     display: { title: session.nativeTitle, preview: previewOf(latestItem), cwd: session.cwd },
   }
 }

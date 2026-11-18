@@ -294,5 +294,14 @@ export function parseCreateAndStart(payload: unknown): CreateSessionCommand {
     ...(typeof p.takeover === 'boolean' ? { takeover: p.takeover } : {}),
     ...(planningIntent !== null ? { planningIntent } : {}),
     ...(goalIntent !== null ? { goalIntent } : {}),
+    ...(origin(p.origin) !== null ? { origin: origin(p.origin)! } : {}),
   }
+}
+
+/** `origin` of a create-and-start the device itself built from an Agent caller (never a client's body field). */
+function origin(value: unknown): NonNullable<CreateSessionCommand['origin']> | null {
+  if (value === null || typeof value !== 'object') return null
+  const entry = value as Record<string, unknown>
+  if (entry.kind !== 'agent' || typeof entry.bySessionId !== 'string' || typeof entry.depth !== 'number') return null
+  return { kind: 'agent', bySessionId: entry.bySessionId, byDeviceId: typeof entry.byDeviceId === 'string' ? entry.byDeviceId : null, depth: entry.depth }
 }

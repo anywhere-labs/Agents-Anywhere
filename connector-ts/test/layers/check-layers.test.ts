@@ -119,8 +119,8 @@ describe('check:layers', () => {
       'mesh/m.ts': "import '../application/ports/p.js'",
       'channel/noise/n.ts': "import '../c.js'",
       'store/st.ts': 'export {}',
-      'tools/t.ts': "import '../store/st.js'",
-      'host/h.ts': "import '../tools/t.js'",
+      'gadgets/t.ts': "import '../store/st.js'",
+      'host/h.ts': "import '../gadgets/t.js'",
     })
     const expected = [
       'application/session/kernel.ts -> ../queue/q.js: application/session must not import application/queue',
@@ -138,8 +138,8 @@ describe('check:layers', () => {
       'workspace/w.ts -> ../keystore/k.js: workspace must not import keystore directly; go through application/ports',
       'mesh/m.ts -> ../application/ports/p.js: mesh is shared infrastructure and must not import application/ports',
       'channel/noise/n.ts -> ../c.js: channel/noise is shared infrastructure and must not import channel',
-      'tools/t.ts -> ../store/st.js: tools has no layer role; add it to ROLES in scripts/check-layers.mjs',
-      'host/h.ts -> ../tools/t.js: tools has no layer role; add it to ROLES in scripts/check-layers.mjs',
+      'gadgets/t.ts -> ../store/st.js: gadgets has no layer role; add it to ROLES in scripts/check-layers.mjs',
+      'host/h.ts -> ../gadgets/t.js: gadgets has no layer role; add it to ROLES in scripts/check-layers.mjs',
     ]
     expect([...checkLayers(src)].sort()).toEqual([...expected].sort())
   })

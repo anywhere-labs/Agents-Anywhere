@@ -35,6 +35,8 @@ const GENERATED = 'generated'
 export const ROLES = {
   link: 'inbound',
   channel: 'inbound',
+  tools: 'inbound',
+  peer: 'outbound',
   sync: 'sync',
   runtime: 'outbound',
   store: 'outbound',
@@ -56,6 +58,7 @@ export const APPLICATION_CONTEXTS = {
   planning: ['session'],
   goals: ['session'],
   conversation: ['session', 'queue', 'planning', 'goals'],
+  collab: [],
 }
 
 /** The facade that wires the session contexts together (module name, without extension). */

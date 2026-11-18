@@ -214,11 +214,12 @@ export class ClientSecureChannel {
     this.#closeListeners.add(listener)
   }
 
-  async request(method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', path: string, body: unknown = null): Promise<{ status: number; body: unknown }> {
+  /** `agent`: an `agent` platform client names the supervisor session each request acts for (agent collaboration). */
+  async request(method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', path: string, body: unknown = null, agent?: { readonly deviceId: string; readonly sessionId: string; readonly grantId: string }): Promise<{ status: number; body: unknown }> {
     const transport = this.#requireOpen()
     const id = `r${this.#nextId++}`
     const response = new Promise<{ status: number; body: unknown }>((resolve, reject) => this.#pending.set(id, { resolve, reject }))
-    await transport.sendMessage({ kind: 'request', id, method, path, body })
+    await transport.sendMessage({ kind: 'request', id, method, path, body, ...(agent !== undefined ? { agent: { deviceId: agent.deviceId, sessionId: agent.sessionId, grantId: agent.grantId } } : {}) })
     return response
   }
 

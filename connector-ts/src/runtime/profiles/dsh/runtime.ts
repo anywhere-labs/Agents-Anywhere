@@ -22,7 +22,7 @@ import type { Capability, Catalogs, CommandResult, ConfigChange, ConfigResult, D
   RuntimeError, RuntimeEvent, RuntimeHandle, RuntimeHandleEvent, RuntimeSession, SteerResult } from '../../../application/ports/runtime-session.js'
 import { asRecord } from '../../acp/client.js'
 import { RuntimeFailure } from '../../acp/errors.js'
-import { AcpRuntimeHandle, WORKSPACE_PREPARATION_CAPABILITIES, type ConnectionFactory } from '../../acp/handle.js'
+import { AGENT_TOOLS_HOST, AcpRuntimeHandle, WORKSPACE_PREPARATION_CAPABILITIES, type ConnectionFactory } from '../../acp/handle.js'
 import { JsonRpcError } from '../../acp/jsonrpc.js'
 import { EventQueue } from '../../acp/queue.js'
 import { createDirectSession } from './direct/create.js'
@@ -178,6 +178,8 @@ export class DshRuntime implements RuntimeHandle {
       if (!this.directHandle) items.push(...WORKSPACE_PREPARATION_CAPABILITIES)
       // An existing conversation can start a stopped direct ACP process by sending a text prompt.
       if (!items.some(item => item.id === 'session.send_message')) items.push({ id: 'session.send_message', supported: true })
+      // The direct route takes injected tool servers (measured); the plugin route is not measured and does not declare it.
+      if (!items.some(item => item.id === AGENT_TOOLS_HOST.id)) items.push(AGENT_TOOLS_HOST)
     }
     items.push({ id: 'runtime.route', supported: true, parameters: host
       ? { route: 'plugin', hostInstance: host.hello.hostInstance, hostKind: host.hello.hostKind, dshVersion: host.hello.dshVersion }

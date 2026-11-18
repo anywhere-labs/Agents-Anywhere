@@ -20,7 +20,7 @@ export const MAX_OPEN_PAIRINGS = 3
 
 export type E2eeMode = 'off' | 'required'
 export type GrantSource = 'qr' | 'approval' | 'local'
-export type ClientPlatform = 'web' | 'desktop' | 'android' | 'ios' | 'cli'
+export type ClientPlatform = 'web' | 'desktop' | 'android' | 'ios' | 'cli' | 'agent'
 
 export interface ClientGrant {
   readonly clientId: string

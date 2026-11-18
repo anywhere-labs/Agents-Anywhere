@@ -1,4 +1,5 @@
 import { hostname, userInfo } from 'node:os'
+import type { AgentPeerKeyring } from '../application/ports/collab.js'
 import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 
@@ -57,6 +58,8 @@ export interface DeviceTrustOptions {
   /** Re-sends every session summary (after a directory key rotation). */
   readonly republishSummaries: () => Promise<number>
   readonly outbox: OutboxStore
+  /** The collaboration client's keys; served as `/e2ee/v1/agent-identity` and `/e2ee/v1/peers`. */
+  readonly peers?: AgentPeerKeyring
 }
 
 /**
@@ -100,7 +103,7 @@ export class DeviceTrust {
     })
     await trust.init()
     const identity = x25519FromSecret((await secrets.identityKey()).secretKey)
-    const hub = new SecureChannelHub({ deviceId: options.deviceId, deviceLabel: options.deviceLabel ?? hostname(), trust, identity, crypto: nodeNoiseCrypto, api: options.api })
+    const hub = new SecureChannelHub({ deviceId: options.deviceId, deviceLabel: options.deviceLabel ?? hostname(), trust, identity, crypto: nodeNoiseCrypto, api: options.api, ...(options.peers !== undefined ? { peers: options.peers } : {}) })
     return new DeviceTrust(options, trust, hub)
   }
 

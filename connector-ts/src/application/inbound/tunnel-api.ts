@@ -11,6 +11,19 @@ export interface ChannelCaller {
   readonly clientId: string
   readonly label: string
   readonly platform: string | null
+  /**
+   * An Agent acting for a supervisor session (agent collaboration): set by the Server from a delegation token
+   * (`ClientCaller.agent`), by the device's own collaboration tools in-process, or from the request of an `agent`
+   * channel client. `supervisionId`: the request is a supervision wake.
+   */
+  readonly agent?: AgentActor | null
+}
+
+export interface AgentActor {
+  readonly deviceId: string
+  readonly sessionId: string
+  readonly grantId: string
+  readonly supervisionId?: string | null
 }
 
 export interface TunnelApiRequest {

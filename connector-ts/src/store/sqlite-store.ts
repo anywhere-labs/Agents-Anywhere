@@ -3,9 +3,13 @@ import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync, type SQLInputValue, type StatementSync } from 'node:sqlite'
 
+import type { AgentAction, AgentGrant, Supervision } from '../domain/collab/index.js'
+import type { MessageAuthor, SessionOrigin } from '../domain/conversation/index.js'
 import type {
   BlobRecord,
   BlobRepository,
+  CollabRepository,
+  SpawnedChild,
   ChangesPage,
   CommandLog,
   CommandReceipt,
@@ -211,6 +215,7 @@ export function openSqliteStore(options: OpenStoreOptions): SyncStore {
       externalSessionId: nullableString(row.external_session_id),
       cwd: nullableString(row.cwd),
       projectId: nullableString(row.project_id),
+      origin: row.origin_json === null || row.origin_json === undefined ? null : parse<SessionOrigin>(row.origin_json),
       nativeTitle: nullableString(row.native_title),
       status: String(row.status) as Session['status'],
       sourceAvailability: String(row.source_availability) as Session['sourceAvailability'],
@@ -505,9 +510,9 @@ export function openSqliteStore(options: OpenStoreOptions): SyncStore {
         const floorRow = get('SELECT seq_floor FROM seq_floors WHERE session_id = ?', input.sessionId)
         const clock: SessionClock = floorRow === undefined ? { headSeq: 0, resetSeq: 0 } : applySeqFloor({ headSeq: 0, resetSeq: 0 }, Number(floorRow.seq_floor)).clock
         run(
-          `INSERT INTO sessions(session_id, runtime_type, runtime_id, external_session_id, cwd, project_id, native_title, status, source_availability,
-             head_seq, reset_seq, takeover, created_at, last_activity_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          input.sessionId, input.runtimeType, input.runtimeId, input.externalSessionId, input.cwd, input.projectId ?? null, input.nativeTitle, input.status,
+          `INSERT INTO sessions(session_id, runtime_type, runtime_id, external_session_id, cwd, project_id, origin_json, native_title, status, source_availability,
+             head_seq, reset_seq, takeover, created_at, last_activity_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          input.sessionId, input.runtimeType, input.runtimeId, input.externalSessionId, input.cwd, input.projectId ?? null, input.origin == null ? null : json(input.origin), input.nativeTitle, input.status,
           input.sourceAvailability, clock.headSeq, clock.resetSeq, input.takeover ? 1 : 0, input.at, input.at,
         )
         if (floorRow !== undefined) run('DELETE FROM seq_floors WHERE session_id = ?', input.sessionId)
@@ -982,6 +987,108 @@ export function openSqliteStore(options: OpenStoreOptions): SyncStore {
     }
   }
 
+  const childFromRow = (row: Row): SpawnedChild => ({
+    childSessionId: String(row.child_session_id),
+    childDeviceId: String(row.child_device_id),
+    grantId: String(row.grant_id),
+    supervisorSessionId: String(row.supervisor_session_id),
+    depth: Number(row.depth),
+    closed: Number(row.closed) === 1,
+    createdAt: String(row.created_at),
+  })
+  const collab: Sync<CollabRepository> = {
+    putGrant(grant, outboxPayload, at) {
+      tx(() => {
+        run('INSERT INTO collab_grants(grant_id, supervisor_session_id, secret_digest, state, state_json, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(grant_id) DO UPDATE SET state = excluded.state, state_json = excluded.state_json, updated_at = excluded.updated_at',
+          grant.grantId, grant.supervisor.sessionId, grant.secretDigest, grant.state, json(grant), at)
+        if (outboxPayload !== null) appendOutbox('collab.grant.changed', grant.supervisor.sessionId, outboxPayload as unknown as Record<string, unknown>, at)
+      })
+    },
+    grant(grantId) {
+      const row = get('SELECT state_json FROM collab_grants WHERE grant_id = ?', grantId)
+      return row === undefined ? null : parse<AgentGrant>(row.state_json)
+    },
+    grantBySecret(secretDigest) {
+      const row = get('SELECT state_json FROM collab_grants WHERE secret_digest = ?', secretDigest)
+      return row === undefined ? null : parse<AgentGrant>(row.state_json)
+    },
+    activeGrantOf(supervisorSessionId) {
+      const row = get("SELECT state_json FROM collab_grants WHERE supervisor_session_id = ? AND state = 'active' ORDER BY updated_at DESC LIMIT 1", supervisorSessionId)
+      return row === undefined ? null : parse<AgentGrant>(row.state_json)
+    },
+    activeGrants() {
+      return all("SELECT state_json FROM collab_grants WHERE state = 'active'").map(row => parse<AgentGrant>(row.state_json))
+    },
+    putSupervision(supervision, outboxPayload, at) {
+      tx(() => {
+        run('INSERT INTO collab_supervisions(supervision_id, supervisor_session_id, target_session_id, state, state_json, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(supervision_id) DO UPDATE SET state = excluded.state, state_json = excluded.state_json, updated_at = excluded.updated_at',
+          supervision.supervisionId, supervision.supervisor.sessionId, supervision.target.sessionId, supervision.state, json(supervision), at)
+        if (outboxPayload !== null) appendOutbox('collab.supervision.changed', supervision.supervisor.sessionId, outboxPayload as unknown as Record<string, unknown>, at)
+      })
+    },
+    supervision(supervisionId) {
+      const row = get('SELECT state_json FROM collab_supervisions WHERE supervision_id = ?', supervisionId)
+      return row === undefined ? null : parse<Supervision>(row.state_json)
+    },
+    supervisionsOf(supervisorSessionId, everything) {
+      const rows = everything === true
+        ? all('SELECT state_json FROM collab_supervisions WHERE supervisor_session_id = ? ORDER BY updated_at DESC', supervisorSessionId)
+        : all("SELECT state_json FROM collab_supervisions WHERE supervisor_session_id = ? AND state != 'ended' ORDER BY updated_at DESC", supervisorSessionId)
+      return rows.map(row => parse<Supervision>(row.state_json))
+    },
+    supervisionsOfTarget(targetSessionId) {
+      return all("SELECT state_json FROM collab_supervisions WHERE target_session_id = ? AND state != 'ended'", targetSessionId).map(row => parse<Supervision>(row.state_json))
+    },
+    liveSupervisions() {
+      return all("SELECT state_json FROM collab_supervisions WHERE state != 'ended'").map(row => parse<Supervision>(row.state_json))
+    },
+    putAction(action) {
+      tx(() => {
+        run('INSERT INTO collab_actions(action_id, supervisor_session_id, state_json, at) VALUES (?, ?, ?, ?) ON CONFLICT(action_id) DO UPDATE SET state_json = excluded.state_json',
+          action.actionId, action.supervisor.sessionId, json(action), action.at)
+        // The audit keeps the latest 500 actions of a supervisor session.
+        run('DELETE FROM collab_actions WHERE supervisor_session_id = ? AND action_id NOT IN (SELECT action_id FROM collab_actions WHERE supervisor_session_id = ? ORDER BY at DESC LIMIT 500)', action.supervisor.sessionId, action.supervisor.sessionId)
+      })
+    },
+    action(actionId) {
+      const row = get('SELECT state_json FROM collab_actions WHERE action_id = ?', actionId)
+      return row === undefined ? null : parse<AgentAction>(row.state_json)
+    },
+    recentActions(supervisorSessionId, limit) {
+      return all('SELECT state_json FROM collab_actions WHERE supervisor_session_id = ? ORDER BY at DESC LIMIT ?', supervisorSessionId, Math.max(1, limit)).map(row => parse<AgentAction>(row.state_json))
+    },
+    putChild(child) {
+      tx(() => {
+        run('INSERT INTO collab_children(child_session_id, child_device_id, grant_id, supervisor_session_id, depth, closed, created_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(child_session_id) DO NOTHING',
+          child.childSessionId, child.childDeviceId, child.grantId, child.supervisorSessionId, child.depth, child.closed ? 1 : 0, child.createdAt)
+      })
+    },
+    child(childSessionId) {
+      const row = get('SELECT * FROM collab_children WHERE child_session_id = ?', childSessionId)
+      return row === undefined ? null : childFromRow(row)
+    },
+    closeChild(childSessionId) {
+      tx(() => {
+        run('UPDATE collab_children SET closed = 1 WHERE child_session_id = ?', childSessionId)
+      })
+    },
+    openChildren(supervisorSessionId) {
+      return Number(get('SELECT COUNT(*) AS n FROM collab_children WHERE supervisor_session_id = ? AND closed = 0', supervisorSessionId)?.n ?? 0)
+    },
+    childrenOf(supervisorSessionId) {
+      return all('SELECT * FROM collab_children WHERE supervisor_session_id = ? ORDER BY created_at DESC LIMIT 200', supervisorSessionId).map(childFromRow)
+    },
+    putAuthor(sessionId, clientMessageId, author) {
+      tx(() => {
+        run('INSERT INTO message_authors(session_id, client_message_id, author_json) VALUES (?, ?, ?) ON CONFLICT(session_id, client_message_id) DO NOTHING', sessionId, clientMessageId, json(author))
+      })
+    },
+    author(sessionId, clientMessageId) {
+      const row = get('SELECT author_json FROM message_authors WHERE session_id = ? AND client_message_id = ?', sessionId, clientMessageId)
+      return row === undefined ? null : parse<MessageAuthor>(row.author_json)
+    },
+  }
+
   return {
     sessions,
     timeline,
@@ -995,6 +1102,7 @@ export function openSqliteStore(options: OpenStoreOptions): SyncStore {
     blobs: blobRepository,
     kv,
     preparations,
+    collab,
     readOnly,
     storeEpoch,
     close() {
