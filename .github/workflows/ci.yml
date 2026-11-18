@@ -43,7 +43,7 @@ concurrency:
 env:
   # This repository intentionally does not commit Yarn or uv lockfiles.
   YARN_ENABLE_IMMUTABLE_INSTALLS: "false"
-  # Headless checks do not need an Electron binary or dependency install scripts.
+  # Skip dependency build scripts by default. Connector opts node-pty in for Linux terminal integration tests.
   YARN_ENABLE_SCRIPTS: "false"
   UV_DEFAULT_INDEX: https://pypi.org/simple
   UV_VERSION: 0.12.3

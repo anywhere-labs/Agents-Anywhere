@@ -24,6 +24,11 @@
     "qrcode-generator": "^2.0.4",
     "zod": "^4.1.0"
   },
+  "dependenciesMeta": {
+    "node-pty": {
+      "built": true
+    }
+  },
   "devDependencies": {
     "@types/node": "^22.15.0",
     "ajv": "^8.20.0",
