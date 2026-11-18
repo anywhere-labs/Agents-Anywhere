@@ -6,7 +6,7 @@
 
 ### 升级须知
 
-- Agent 协作需要 Server 执行 `v2_67` 数据库迁移（只新增两张表和几个字段，不改写已有数据）；功能默认关闭，要在设置里按账号和 Runtime 实例分别开启，跨设备访问还要单独开启。（[#PR](https://github.com/anywhere-labs/Agents-Anywhere/pull/PR)）
+- Agent 协作需要 Server 执行 `v2_67` 数据库迁移（只新增两张表和几个字段，不改写已有数据）；功能默认关闭，要在设置里按账号和 Runtime 实例分别开启，跨设备访问还要单独开启。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 不用 Compose、手动部署 MeshCall Router 的环境，升级 Server 后要重新执行一次 Router 的 `init-auth`，否则 v3 设备连不上；Compose 部署每次启动会自动重新生成，不用处理。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - Server 需要执行 `v2_64` 数据库迁移：操作记录里保存的消息原文、排队文本和计划反馈会被清除，只保留结果状态；之后用同一个操作重试时只返回是否成功，不再返回设备当时的完整结果。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - Server 需要执行 `v2_65`、`v2_66` 数据库迁移：加密模式的命令记录并入操作记录表，并删除一张不再使用的渠道表，已有会话和设置不受影响。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
@@ -28,7 +28,7 @@
 
 ### 会话创建与消息交付
 
-- 连接 v3 Connector 的设备上，开启「Agent 协作」后，Claude、Codex、Pi 和 DSH 会话里的 Agent 可以新建、驱动和监督同一账号的其他会话（也可以在其他设备上）：派出的会话结束、失败、等待审批或提交计划时，监督它的会话会自动收到一段进展摘要；默认只能发消息和关闭自己创建的会话，打断、代答审批和批准计划要单独允许，且不超过监督会话自己的权限模式；端到端加密模式下同样可用。（[#PR](https://github.com/anywhere-labs/Agents-Anywhere/pull/PR)）
+- 连接 v3 Connector 的设备上，开启「Agent 协作」后，Claude、Codex、Pi 和 DSH 会话里的 Agent 可以新建、驱动和监督同一账号的其他会话（也可以在其他设备上）：派出的会话结束、失败、等待审批或提交计划时，监督它的会话会自动收到一段进展摘要；默认只能发消息和关闭自己创建的会话，打断、代答审批和批准计划要单独允许，且不超过监督会话自己的权限模式；端到端加密模式下同样可用。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 修复 Pi 会话刷新或重连后重复显示旧回复的问题，已出现的重复回复会在读取会话时清理。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 修复 Web、Desktop、Android 和 iOS 无法完成加密配对的问题，并恢复加密会话的实时消息更新。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - Web 和 Desktop 新建会话时会选用设备允许访问的默认工作目录，主目录受限时可从允许的工作目录加载 Agent 配置。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
@@ -90,7 +90,7 @@
 
 ### Web 与 Desktop 界面
 
-- Web 和 Desktop 新增「设置 → Agent 协作」和会话页的「协作」面板：可以按 Runtime 实例开启协作、选择 Agent 可以代你做的事，查看和暂停、结束监督，或让一个会话监督另一个会话；Agent 创建或被监督的会话带标记，Agent 发出的消息、监督通知和「需要你决定」的问题在时间线上单独显示；加密模式下可以在「安全连接」里允许一台设备上的 Agent 访问另一台设备。（[#PR](https://github.com/anywhere-labs/Agents-Anywhere/pull/PR)）
+- Web 和 Desktop 新增「设置 → Agent 协作」和会话页的「协作」面板：可以按 Runtime 实例开启协作、选择 Agent 可以代你做的事，查看和暂停、结束监督，或让一个会话监督另一个会话；Agent 创建或被监督的会话带标记，Agent 发出的消息、监督通知和「需要你决定」的问题在时间线上单独显示；加密模式下可以在「安全连接」里允许一台设备上的 Agent 访问另一台设备。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - Claude 退出规划模式时，会话里只显示计划审阅面板，不再同时弹出一张列着原生选项的审批卡片；审批卡片的选项较长时会换行显示，标题不再被挤成竖排。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 连接 v3 Connector 的设备上，工具的超长输出和图片只保存在设备上时，可以在 Web 和 Desktop 点「展开完整输出」「加载图片」或「下载」从设备读取完整内容；加密模式下这些内容和附件图片也能正常加载。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 多个窗口或设备同时打开同一个会话时，关掉其中一个不再让其他窗口读取会话失败。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
@@ -115,7 +115,7 @@
 
 ### Android
 
-- Android 会显示会话由哪个会话的 Agent 创建、被谁监督，时间线上单独显示 Agent 发出的消息、监督通知、「需要你决定」的问题和协作工具调用，可以点开相关会话。（[#PR](https://github.com/anywhere-labs/Agents-Anywhere/pull/PR)）
+- Android 会显示会话由哪个会话的 Agent 创建、被谁监督，时间线上单独显示 Agent 发出的消息、监督通知、「需要你决定」的问题和协作工具调用，可以点开相关会话。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 在会话中完成加密配对后，会自动加载当前会话；加密会话可以正常发送消息和续聊。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 
 - 连接 v3 Connector 的设备上，只保存在设备上的工具长输出、图片和文件可以点开查看完整内容、加载图片或交给其他应用打开；加密模式下附件也能正常加载。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
@@ -138,7 +138,7 @@
 
 ### iOS
 
-- iOS 会显示会话由哪个会话的 Agent 创建、被谁监督，时间线上单独显示 Agent 发出的消息、监督通知、「需要你决定」的问题和协作工具调用，可以点开相关会话。（[#PR](https://github.com/anywhere-labs/Agents-Anywhere/pull/PR)）
+- iOS 会显示会话由哪个会话的 Agent 创建、被谁监督，时间线上单独显示 Agent 发出的消息、监督通知、「需要你决定」的问题和协作工具调用，可以点开相关会话。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 连接 v3 Connector 的设备上，只保存在设备上的工具长输出、图片和文件可以展开完整内容、加载图片或按文件打开；加密模式下附件也能正常加载。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 会话所在设备离线时（v3 Server）：
   - 本机缓存过的消息继续显示，输入框上方提示「设备离线」；没有缓存时对话区显示「设备离线，上线后查看。」，设备上线后自动补上离线期间的新消息。
