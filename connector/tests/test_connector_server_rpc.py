@@ -239,6 +239,111 @@ def test_connector_rpc_clear_connection_cancels_request_tasks() -> None:
     assert asyncio.run(exercise()) == (True, 0)
 
 
+def test_read_timeouts_release_all_slots_and_model_catalog_recovers(monkeypatch) -> None:
+    monkeypatch.setattr("connector.server.rpc.READ_RPC_TIMEOUT_SECONDS", 0.02)
+
+    async def exercise() -> None:
+        channel = ConnectorRpcChannel()
+        websocket = MemoryWebSocket()
+        channel.set_connection(websocket)
+        started = 0
+        cancelled = 0
+        all_started = asyncio.Event()
+
+        async def dispatch(method, params):
+            nonlocal started, cancelled
+            if method == "session.state":
+                started += 1
+                if started == 8:
+                    all_started.set()
+                try:
+                    await asyncio.Future()
+                finally:
+                    cancelled += 1
+            return {"catalog": {"models": ["available"]}}
+
+        for index in range(8):
+            channel.start_request(
+                {"type": "request", "id": f"state-{index}", "method": "session.state"},
+                dispatch,
+            )
+        await asyncio.wait_for(all_started.wait(), 1)
+        await asyncio.wait_for(asyncio.gather(*channel._request_tasks), 1)
+        assert cancelled == 8
+        responses = [json.loads(frame) for frame in websocket.sent]
+        assert len(responses) == 8
+        assert all(response["error"]["code"] == "TimeoutError" for response in responses)
+        await channel.process_request(
+            {"type": "request", "id": "models", "method": "runtime.modelCatalog"}, dispatch,
+        )
+        assert json.loads(websocket.sent[-1])["result"]["catalog"]["models"] == ["available"]
+        await channel.close_connection()
+
+    asyncio.run(exercise())
+
+
+def test_read_queue_wait_is_bounded_and_expired_read_never_executes(monkeypatch) -> None:
+    monkeypatch.setattr("connector.server.rpc.READ_RPC_TIMEOUT_SECONDS", 0.01)
+
+    async def exercise() -> None:
+        channel = ConnectorRpcChannel()
+        websocket = MemoryWebSocket()
+        channel.set_connection(websocket)
+        release = asyncio.Event()
+        all_started = asyncio.Event()
+        writes_started = 0
+
+        async def dispatch(method, params):
+            nonlocal writes_started
+            assert method == "session.create", "expired read must never run after capacity frees"
+            writes_started += 1
+            if writes_started == 8:
+                all_started.set()
+            await release.wait()
+            return {"created": True}
+
+        for index in range(8):
+            channel.start_request(
+                {"type": "request", "id": f"write-{index}", "method": "session.create"}, dispatch,
+            )
+        await asyncio.wait_for(all_started.wait(), 1)
+        await asyncio.wait_for(channel.process_request(
+            {"type": "request", "id": "models", "method": "runtime.modelCatalog"}, dispatch,
+        ), 1)
+        assert json.loads(websocket.sent[-1])["error"]["code"] == "TimeoutError"
+        release.set()
+        await asyncio.wait_for(asyncio.gather(*channel._request_tasks), 1)
+        assert len(websocket.sent) == 9
+        assert all(json.loads(frame)["ok"] for frame in websocket.sent[1:])
+        await channel.close_connection()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("method", ["session.create", "session.send_message", "interaction.respond"])
+def test_read_deadline_does_not_cancel_writes(monkeypatch, method) -> None:
+    monkeypatch.setattr("connector.server.rpc.READ_RPC_TIMEOUT_SECONDS", 0.001)
+
+    async def exercise() -> None:
+        channel = ConnectorRpcChannel()
+        websocket = MemoryWebSocket()
+        channel.set_connection(websocket)
+        release = asyncio.Event()
+
+        async def dispatch(method, params):
+            asyncio.get_running_loop().call_later(0.02, release.set)
+            await release.wait()
+            return {"completed": True}
+
+        await asyncio.wait_for(channel.process_request(
+            {"type": "request", "id": "write", "method": method}, dispatch,
+        ), 1)
+        assert json.loads(websocket.sent[-1])["result"] == {"completed": True}
+        await channel.close_connection()
+
+    asyncio.run(exercise())
+
+
 def test_connector_rpc_rejects_oversized_notification_before_send() -> None:
     async def exercise() -> MemoryWebSocket:
         websocket = MemoryWebSocket()

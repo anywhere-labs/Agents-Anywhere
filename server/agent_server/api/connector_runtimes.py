@@ -418,9 +418,14 @@ async def request_runtime_rpc(
         return await manager.request(connector_id, method, params, timeout=30)
     except ConnectorOfflineError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=504,
+            detail={"code": "TimeoutError", "message": "Connector request timed out"},
+        ) from exc
     except ConnectorRpcError as exc:
         raise HTTPException(
-            status_code=502,
+            status_code=504 if exc.code == "TimeoutError" else 502,
             detail={"code": exc.code, "message": exc.message or exc.code},
         ) from exc
 
