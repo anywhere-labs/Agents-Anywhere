@@ -21,7 +21,7 @@
 
 ### 本机连接
 
-- 第一次打开桌面端或桌面端换了安装位置后，DSH 插件几秒内就会把本机连接交给桌面端，不再等桌面端准备完运行环境（Windows 上原来要将近一分钟）；Windows 上 DSH 运行期间，插件也不再每 1.5 秒启动一次 PowerShell 检查桌面端。（PR_LINK）
+- 第一次打开桌面端或桌面端换了安装位置后，DSH 插件几秒内就会把本机连接交给桌面端，不再等桌面端准备完运行环境（Windows 上原来要将近一分钟）；Windows 上 DSH 运行期间，插件也不再每 1.5 秒启动一次 PowerShell 检查桌面端。（[#781](https://github.com/anywhere-labs/Agents-Anywhere/pull/781)）
 - 准备 Pi 时会复用本机 Node 22.19 及以上版本（包括 Node 24），不再强制下载；需要下载时，官方源连不上会自动改用 npmmirror，Python 安装源选了镜像的设备会优先使用 npmmirror；Windows 上多个进程同时准备不再报 `Resource deadlock avoided`，而是排队等待；数据目录通过 Junction 挂到其他盘时，不再误报「Node 安装包路径无效」；Node 下载失败时会提示检查网络。（[#657](https://github.com/anywhere-labs/Agents-Anywhere/pull/657)）
 
 ### Android
