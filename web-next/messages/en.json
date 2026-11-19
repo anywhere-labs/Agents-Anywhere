@@ -2932,6 +2932,7 @@
     },
     "settings": {
       "title": "Agent collaboration",
+      "encryptedUnavailable": "Agent collaboration is unavailable while end-to-end encryption is required.",
       "description": "When on, Agents can create, drive and supervise other sessions on the devices of this account. Everything is off by default.",
       "enabled": "Allow Agent collaboration",
       "enabledDescription": "Account switch. While it is off, no runtime instance can use the collaboration tools.",

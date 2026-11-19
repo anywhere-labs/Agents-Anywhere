@@ -57,13 +57,14 @@ DELETE /api/v3/device/agent-delegations/{grantId}
 
 每次使用都会检查：令牌已吊销、监督会话或设备已删除、跨设备协作被关闭时返回 `401 agent_grant_revoked`；未知或过期返回 `401 agent_delegation_invalid`。
 
+端到端加密启用时，Server 返回关闭的协作设置。尝试开启协作、签发或使用委托令牌，或申请 A2A 审查权限会返回 `403 agent_scope_denied`。Connector 停止注入协作 MCP 工具，并拒绝已有工具的调用。已有审查记录仍可查看。
+
 ## 委托 Agent 能调用什么
 
 带委托令牌（`Authorization: Bearer <token>`）的请求以 Agent 身份执行，代表令牌里的监督会话。只允许：
 
 - 客户端路由表（`contracts/device-meshcall/1.0/client-routes.json`）中 `agent: true` 的路由，例如消息、引导、中断、审批答复、规划、快照、时间线和 `create-and-start`；
-- Server 自己的读接口：`GET /api/v2/connectors`（每台设备只有 `id`、`name`、`online`、`e2eeMode`）、`GET /api/v2/connectors/{id}/runtimes`、`GET /api/v2/sessions`、`GET /api/v2/sessions/list`；
-- 加密通道 `WS /api/v3/tunnel`（用同一个请求头认证，只能打开到 `scope` 内设备的通道）。
+- Server 自己的读接口：`GET /api/v2/connectors`（每台设备只有 `id`、`name`、`online`、`e2eeMode`）、`GET /api/v2/connectors/{id}/runtimes`、`GET /api/v2/sessions`、`GET /api/v2/sessions/list`。
 
 其他路由一律 `403 agent_route_denied`。路径里的会话或设备不属于该账号时返回 `404 agent_target_unknown`，不在 `scope` 内时返回 `403 agent_scope_denied`；列表只返回 `scope` 内设备上的条目。
 
@@ -89,7 +90,7 @@ Agent 调用 `create-and-start` 时，新会话的 `origin` 为 `{"kind": "agent
 
 ## 调度信号
 
-被监督会话的 `status`、`headSeq`、`resetSeq`、`latestTurnEndSeq`、`planState`、`goalState` 有变化，或它所在的设备上线、离线时，Server 向每台监督方设备发一条 `collab.signal`，每条关系一个 `CollabTargetSignal`。信号可丢失：不重试、不记回执；它不在摘要入库的路径上等待。监督方设备重新上线后和每隔 30 秒，通过现有会话详情接口对照远端状态和已保存的监督状态，补获错过的回合结束或待审批事项。普通和加密模式沿用各自的访问路径。
+被监督会话的 `status`、`headSeq`、`resetSeq`、`latestTurnEndSeq`、`planState`、`goalState` 有变化，或它所在的设备上线、离线时，Server 向每台监督方设备发一条 `collab.signal`，每条关系一个 `CollabTargetSignal`。信号可丢失：不重试、不记回执；它不在摘要入库的路径上等待。监督方设备重新上线后和每隔 30 秒，通过现有会话详情接口对照远端状态和已保存的监督状态，补获错过的回合结束或待审批事项。
 
 ## 实现并审查
 

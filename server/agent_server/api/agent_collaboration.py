@@ -60,6 +60,8 @@ async def put_agent_collaboration_settings(
 ) -> AgentCollaborationSettings:
     try:
         return await collab.update_settings(user_id, payload)
+    except CollabError as exc:
+        _raise(exc)
     except KeyError:
         raise HTTPException(status_code=401, detail="user no longer exists") from None
 

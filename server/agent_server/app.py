@@ -373,6 +373,7 @@ def create_app(
         app.state.timeline_broker,
         app.state.device_commands,
         app.state.device_link_hub.is_online,
+        encryption_required=lambda: _e2ee_settings().required,
     )
     app.state.device_link.collab = app.state.collab
     # Every device-served client route of a device-meshcall device goes through ``Client/call``.

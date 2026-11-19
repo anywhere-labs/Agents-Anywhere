@@ -5,6 +5,7 @@
 
 import * as React from "react"
 import { useTranslations } from "next-intl"
+import { serverE2eeDeclaration } from "@/lib/e2ee/state"
 import { toast } from "sonner"
 
 import { SettingsSection } from "@/components/settings/settings-section"
@@ -70,10 +71,11 @@ export function AgentCollaborationTab({
   const [settings, setSettings] = React.useState<CollabSettings | null>(null)
   const [loadError, setLoadError] = React.useState<string | null>(null)
   const [saving, setSaving] = React.useState(false)
-  const hosts = useAgentToolHosts(token, runtimes, connectors)
+  const encrypted = serverE2eeDeclaration() === "required"
+  const hosts = useAgentToolHosts(encrypted ? "" : token, runtimes, connectors)
 
   React.useEffect(() => {
-    if (!token) return
+    if (!token || encrypted) return
     let cancelled = false
     collabApi.getSettings(token).then(
       (next) => !cancelled && setSettings(next),
@@ -82,7 +84,7 @@ export function AgentCollaborationTab({
     return () => {
       cancelled = true
     }
-  }, [token])
+  }, [encrypted, token])
 
   const save = React.useCallback(async (next: CollabSettings) => {
     const previous = settings
@@ -108,6 +110,7 @@ export function AgentCollaborationTab({
       .map((runtime) => ({ runtime, deviceName: deviceName(runtime.connectorId), online: online(runtime.connectorId) }))
   }, [connectors, hosts, runtimes, settings])
 
+  if (encrypted) return <SettingsSection variant="plain" title={t("title")} description={t("encryptedUnavailable")} />
   if (loadError) return <SettingsSection variant="plain" title={t("title")} description={t("loadFailed", { error: loadError })} />
   if (!settings) return null
 

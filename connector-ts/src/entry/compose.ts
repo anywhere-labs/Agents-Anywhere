@@ -219,6 +219,7 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
           log,
           onOutbox: () => outboxSignal.poke(),
           reviewGit,
+          encryptionRequired: () => link?.e2eeMode === 'required' || trust?.localMode() === 'required',
           hostsTools: async runtimeId => ((await runtimes.handle(runtimeId))?.capabilities().items ?? []).some(item => item.id === 'runtime.agent_tools.host' && item.supported),
           localRuntimes: async () => runtimes.instances().filter(spec => spec.enabled).map(spec => ({ runtimeId: spec.runtimeId, runtimeType: spec.runtimeType, name: spec.name ?? null })),
           ...(options.collaboration ?? {}),
@@ -349,6 +350,7 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
           blobs: blobSlices(findBlob),
           ...(collaboration !== null ? {
             collab: lazyCollabApi(collaboration),
+            agentCollaborationAvailable: () => collaboration.enabled(),
             a2aReview: (caller, method, body) => collaboration.a2aRequest(caller, method, body),
             prepareCollaborationCheckout: (cwd, owner, input) => reviewGit.prepare(cwd, owner, input),
           } : {}),

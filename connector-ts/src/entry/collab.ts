@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import {
+  COLLAB_OFF,
   CollabPeopleApi,
   CollabSettingsHolder,
   GrantService,
@@ -48,6 +49,7 @@ import { reviewRuns } from '../store/review-runs.js'
 import { reviewExecutions } from '../store/review-executions.js'
 import type { ReviewGit } from '../workspace/review-git.js'
 
+const COLLAB_ENCRYPTED = 'Agent collaboration is unavailable in encrypted mode.'
 const BUSY = new Set(['pending', 'running', 'stopping'])
 
 export interface CollabOptions {
@@ -66,6 +68,7 @@ export interface CollabOptions {
   readonly localRuntimes: SupervisorFacts['localRuntimes']
   readonly onOutbox: () => void
   readonly reviewGit?: ReviewGit
+  readonly encryptionRequired: () => boolean
 }
 
 /** The bundled tool server beside this module, started with this Node (Electron runs it as Node). */
@@ -107,12 +110,16 @@ export class CollabWiring {
       store: options.store,
       clock: options.clock,
       ids: options.ids,
-      settings: () => this.settings.get(),
+      settings: () => this.enabled() ? this.settings.get() : COLLAB_OFF,
       facts: this.facts(),
       launch: launch === null ? null : { ...launch, endpoint: this.socket.endpoint },
-      scopedSecret: sessionId => this.reviewSecret(sessionId),
+      scopedSecret: sessionId => this.enabled() ? this.reviewSecret(sessionId) : Promise.resolve(undefined),
       onOutbox: options.onOutbox,
     })
+  }
+
+  public enabled(): boolean {
+    return !this.options.encryptionRequired()
   }
 
   /** The facts collaboration reads about this device's own sessions. */
@@ -144,6 +151,7 @@ export class CollabWiring {
     const { deviceId, clock, store, ids, log } = this.options
     const local: PeerRoute = {
       request: async (_deviceId, actor, request) => {
+        if (!this.enabled()) return { status: 403, body: { detail: { code: 'agent_scope_denied', message: COLLAB_ENCRYPTED } } }
         const response = await deps.api.request(agentCaller(actor), { method: request.method, path: apiPath(request), body: request.body ?? null })
         return { status: response.status, body: response.body }
       },
@@ -287,6 +295,7 @@ export class CollabWiring {
       gateway,
       facts,
       escalations,
+      available: () => this.enabled(),
       ...(review !== undefined ? { reviewWorker: (sessionId, target) => review.tracks(sessionId, target) } : {}),
       onOutbox: this.options.onOutbox,
       onError: (supervisionId, error) => log('debug', `supervision ${supervisionId}: ${message(error)}`),
@@ -300,7 +309,7 @@ export class CollabWiring {
 
   /** `collab.signal`: target signals the Server forwarded. */
   public async onSignals(signals: readonly Record<string, unknown>[]): Promise<{ accepted: number }> {
-    if (this.supervisions === null) return { accepted: 0 }
+    if (!this.enabled() || this.supervisions === null) return { accepted: 0 }
     const accepted = await this.supervisions.onSignals(signals.map(signal => ({
       supervisionId: String(signal.supervisionId),
       signal: {
@@ -336,6 +345,7 @@ export class CollabWiring {
   }
 
   public async a2aRequest(caller: ChannelCaller, method: string, body: unknown): Promise<TunnelApiResponse> {
+    if (!this.enabled()) return { status: 403, body: { detail: { code: 'agent_scope_denied', message: COLLAB_ENCRYPTED } } }
     const actor = caller.agent
     const envelope = object(body)
     const delegation = typeof envelope.delegation === 'string' ? envelope.delegation : undefined
@@ -364,6 +374,7 @@ export class CollabWiring {
   }
 
   private async callTool(secret: string, tool: string, args: Record<string, unknown>): Promise<ToolResult> {
+    if (!this.enabled()) return { ok: false, code: 'agent_scope_denied', message: COLLAB_ENCRYPTED }
     const sessionId = this.reviewTokens.get(secret)
     if (sessionId !== undefined && this.execution !== null) {
       if (tool !== 'aa_submit_review') return { ok: false, code: 'agent_scope_denied', message: 'This session can submit its own review result.' }
@@ -378,6 +389,7 @@ export class CollabWiring {
   }
 
   private pollReviews(): void {
+    if (!this.enabled()) return
     void this.execution?.tick().catch(error => this.options.log('debug', `review worker recovery: ${message(error)}`))
     void this.tools?.pollReviews().catch(error => this.options.log('debug', `review run recovery: ${message(error)}`))
   }
@@ -396,10 +408,14 @@ export function lazyCollabApi(wiring: CollabWiring): CollabClientApi {
     if (wiring.people === null) throw Object.assign(new Error('agent collaboration is starting'), { code: 'runtime_unavailable' })
     return wiring.people
   }
+  const writable = (): CollabPeopleApi => {
+    if (!wiring.enabled()) throw new CollabError('agent_scope_denied', COLLAB_ENCRYPTED)
+    return people()
+  }
   return {
     view: sessionId => people().view(sessionId),
-    supervise: (caller, sessionId, body) => people().supervise(caller, sessionId, body),
-    updateSupervision: (caller, sessionId, supervisionId, body) => people().updateSupervision(caller, sessionId, supervisionId, body),
+    supervise: (caller, sessionId, body) => writable().supervise(caller, sessionId, body),
+    updateSupervision: (caller, sessionId, supervisionId, body) => writable().updateSupervision(caller, sessionId, supervisionId, body),
   }
 }
 

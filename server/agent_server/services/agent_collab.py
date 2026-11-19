@@ -99,23 +99,34 @@ class CollabService:
         online: Callable[[str], Any],
         *,
         signals_enabled: Callable[[], bool] = lambda: True,
+        encryption_required: Callable[[], bool] = lambda: False,
     ) -> None:
         self._store = store
         self._broker = broker
         self._commands = commands
         self._online = online
-        self._signals_enabled = signals_enabled
+        self._encryption_required = encryption_required
+        self._signals_enabled = lambda: signals_enabled() and not encryption_required()
         self._tasks: set[asyncio.Task[Any]] = set()
 
     # -- account settings ---------------------------------------------------------------
 
+    def _require_available(self) -> None:
+        if self._encryption_required():
+            raise CollabError(403, "agent_scope_denied", "Agent collaboration is unavailable in encrypted mode")
+
     async def get_settings(self, user_id: str) -> AgentCollaborationSettings:
-        return collaboration_settings_from_stored(await self._store.get_agent_collaboration(user_id))
+        settings = collaboration_settings_from_stored(await self._store.get_agent_collaboration(user_id))
+        return AgentCollaborationSettings() if self._encryption_required() else settings
 
     async def update_settings(self, user_id: str, settings: AgentCollaborationSettings) -> AgentCollaborationSettings:
         """Store the settings, then hand them to every v3 device of the account that is online now; the others get
         them in ``LinkWelcome.desired.deviceSettings`` when they link again."""
 
+        if self._encryption_required() and (settings.enabled or settings.crossDevice or any(
+            instance.enabled or instance.crossDevice for instance in settings.instances.values()
+        )):
+            self._require_available()
         await self._store.set_agent_collaboration(user_id, settings.model_dump(mode="json"))
         device_ids = await self._store.list_link_device_ids(user_id)
         if device_ids:
@@ -128,7 +139,7 @@ class CollabService:
         """``LinkWelcome.desired.deviceSettings``: the device's own settings and the account's collaboration."""
 
         own = device_settings_from_stored(await self._store.get_connector_device_settings(device_id))
-        collaboration = await self._store.connector_agent_collaboration(device_id)
+        collaboration = AgentCollaborationSettings() if self._encryption_required() else await self._store.connector_agent_collaboration(device_id)
         return device_settings_payload(own, collaboration).model_dump(mode="json")
 
     async def _deliver_settings(self, device_id: str, settings: AgentCollaborationSettings) -> bool:
@@ -150,6 +161,7 @@ class CollabService:
         account allows its runtime instance to reach other devices.
         """
 
+        self._require_available()
         connector = await self._store.get_connector(device_id)
         user_id = connector.userId
         try:
@@ -204,6 +216,7 @@ class CollabService:
     async def authenticate(self, token: str) -> AgentPrincipal:
         """The principal of a delegation token; raises ``CollabError`` (401) when it no longer holds."""
 
+        self._require_available()
         claims = verify_signed_token(DELEGATION_TOKEN_KIND, token)
         if claims is None:
             raise CollabError(401, "agent_delegation_invalid", "the delegation token is invalid or expired")
@@ -231,6 +244,7 @@ class CollabService:
     async def review_admission(self, target_id: str, request: ReviewAdmissionRequest) -> ReviewAdmission:
         """Resolve current collaboration authority and the selected project for a review worker."""
 
+        self._require_available()
         denied = CollabError(403, "agent_scope_denied", "review is outside the current collaboration scope")
         connector = await self._store.get_connector(target_id)
         user_id = connector.userId

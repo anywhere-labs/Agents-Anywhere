@@ -143,6 +143,7 @@ export interface DeviceTunnelApiDeps {
   readonly blobs?: SessionBlobReader
   /** Agent collaboration routes (`sessions/{id}/collab*`); absent: they are 404. */
   readonly collab?: CollabClientApi
+  readonly agentCollaborationAvailable?: () => boolean
   readonly a2aReview?: (caller: ChannelCaller, method: string, body: unknown) => Promise<TunnelApiResponse>
   readonly prepareCollaborationCheckout?: (cwd: string, owner: string, input: CollaborationCheckout) => Promise<string>
 }
@@ -284,6 +285,9 @@ export class DeviceTunnelApi implements TunnelApi {
       const call = callOf(context)
       const route = parse(request)
       const [area, id] = route.segments
+      if (caller.agent != null && this.deps.agentCollaborationAvailable?.() === false) {
+        throw new TunnelHttpError(403, 'agent_scope_denied', 'Agent collaboration is unavailable in encrypted mode.')
+      }
       if (caller.agent != null && !agentRouteAllowed(route.method, route.segments)) {
         throw new TunnelHttpError(403, 'agent_route_denied', `${route.method} ${route.segments.join('/')} is not available to an Agent`)
       }

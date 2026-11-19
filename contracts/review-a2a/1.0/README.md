@@ -1,7 +1,7 @@
 # Anywhere review skill over A2A 1.0
 
 Connector exposes the authenticated Agent Card at `GET /api/v2/connectors/{connector_id}/a2a/agent-card.json` and accepts A2A 1.0 JSON-RPC at `POST /api/v2/connectors/{connector_id}/a2a/review`.
-The supported operations are SendMessage, GetTask, ListTasks and CancelTask. Requests name one of the registered projects of the receiving device. The ordinary HTTP endpoint accepts an Anywhere Agent delegation as bearer authentication. The encrypted route carries the same JSON-RPC object through the paired device channel. Its delegation proof is separate from the A2A message.
+The supported operations are SendMessage, GetTask, ListTasks and CancelTask. Requests name one of the registered projects of the receiving device. The ordinary HTTP endpoint accepts an Anywhere Agent delegation as bearer authentication. Review is unavailable when end-to-end encryption is required. The paired device channel cannot be used for Agent review. Existing review history remains readable.
 Optional streaming and push notifications are disabled. SendMessage with returnImmediately returns the persisted task before its worker executes.
 
 Initial SendMessage carries one A2A data part with `schema: "aa.review.request.v1"`, `runId`, `round`, `requirement`, `base`, `sha`, `runtimeId`, `cwd`, optional `projectId` and configured Git `remote`. The optional runtimeType selects claude (default) or pi. The receiver resolves the registered project and the declared local runtime instance. A continuation on the same task and context carries `schema: "aa.review.resume.v1"`. Native permission requests are answered via the existing authenticated user route.

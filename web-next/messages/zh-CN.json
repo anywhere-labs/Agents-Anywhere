@@ -2932,6 +2932,7 @@
     },
     "settings": {
       "title": "Agent 协作",
+      "encryptedUnavailable": "启用端到端加密时，Agent 协作不可用。",
       "description": "开启后，Agent 可以在同一账号的设备上新建、驱动和监督其他会话。默认全部关闭。",
       "enabled": "允许 Agent 协作",
       "enabledDescription": "账号总开关。关闭时，任何 Runtime 实例都不能使用协作工具。",

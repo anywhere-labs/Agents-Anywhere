@@ -23,4 +23,4 @@ Rules that hold for every tool:
 3. `aa_wait` waits at most 50 seconds (Pi and DSH time an MCP call out at 60 seconds); longer waits are supervision
    wake-ups.
 4. Targets are reached through the client API: in-process on the same device, through the Server with a delegation
-   token in normal mode, through a Noise channel as an `agent` client in encrypted mode (never downgraded).
+   token in normal mode. Agent collaboration tools are unavailable when end-to-end encryption is required.

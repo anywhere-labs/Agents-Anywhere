@@ -35,6 +35,7 @@ export interface SupervisionServiceDeps {
   readonly onError?: (supervisionId: string, error: unknown) => void
   /** How often local targets are polled and stalls checked; default 5 seconds. */
   readonly tickMs?: number
+  readonly available?: () => boolean
   readonly reviewWorker?: (supervisorSessionId: string, target: SessionAddress) => Promise<boolean>
 }
 
@@ -158,7 +159,7 @@ export class SupervisionService {
 
   /** One pass: polls local targets, reconciles remote targets after reconnect, and delivers due wakes. */
   public async tick(): Promise<void> {
-    if (this.ticking) return
+    if (this.ticking || this.deps.available?.() === false) return
     this.ticking = true
     try {
       const liveSupervisions = (await this.deps.store.collab.liveSupervisions())
