@@ -209,8 +209,8 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     const root = createRoot(container)
     unmount = () => root.unmount()
     await act(async () => { root.render(createElement(Component, { ...props, wide: true })) })
-    const button = (text: string) => {
-      const element = Array.from((dialog() ?? document).querySelectorAll('button')).find(item => item.textContent === text || item.getAttribute('aria-label') === text)
+    const button = (text: string, scope: ParentNode = dialog() ?? document) => {
+      const element = Array.from(scope.querySelectorAll('button')).find(item => item.textContent === text || item.getAttribute('aria-label') === text)
       assert.ok(element, `Missing button: ${text}`)
       return element
     }
@@ -656,12 +656,29 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     await act(async () => { button('重新检查').click() })
     assert.equal(dialog()!.getAttribute('aria-label'), 'Agents Anywhere')
 
+    const logoutCalls = () => calls.filter(call => call.endpoint.endsWith('/logout')).length
+    const logoutBefore = logoutCalls()
+    await act(async () => { button('退出登录').click() })
+    const logoutDialog = () => document.querySelector<HTMLElement>('[role="dialog"][aria-label="退出登录"]')
+    assert.match(logoutDialog()!.textContent!, /本机连接将停止/)
+    assert.equal(logoutCalls(), logoutBefore, 'Opening confirmation must preserve the connection')
+    await act(async () => { button('取消', logoutDialog()!).click() })
+    assert.equal(logoutDialog(), null)
+    assert.equal(logoutCalls(), logoutBefore, 'Cancelling must preserve the connection')
+    await act(async () => { button('退出登录').click() })
+    await act(async () => { button('关闭退出登录确认', logoutDialog()!).click() })
+    assert.equal(logoutDialog(), null)
+    assert.equal(logoutCalls(), logoutBefore)
     failLogout = true
     await act(async () => { button('退出登录').click() })
+    await act(async () => { button('确认退出', logoutDialog()!).click() })
     assert.equal(dialog()!.getAttribute('aria-label'), 'Agents Anywhere')
-    assert.match(dialog()!.querySelector('[role="alert"]')!.textContent!, /退出失败/)
+    assert.match(logoutDialog()!.querySelector('[role="alert"]')!.textContent!, /退出失败/)
+    assert.equal(logoutCalls(), logoutBefore + 1)
     failLogout = false
-    await act(async () => { button('退出登录').click() })
+    await act(async () => { button('确认退出', logoutDialog()!).click() })
+    assert.equal(logoutDialog(), null)
+    assert.equal(logoutCalls(), logoutBefore + 2)
     assert.equal(dialog()!.getAttribute('aria-label'), 'Agents Anywhere')
     assert.equal(button('登录 Agents Anywhere Cloud').disabled, false)
     assert.doesNotMatch(dialog()!.textContent!, /BensonWang|benson@example.test|退出登录/)

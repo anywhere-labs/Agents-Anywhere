@@ -1,6 +1,6 @@
 import { translateMessage, type Translate } from '../../locales.js'
 import { useState } from 'react'
-import { Button, StateDot, type StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, Modal, StateDot, type StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
 import { Globe, User } from 'lucide-react'
 import type { AccountProfile, OnboardingHostApi, OnboardingSnapshot } from '../../../contracts/index.js'
 import { resolveWebAppUrl } from '../../../contracts/web-address.js'
@@ -34,6 +34,7 @@ export function AccountPanel({ t, host, state, snapshot, account }: {
 }) {
   const [failedAvatar, setFailedAvatar] = useState<string | null>(null)
   const [loggingOut, setLoggingOut] = useState(false)
+  const [confirmLogout, setConfirmLogout] = useState(false)
   const [loginUrl, setLoginUrl] = useState<string | null>(null)
   const [onboardingUrl, setOnboardingUrl] = useState<string | null>(null)
   const status = connectorStatus(snapshot, state.readError, t)
@@ -94,13 +95,24 @@ export function AccountPanel({ t, host, state, snapshot, account }: {
         onClick={() => window.open(webAppUrl, '_blank', 'noopener,noreferrer')}
       >{t('打开 Web')}</Button>
       <MobileConnection t={t} host={host} disabled={state.busy || Boolean(state.readError) || Boolean(snapshot.accountExpired)} />
-      <Button variant="ghost" className={css.button} disabled={state.busy} onClick={() => void state.run(async () => {
-        setLoggingOut(true)
-        try { await host.logout() } finally { setLoggingOut(false) }
-      })}>
+      <Button variant="ghost" className={css.button} disabled={state.busy} aria-haspopup="dialog"
+        onClick={() => { state.clearError(); setConfirmLogout(true) }}>
         {loggingOut ? t('正在退出…') : t('退出登录')}
       </Button>
     </div>
+    <Modal open={confirmLogout} title={t('退出登录')} closeLabel={t('关闭退出登录确认')}
+      description={t('退出登录后，本机连接将停止。确定要退出登录吗？')}
+      onClose={() => { if (!state.busy) setConfirmLogout(false) }}
+      footer={<>
+        <Button variant="outline" data-modal-autofocus disabled={state.busy}
+          onClick={() => setConfirmLogout(false)}>{t('取消')}</Button>
+        <Button variant="primary" disabled={state.busy} onClick={() => void state.run(async () => {
+          setLoggingOut(true)
+          try { await host.logout(); setConfirmLogout(false) } finally { setLoggingOut(false) }
+        })}>{loggingOut ? t('正在退出…') : t('确认退出')}</Button>
+      </>}>
+      {state.error ? <p className={css.error} role="alert">{translateMessage(t, state.error)}</p> : null}
+    </Modal>
     {state.error ? <p className={css.error} role="alert">{translateMessage(t, state.error)}</p> : null}
   </section>
 }
