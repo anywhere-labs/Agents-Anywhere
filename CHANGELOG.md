@@ -25,6 +25,9 @@
 
 ### Android
 
+- v3 Android 原型的会话页右上角新增「文件与终端」入口，与会话菜单共用一个玻璃胶囊，可在面板内切换文件和终端演示页。（[96254007](https://github.com/anywhere-labs/Agents-Anywhere/commit/96254007)）
+
+- v3 Android 原型的面板内卡片不再透出底层内容，模糊程度调到最清透时仍保留轻微模糊，关闭面板玻璃后开关滑块也使用不透明外观。（[96254007](https://github.com/anywhere-labs/Agents-Anywhere/commit/96254007)）
 - 没发出去的消息下方显示「发送失败」，点开可以查看原因并删除这条消息，不会再一直留在对话里。（[#660](https://github.com/anywhere-labs/Agents-Anywhere/pull/660)）
 - 打开过文件后再进入会话，会直接显示对话，不再先停在「文件」页。（[#661](https://github.com/anywhere-labs/Agents-Anywhere/pull/661)）
 - 在小米 15、小米 17 等已升级 HyperOS 4 的手机上，展开推理内容不再闪退；推理正文改用与其他文字相同的常规字重。（[#662](https://github.com/anywhere-labs/Agents-Anywhere/pull/662)）
