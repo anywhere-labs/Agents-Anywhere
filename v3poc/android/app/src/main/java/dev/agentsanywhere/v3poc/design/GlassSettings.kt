@@ -39,7 +39,9 @@ class GlassSettings(private val context: Context) {
      * blur and a faint tint, mostly refraction; 1: the strongest blur and tint (close to iOS's most opaque setting);
      * default the middle.
      */
-    var frost by mutableFloatStateOf(prefs.getFloat("frost", 0.5f)); private set
+    private var frostSaved by mutableFloatStateOf(prefs.getFloat("frost", 0.5f).takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 0.5f)
+    var frostOverride by mutableStateOf<Float?>(null)
+    val frost: Float get() = frostOverride ?: frostSaved
     /**
      * Glass on the sheets and menus (「面板和菜单的玻璃」). Separate from the main switch because it costs the most power:
      * the whole screen (sidebar + conversation) is recorded and a sheet-sized area blurred every frame. Off: sheets and
@@ -80,6 +82,11 @@ class GlassSettings(private val context: Context) {
 
     fun updateEnabled(value: Boolean) { debugOverride = null; enabled = value; prefs.edit().putBoolean("enabled", value).apply() }
     fun updateSheetGlass(value: Boolean) { sheetGlassOverride = null; sheetGlassSaved = value; prefs.edit().putBoolean("sheetGlass", value).apply() }
-    fun updateFrost(value: Float) { frost = value.coerceIn(0f, 1f); prefs.edit().putFloat("frost", frost).apply() }
+    fun updateFrost(value: Float) {
+        if (!value.isFinite()) return
+        frostOverride = null
+        frostSaved = value.coerceIn(0f, 1f)
+        prefs.edit().putFloat("frost", frostSaved).apply()
+    }
     fun updateIgnorePowerSaver(value: Boolean) { ignorePowerSaver = value; prefs.edit().putBoolean("ignorePowerSaver", value).apply() }
 }

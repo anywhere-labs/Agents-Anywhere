@@ -4,6 +4,8 @@ v3 架构验证的 Android 部分，行为和外观照着 iOS PoC（[`../ios/`](
 
 这个 PoC 不联网，用 `MockSessionsClient` 回放 [`../fixtures/`](../fixtures/)，代替电脑上的 Connector。
 
+会话页右上角的文件夹按钮沿用 iOS 正式端的位置和图标，与「…」会话菜单共用一个玻璃胶囊，两个图标独立点击、按压时整组等比放大；文件夹打开「文件与终端」统一面板；两项在面板内切换。目前仅展示当前会话目录及演示提示，未接入文件读取或终端服务。
+
 ## 目录
 
 | 路径 | 内容 |
@@ -44,7 +46,7 @@ ANDROID_SERIAL=emulator-5556 tools/shot.sh /tmp/shot.png
 ANDROID_SERIAL=emulator-5556 PYTHON=/path/to/python-with-pillow tools/compare.sh   # 7 张和 iOS 的并排对照
 ```
 
-模拟器（headless）：`emulator -avd <名字> -no-window -no-audio -no-snapshot-save`。脚本里用 `am start -S`，会先杀掉进程，**不要对别人正在用的设备运行**。
+检查玻璃效果时使用可见模拟器：`emulator -avd <名字> -gpu host -no-audio -no-snapshot-save`，不要使用 `-no-window` 或 CPU 软件渲染来判断外观。脚本里用 `am start -S`，会先杀掉进程，**不要对别人正在用的设备运行**。
 
 ## 调试启动参数
 
@@ -53,7 +55,7 @@ ANDROID_SERIAL=emulator-5556 PYTHON=/path/to/python-with-pillow tools/compare.sh
 | 参数 | 作用 |
 | --- | --- |
 | `--ez drawer true` | 启动时打开侧栏抽屉 |
-| `--es sheet options` | 渲染包就绪后打开输入框的「对话选项」Sheet |
+| `--es sheet options\|account` | 渲染包就绪后打开「对话选项」或「账号」Sheet |
 | `--ez focus true` | 聚焦输入框，弹出键盘 |
 | `--es session s-unread` | 先打开哪个会话（默认是第一个运行中的会话） |
 | `--ei auto_approve_seconds 8` | 出现审批 n 秒后自动选第一个允许选项 |
@@ -64,6 +66,8 @@ ANDROID_SERIAL=emulator-5556 PYTHON=/path/to/python-with-pillow tools/compare.sh
 | `--ei cache_items 3000` | 会话缓存每个会话保留的条数（默认 300），同 iOS 的 `AA_POC_CACHE_ITEMS` |
 | `--ei crash_renderer_at 20` | 就绪 n 秒后让渲染进程崩溃（`chrome://crash`），检查恢复 |
 | `--es glass blur\|tint` | 临时覆盖毛玻璃开关 |
+| `--es sheet_glass on\|off` | 仅本次启动覆盖「面板和菜单的玻璃」 |
+| `--ef frost 0.5` | 仅本次启动覆盖「模糊程度」（0…1）；手动拖动滑块后保存实际值并清除覆盖 |
 | `--ez open_sheet true` | 打开「打开文件」Sheet |
 | `--es web_glass window\|behind\|bgafter\|bgaftert` | 窗口级模糊的评估代码（只用于评估，方向已停止） |
 | `--es web_layer both\|hw\|preraster\|none` | WebView 的绘制方式（默认 both），用于玻璃录制的对比 |
@@ -116,14 +120,14 @@ interface SessionsClient {
 
 外观和交互以 iOS PoC 为准，数值在 [`../design/tokens.json`](../design/tokens.json)，组件对照和做不到的地方在 [`../design/README.md`](../design/README.md)。要点：
 
-- 不用 Material 3 组件和水波纹；按下效果是变暗或缩小，和 iOS 一样。
+- 主体控件使用自己的设计系统、没有水波纹；普通项按下变暗，玻璃控件等比放大并阻尼回弹。当前「模糊程度」仍使用 Material 3 Slider。
 - 图标是 iOS 资源里的同一份 Lucide SVG（`tools/svg2compose.py` 转换）；字体用系统字体和 iOS 的字号，Agents Anywhere 字标用同一个 Caveat 字体文件。
 - 抽屉、Sheet、菜单、输入框、审批区、「到底部」、Toast 都是照着 iOS 手写的，弹簧参数从 SwiftUI 的 `response` / `dampingFraction` 换算。
 - 唯一保留的 Android 习惯：返回手势（预测性返回）依次关闭 Sheet、抽屉、键盘。
 - 毛玻璃：WebView 先画进自己的硬件层（并开 `offscreenPreRaster`），Kyant backdrop 录制它，顶栏、输入框、审批区、「到底部」在上面模糊 + 折射（Android 13+）；顶部还有和 iOS 一样的模糊渐变带，底部不模糊。原生内容上方（侧栏底部栏）用 RenderEffect 模糊。只有真正模糊的地方才半透明，其余情况（开关关、省电、Android 12 以下、系统提高对比度或关闭动画）一律不透明实色。试过的方案和取舍见 design README。
 - 圆角：非胶囊的圆角矩形都是连续曲率（Kyant shapes，等同 SwiftUI `.continuous`）；抽屉卡片的圆角取屏幕自己的圆角。
 - 对比度：玻璃上的文字按最坏下层算（`tools/contrast.py`），只调颜色。
-- 截图对照：`tools/compare.sh` 生成 `.local-dev/v3poc/android/compare/NN-*.png`（左 iOS、右 Android，同一逻辑宽度）。剩下的差异：字体（Roboto / Noto CJK 与 SF / 苹方的字宽）、顶边是遮盖而不是模糊、玻璃没有折射、系统状态栏和导航条高度不同、Pixel 9 比 iPhone 高 49 dp（Sheet 中档按比例所以位置略低）、iOS 截图用的是旧渲染包（线程内容的折叠方式不同）。
+- 截图对照：`tools/compare.sh` 生成 `.local-dev/v3poc/android/compare/NN-*.png`（左 iOS、右 Android，同一逻辑宽度）。剩下的差异：字体（Roboto / Noto CJK 与 SF / 苹方的字宽）、Android 12 没有透镜折射、系统状态栏和导航条高度不同、Pixel 9 比 iPhone 高 49 dp（Sheet 中档按比例所以位置略低）、iOS 截图用的是旧渲染包（线程内容的折叠方式不同）。
 
 ## 压力测试
 
@@ -145,7 +149,7 @@ python3 -I v3poc/android/stress/compare.py .local-dev/v3poc/android/stress/a1-pr
 - **左边缘是系统返回手势**。抽屉只能在屏幕中段 200 dp 的排除区里从边缘拖出，其他位置从左边缘拖是系统返回；顶栏的菜单按钮始终可用。
 - **`onTrimMemory` 在 Android 14 起不再给前台 App 发 `RUNNING_*` 级别**，前台内存紧张时 App 可能来不及收到信号；渲染进程被回收后的 `warning` 是兜底。
 - **启动时间受 16 MB HTML 影响**：第一次启动（没有 V8 代码缓存）JS 解析执行约 1.1 秒，之后约 0.25 秒；低端机会更慢。
-- 模拟器是 CPU 软件渲染，帧时间和耗电只能横向比较，不能当真机数据。
+- 模拟器须使用 host GPU 验证玻璃；模拟器帧时间不能代替真机数据，更不能用来推算耗电。
 
 ## 已验证
 
@@ -176,6 +180,10 @@ python3 -I v3poc/android/stress/compare.py .local-dev/v3poc/android/stress/a1-pr
 - 真机：帧时间、耗电、Kyant 录制 WebView 在不同 GPU / WebView 版本上是否同样不闪烁，低端机和国产 ROM 上的 WebView 版本。模拟器的帧时间受宿主负载影响很大（同一个包在宿主空闲时 p50 24 ms，满载时 150–950 ms）。
 - TalkBack、外接键盘、平板 / 折叠屏布局（只按手机做）。
 - 照片 / 文件选择器只调起了系统选择器，附件不会上传（演示提示）。
-- 回退、分叉、打开文件的原生处理写了，压测和截图里没有点到全部按钮。
+- 回退、分叉仍只弹演示提示；打开文件只展示路径并提供复制，不是完整文件浏览。
 - 1.3 倍系统字体下的截图、TalkBack 朗读顺序。
 - 压测只跑完 protocol 档，burst 中途停止，open3000 / kill / memwarn 没跑（见 `stress/RESULTS.md`）。
+
+## 交接收尾
+
+见 [`../HANDOFF.md`](../HANDOFF.md) 的完成状态和 [`validation/HANDOFF-2026-11-19.md`](validation/HANDOFF-2026-11-19.md) 的本轮验证记录。检查设计源文件与生成文件是否一致：`python3 -I v3poc/android/tools/tokens2kotlin.py --check`。UI 验证不运行 `stress/` 的 WebView 压测脚本。

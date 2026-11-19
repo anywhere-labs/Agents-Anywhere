@@ -2,7 +2,6 @@ package dev.agentsanywhere.v3poc.design
 
 import android.os.Build
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.spring
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
@@ -41,25 +40,26 @@ import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.lens
+import com.kyant.backdrop.effects.blur
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-private val TrackWidth = 63.dp
-private val TrackHeight = 28.dp
-private val ThumbWidth = 37.dp
-private val ThumbHeight = 24.dp
-private val ThumbInset = 2.dp
+private val TrackWidth = AAMetrics.switchTrackWidth
+private val TrackHeight = AAMetrics.switchTrackHeight
+private val ThumbWidth = AAMetrics.switchThumbWidth
+private val ThumbHeight = AAMetrics.switchThumbHeight
+private val ThumbInset = AAMetrics.switchThumbInset
 /** While held, the thumb grows uniformly to this scale and turns into a clear glass lens over the track. */
-private const val HeldScale = 1.5f
-private val ThumbSpring = spring<Float>(dampingRatio = 0.68f, stiffness = 520f)
+private const val HeldScale = AAMetrics.switchHeldScale
+private val ThumbSpring = AAMotion.switchThumb
 
 /**
  * The iOS 26 switch: a 63×28 track with a capsule thumb (37×24). Touching it grows the thumb into a clear glass lens
  * (uniform scale, damped like the other liquid controls) that refracts the track under it; it can be dragged, and the
  * track colour follows the thumb's position. Releasing shrinks it back to a white capsule. Tap toggles; a drag decides
  * by where the thumb is let go; a vertical drag is left to the scrolling parent.
- * Android 13+ draws the lens (RuntimeShader); below that the held thumb is a translucent white capsule.
+ * Android 13+ with glass enabled draws the lens (RuntimeShader); otherwise the thumb stays opaque white.
  */
 @Composable
 fun AASwitch(checked: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit) {
@@ -74,7 +74,7 @@ fun AASwitch(checked: Boolean, enabled: Boolean = true, onChange: (Boolean) -> U
     LaunchedEffect(checked) { if (!dragging) position.animateTo(if (checked) 1f else 0f, ThumbSpring) }
     val offTrack = c.fillTertiary.copy(alpha = 0.32f)
     val onTrack = c.green
-    val lensed = Build.VERSION.SDK_INT >= 33
+    val lensed = Build.VERSION.SDK_INT >= 33 && LocalGlassMode.current == GlassMode.Blur
     val trackBackdrop = rememberLayerBackdrop()
 
     Box(
@@ -150,6 +150,7 @@ fun AASwitch(checked: Boolean, enabled: Boolean = true, onChange: (Boolean) -> U
                     shape = { thumbShape },
                     effects = {
                         val p = held.value
+                        blur(0.5f)
                         if (p > 0.02f) lens(10.dp.toPx() * p, 16.dp.toPx() * p, chromaticAberration = true)
                     },
                     highlight = { edgeHighlight(dark) },
@@ -161,7 +162,7 @@ fun AASwitch(checked: Boolean, enabled: Boolean = true, onChange: (Boolean) -> U
         } else {
             Box(
                 thumb.shadow(3.dp, thumbShape).drawBehind {
-                    drawRoundRect(Color.White.copy(alpha = 1f - 0.4f * held.value), cornerRadius = CornerRadius(size.height / 2))
+                    drawRoundRect(Color.White, cornerRadius = CornerRadius(size.height / 2))
                 },
             )
         }

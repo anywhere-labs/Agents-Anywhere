@@ -24,7 +24,6 @@ class AAColors(
     val glassTintBlur: Color,
     val liquidButtonSurface: Color,
     val liquidButtonLift: Color,
-    /** Buttons on another glass (approval dock, sheet, toolbar over the top-edge blur): measured on iOS. */
     val liquidNestedButtonSurface: Color,
     val liquidNestedButtonLift: Color,
     val liquidPanelLift: Color,
@@ -87,7 +86,7 @@ val AALightColors = AAColors(
     glassPressed = Color(0x0F000000),
     sheetBackground = Color(0xF0EEEEF0),
     sheetBackgroundOpaque = Color(0xFFE7E7E9),
-    sheetCard = Color(0xEBFFFFFF),
+    sheetCard = Color(0xFFFFFFFF),
     sheetScrim = Color(0x33000000),
     menuBackground = Color(0xE6F7F7F7),
     toolbarEdgeTint = Color(0xFFFFFFFF),
@@ -134,7 +133,7 @@ val AADarkColors = AAColors(
     glassPressed = Color(0x1AFFFFFF),
     sheetBackground = Color(0xF21C1C1E),
     sheetBackgroundOpaque = Color(0xFF1C1C1E),
-    sheetCard = Color(0xEB2B2B2B),
+    sheetCard = Color(0xFF2B2B2B),
     sheetScrim = Color(0x66000000),
     menuBackground = Color(0xE6252525),
     toolbarEdgeTint = Color(0xFF000000),
@@ -265,8 +264,13 @@ object AAMetrics {
     val spinner: Dp = 14.dp
     const val pressedScale: Float = 0.96f
     const val pressedOpacity: Float = 0.4f
-    /** Glass under a finger grows by about this much on its longer side (a 44 dp circle: ≈ +20 %). */
     val liquidPressGrow: Dp = 10.dp
+    val switchTrackWidth: Dp = 63.dp
+    val switchTrackHeight: Dp = 28.dp
+    val switchThumbWidth: Dp = 37.dp
+    val switchThumbHeight: Dp = 24.dp
+    val switchThumbInset: Dp = 2.dp
+    const val switchHeldScale: Float = 1.5f
 }
 
 /** Springs as SwiftUI writes them (response, dampingRatio) or `.smooth(duration:)`. Unused fields are 0. */
@@ -281,10 +285,8 @@ data class AAMotionSpec(
 )
 
 object AAMotion {
-    /** Liquid press: underdamped, so the glass overshoots slightly as it swells and as it settles back. */
-    val liquidPress: androidx.compose.animation.core.SpringSpec<Float> =
-        androidx.compose.animation.core.spring(dampingRatio = 0.55f, stiffness = 450f)
-
+    val liquidPress: androidx.compose.animation.core.SpringSpec<Float> = androidx.compose.animation.core.spring(dampingRatio = 0.55f, stiffness = 450.0f)
+    val switchThumb: androidx.compose.animation.core.SpringSpec<Float> = androidx.compose.animation.core.spring(dampingRatio = 0.68f, stiffness = 520.0f)
     val drawerSpring = AAMotionSpec(response = 0.34f, dampingRatio = 0.9f, projectionSeconds = 0.2f, threshold = 0.5f)
     val sheetSpring = AAMotionSpec(response = 0.42f, dampingRatio = 0.88f)
     val composerExpand = AAMotionSpec(smooth = 0.24f)

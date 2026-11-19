@@ -61,7 +61,12 @@ fun Root(app: App, ui: UiState) {
     AATheme(dark) {
         // Launch overrides apply once; the settings switches clear them (re-applying them on every recomposition made
         // the switches look dead while the app was still running from a debug launch).
-        remember { app.glass.debugOverride = DebugLaunch.glass; app.glass.sheetGlassOverride = DebugLaunch.sheetGlass?.let { it != "off" }; true }
+        remember {
+            app.glass.debugOverride = DebugLaunch.glass
+            app.glass.sheetGlassOverride = DebugLaunch.sheetGlass?.let { it != "off" }
+            app.glass.frostOverride = DebugLaunch.frost
+            true
+        }
         val mode = app.glass.mode
         // The thread (WebView) is recorded once, here, for every glass that stands over it: the conversation page's
         // controls and the sheets drawn above the page. Null when glass is off: nothing is recorded.
@@ -78,6 +83,9 @@ fun Root(app: App, ui: UiState) {
             // `overlays` for as long as they are composed.
             val overlays = remember { dev.agentsanywhere.v3poc.design.OverlayCount() }
             val recordScreen = sheetGlass && overlays.value > 0
+            LaunchedEffect(recordScreen) {
+                dev.agentsanywhere.v3poc.bridge.StressMetrics.event("screenRecording", mapOf("enabled" to recordScreen))
+            }
             Box(Modifier.fillMaxSize()) {
                 Box(Modifier.fillMaxSize().then(if (recordScreen) Modifier.layerBackdrop(screen) else Modifier)) {
                     SidebarDrawer(
@@ -93,6 +101,7 @@ fun Root(app: App, ui: UiState) {
                     dev.agentsanywhere.v3poc.design.LocalWebBackdrop provides if (sheetGlass) screen else null,
                 ) {
                     OptionsSheet(controller, ui)
+                    WorkspaceSheet(controller, ui)
                     OpenSheet(controller)
                     DemoSheet(ui)
                     AccountSheet(controller, ui, app)

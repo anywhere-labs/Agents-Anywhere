@@ -14,11 +14,12 @@ class UiState {
     /** Pairing / account placeholders: title and message. */
     var demoSheet by mutableStateOf<Pair<String, String>?>(null)
     var accountSheet by mutableStateOf(false)
+    var workspaceSheet by mutableStateOf(false)
     var menu by mutableStateOf<MenuRequest?>(null)
     var draft by mutableStateOf(TextFieldValue(""))
     var composerFocused by mutableStateOf(false)
     /** Ask the composer to take (true) or drop (false) focus. */
     var focusRequest by mutableStateOf<Boolean?>(null)
 
-    val anySheet: Boolean get() = optionsSheet || demoSheet != null || accountSheet
+    val anySheet: Boolean get() = optionsSheet || demoSheet != null || accountSheet || workspaceSheet
 }

@@ -1,6 +1,7 @@
 package dev.agentsanywhere.v3poc.design
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
@@ -10,6 +11,7 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -31,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
@@ -220,7 +223,7 @@ fun Modifier.glass(shape: Shape, kind: GlassKind = GlassKind.Regular, pressed: F
         // The rim goes first in the chain so it draws last: on top of Kyant's top/bottom highlight, as on iOS (grey ring
         // outside, white highlight just inside it).
         return this.then(Modifier.rim(shape, dark)).drawBackdrop(
-            backdrop = web!!,
+            backdrop = web,
             shape = { shape },
             // Glass placed on this glass (buttons on the approval dock, controls in a sheet) samples this glass as
             // drawn, not the thread under it: `exportTo` records it and the caller provides it as LocalWebBackdrop.
@@ -230,8 +233,10 @@ fun Modifier.glass(shape: Shape, kind: GlassKind = GlassKind.Regular, pressed: F
                 // Like iOS, bigger glass blurs more: the radius follows the component's size (√(w·h), so a wide
                 // composer sits between a 44 dp button and the approval dock), scaled by 「模糊程度」.
                 val visible = blurSize?.invoke() ?: size
-                val radius = glassBlurRadius(visible.width, visible.height, this) * frost
-                if (radius >= 0.5f) blur(radius)
+                // Even the clear endpoint samples a genuinely blurred backdrop; never draw translucent
+                // glass with blur completely disabled. Half a physical pixel keeps this endpoint clear.
+                val radius = (glassBlurRadius(visible.width, visible.height, this) * frost).coerceAtLeast(0.5f)
+                blur(radius)
                 if (Build.VERSION.SDK_INT >= 33) {
                     when {
                         dialog -> lens(24.dp.toPx(), 48.dp.toPx(), depthEffect = true)
@@ -261,7 +266,6 @@ fun Modifier.glass(shape: Shape, kind: GlassKind = GlassKind.Regular, pressed: F
 
     val blurLayer = if (nativeBlur) rememberGraphicsLayer() else null
     var origin by remember { mutableStateOf(Offset.Zero) }
-    val tint = if (nativeBlur) translucent else solid
     return this
         .then(if (nativeBlur) Modifier.onGloballyPositioned { origin = it.positionInRoot() } else Modifier)
         .drawBehind {
@@ -279,7 +283,8 @@ fun Modifier.glass(shape: Shape, kind: GlassKind = GlassKind.Regular, pressed: F
                 clipPath(clip) { drawLayer(blurLayer) }
             }
             clipPath(clip) {
-                drawRect(tint)
+                // A source may not have recorded its first frame yet: stay opaque until it exists.
+                drawRect(if (blurLayer != null && src != null) translucent else solid)
                 if (pressed > 0f) drawRect(c.glassPressed.copy(alpha = c.glassPressed.alpha * pressed))
             }
         }
@@ -413,6 +418,30 @@ fun GlassCircleButton(symbol: String, label: String, size: Dp = AAMetrics.toolba
             .glass(CircleShape, pressed = if (pressed) 1f else 0f),
         contentAlignment = Alignment.Center,
     ) { AASymbol(symbol, size = iconSize) }
+}
+
+/** One glass surface and press spring for adjacent toolbar actions, as in iOS ToolbarItemGroup. */
+@Composable
+fun GlassToolbarGroup(content: @Composable RowScope.(MutableInteractionSource) -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val progress by animateFloatAsState(if (pressed) 1f else 0f, AAMotion.liquidPress, label = "toolbarGroupPress")
+    Row(
+        Modifier.graphicsLayer { liquidScale(progress) }
+            .glass(RoundedCornerShape(50), pressed = if (pressed) 1f else 0f),
+        verticalAlignment = Alignment.CenterVertically,
+    ) { content(interaction) }
+}
+
+/** A separate accessible hit target inside a shared glass toolbar, without its own rim or background. */
+@Composable
+fun GlassToolbarAction(symbol: String, label: String, interaction: MutableInteractionSource,
+                       modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Box(
+        modifier.size(AAMetrics.toolbarButtonDiameter)
+            .pressable(Press.None, label = label, interaction = interaction, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) { AASymbol(symbol, size = AAMetrics.toolbarIcon) }
 }
 
 /** A glass capsule label (到底部, toasts). */

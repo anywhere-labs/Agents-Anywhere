@@ -80,6 +80,8 @@ import dev.agentsanywhere.v3poc.design.AAText
 import dev.agentsanywhere.v3poc.design.GlassButton
 import dev.agentsanywhere.v3poc.design.GlassCapsule
 import dev.agentsanywhere.v3poc.design.GlassCircleButton
+import dev.agentsanywhere.v3poc.design.GlassToolbarGroup
+import dev.agentsanywhere.v3poc.design.GlassToolbarAction
 import dev.agentsanywhere.v3poc.design.GlassMode
 import dev.agentsanywhere.v3poc.design.LocalGlassMode
 import dev.agentsanywhere.v3poc.design.MenuItem
@@ -371,7 +373,7 @@ half4 main(float2 p) {
 }
 """
 
-/** iOS `ChatPageToolbar`: glass sidebar button, leading title + agent · device · status, glass menu button. */
+/** iOS toolbar layout: sidebar, title/status, workspace entry, session menu. */
 @Composable
 private fun Toolbar(title: String, subtitle: String, controller: SessionController, deviceOnline: Boolean, ui: UiState,
                     statusTop: androidx.compose.ui.unit.Dp, onMenu: () -> Unit) {
@@ -395,12 +397,19 @@ private fun Toolbar(title: String, subtitle: String, controller: SessionControll
             }
         }
         Spacer(Modifier.size(AAMetrics.toolbarTitleGap))
-        GlassCircleButton("ellipsis", "会话菜单", modifier = Modifier.onGloballyPositioned { menuBounds = it.boundsInRoot() }) {
-            ui.menu = MenuRequest(buildList {
-                add(MenuItem("会话详情", "info.circle") { controller.showToast("演示：会话详情") })
-                add(MenuItem("复制会话 ID", "number") { controller.copy(controller.selectedId ?: ""); controller.showToast("已复制") })
-                if (controller.isRunning) add(MenuItem("停止", "CircleStop", destructive = true, divider = true) { controller.stop() })
-            }, menuBounds, alignEnd = true)
+        GlassToolbarGroup { interaction ->
+            GlassToolbarAction("folder", "文件与终端", interaction) {
+                ui.focusRequest = false
+                ui.workspaceSheet = true
+            }
+            GlassToolbarAction("ellipsis", "会话菜单", interaction,
+                modifier = Modifier.onGloballyPositioned { menuBounds = it.boundsInRoot() }) {
+                ui.menu = MenuRequest(buildList {
+                    add(MenuItem("会话详情", "info.circle") { controller.showToast("演示：会话详情") })
+                    add(MenuItem("复制会话 ID", "number") { controller.copy(controller.selectedId ?: ""); controller.showToast("已复制") })
+                    if (controller.isRunning) add(MenuItem("停止", "CircleStop", destructive = true, divider = true) { controller.stop() })
+                }, menuBounds, alignEnd = true)
+            }
         }
     }
 }

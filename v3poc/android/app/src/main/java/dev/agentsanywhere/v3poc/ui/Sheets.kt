@@ -308,7 +308,6 @@ fun AccountSheet(controller: SessionController, ui: UiState, app: App) {
                 Box(Modifier.padding(start = 16.dp).fillMaxWidth().height(0.5.dp).background(AA.colors.separator))
                 SwitchRow("省电模式下也开启", glass.ignorePowerSaver, enabled = glass.supported && glass.enabled) { glass.updateIgnorePowerSaver(it) }
                 Box(Modifier.padding(start = 16.dp).fillMaxWidth().height(0.5.dp).background(AA.colors.separator))
-                Box(Modifier.padding(start = 16.dp).fillMaxWidth().height(0.5.dp).background(AA.colors.separator))
                 SwitchRow("面板和菜单的玻璃", glass.sheetGlass, enabled = glass.supported && glass.enabled) { glass.updateSheetGlass(it) }
                 Box(Modifier.padding(start = 16.dp).fillMaxWidth().height(0.5.dp).background(AA.colors.separator))
                 FrostRow(glass.frost, enabled = glass.mode == GlassMode.Blur) { glass.updateFrost(it) }
@@ -317,8 +316,8 @@ fun AccountSheet(controller: SessionController, ui: UiState, app: App) {
                 !glass.supported -> "Android 12 以下没有实时模糊（RenderEffect），玻璃控件固定为不透明实色。"
                 glass.accessibilitySolid -> "系统开启了提高对比度或关闭了动画：玻璃控件改用不透明实色。"
                 glass.pausedForPowerSaver -> "省电模式下已暂停：玻璃控件改用不透明实色，不再录制背景。"
-                glass.mode == GlassMode.Blur && !glass.sheetGlass -> "已开启：顶栏、输入框、审批区会模糊并折射背后的对话内容。面板和菜单的玻璃已关闭：它们改用不透明背景，不再录制整个屏幕，可以省电。"
-                glass.mode == GlassMode.Blur -> "已开启：顶栏、输入框、审批区会模糊并折射背后的对话内容；面板和菜单会模糊背后的整个屏幕（包括侧栏），这部分最耗电，可以单独关闭。关闭总开关后控件外形不变，改用不透明实色，不再录制和模糊背景。"
+                glass.mode == GlassMode.Blur && !glass.sheetGlass -> "已开启：顶栏、输入框、审批区会模糊并折射背后的对话内容。面板和菜单的玻璃已关闭：它们改用不透明背景，不再额外录制整个屏幕。"
+                glass.mode == GlassMode.Blur -> "已开启：顶栏、输入框、审批区会模糊并折射背后的对话内容；仅在面板或菜单打开期间，额外录制整个屏幕（包括侧栏）供它们模糊，可以单独关闭。关闭总开关后控件外形不变，改用不透明实色，不再录制和模糊背景。"
                 else -> "已关闭：玻璃控件使用不透明实色、高光边框和阴影，不录制背景。"
             }
             AAText(note, Modifier.padding(horizontal = 16.dp), font = AAFonts.footnote, color = AA.colors.secondaryLabel)

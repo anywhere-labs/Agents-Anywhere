@@ -27,6 +27,8 @@ object DebugLaunch {
     var glass: String? = null; private set
     /** `on` | `off`: overrides the 「面板和菜单的玻璃」 setting for this launch. */
     var sheetGlass: String? = null; private set
+    /** Temporary frost level for repeatable UI comparisons; does not overwrite the saved slider value. */
+    var frost: Float? = null; private set
     /** Crash the renderer process n seconds after `ready` (`chrome://crash`), to check recovery. */
     var crashRendererAt: Int? = null; private set
     /** `window`: show the window-level blur evaluation windows over the thread (see WindowGlassSpike). */
@@ -62,6 +64,7 @@ object DebugLaunch {
         scrollUp = if (x.containsKey("scroll_up")) x.getInt("scroll_up") else null
         glass = x.getString("glass")
         sheetGlass = x.getString("sheet_glass")
+        frost = if (x.containsKey("frost")) x.getFloat("frost").takeIf { it.isFinite() }?.coerceIn(0f, 1f) else null
         crashRendererAt = if (x.containsKey("crash_renderer_at")) x.getInt("crash_renderer_at") else null
         openSheet = x.getBoolean("open_sheet", false)
         webGlass = x.getString("web_glass") ?: "off"
