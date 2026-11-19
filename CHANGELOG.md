@@ -75,6 +75,7 @@
 
 ### 本机连接
 
+- 修复 Desktop 与本机 Connector 并发更新本机运行记录时，安装信息或设备连接记录可能被覆盖的问题。（[#786](https://github.com/anywhere-labs/Agents-Anywhere/pull/786)）
 - 连接 v3 Connector 的电脑上，持续增长的长输出（如长时间运行的命令）在运行期间只保存预览，结束后才保存一份完整内容，不再留下几百份中间版本占用磁盘；内容被修改、删除后不再使用的文件会自动删除，启动时也会清理之前残留的文件。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 设备连接半断（连接还在但不再有心跳）时，所有 Server 实例会在一分钟内一致显示离线；设备上报的会话摘要遇到 Server 存储出错时由设备重发，不再丢失；设备删除本地数据或重装后重建的会话，新消息不会被客户端当成已经看过的旧消息；Connector 的本地存储意外退出时会停止并报错，不再整体卡住。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 命令行 Connector 找到 `frpc`（`PATH` 上，或用 `AA_FRPC_BINARY` 指定）时也能在手机上预览会话启动的网页服务；设备没有 frp 客户端或不支持端口预览时，各端不再显示「在手机上预览」，不会点了才报错。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）

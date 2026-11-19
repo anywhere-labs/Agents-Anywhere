@@ -6,6 +6,7 @@ import json
 import os
 import secrets
 import socket
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -159,11 +160,38 @@ class _LockLease:
         self._thread.join(timeout=1)
 
 
+def _acquire_state_guard(path: Path, deadline: float) -> sqlite3.Connection:
+    """Keep the same inode across transactions so SQLite can coordinate every writer."""
+    guard_path = Path(f"{path}.lock.sqlite")
+    try:
+        descriptor = os.open(guard_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        pass
+    else:
+        os.close(descriptor)
+    guard = sqlite3.connect(guard_path, timeout=0, isolation_level=None)
+    try:
+        while True:
+            try:
+                guard.execute("BEGIN IMMEDIATE")
+                return guard
+            except sqlite3.OperationalError as exc:
+                if exc.sqlite_errorcode != sqlite3.SQLITE_BUSY:
+                    raise
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("The local Connector record is busy. Please retry.") from exc
+                time.sleep(_LOCK_RETRY_INTERVAL_SECONDS)
+    except BaseException:
+        guard.close()
+        raise
+
+
 @contextmanager
 def state_lock(path: Path, timeout: float = 5) -> Iterator[None]:
     """Short cross-process transaction on ``path``: contracts/local-machine/2.0.
 
-    The holder listens on a loopback port the OS picked and publishes
+    A SQLite write transaction serializes updated writers across processes.
+    The JSON lease remains visible to older writers. The holder listens on a loopback port the OS picked and publishes
     ``{port, pid, token}`` next to the record; a contender connects to that
     port and expects the token back. A dead holder's record is taken over once
     the probe fails, never on the strength of a pid alone.
@@ -171,18 +199,21 @@ def state_lock(path: Path, timeout: float = 5) -> Iterator[None]:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     record_path = state_lock_record_path(path)
     lease = _LockLease()
+    guard: sqlite3.Connection | None = None
     try:
         record = lease.record()
         deadline = time.monotonic() + timeout
+        guard = _acquire_state_guard(path, deadline)
         while True:
             if not _write_lock_record(record_path, record, exclusive=True):
                 current = _lock_record_settled(record_path)
-                if isinstance(current, dict) and current["token"] != record["token"] and _lock_owner_alive(current):
+                if current is None or (isinstance(current, dict) and current["token"] != record["token"]
+                                       and _lock_owner_alive(current)):
                     if time.monotonic() >= deadline:
                         raise RuntimeError("The local Connector record is busy. Please retry.")
                     time.sleep(_LOCK_RETRY_INTERVAL_SECONDS)
                     continue
-                # Absent, unreadable for good, or a dead holder: take it over.
+                # Only a record that was read and found unusable needs takeover.
                 if isinstance(current, dict):
                     logger.warning("stale local Connector record lock taken over path={} pid={}", record_path, current["pid"])
                 _write_lock_record(record_path, record, exclusive=False)
@@ -202,7 +233,11 @@ def state_lock(path: Path, timeout: float = 5) -> Iterator[None]:
                 with contextlib.suppress(OSError):
                     record_path.unlink()
     finally:
-        lease.close()
+        try:
+            if guard is not None:
+                guard.close()
+        finally:
+            lease.close()
 
 
 def _json(path: Path) -> dict[str, Any] | None:

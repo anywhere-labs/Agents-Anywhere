@@ -6,8 +6,10 @@ import { randomBytes } from 'node:crypto'
 import { mkdir, open, readFile, rename, rm } from 'node:fs/promises'
 import { connect, createServer, type AddressInfo } from 'node:net'
 import { dirname } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { setTimeout as delay } from 'node:timers/promises'
 
+const SQLITE_BUSY = 5
 const PROBE_TIMEOUT_MS = 200
 const RETRY_INTERVAL_MS = 20
 // A record that is being written is briefly empty or partial; give it this long.
@@ -29,6 +31,9 @@ export function machineStateLockRecordPath(filePath: string): string {
 
 /**
  * Short file transaction shared with Python: contracts/local-machine/2.0.
+ *
+ * A SQLite write transaction serializes updated writers across processes. The JSON lease
+ * remains visible to older writers.
  *
  * The writer listens on a loopback port the OS picked and publishes
  * {port, pid, token} next to the record; a contender connects to that port and
@@ -58,16 +63,18 @@ export async function withMachineStateLock<T>(
   }
   const deadline = Date.now() + timeoutMs
   const busy = () => new Error('The local machine record is busy. Please retry.')
+  let guard: DatabaseSync | undefined
   try {
+    guard = await acquireGuard(filePath, deadline, busy)
     for (;;) {
       if (!(await createRecord(record, ours))) {
         const current = await readRecordSettled(record)
-        if (current !== null && current !== 'unreadable' && current.token !== token && (await ownerAlive(current))) {
+        if (current === null || (current !== 'unreadable' && current.token !== token && (await ownerAlive(current)))) {
           if (Date.now() >= deadline) throw busy()
           await delay(RETRY_INTERVAL_MS)
           continue
         }
-        // Absent (removed meanwhile), unreadable for good, or a dead writer: take it over.
+        // Only a record that was read and found unusable needs takeover.
         if (current !== null && current !== 'unreadable') warn?.(`Stale local machine record lock taken over (pid ${current.pid}).`)
         await replaceRecord(record, ours)
       }
@@ -86,7 +93,38 @@ export async function withMachineStateLock<T>(
       if (current !== null && current !== 'unreadable' && current.token === token) await rm(record, { force: true })
     }
   } finally {
-    await new Promise<void>(resolve => lease.close(() => resolve()))
+    try {
+      guard?.close()
+    } finally {
+      await new Promise<void>(resolve => lease.close(() => resolve()))
+    }
+  }
+}
+
+/** Keep the same inode across transactions so SQLite can coordinate every writer. */
+async function acquireGuard(filePath: string, deadline: number, busy: () => Error): Promise<DatabaseSync> {
+  const guardPath = `${filePath}.lock.sqlite`
+  try {
+    const file = await open(guardPath, 'wx', 0o600)
+    await file.close()
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+  }
+  const db = new DatabaseSync(guardPath)
+  try {
+    for (;;) {
+      try {
+        db.exec('BEGIN IMMEDIATE')
+        return db
+      } catch (error) {
+        if ((error as { errcode?: number }).errcode !== SQLITE_BUSY) throw error
+        if (Date.now() >= deadline) throw busy()
+        await delay(RETRY_INTERVAL_MS)
+      }
+    }
+  } catch (error) {
+    db.close()
+    throw error
   }
 }
 
