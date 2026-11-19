@@ -213,19 +213,34 @@ export class ToolService {
     const prompt = str(args.prompt)
     if (cwd === null || prompt === null) throw new CollabError('invalid_argument', 'cwd and prompt are required.')
     const deviceId = str(args.deviceId) ?? this.deps.deviceId
-    const runtime = str(args.runtime)
-    const runtimeId = str(args.runtimeId) ?? runtime
+    const requestedRuntimeType = str(args.runtime)
+    const instanceId = str(args.runtimeId)
+    const runtimeId = instanceId ?? requestedRuntimeType
     if (runtimeId === null) throw new CollabError('invalid_argument', 'runtimeId (or runtime) is required; aa_targets lists them.')
     const address: SessionAddress = { deviceId, sessionId: '' }
+    // Check device scope before reading the remote runtime directory.
+    assertAuthorized(grant, { verb: 'status', target: { address } })
+    let runtimeType = runtimeId
+    if (instanceId !== null) {
+      const runtimes = deviceId === this.deps.deviceId
+        ? await this.deps.facts.localRuntimes()
+        : await this.deps.gateway.runtimes(this.actor(grant), deviceId)
+      const instance = runtimes.find(runtime => runtime.runtimeId === instanceId)
+      if (instance === undefined) throw new GatewayError('runtime_unavailable', `Runtime instance ${instanceId} was not found on the target device.`)
+      runtimeType = instance.runtimeType
+      if (requestedRuntimeType !== null && requestedRuntimeType !== runtimeType) {
+        throw new CollabError('invalid_argument', `Runtime instance ${instanceId} is of type ${runtimeType}, not ${requestedRuntimeType}.`)
+      }
+    }
     assertAuthorized(grant, {
       verb: 'spawn',
-      target: { address, runtimeId, runtimeType: runtime ?? runtimeId, cwd },
+      target: { address, runtimeId, runtimeType, cwd },
       activeChildren: await this.deps.store.collab.openChildren(grant.supervisor.sessionId),
     })
     const mode = args.mode === 'plan' || args.mode === 'goal' ? args.mode : 'normal'
     return this.act(grant, 'spawn', address, args, async actionId => {
       const body: Record<string, unknown> = {
-        runtime: runtime ?? runtimeId,
+        runtime: runtimeType,
         runtimeId,
         cwd,
         content: prompt,

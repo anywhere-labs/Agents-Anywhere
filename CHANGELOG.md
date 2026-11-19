@@ -28,7 +28,7 @@
 
 ### 会话创建与消息交付
 
-- 连接 v3 Connector 的设备上，开启「Agent 协作」后，Claude、Codex、Pi 和 DSH 会话里的 Agent 可以新建、驱动和监督同一账号的其他会话（也可以在其他设备上）：派出的会话结束、失败、等待审批或提交计划时，监督它的会话会自动收到一段进展摘要；默认只能发消息和关闭自己创建的会话，打断、代答审批和批准计划要单独允许，且不超过监督会话自己的权限模式；端到端加密模式下同样可用。（[#786](https://github.com/anywhere-labs/Agents-Anywhere/pull/786)）
+- 连接 v3 Connector 的设备上，开启「Agent 协作」后，Claude、Codex、Pi 和 DSH 会话里的 Agent 可以新建、驱动和监督同一账号的其他会话（也可以在其他设备上）：仅指定运行实例也可以派活并建立监督，派出的会话结束、失败、等待审批或提交计划时，监督它的会话会自动收到一段进展摘要；默认只能发消息和关闭自己创建的会话，打断、代答审批和批准计划要单独允许，且不超过监督会话自己的权限模式；端到端加密模式下同样可用。（[#786](https://github.com/anywhere-labs/Agents-Anywhere/pull/786)）
 - 修复 Pi 会话刷新或重连后重复显示旧回复的问题，已出现的重复回复会在读取会话时清理。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 修复 Web、Desktop、Android 和 iOS 无法完成加密配对的问题，并恢复加密会话的实时消息更新。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - Web 和 Desktop 新建会话时会选用设备允许访问的默认工作目录，主目录受限时可从允许的工作目录加载 Agent 配置。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
