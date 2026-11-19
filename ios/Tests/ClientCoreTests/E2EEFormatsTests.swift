@@ -192,77 +192,8 @@ nonisolated enum E2EEVectors {
     #expect(try decode(#"{"e2ee":null}"#) == nil)
 }
 
-@Test func e2eeTunnelWireFormat() throws {
-    let route = E2EETunnelRoute(deviceId: "dev_1", clientId: "cli_gazvumrcxzyh5u54kyp5zj4evo", ch: "c_1")
-    let frame = try JSONSerialization.jsonObject(with: Data(E2EETunnelWire.encodeFrame(route, E2EEChannelItem(n: 7, ct: "abc")).utf8)) as! [String: Any]
-    #expect(frame["t"] as? String == "tun")
-    #expect(frame["n"] as? Int == 7)
-    #expect(frame["ct"] as? String == "abc")
-    #expect(frame["route"] as? [String: String] == ["deviceId": "dev_1", "clientId": route.clientId, "ch": "c_1"])
-    #expect(frame["code"] == nil)
-    let end = try JSONSerialization.jsonObject(with: Data(E2EETunnelWire.encodeEnd(route, code: "closed").utf8)) as! [String: Any]
-    #expect(end["t"] as? String == "end")
-    #expect(end["code"] as? String == "closed")
-    #expect(end["n"] == nil && end["ct"] == nil)
-
-    let routeJSON = #"{"deviceId":"dev_1","clientId":"cli_gazvumrcxzyh5u54kyp5zj4evo","ch":"c_1"}"#
-    #expect(E2EETunnelWire.decode(#"{"t":"tun","route":\#(routeJSON),"n":3,"ct":"xyz"}"#)! == (route, .frame(E2EEChannelItem(n: 3, ct: "xyz"))))
-    #expect(E2EETunnelWire.decode(#"{"t":"end","route":\#(routeJSON),"code":"e2ee_not_paired"}"#)! == (route, .end(code: "e2ee_not_paired")))
-    #expect(E2EETunnelWire.decode(#"{"type":"keepalive"}"#) == nil)
-
-    let url = try URLSessionE2EETunnel.tunnelURL(serverURL: URL(string: "https://aa.example.com/some/path")!, ticket: "t k")
-    #expect(url.absoluteString == "wss://aa.example.com/api/v3/tunnel?ticket=t%20k")
+@Test func e2eeContentPathsPreserveAPIAndQuery() {
     #expect(v2APIPath("/api/v3/e2ee/commands") == "/api/v3/e2ee/commands")
     #expect(E2EEChannelHTTPTransport.path("/sessions/s1/events", query: [URLQueryItem(name: "after", value: "seq:1")])
             == "/api/v2/sessions/s1/events?after=seq:1")
-}
-
-@Test func e2eeTunnelMultiplexesRoutesOnOneSocket() async throws {
-    let sockets = Mutex<[E2EEFakeTunnelSocket]>([])
-    let urls = Mutex<[URL]>([])
-    let tunnel = URLSessionE2EETunnel(serverURL: URL(string: "https://aa.example.com")!, ticket: {
-        "tk\(sockets.withLock { $0.count })"
-    }, makeSocket: { url in
-        urls.withLock { $0.append(url) }
-        let socket = E2EEFakeTunnelSocket()
-        sockets.withLock { $0.append(socket) }
-        return socket
-    })
-    let a = E2EETunnelRoute(deviceId: "dev_1", clientId: "cli_aaaaaaaaaaaaaaaaaaaaaaaaaa", ch: "c_a")
-    let b = E2EETunnelRoute(deviceId: "dev_2", clientId: "cli_aaaaaaaaaaaaaaaaaaaaaaaaaa", ch: "c_b")
-    let linkA = try await tunnel.open(a)
-    let linkB = try await tunnel.open(b)
-    #expect(sockets.withLock { $0.count } == 1)
-    #expect(urls.withLock { $0.map(\.absoluteString) } == ["wss://aa.example.com/api/v3/tunnel?ticket=tk0"])
-    await #expect(throws: E2EEError.self) { try await tunnel.open(a) }
-    let socket = sockets.withLock { $0[0] }
-
-    linkA.send(E2EEChannelItem(n: 0, ct: "zero"))
-    linkA.send(E2EEChannelItem(n: 1, ct: "one"))
-    try await eventually { socket.sent.count == 2 }
-    #expect(socket.sent == [E2EETunnelWire.encodeFrame(a, .init(n: 0, ct: "zero")), E2EETunnelWire.encodeFrame(a, .init(n: 1, ct: "one"))])
-
-    socket.push(.success(#"{"type":"keepalive"}"#))
-    socket.push(.success(E2EETunnelWire.encodeFrame(b, .init(n: 0, ct: "to-b"))))
-    socket.push(.success(E2EETunnelWire.encodeEnd(a, code: "e2ee_not_paired")))
-    var inboundB = linkB.inbound.makeAsyncIterator()
-    #expect(await inboundB.next() == .frame(.init(n: 0, ct: "to-b")))
-    var inboundA = linkA.inbound.makeAsyncIterator()
-    #expect(await inboundA.next() == .end(code: "e2ee_not_paired"))
-    #expect(await inboundA.next() == nil)
-
-    linkB.end(code: "closed")
-    try await eventually { socket.sent.count == 3 }
-    #expect(socket.sent.last == E2EETunnelWire.encodeEnd(b, code: "closed"))
-
-    // 连接断了：还开着的路由收到 end(closed)，下一次打开重新拿票、重新连接。
-    let linkC = try await tunnel.open(E2EETunnelRoute(deviceId: "dev_3", clientId: a.clientId, ch: "c_c"))
-    socket.push(.failure(URLError(.networkConnectionLost)))
-    var inboundC = linkC.inbound.makeAsyncIterator()
-    #expect(await inboundC.next() == .end(code: E2EEError.closed))
-    _ = try await tunnel.open(a)
-    #expect(sockets.withLock { $0.count } == 2)
-    #expect(urls.withLock { $0.last?.absoluteString } == "wss://aa.example.com/api/v3/tunnel?ticket=tk1")
-    await tunnel.shutdown()
-    #expect(sockets.withLock { $0[1].closed })
 }

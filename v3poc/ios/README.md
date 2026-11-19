@@ -2,7 +2,7 @@
 
 v3 架构验证的 iOS 部分：对话线程画在**一个常驻的 WKWebView** 里（渲染包和 Web 是同一份代码），线程周围的控件仍然是**原生液态玻璃**：侧栏、顶栏、输入框、审批区、「到底部」按钮、Sheet。数据契约见 [`../protocol/`](../protocol/README.md)。
 
-这个 PoC 不联网。手机端的连接（MeshCall Swift SDK）在别处开发，这里用 `MockSessionsClient` 回放 [`../fixtures/`](../fixtures/) 代替电脑上的 Connector。
+启动时可登录 Server、选择设备并配对。Debug 版可通过 `AA_POC_DEMO=1` 启动内置演示。构建、加密连接与调试入口见 [MeshCall 联调](../meshcall.md)。
 
 ## 目录
 
@@ -24,6 +24,8 @@ v3 架构验证的 iOS 部分：对话线程画在**一个常驻的 WKWebView** 
 
 ## 构建与运行
 
+先在仓库根目录执行 `sh vendor/meshcall/prepare-mobile-sdk.sh`，获取锁定版本的 Swift 和 JVM SDK。
+
 ```sh
 # 修改 fixtures 后
 python3 -I v3poc/fixtures/build.py && sh v3poc/ios/sync-fixtures.sh
@@ -37,7 +39,7 @@ xcodebuild -project v3poc/ios/AAv3PoC.xcodeproj -scheme AAv3PoC \
 
 xcrun simctl boot 'iPhone 18 Pro'
 xcrun simctl install booted /tmp/aav3poc-dd/Build/Products/Debug-iphonesimulator/AAv3PoC.app
-SIMCTL_CHILD_AA_POC_SCHEME=dark xcrun simctl launch --stderr=/tmp/aav3poc.log booted dev.agentsanywhere.v3poc
+SIMCTL_CHILD_AA_POC_DEMO=1 SIMCTL_CHILD_AA_POC_SCHEME=dark xcrun simctl launch --stderr=/tmp/aav3poc.log booted dev.agentsanywhere.v3poc
 xcrun simctl io booted screenshot shot.png
 ```
 
@@ -218,7 +220,7 @@ protocol SessionsClient: AnyObject {
 }
 ```
 
-它和 `protocol/services.ts` 的 `aa.v3.Sessions` 一一对应。MeshCall Swift SDK 生成类型化客户端后，只要写一个适配器实现这个协议（`watch` 流断开时结束 `AsyncStream`，控制器会重新 `watch`），在 `SceneDelegate` 里替换掉 `MockSessionsClient` 即可。事件保持 JSON，原样转给渲染包；原生只读取少数几个字段（`control.state`、`control.pending`、`control.usage`、`session.config`、标题和设备）。`SessionCache` 只在内存里，并且有上限：默认最近用过的 8 个会话、每个会话最后 300 条，更早的条目由渲染包通过 `loadOlder`（`listMessages`）取回。以后可以直接把快照落盘。
+`MeshSessionsClient` 实现这个协议并转换 Connector 的事件与快照。断线时 `AsyncStream` 结束，控制器重新订阅。`SessionCache` 保存在内存，默认保留最近用过的 8 个会话及每个会话最后 300 条消息。渲染包通过 `loadOlder` 获取更早的条目。
 
 `MockSessionsClient` 按 `fixtures/build.py` 开头写的脚本语义回放：新 id 第一次出现时分配下一个 `seq`；`stream` 每 `interval` 毫秒推一次整条 item，文字按 `cps` 增长，最后一次推完整内容；`until: answer` 等审批，答复后推一条把请求从 `pending` 挪到 `answered` 的 control（`by` 是账号名，`device` 是 `iPhone`）；发送消息时先推用户消息，再播 `reply`（替换 `$TURN` 和 `$X`）。其他会话按侧栏摘要合成一个小快照：一条用户消息、一条助手回复；`waiting` 状态的会话另外带一条待审批的命令。
 

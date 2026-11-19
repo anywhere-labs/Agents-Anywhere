@@ -21,7 +21,7 @@ import type { AttachmentRef } from '../generated/device-meshcall/v1_0/client-cal
 import type { CommandAck } from '../generated/device-meshcall/v1_0/command-ack.js'
 import type { CommandCall } from '../generated/device-meshcall/v1_0/command-call.js'
 import { appCommandViews, commandText, commandViews, slashResult, type SessionCommand } from './client-api/commands.js'
-import { TunnelHttpError, conflict, errorBody, int, invalid, isRecord, notFound, okBody, parse, record, statusOf, text, type Route } from './client-api/http.js'
+import { CONTENT_CHUNK_BYTES, TunnelHttpError, conflict, errorBody, int, invalid, isRecord, notFound, okBody, parse, record, statusOf, text, type Route } from './client-api/http.js'
 import { NOTICE_GONE_CODES, capabilityUsable, findCapability, noticeAnswerInput, parsePlanCommand, sessionSourceError, unsupportedMediaType } from './client-api/rules.js'
 import { capabilitySetView, goalView, modelCatalogView, noticeView, permissionCatalogView, planningView, runtimeStateView } from './client-api/views.js'
 import { WorkspaceRoutes, type PreviewFacts, type RuntimeCatalogs, type TransferFacts, type WorkspaceCall } from './client-api/workspace-routes.js'
@@ -62,7 +62,7 @@ export interface SessionBlobSlice {
 export type SessionBlobReader = (sessionId: string, blobRef: string, offset: number, length: number) => Promise<SessionBlobSlice | null>
 
 /** Largest slice `GET sessions/{id}/blobs/{blobRef}` returns (protocol 1.2 `SESSION_BLOB_CHUNK_MAX_BYTES`). */
-export const SESSION_BLOB_CHUNK_MAX_BYTES = 4 * 1024 * 1024
+const SESSION_BLOB_CHUNK_MAX_BYTES = 4 * 1024 * 1024
 
 /** An uploaded attachment as the Server recorded it (`AttachmentRef` of `Client/call`). */
 export type AttachmentFacts = AttachmentRef
@@ -291,7 +291,7 @@ export class DeviceTunnelApi implements TunnelApi {
   private async blob(sessionId: string, blobRef: string, route: Route): Promise<TunnelApiResponse> {
     await this.requireSession(sessionId)
     const offset = int(route.query.get('offset'), 0, 0, Number.MAX_SAFE_INTEGER)
-    const length = int(route.query.get('length'), SESSION_BLOB_CHUNK_MAX_BYTES, 1, SESSION_BLOB_CHUNK_MAX_BYTES)
+    const length = Math.min(int(route.query.get('length'), CONTENT_CHUNK_BYTES, 1, SESSION_BLOB_CHUNK_MAX_BYTES), CONTENT_CHUNK_BYTES)
     const slice = this.deps.blobs === undefined ? null : await this.deps.blobs(sessionId, blobRef, offset, length)
     if (slice === null) throw new TunnelHttpError(404, 'blob_not_found', `${blobRef} is not on this device`)
     if (offset > slice.size) throw invalid(`offset ${offset} is past the end of ${blobRef} (${slice.size} bytes)`)

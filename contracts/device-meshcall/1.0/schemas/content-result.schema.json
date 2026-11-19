@@ -1,0 +1,36 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:content-result",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "body": {
+      "default": null,
+      "title": "Body"
+    },
+    "contentType": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Contenttype"
+    },
+    "status": {
+      "title": "Status",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "status"
+  ],
+  "title": "ContentResult",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

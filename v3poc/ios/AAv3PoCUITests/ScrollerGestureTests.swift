@@ -17,6 +17,7 @@ final class ScrollerGestureTests: XCTestCase {
         for key in ["AA_POC_RENDERER_PATH", "AA_POC_LOG_PATH"] {
             if let value = env[key] { app.launchEnvironment[key] = value }
         }
+        app.launchEnvironment["AA_POC_DEMO"] = "1"
         app.launch()
         sleep(4)
         func at(_ x: CGFloat, _ y: CGFloat) -> XCUICoordinate { app.coordinate(withNormalizedOffset: CGVector(dx: x, dy: y)) }

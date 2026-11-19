@@ -12,7 +12,7 @@ Native Android client for Agents Anywhere.
 ## Open In Android Studio
 
 1. Install Android Studio.
-2. Open this `android/` directory.
+2. From the repository root, run `sh vendor/meshcall/prepare-mobile-sdk.sh`, then open this `android/` directory.
 3. Let Android Studio install the requested Android SDK and sync Gradle.
 4. Connect an Android phone with USB debugging enabled.
 5. Run the `app` configuration.
@@ -38,7 +38,8 @@ WebSocket and use the current access token while preserving the replay cursor.
 ## Build from the command line
 
 Use JDK 17 and the Android SDK matching `compileSdk` in `app/build.gradle.kts`
-(currently 36). Set `ANDROID_HOME` or the local SDK path in ignored
+(currently 37). Prepare the pinned MeshCall SDK from the repository root with
+`sh vendor/meshcall/prepare-mobile-sdk.sh`. Set `ANDROID_HOME` or the local SDK path in ignored
 `local.properties`, then run from this directory:
 
 ```bash

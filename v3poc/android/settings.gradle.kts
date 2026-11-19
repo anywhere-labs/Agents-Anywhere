@@ -19,3 +19,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "AAv3PoC"
 include(":app")
+includeBuild("../../vendor/meshcall/sdk/meshcall-jvm")

@@ -1,6 +1,7 @@
 // Process-level fake ACP Agent (ndjson over stdio) for the end-to-end test (server/tests/test_v3_e2e.py).
 // Behaviour depends on the prompt text:
 //   contains "#slow": replies with some text, then waits for session/cancel (or 60 seconds);
+//   contains "#approve": waits for a native permission response, then echoes the chosen option;
 //   contains "#plan": sends a Markdown plan (plan_update), then replies;
 //   contains "#later": replies after 3 seconds (a turn that ends while the test has the link down);
 //   contains "#bulk <n>": reports n completed tool calls (one timeline item each), then replies;
@@ -38,6 +39,8 @@ const COMMANDS = [
 const configs = new Map()
 /** @type {Map<string, () => void>} */
 const running = new Map()
+/** @type {Map<string, (result: any) => void>} */
+const approvals = new Map()
 let sessions = 0
 /** session/new calls per working directory, and the directory of each session. */
 /** @type {Map<string, number>} */
@@ -105,6 +108,25 @@ async function prompt(message) {
     send({ id: message.id, result: { stopReason: cancelled ? 'cancelled' : 'end_turn' } })
     return
   }
+  if (text.includes('#approve')) {
+    const requestId = `approval-${message.id}`
+    const selected = await new Promise(resolve => {
+      approvals.set(requestId, resolve)
+      send({
+        id: requestId, method: 'session/request_permission', params: {
+          sessionId,
+          toolCall: { toolCallId: requestId, title: 'QA permission approval', kind: 'read', status: 'pending' },
+          options: [
+            { optionId: 'qa-allow', name: 'Allow QA', kind: 'allow_once' },
+            { optionId: 'qa-deny', name: 'Deny QA', kind: 'reject_once' },
+          ],
+        },
+      })
+    })
+    update(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `approval: ${selected?.outcome?.optionId ?? 'cancelled'}` } })
+    send({ id: message.id, result: { stopReason: 'end_turn' } })
+    return
+  }
   if (text.includes('#later')) await new Promise(resolve => setTimeout(resolve, 3000))
   const bulk = /#bulk (\d+)/u.exec(text)
   for (let index = 0; index < Number(bulk?.[1] ?? 0); index++) {
@@ -149,6 +171,11 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
 
 createInterface({ input: process.stdin }).on('close', () => process.exit(0)).on('line', line => {
   const message = JSON.parse(line)
+  if (message.method === undefined && approvals.has(message.id)) {
+    approvals.get(message.id)?.(message.result)
+    approvals.delete(message.id)
+    return
+  }
   const params = message.params ?? {}
   switch (message.method) {
     case 'initialize':

@@ -63,6 +63,7 @@
     "katex": "^0.16.22",
     "lucide-react": "^1.21.0",
     "mermaid": "^11",
+    "meshcall": "file:../vendor/meshcall/meshcall-0.4.0-dev.ce14d60.tgz",
     "monaco-editor": "^0.55.1",
     "next": "^16.2.9",
     "next-intl": "^4.13.0",

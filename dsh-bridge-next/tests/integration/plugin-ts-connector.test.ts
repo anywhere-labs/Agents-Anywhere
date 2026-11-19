@@ -16,7 +16,7 @@ import { mountAgents, TextAdapter } from '../fixtures/agent-runtime.js'
 import { connectorTs, connectorTsInstalled, sourceConnectorLauncher, v3RouterBinary } from '../helpers/ts-connector.js'
 
 const routerBinary = v3RouterBinary()
-const skip = !connectorTsInstalled ? 'connector-ts is not installed' : !routerBinary ? 'no meshcall 9334405 Router binary' : false
+const skip = !connectorTsInstalled ? 'connector-ts is not installed' : !routerBinary ? 'no compatible MeshCall Router binary' : false
 
 async function until(check: () => boolean | Promise<boolean>, label: string, ms = 30_000) {
   for (const end = Date.now() + ms; Date.now() < end;) { if (await check()) return; await delay(50) }

@@ -148,7 +148,12 @@ fun Sidebar(controller: SessionController, ui: UiState, onOpenSession: (String) 
                     .padding(start = AAMetrics.sidebarBottomBarPadding, end = AAMetrics.sidebarBottomBarPadding, bottom = maxOf(bottom, AAMetrics.sidebarBottomBarMinBottom)),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                val runtimes = controller.availableRuntimes
+                if (runtimes != null) {
+                    CreateSessionButton(controller, runtimes, onOpenSession)
+                } else {
                 GlassButton("新会话", symbol = "square.and.pencil", prominent = true) { controller.showToast("演示：新会话") }
+                }
                 Spacer(Modifier.weight(1f))
                 val interaction = remember { MutableInteractionSource() }
                 val pressed by interaction.collectIsPressedAsState()

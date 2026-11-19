@@ -13,7 +13,7 @@ import {
   sealSegments,
   type ChannelItem,
   type PairingPayload,
-} from '../../src/channel/index.js'
+} from './legacy/index.js'
 import { nodeNoiseCrypto, x25519FromSecret, generateX25519, type X25519KeyPair } from '../../src/channel/noise/node-crypto.js'
 import { clientIdFor, type DeviceTrustState } from '../../src/domain/trust/index.js'
 

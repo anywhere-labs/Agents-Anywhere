@@ -1,7 +1,7 @@
 /**
  * What a secure channel calls once a client is authorised: the same client API as normal mode (contracts/e2ee/1.0
  * README, channel messages section). The adapter that maps paths to Conversation use cases implements this; Conversation itself
- * never learns that the request came through Noise, only who the caller is (docs/v3/11-e2ee-noise.md §6).
+ * receives the authenticated caller identity from the MeshCall content service.
  */
 
 import type { ClientServerFacts } from '../../generated/device-meshcall/v1_0/client-call-request.js'

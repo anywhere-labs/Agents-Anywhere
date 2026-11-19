@@ -65,14 +65,13 @@ class E2eeContentRoutingTest {
     private val e2ee by lazy {
         E2eeClient(
             trust = trust,
-            tunnel = device,
+            provider = LegacyE2eeProvider(trust, device),
             commands = { commandId, _, digest ->
                 registered += commandId
                 digests += digest
                 duplicate
             },
             loadServerConfig = { serverConfig },
-            now = { 0L },
             requestTimeoutMillis = timeoutMillis,
         )
     }

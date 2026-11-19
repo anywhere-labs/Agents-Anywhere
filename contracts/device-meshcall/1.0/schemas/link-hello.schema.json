@@ -68,6 +68,19 @@
       "title": "Host",
       "type": "string"
     },
+    "meshE2eeKey": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Meshe2Eekey"
+    },
     "os": {
       "minLength": 1,
       "title": "Os",

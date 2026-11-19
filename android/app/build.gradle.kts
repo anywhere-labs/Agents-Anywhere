@@ -2,8 +2,8 @@ import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 val officialServerUrl = "https://web.agents-anywhere.com"
@@ -21,7 +21,7 @@ fun String.asBuildConfigString(): String = "\"" + replace("\\", "\\\\")
 
 android {
     namespace = "com.agentsanywhere.app"
-    compileSdk = 36
+    compileSdk { version = release(37) }
 
     defaultConfig {
         applicationId = "com.agentsanywhere.app"
@@ -50,14 +50,12 @@ android {
         }
     }
 
+    packaging.resources.excludes += "META-INF/versions/*/org/bouncycastle/**"
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
         isCoreLibraryDesugaringEnabled = true
-    }
-
-    kotlinOptions {
-        jvmTarget = "17"
     }
 
     buildFeatures {
@@ -67,6 +65,7 @@ android {
 }
 
 dependencies {
+    implementation("io.github.t4wefan:meshcall:0.3.0")
     implementation(platform(libs.androidx.compose.bom))
     implementation(platform(libs.sora.bom))
     implementation(libs.androidx.activity.compose)
@@ -109,7 +108,7 @@ dependencies {
     coreLibraryDesugaring(libs.desugar.jdk.libs)
     testImplementation(libs.junit)
     testImplementation("org.json:json:20240303")
-    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    testImplementation(libs.okhttp.mockwebserver)
     testImplementation("org.robolectric:robolectric:4.17")
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.test.ext.junit)

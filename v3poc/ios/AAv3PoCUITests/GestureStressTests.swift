@@ -14,6 +14,7 @@ final class GestureStressTests: XCTestCase {
         for key in ["AA_POC_RENDERER_PATH"] { // passed through as TEST_RUNNER_AA_POC_RENDERER_PATH
             if let value = ProcessInfo.processInfo.environment[key] { app.launchEnvironment[key] = value }
         }
+        app.launchEnvironment["AA_POC_DEMO"] = "1"
         app.launch()
         sleep(4) // renderer ready, script streaming
 
@@ -63,6 +64,7 @@ final class GestureStressTests: XCTestCase {
             let app = XCUIApplication()
             app.launchEnvironment["AA_POC_SCHEME"] = "light"
             if let path = ProcessInfo.processInfo.environment["AA_POC_RENDERER_PATH"] { app.launchEnvironment["AA_POC_RENDERER_PATH"] = path }
+            app.launchEnvironment["AA_POC_DEMO"] = "1"
             app.launch()
             func at(_ x: CGFloat, _ y: CGFloat) -> XCUICoordinate { app.coordinate(withNormalizedOffset: CGVector(dx: x, dy: y)) }
             let start = Date()

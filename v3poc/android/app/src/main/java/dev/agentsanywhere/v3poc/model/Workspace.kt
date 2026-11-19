@@ -16,7 +16,7 @@ data class Workspace(
     @Serializable data class Device(val id: String, val name: String, val presence: String, val platform: String) {
         val isOnline: Boolean get() = presence == "online"
     }
-    @Serializable data class Project(val device_id: String, val cwd: String, val name: String) {
+    @Serializable data class Project(val device_id: String, val cwd: String, val name: String, val remoteId: String? = null) {
         val id: String get() = "$device_id:$cwd"
     }
     @Serializable data class Session(

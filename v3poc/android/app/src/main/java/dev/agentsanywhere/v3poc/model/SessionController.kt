@@ -8,6 +8,8 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import android.net.Uri
+import dev.agentsanywhere.v3poc.R
 import dev.agentsanywhere.v3poc.DebugLaunch
 import dev.agentsanywhere.v3poc.LaunchClock
 import dev.agentsanywhere.v3poc.bridge.RendererBridge
@@ -15,6 +17,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -41,6 +44,7 @@ class SessionController(
     /** The latest Session / Control of the selected session. Items are not observed here: they go to the renderer. */
     var session by mutableStateOf<JsonObject?>(null); private set
     var control by mutableStateOf<JsonObject?>(null); private set
+    var contentConnected by mutableStateOf<Boolean?>(null); private set
     /** Live states for the sidebar (cache entries of sessions watched in this run). */
     val activities = mutableStateMapOf<String, SessionActivity>()
     var toast by mutableStateOf<String?>(null); private set
@@ -53,6 +57,12 @@ class SessionController(
     private val cache = SessionCache(DebugLaunch.cacheItems ?: 300)
     private var watchJob: Job? = null
     private var toastJob: Job? = null
+    private val staged = mutableStateMapOf<String, List<StagedAttachment>>()
+    var uploading by mutableStateOf(false); private set
+    var sending by mutableStateOf(false); private set
+    private var pendingSend: PendingSend? = null
+    private data class PendingSend(val session: String, val text: String, val attachments: List<StagedAttachment>, val id: String)
+
     private val autoApproved = HashSet<String>()
 
     init {
@@ -60,11 +70,31 @@ class SessionController(
         bridge.onMessage = ::handleRenderer
     }
 
+    fun close() {
+        scope.cancel()
+        bridge.currentSnapshot = { null }
+        bridge.onMessage = {}
+    }
+
+    internal val workspaceClient get() = client as? MeshSessionsClient
+    internal val workspaceRoot get() = session["cwd"].str?.takeIf(String::isNotBlank)
+        ?: selectedSummary?.cwd?.takeIf(String::isNotBlank)
+        ?: projects.firstOrNull()?.cwd
+    internal val availableRuntimes get() = (client as? MeshSessionsClient)?.runtimes
+    internal suspend fun create(runtime: RuntimeChoice, cwd: String, text: String, operationId: String): String {
+        val mesh = client as? MeshSessionsClient ?: error("Missing device connection")
+        val item = mesh.create(runtime, cwd, text, operationId, projects.find { it.cwd == cwd })
+        if (sessions.none { it.id == item.id }) sessions.add(0, item)
+        select(item.id)
+        return item.id
+    }
+
     val selectedSummary: Workspace.Session? get() = sessions.firstOrNull { it.id == selectedId }
 
     fun select(id: String) {
         if (id == selectedId) return
         selectedId = id
+        contentConnected = null
         val index = sessions.indexOfFirst { it.id == id }
         if (index >= 0 && sessions[index].unread) sessions[index] = sessions[index].copy(unread = false)
         // Instant from the cache; the watch snapshot replaces it a moment later (and is skipped by the bridge if equal).
@@ -82,15 +112,25 @@ class SessionController(
     private fun watch(id: String) {
         watchJob?.cancel()
         watchJob = scope.launch {
+            var retry = 1_000L
             while (isActive) {
-                client.watch(id).collect { receive(it, id) }
-                // The stream dropped: watch again (a real connection would back off).
-                delay(1000)
+                client.watch(id).collect {
+                    if (it["type"].str == "snapshot") retry = 1_000L
+                    receive(it, id)
+                }
+                delay(retry)
+                retry = minOf(retry * 2, 30_000L)
             }
         }
     }
 
     private fun receive(event: JsonObject, id: String) {
+        if (id == selectedId && workspaceClient != null) {
+            when {
+                event["type"].str == "snapshot" -> contentConnected = true
+                event["type"].str == "control" && event["control"]["state"].str == "disconnected" -> contentConnected = false
+            }
+        }
         val state = cache.apply(event, id) ?: return
         activities[id] = state.activity
         if (id != selectedId) return
@@ -155,12 +195,63 @@ class SessionController(
 
     // Actions
 
-    fun send(text: String) {
+    val attachmentCount: Int get() = staged[selectedId].orEmpty().size
+
+    fun clearAttachments() {
+        selectedId?.let { staged.remove(it) }
+    }
+
+    fun attach(uris: List<Uri>) {
+        val id = selectedId ?: return
+        val upload = (client as? MeshSessionsClient)?.upload ?: return
+        if (uploading || sending || uris.isEmpty()) return
+        val existing = staged[id].orEmpty()
+        if (existing.size + uris.size > 5) {
+            showToast(context.getString(R.string.connection_attachment_limit))
+            return
+        }
+        uploading = true
+        scope.launch {
+            try {
+                val available = existing.toMutableList()
+                for (uri in uris) {
+                    available += upload(id, uri)
+                    staged[id] = available.toList()
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                showToast(context.getString(R.string.connection_attachment_failed))
+            } finally {
+                uploading = false
+            }
+        }
+    }
+
+    fun send(text: String, accepted: () -> Unit = {}) {
         val id = selectedId ?: return
         val content = text.trim()
-        if (content.isEmpty()) return
+        if (content.isEmpty() || sending || uploading) return
+        val files = staged[id].orEmpty()
+        val pending = pendingSend?.takeIf { it.session == id && it.text == content && it.attachments == files }
+            ?: PendingSend(id, content, files, UUID.randomUUID().toString()).also { pendingSend = it }
+        sending = true
         bridge.scrollToEnd()
-        perform { client.send(id, "c-" + UUID.randomUUID().toString().take(8), content) }
+        scope.launch {
+            try {
+                if (client is MeshSessionsClient) client.send(id, pending.id, content, files)
+                else client.send(id, pending.id, content)
+                pendingSend = null
+                staged.remove(id)
+                if (id == selectedId) accepted()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                showToast(context.getString(R.string.connection_send_failed))
+            } finally {
+                sending = false
+            }
+        }
     }
 
     fun stop() {
@@ -240,6 +331,7 @@ class SessionController(
     // Debug
 
     private fun scheduleAutoApprove() {
+        if (client !is MockSessionsClient) return
         val seconds = DebugLaunch.autoApproveSeconds ?: return
         val request = pending ?: return
         if (!autoApproved.add(request.requestId)) return

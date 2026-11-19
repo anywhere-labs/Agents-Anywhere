@@ -6,16 +6,37 @@ import test from "node:test"
 import { registerSource } from "./helpers/onboarding-source.mjs"
 
 registerSource()
-const { HandshakeState } = await import("../src/lib/e2ee/noise/index.ts")
+const { HandshakeState } = await import("./helpers/legacy-e2ee/noise/index.ts")
 const { webNoiseCrypto, randomBytes } = await import("../src/lib/e2ee/webcrypto.ts")
 const formats = await import("../src/lib/e2ee/formats.ts")
 const { b64url, fromB64url, fromUtf8, utf8 } = await import("../src/lib/e2ee/bytes.ts")
-const { TransportSession, encodeHandshake, decodeHandshake } = await import("../src/lib/e2ee/transport.ts")
+const { TransportSession, encodeHandshake, decodeHandshake } = await import("./helpers/legacy-e2ee/transport.ts")
 const { ClientTrustStore, memoryTrustBackend } = await import("../src/lib/e2ee/trust-store.ts")
-const { TunnelMux } = await import("../src/lib/e2ee/tunnel.ts")
+const { TunnelMux } = await import("./helpers/legacy-e2ee/tunnel.ts")
 const { SecureChannelPool } = await import("../src/lib/e2ee/secure-transport.ts")
-const { ClientSecureChannel } = await import("../src/lib/e2ee/client-channel.ts")
+const { ClientSecureChannel } = await import("./helpers/legacy-e2ee/client-channel.ts")
 const { isPlaintextMetadataPath } = await import("../src/features/e2ee/runtime.ts").catch(() => ({}))
+
+// The previous tunnel fixture exercises content adapter behavior without a running Router.
+function fixtureProvider(store, socket) {
+  const mux = new TunnelMux(async () => socket)
+  async function options(deviceId) {
+    const identity = await store.identity()
+    const ch = b64url(randomBytes(12))
+    let channel
+    return {
+      crypto: webNoiseCrypto, identity: identity.noise, ch,
+      wire: mux.wire({ deviceId, clientId: identity.clientId, ch }, {
+        receive: (event) => channel?.receive(event), ended: (code) => channel?.ended(code),
+      }),
+      bind: (value) => { channel = value },
+    }
+  }
+  return {
+    pair: async (payload) => ClientSecureChannel.pair(payload, { ...await options(payload.deviceId), label: "test", platform: "web" }),
+    connect: async (id, pin) => ClientSecureChannel.connect(id, fromB64url(pin.devicePub), await options(id)),
+  }
+}
 
 /** A minimal device: answers pairing and reconnects, echoes requests, pushes one event per subscription. */
 class FakeDevice {
@@ -169,8 +190,7 @@ async function setup(options = {}) {
     serverTime: "now",
   })
   const pool = new SecureChannelPool({
-    store, crypto: webNoiseCrypto, label: "test", platform: "web",
-    mux: new TunnelMux(async () => socket),
+    store, label: "test", platform: "web", provider: fixtureProvider(store, socket),
     registerCommand: async (reg) => {
       registered.push(reg)
       return registration(reg)
@@ -212,7 +232,7 @@ test("pairing pins the device, then content flows through the channel", async ()
 })
 
 test("rekeys only between messages, so a large message crossing the rekey time stays intact", async () => {
-  const { TransportSession: Session } = await import("../src/lib/e2ee/transport.ts")
+  const { TransportSession: Session } = await import("./helpers/legacy-e2ee/transport.ts")
   // Two transport halves from an XX handshake between two fresh keys.
   const ki = await webNoiseCrypto.generateKeyPair()
   const kr = await webNoiseCrypto.generateKeyPair()
@@ -251,7 +271,7 @@ test("a fresh pool reconnects with KK against the pinned key", async () => {
   await pool.pair(device.pairing())
   await pool.closeAll()
   const again = new SecureChannelPool({
-    store, crypto: webNoiseCrypto, label: "test", platform: "web", mux: new TunnelMux(async () => socket),
+    store, label: "test", platform: "web", provider: fixtureProvider(store, socket),
     registerCommand: async () => ({ duplicate: false, outcome: null }), deviceOfSession: async () => "dev_1",
   })
   const channel = await again.channel("dev_1")

@@ -59,7 +59,7 @@ import Testing
 
     init() throws {
         service = V2E2EEService(trust: ClientTrustStore(storage: E2EEMemoryStorage(), scope: "routing"),
-                                tunnel: E2EETestTunnel(device: device), api: api, clientLabel: "iPhone")
+                                provider: LegacyE2EEChannelProvider(tunnel: E2EETestTunnel(device: device)), api: api, clientLabel: "iPhone")
         routing = E2EERoutingHTTPTransport(plain: plain, channelTimeout: .milliseconds(300))
         let deviceId = device.deviceId
         routing.attach(service: service) { sessionId in sessionId == "unknown" ? nil : deviceId }

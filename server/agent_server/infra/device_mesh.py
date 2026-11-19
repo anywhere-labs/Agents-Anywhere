@@ -20,7 +20,7 @@ import json
 import os
 import secrets
 import tempfile
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypeVar
@@ -28,6 +28,18 @@ from typing import Any, TypeVar
 from loguru import logger
 from pydantic import BaseModel
 
+from agent_server.core.device_content import (
+    CONTENT_METHODS,
+    CONTENT_SERVICE,
+    CONTROL_PRINCIPAL,
+    MOBILE_CONTENT_GRANT_METHOD,
+    MOBILE_DIRECTORY_METHOD,
+    MOBILE_CONTROL_SERVICE,
+    EncryptedTunnelGrant,
+    content_tunnel_principal,
+    mobile_control_identity,
+    mobile_control_principal,
+)
 from agent_server.core.device_meshcall import (
     CONNECTION_ID_METADATA,
     MESH_MAX_FRAME_BYTES,
@@ -35,15 +47,17 @@ from agent_server.core.device_meshcall import (
     FailureClass,
     MeshRoute,
     classify_mesh_error,
+    registered_services,
 )
 
 ResponseT = TypeVar("ResponseT", bound=BaseModel)
 
 DEVICE_SERVICES: tuple[str, ...] = tuple(
-    f"{MESH_SERVICE_PREFIX}.{name}" for name in ("Link", "Sessions", "Store", "Commands", "Client", "Secure")
-)
+    f"{MESH_SERVICE_PREFIX}.{name}" for name in ("Link", "Sessions", "Store", "Commands", "Client")
+) + (CONTENT_SERVICE,)
 ROUTER_AUTH_SERVICE = "meshcall.router.v1.AuthService"
 ROUTER_REGISTRY_SERVICE = "meshcall.router.v1.Registry"
+ROUTER_TUNNEL_SERVICE = "meshcall.router.v1.TunnelService"
 DEFAULT_ROUTER_USER = "aa-server"
 DEFAULT_TOKEN_TTL_SECONDS = 900
 DEFAULT_READ_TIMEOUT_SECONDS = 10.0
@@ -159,8 +173,16 @@ def router_auth_document(password_hash: str, *, username: str = DEFAULT_ROUTER_U
                     f"{ROUTER_AUTH_SERVICE}/list_tokens",
                     f"{ROUTER_AUTH_SERVICE}/whoami",
                     f"{ROUTER_REGISTRY_SERVICE}/*",
+                    f"{ROUTER_TUNNEL_SERVICE}/*",
+                    f"{MOBILE_CONTROL_SERVICE}/*",
                 ],
-            }
+            },
+            {
+                "username": f"{username}-mobile",
+                "password_hash": password_hash,
+                "roles": ["server"],
+                "register": [MOBILE_CONTROL_SERVICE],
+            },
         ]
     }
 
@@ -184,6 +206,11 @@ class DeviceMesh:
         self._router_url = self.settings.router_url
         self._password = self.settings.password
         self._closed = False
+        self._control_key: Callable[[str, str], Awaitable[str | None]] | None = None
+        self._control_clients: dict[str, tuple[str, str, Any]] = {}
+        self._control_locks: dict[str, asyncio.Lock] = {}
+        self._mobile_lock = asyncio.Lock()
+        self._mobile_host: tuple[Any, str, str] | None = None
         self.last_error: str | None = None
 
     @property
@@ -225,6 +252,12 @@ class DeviceMesh:
 
     async def close(self) -> None:
         self._closed = True
+        async with self._mobile_lock:
+            await self._close_mobile_host()
+        for _, _, client in self._control_clients.values():
+            with contextlib.suppress(Exception):
+                await client.close()
+        self._control_clients.clear()
         async with self._lock:
             mesh, self._mesh = self._mesh, None
         if mesh is not None:
@@ -345,6 +378,170 @@ class DeviceMesh:
             services=tuple(methods),
         )
 
+    async def open_content_tunnel(self, device_id: str, public_key: str, family_id: str) -> Any:
+        from meshcall import TunnelScope
+
+        mesh = await self._connect(5)
+        try:
+            async with asyncio.timeout(self.settings.read_timeout_seconds):
+                return await mesh.tunnels.open(
+                    instance=device_id,
+                    scopes=[TunnelScope(service=CONTENT_SERVICE, methods=list(CONTENT_METHODS))],
+                    principal=content_tunnel_principal(family_id),
+                    ttl_seconds=300,
+                    max_connections=1,
+                    e2e_key=public_key,
+                )
+        except Exception as exc:
+            raise self._classify(exc, opened=True) from exc
+
+    async def _close_mobile_host(self) -> None:
+        host, self._mobile_host = self._mobile_host, None
+        if host is not None:
+            with contextlib.suppress(Exception):
+                await host[0].close()
+
+    async def open_mobile_control_tunnel(
+        self, service: object, *, user_id: str, family_id: str, public_router_url: str,
+    ) -> EncryptedTunnelGrant:
+        from meshcall import (
+            Mesh,
+            Router,
+            RouterCredentials,
+            TunnelScope,
+            generate_e2e_key,
+        )
+
+        issuer = await self._connect(5)
+        async with self._mobile_lock:
+            if self._closed:
+                raise MeshNotConfigured("MeshCall is shutting down")
+            if self._mobile_host is None:
+                key = generate_e2e_key()
+                instance = f"aa-mobile-{secrets.token_hex(12)}"
+                host = Mesh(
+                    Router(self._router_url),
+                    credentials=RouterCredentials.basic(f"{self.settings.username}-mobile", self._password),
+                    max_frame_size=MESH_MAX_FRAME_BYTES,
+                )
+                host.mount(
+                    service,
+                    instance_id=instance,
+                    accept_tunnels=lambda offer: mobile_control_identity(offer.principal) is not None,
+                    e2e_private_key=key.private_key,
+                    require_e2e=True,
+                )
+                try:
+                    async with asyncio.timeout(self.settings.read_timeout_seconds):
+                        await host.serve(access_log=False).__aenter__()
+                except BaseException as exc:
+                    await host.close()
+                    if isinstance(exc, Exception):
+                        raise self._classify(exc, opened=False) from exc
+                    raise
+                self._mobile_host = host, instance, key.public_key
+            _, instance, public_key = self._mobile_host
+            try:
+                async with asyncio.timeout(self.settings.read_timeout_seconds):
+                    ticket = await issuer.tunnels.open(
+                        instance=instance,
+                        scopes=[TunnelScope(service=MOBILE_CONTROL_SERVICE, methods=[MOBILE_CONTENT_GRANT_METHOD, MOBILE_DIRECTORY_METHOD])],
+                        principal=mobile_control_principal(user_id, family_id, public_router_url),
+                        ttl_seconds=300,
+                        max_connections=1,
+                        e2e_key=public_key,
+                    )
+            except Exception as exc:
+                if getattr(exc, "reason", None) in {"instance_unknown", "instance_offline", "instance_changed"}:
+                    await self._close_mobile_host()
+                raise self._classify(exc, opened=False) from exc
+        return EncryptedTunnelGrant(
+            router_url=public_router_url,
+            credential=ticket.credential,
+            instance_id=instance,
+            tunnel_id=ticket.tunnel_id,
+            e2e_key=public_key,
+            expires_at_unix_ms=ticket.expires_at_unix_ms,
+            maxFrameBytes=MESH_MAX_FRAME_BYTES,
+        )
+
+    async def revoke_content_tunnel(self, tunnel_id: str) -> bool:
+        mesh = await self._connect(5)
+        async with asyncio.timeout(self.settings.read_timeout_seconds):
+            return await mesh.tunnels.revoke(tunnel_id)
+
+    async def revoke_content_family(self, family_id: str) -> None:
+        """Close all Router grants belonging to a revoked login."""
+        if not self.configured:
+            return
+        try:
+            mesh = await self._connect(5)
+            principal = content_tunnel_principal(family_id)
+            async with asyncio.timeout(self.settings.read_timeout_seconds):
+                for ticket in await mesh.tunnels.list():
+                    mobile_identity = mobile_control_identity(ticket.principal)
+                    if ticket.principal == principal or (mobile_identity is not None and mobile_identity[1] == family_id):
+                        await mesh.tunnels.revoke(ticket.tunnel_id)
+        except Exception as exc:  # noqa: BLE001 - logout succeeds even if the Router already lost its grants.
+            logger.warning("failed to revoke MeshCall content grants: {}", type(exc).__name__)
+
+    def use_control_tunnels(self, key: Callable[[str, str], Awaitable[str | None]]) -> None:
+        self._control_key = key
+
+    async def _control_client(self, device_id: str, connection_id: str | None, route: MeshRoute) -> Any:
+        if self._control_key is None or connection_id is None or route.service not in {
+            "aa.device.v1.Link", "aa.device.v1.Commands",
+        }:
+            return await self._connect(5)
+        lock = self._control_locks.setdefault(device_id, asyncio.Lock())
+        async with lock:
+            key = await self._control_key(device_id, connection_id)
+            if key is None:
+                return await self._connect(5)
+            current = self._control_clients.get(device_id)
+            if current and current[0] == connection_id:
+                return current[2]
+            if current:
+                await self.drop_control_tunnel(device_id)
+            from meshcall import Mesh, ReconnectPolicy, RetryPolicy, Router, TunnelScope
+
+            issuer = await self._connect(5)
+            try:
+                async with asyncio.timeout(self.settings.read_timeout_seconds):
+                    ticket = await issuer.tunnels.open(
+                        instance=device_id,
+                        scopes=[
+                            TunnelScope(service=name, methods=methods)
+                            for name, methods in registered_services("required").items()
+                            if name in {"aa.device.v1.Link", "aa.device.v1.Commands"}
+                        ],
+                        principal=CONTROL_PRINCIPAL,
+                        e2e_key=key,
+                        max_connections=1,
+                    )
+            except Exception as exc:
+                raise self._classify(exc, opened=False) from exc
+            client = Mesh(
+                Router(self._router_url),
+                tunnel=ticket.credential,
+                e2e_key=key,
+                retry=RetryPolicy(enabled=False),
+                reconnect=ReconnectPolicy(enabled=False),
+                max_frame_size=MESH_MAX_FRAME_BYTES,
+            )
+            self._control_clients[device_id] = (connection_id, ticket.tunnel_id, client)
+            return client
+
+    async def drop_control_tunnel(self, device_id: str, *, client: Any | None = None) -> None:
+        current = self._control_clients.get(device_id)
+        if current is None or (client is not None and current[2] is not client):
+            return
+        del self._control_clients[device_id]
+        with contextlib.suppress(Exception):
+            await current[2].close()
+        with contextlib.suppress(Exception):
+            await self.revoke_content_tunnel(current[1])
+
     async def revoke_token(self, token_id: str) -> bool:
         """Revoke; the Router closes that token's connections with 4401. Best effort."""
 
@@ -415,7 +612,7 @@ class DeviceMesh:
         idempotency_key: str | None = None,
     ) -> ResponseT:
         timeout = timeout or self.settings.read_timeout_seconds
-        mesh = await self._connect(min(timeout, 5))
+        mesh = await self._control_client(device_id, connection_id, route)
         try:
             return await mesh.call_unary(
                 route.service,
@@ -430,6 +627,8 @@ class DeviceMesh:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            if getattr(exc, "code", None) in {"unauthenticated", "unavailable"}:
+                await self.drop_control_tunnel(device_id, client=mesh)
             await self._reset(mesh, exc)
             raise self._classify(exc, opened=True) from exc
 
@@ -446,7 +645,7 @@ class DeviceMesh:
     ) -> AsyncIterator[ResponseT]:
         """Server stream; iteration raises ``DeviceCallError``. Closing the iterator cancels the call."""
 
-        mesh = await self._connect(5)
+        mesh = await self._control_client(device_id, connection_id, route)
         call = mesh.call_server_stream(
             route.service,
             route.method,
@@ -465,34 +664,13 @@ class DeviceMesh:
         except GeneratorExit:
             raise
         except Exception as exc:
+            if getattr(exc, "code", None) in {"unauthenticated", "unavailable"}:
+                await self.drop_control_tunnel(device_id, client=mesh)
             await self._reset(mesh, exc)
             raise self._classify(exc, opened=True) from exc
         finally:
             with contextlib.suppress(Exception):
                 await asyncio.shield(call.cancel("caller_closed"))
-
-    async def duplex(
-        self,
-        device_id: str,
-        route: MeshRoute,
-        request: BaseModel,
-        input_type: type[BaseModel],
-        output_type: type[ResponseT],
-        *,
-        connection_id: str | None = None,
-    ) -> Any:
-        """Open a duplex call (``Secure/channel``); the caller owns send/iterate/cancel."""
-
-        mesh = await self._connect(5)
-        return mesh.call_duplex(
-            route.service,
-            route.method,
-            request,
-            input_type,
-            output_type,
-            instance=device_id,
-            metadata=self._metadata(connection_id),
-        )
 
     def classify(self, exc: BaseException, *, opened: bool = True) -> DeviceCallError:
         return self._classify(exc, opened=opened)

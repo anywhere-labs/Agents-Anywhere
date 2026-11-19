@@ -1,6 +1,6 @@
 # meshcall（vendored）
 
-v3 的设备连接与本机 Router 依赖 MeshCall `main` 的提交 [`93344059ada65735c6cc08fdf3247ea9fb808d6b`](https://github.com/t4wefan/meshcall/tree/93344059ada65735c6cc08fdf3247ea9fb808d6b)（简称 9334405）：Router token 带 `instance_ids`，续期与吊销有对应的关闭码。0.4.0 还没有发版，所以 TS 包放在这里，由仓库里的各个 TS 子项目共用同一份（`docs/v3/10-development-plan.md` M1：「meshcall 0.4.0 已发版或 vendored 方案已定」）。
+v3 的设备连接与本机 Router 依赖 MeshCall `main` 的提交 [`ce14d60743c2c6d5c2d504da02748de271ed8769`](https://github.com/t4wefan/meshcall/tree/ce14d60743c2c6d5c2d504da02748de271ed8769)（简称 ce14d60）：该提交包含 Swift 和 JVM SDK，并提供端到端加密隧道。0.4.0 还没有发版，所以 TS 包放在这里，由仓库里的各个 TS 子项目共用同一份（`docs/v3/10-development-plan.md` M1：「meshcall 0.4.0 已发版或 vendored 方案已定」）。
 
 **0.4.0 发版后换回 npm 依赖，并删除本目录。**
 
@@ -8,7 +8,7 @@ v3 的设备连接与本机 Router 依赖 MeshCall `main` 的提交 [`93344059ad
 
 | 文件 | 说明 | sha256 |
 | --- | --- | --- |
-| `meshcall-0.4.0-dev.9334405.tgz` | 9334405 的 `meshcall-ts/` 构建出的 npm 包，版本号 `0.4.0-dev.9334405` | `54da9d301b21d920e285f313635e0225efe1c511cfb83629459d7eccd567ecca` |
+| `meshcall-0.4.0-dev.ce14d60.tgz` | ce14d60 的 `meshcall-ts/` 构建出的 npm 包，版本号 `0.4.0-dev.ce14d60` | `d6b5acc412852b01744c60d70c3fe74adcb5f3340357fd1da31d96dcd6e6971b` |
 | `LICENSE` | MeshCall 的 MIT 许可证（与包内 `package/LICENSE` 相同） | — |
 
 Python 端（Server）不使用本目录：`server/pyproject.toml` 用 uv 的 git 依赖钉在同一个提交，`subdirectory = "meshcall-py"`，两边版本一致。
@@ -19,7 +19,7 @@ Python 端（Server）不使用本目录：`server/pyproject.toml` 用 uv 的 gi
 
 ```json
 "dependencies": {
-  "meshcall": "file:../vendor/meshcall/meshcall-0.4.0-dev.9334405.tgz"
+  "meshcall": "file:../vendor/meshcall/meshcall-0.4.0-dev.ce14d60.tgz"
 }
 ```
 
@@ -31,13 +31,13 @@ Python 端（Server）不使用本目录：`server/pyproject.toml` 用 uv 的 gi
 
 ```bash
 git clone https://github.com/t4wefan/meshcall.git && cd meshcall
-git checkout 93344059ada65735c6cc08fdf3247ea9fb808d6b
+git checkout ce14d60743c2c6d5c2d504da02748de271ed8769
 cd meshcall-ts
-npm pkg set version=0.4.0-dev.9334405
+npm pkg set version=0.4.0-dev.ce14d60
 corepack yarn@1.22.22 install --frozen-lockfile
 ./node_modules/.bin/tsc -p tsconfig.json
 npm pack --ignore-scripts
-shasum -a 256 meshcall-0.4.0-dev.9334405.tgz
+shasum -a 256 meshcall-0.4.0-dev.ce14d60.tgz
 ```
 
 `npm pack --ignore-scripts` 跳过包里的 `prepack`（它调用全局 `yarn build`），构建由上一行的 `tsc` 完成，产物相同。

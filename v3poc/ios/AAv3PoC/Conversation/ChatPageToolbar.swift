@@ -26,7 +26,7 @@ struct ConversationHeader {
 
     var summary: Workspace.Session? { controller.selectedSummary }
     var device: Workspace.Device? { summary.flatMap { s in controller.workspace.devices.first { $0.id == s.device_id } } }
-    var deviceOnline: Bool { device?.isOnline ?? true }
+    var deviceOnline: Bool { controller.contentConnected ?? device?.isOnline ?? true }
     var title: String { controller.session?["title"]?.string ?? summary?.title ?? "会话" }
     var subtitle: String {
         [summary?.agentLabel, controller.session?["device"]?["name"]?.string ?? device?.name].compactMap { $0 }.joined(separator: " · ")

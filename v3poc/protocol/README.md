@@ -5,7 +5,7 @@
 | 文件 | 内容 |
 | --- | --- |
 | `timeline.ts` | Session、Message（item）、Control、`watch` 事件、侧栏数据 |
-| `services.ts` | `aa.v3.Sessions` 的调用接口（PoC 里没有实现，demo 用 fixtures 回放代替 `watch`） |
+| [device.meshcall.json](../../contracts/device-meshcall/1.0/device.meshcall.json) | Connector 内容 RPC 的源契约。原生客户端由 MeshCall 生成 |
 | `bridge.ts` | `aa.render/1`：原生 App 和 WebView 渲染包之间的消息 |
 
 ## 和 v2 的区别

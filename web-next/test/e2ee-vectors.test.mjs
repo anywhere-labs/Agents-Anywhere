@@ -6,11 +6,11 @@ import test from "node:test"
 import { registerSource } from "./helpers/onboarding-source.mjs"
 
 registerSource()
-const { HandshakeState } = await import("../src/lib/e2ee/noise/index.ts")
+const { HandshakeState } = await import("./helpers/legacy-e2ee/noise/index.ts")
 const { webNoiseCrypto, keyPairFromSecret } = await import("../src/lib/e2ee/webcrypto.ts")
 const formats = await import("../src/lib/e2ee/formats.ts")
 const { b64url, fromB64url, utf8 } = await import("../src/lib/e2ee/bytes.ts")
-const { parsePairingUri } = await import("../src/lib/e2ee/client-channel.ts")
+const { parsePairingUri } = await import("./helpers/legacy-e2ee/client-channel.ts")
 
 const VECTORS = new URL("../../contracts/e2ee/1.0/vectors/", import.meta.url)
 const load = (file) => JSON.parse(readFileSync(new URL(file, VECTORS), "utf8"))

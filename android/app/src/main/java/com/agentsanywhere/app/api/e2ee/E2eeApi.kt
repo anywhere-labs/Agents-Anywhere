@@ -12,6 +12,10 @@ data class CommandRegistrationResult(val duplicate: Boolean)
 class E2eeApi(
     private val client: ApiClient = ApiClient(),
 ) {
+    fun bootstrapContent(serverUrl: String, authorizationToken: String): JSONObject = client.postJson(
+        serverUrl = serverUrl, path = "/api/v3/mobile/control-tunnel", body = JSONObject(), authorizationToken = authorizationToken,
+    )
+
     /** 发命令前登记 `CommandRegistration`；返回 `duplicate: true` 时这条命令已经发过，不要再发。 */
     fun registerCommand(
         serverUrl: String,
@@ -37,7 +41,7 @@ fun ApiException.isE2eeRequired(): Boolean = errorCode == E2eeErrorCodes.E2EE_RE
  * 经通道发一个普通模式的客户端 API 请求，返回 JSON 对象；非 2xx 转成 [ApiException]，
  * 与 [ApiClient] 的错误处理一致。`path` 可以写成普通模式下的相对路径（`/sessions/…`）。
  */
-suspend fun ClientSecureChannel.requestJson(method: String, path: String, body: JSONObject? = null): JSONObject =
+suspend fun DeviceContentChannel.requestJson(method: String, path: String, body: JSONObject? = null): JSONObject =
     request(method, apiPath(path), body?.toString()).toJsonObjectOrThrow()
 
 fun TunnelResponse.toJsonObjectOrThrow(): JSONObject {

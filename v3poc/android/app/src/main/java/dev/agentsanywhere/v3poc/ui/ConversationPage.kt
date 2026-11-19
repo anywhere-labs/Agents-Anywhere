@@ -11,6 +11,7 @@ import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import androidx.compose.runtime.CompositionLocalProvider
 import android.os.Build
+import dev.agentsanywhere.v3poc.R
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.compose.animation.AnimatedVisibility
@@ -61,6 +62,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
@@ -107,7 +109,7 @@ fun ConversationPage(controller: SessionController, ui: UiState, onMenu: () -> U
     val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val summary = controller.selectedSummary
     val device = summary?.let { s -> controller.devices.firstOrNull { it.id == s.device_id } }
-    val deviceOnline = device?.isOnline ?: true
+    val deviceOnline = controller.contentConnected ?: device?.isOnline ?: true
     val title = controller.session["title"].str ?: summary?.title ?: "会话"
     val subtitle = listOfNotNull(summary?.agentLabel, controller.session["device"]["name"].str ?: device?.name).joinToString(" · ")
     var bottomBarTop by remember { mutableFloatStateOf(0f) }
@@ -176,11 +178,27 @@ fun ConversationPage(controller: SessionController, ui: UiState, onMenu: () -> U
                     }
                 }
             }
+            if (controller.uploading) androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth())
+            if (controller.attachmentCount > 0) {
+                Row(Modifier.padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically) {
+                    AAText(androidx.compose.ui.res.stringResource(dev.agentsanywhere.v3poc.R.string.connection_attachments_staged) +
+                        " " + controller.attachmentCount)
+                    androidx.compose.material3.TextButton(onClick = controller::clearAttachments,
+                        enabled = !controller.uploading && !controller.sending) {
+                        androidx.compose.material3.Text(androidx.compose.ui.res.stringResource(dev.agentsanywhere.v3poc.R.string.connection_clear_attachments))
+                    }
+                }
+            }
             Composer(
-                ui = ui, running = controller.isRunning, canSend = deviceOnline,
-                placeholder = if (deviceOnline) "询问 Agents" else "设备离线，暂时不能发送",
+                ui = ui, running = controller.isRunning, canSend = deviceOnline && !controller.sending && !controller.uploading,
+                placeholder = stringResource(if (deviceOnline) R.string.connection_ask else R.string.connection_device_offline),
                 maximumEditorHeight = maxEditor,
-                onSend = { val text = ui.draft.text; ui.draft = androidx.compose.ui.text.input.TextFieldValue(""); controller.send(text) },
+                onSend = {
+                    val original = ui.draft
+                    controller.send(original.text) {
+                        if (ui.draft == original) ui.draft = androidx.compose.ui.text.input.TextFieldValue("")
+                    }
+                },
                 onStop = controller::stop,
                 onOptions = { ui.focusRequest = false; ui.optionsSheet = true },
             )

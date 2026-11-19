@@ -275,7 +275,7 @@ nonisolated final class E2EERoutingHTTPTransport: HTTPTransport, @unchecked Send
 
     /// 写操作：先登记命令（输入摘要按请求体原始字节），再经通道发出；Server 说已经登记过时不再重发。
     private func command<Body: Encodable, Response: Decodable>(
-        _ request: HTTPRequest<Body, Response>, path: String, body: Data?, channel: ClientSecureChannel, router: Router
+        _ request: HTTPRequest<Body, Response>, path: String, body: Data?, channel: any E2EEDeviceChannel, router: Router
     ) async throws -> E2EETunnelResponse {
         let fields = body.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
         let commandId = request.headers.first { $0.key.lowercased() == "idempotency-key" }?.value

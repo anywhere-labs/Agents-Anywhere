@@ -28,7 +28,7 @@ from meshcall import (
     Router,
     RouterCredentials,
     RpcContext,
-    RpcDuplex,
+    generate_e2e_key,
     mutates,
     query,
     service,
@@ -36,6 +36,7 @@ from meshcall import (
 )
 from pydantic import BaseModel, ConfigDict
 
+from agent_server.core.device_content import CONTENT_SERVICE, ContentEvent, ContentPairResult, ContentResult
 from agent_server.core.device_meshcall import (
     COMMAND_METHODS,
     CONNECTION_ID_METADATA,
@@ -48,7 +49,6 @@ from agent_server.core.device_meshcall import (
     LinkAttachItem,
     LinkError,
     OutboxItem,
-    SecureChannelItem,
     StreamChunk,
     TerminalStreamItem,
     command_route,
@@ -460,24 +460,29 @@ def _make_services(state: FakeDeviceState, *, mode: str = "off") -> list[object]
     namespace["status"] = query(status)
     commands = service(f"{SERVICE_PREFIX}.Commands", targeted=True)(type("Commands", (), namespace))
 
-    @service(f"{SERVICE_PREFIX}.Secure", targeted=True)
-    class Secure:
-        """Noise channels (the fake echoes)."""
+    @service(CONTENT_SERVICE, targeted=True)
+    class Content:
+        """Echo Connector content inside a Router-issued encrypted tunnel."""
 
-        @mutates(reason="a Noise channel sends and receives at the same time")
-        async def channel(
-            self, clientId: str, ch: str, wire: RpcDuplex[SecureChannelItem, SecureChannelItem], ctx: RpcContext
-        ) -> None:
-            """Echo ``ct`` back as ``echo:<ct>``; ``ct == "end"`` ends the call, ``ct == "fail"`` fails it."""
-            state.calls.append("secure.channel")
-            async for item in wire:
-                if item.ct == "end":
-                    return
-                if item.ct == "fail":
-                    raise MeshCallError(
-                        "failed_precondition", "not paired", details={"source": "device", "aaCode": "e2ee_not_paired"}
-                    )
-                await wire.send(SecureChannelItem(n=item.n, ct=f"echo:{item.ct}"))
+        @mutates
+        async def pair(self) -> ContentPairResult:
+            """Refuse pairing on this test-only echo service."""
+            raise MeshCallError("permission_denied", "This test device does not pair")
+
+        @query
+        async def request(self, method: str, path: str, ctx: RpcContext, body: Any = None) -> ContentResult:
+            """Return the received body after testing the tunnel context."""
+            if not ctx.tunnel or not ctx.tunnel.sealed:
+                raise MeshCallError("permission_denied", "Encrypted content tunnel required")
+            state.calls.append("content.request")
+            return ContentResult(status=200, body=body)
+
+        @stream
+        async def subscribe(self, ctx: RpcContext) -> AsyncIterator[ContentEvent]:
+            """Emit a single subscription event inside the tunnel."""
+            if not ctx.tunnel or not ctx.tunnel.sealed:
+                raise MeshCallError("permission_denied", "Encrypted content tunnel required")
+            yield ContentEvent({"type": "session.subscribed"})
 
     built = {
         f"{SERVICE_PREFIX}.Link": Link,
@@ -485,7 +490,7 @@ def _make_services(state: FakeDeviceState, *, mode: str = "off") -> list[object]
         f"{SERVICE_PREFIX}.Store": Store,
         f"{SERVICE_PREFIX}.Commands": commands,
         f"{SERVICE_PREFIX}.Client": Client,
-        f"{SERVICE_PREFIX}.Secure": Secure,
+        CONTENT_SERVICE: Content,
     }
     # Everything follows the registration table.
     return [factory() for name, factory in built.items() if name in registration]
@@ -494,11 +499,12 @@ def _make_services(state: FakeDeviceState, *, mode: str = "off") -> list[object]
 class FakeDevice:
     """One device on one Router connection."""
 
-    def __init__(self, device_id: str, router_url: str, token: str, *, e2ee_mode: str = "off") -> None:
+    def __init__(self, device_id: str, router_url: str, token: str, *, e2ee_mode: str = "off", e2ee_key=None) -> None:
         self.state = FakeDeviceState(device_id)
         self.router_url = router_url
         self.token = token
         self.e2ee_mode = e2ee_mode
+        self.e2ee_key = e2ee_key or generate_e2e_key()
         self.mesh: Mesh | None = None
         self._serve: Any = None
         self.server: Any = None
@@ -514,6 +520,8 @@ class FakeDevice:
         self.mesh.mount(
             *_make_services(self.state, mode=self.e2ee_mode),
             instance_id=self.state.device_id,
+            accept_tunnels=self.e2ee_mode == "required",
+            e2e_private_key=self.e2ee_key.private_key if self.e2ee_mode == "required" else None,
         )
         self._serve = self.mesh.serve(access_log=False, log_level="WARNING", drain_timeout=0.5)
         self.server = await self._serve.__aenter__()
@@ -541,7 +549,7 @@ async def connect_device(
 
     ``client`` is an ``httpx.AsyncClient`` on the Server. Returns the device, the
     ``LinkWelcome`` body and the access token. In E2EE ``required`` mode (the welcome's
-    ``e2eeMode``) the device mounts only Link, Commands and Secure, like a real one.
+    ``e2eeMode``) the device mounts only Link, Commands and Content, like a real one.
     """
 
     auth = await client.post(
@@ -550,6 +558,7 @@ async def connect_device(
     auth.raise_for_status()
     access = auth.json()["accessToken"]
     headers = {"Authorization": f"Bearer {access}", "X-Device-OS": "macos", "X-Connector-Version": "3.0.0"}
+    e2e_key = generate_e2e_key()
     hello = await client.post(
         "/api/v3/device/hello",
         headers=headers,
@@ -560,6 +569,7 @@ async def connect_device(
             "os": "macos",
             "host": host,
             "sessionsHead": sessions_head or [],
+            "meshE2eeKey": e2e_key.public_key,
         },
     )
     hello.raise_for_status()
@@ -569,6 +579,7 @@ async def connect_device(
         welcome["mesh"]["routerUrl"],
         welcome["mesh"]["token"],
         e2ee_mode=str(welcome.get("e2eeMode") or "off"),
+        e2ee_key=e2e_key,
     )
     device.state.connection_id = welcome["connectionId"]
     await device.start()

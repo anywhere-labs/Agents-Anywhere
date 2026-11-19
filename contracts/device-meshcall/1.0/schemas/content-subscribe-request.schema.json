@@ -1,0 +1,65 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:content-subscribe-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "afterCursor": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Aftercursor"
+    },
+    "fromSeq": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fromseq"
+    },
+    "sessionId": {
+      "default": "",
+      "title": "Sessionid",
+      "type": "string"
+    },
+    "stream": {
+      "default": "session",
+      "enum": [
+        "session",
+        "terminal",
+        "trust"
+      ],
+      "title": "Stream",
+      "type": "string"
+    },
+    "terminalId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Terminalid"
+    }
+  },
+  "title": "ContentSubscribeRequest",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

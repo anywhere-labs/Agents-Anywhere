@@ -140,6 +140,6 @@
     }
   },
   "dependencies": {
-    "meshcall": "file:../vendor/meshcall/meshcall-0.4.0-dev.9334405.tgz"
+    "meshcall": "file:../vendor/meshcall/meshcall-0.4.0-dev.ce14d60.tgz"
   }
 }

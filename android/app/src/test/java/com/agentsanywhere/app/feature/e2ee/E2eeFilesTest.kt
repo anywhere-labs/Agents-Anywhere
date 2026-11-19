@@ -74,7 +74,7 @@ class E2eeFilesTest {
     private val serverRequests = CopyOnWriteArrayList<Pair<RecordedRequest, ByteArray>>()
 
     private val e2ee by lazy {
-        E2eeClient(trust, device, { commandId, _, _ -> registered += commandId; duplicateCommands }, { com.agentsanywhere.app.api.E2eeServerConfig() }, { 0L })
+        E2eeClient(trust, LegacyE2eeProvider(trust, device), { commandId, _, _ -> registered += commandId; duplicateCommands }, { com.agentsanywhere.app.api.E2eeServerConfig() })
     }
     private lateinit var router: E2eeContentRouter
     private val apiClient by lazy { ApiClient(contentGate = { router }) }
@@ -388,6 +388,6 @@ class E2eeFilesTest {
         router.resetForLogout()
         assertNull(SessionDeviceDirectory.deviceFor("sess_paired"))
         assertNull(router.sealedKeys.keyFor("file_1", "dev_paired"))
-        assertNotNull(channel.closed)
+        assertFalse(channel.isOpen)
     }
 }

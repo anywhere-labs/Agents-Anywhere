@@ -120,6 +120,26 @@ describe('native history projection', () => {
     expect(native.reads).toEqual([])
   })
 
+  it('reuses a Pi conversation after restart when two instances scan the same native history', async () => {
+    native.add('shared', 2)
+    await store.sessions.create({
+      sessionId: 'sess_existing', runtimeType: 'pi', runtimeId: 'rti_pi',
+      externalSessionId: 'shared', cwd: '/w', nativeTitle: null, status: 'idle',
+      sourceAvailability: 'available', takeover: true, at: clock.nowIso(),
+    })
+    const restarted = new NativeHistory({
+      store, feed, clock,
+      runtimes: { handle: async runtimeId => ({ ...handle(), instanceId: runtimeId }) },
+      sessionIdFor: (_h, runtimeId, ref) => `sess_${runtimeId}_${ref.nativeSessionId}`,
+    })
+    expect(await Promise.all([
+      restarted.scan('rti_pi_other', 'other'),
+      restarted.scan('rti_pi', 'owner'),
+    ])).toEqual([{ sessions: 0, complete: true }, { sessions: 1, complete: true }])
+    expect((await store.sessions.list()).map(session => session.sessionId)).toEqual(['sess_existing'])
+    expect(await ids('sess_existing')).toEqual(['shared_m1', 'shared_m2'])
+  })
+
   it("shows an unopened session's permission as the Runtime reported it, and nothing when it did not", async () => {
     native.add('a', 1, { permission: 'codex:permission:full_access' })
     native.add('b', 1)

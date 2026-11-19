@@ -15,6 +15,7 @@ struct ConversationChrome: View {
     @State private var editor = ComposerEditorController()
     @State private var showsOptions = false
     @State private var picker: AttachmentPicker?
+    @State private var workspaceTool: WorkspaceTool?
     @State private var photos: [PhotosPickerItem] = []
     @State private var appliedDebugLaunch = false
     @ScaledMetric(relativeTo: .body) private var bodyLineHeight: CGFloat = 22
@@ -48,17 +49,31 @@ struct ConversationChrome: View {
         .sheet(isPresented: $showsOptions) {
             ComposerOptionsSheet(controller: controller,
                                  onPhotos: { showsOptions = false; picker = .photos },
-                                 onFiles: { showsOptions = false; picker = .files })
+                                 onFiles: { showsOptions = false; picker = .files },
+                                 onWorkspaceTool: { showsOptions = false; workspaceTool = $0 })
+        }
+        .sheet(item: $workspaceTool) { kind in
+            if let client = controller.workspaceClient, let root = controller.workspaceRoot {
+                WorkspaceToolView(client: client, root: root, kind: kind)
+            }
         }
         .sheet(item: $controller.openRequest) { request in OpenTargetSheet(request: request) }
         .photosPicker(isPresented: pickerBinding(.photos), selection: $photos, maxSelectionCount: 5, matching: .images)
-        .fileImporter(isPresented: pickerBinding(.files), allowedContentTypes: [.item], allowsMultipleSelection: true) { _ in
-            controller.showToast("演示：附件不会上传")
+        .fileImporter(isPresented: pickerBinding(.files), allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
+            guard case let .success(files) = result else { return }
+            controller.attach(count: files.count) { index in
+                try await Task.detached(priority: .userInitiated) { try LocalChatFile.read(files[index]) }.value
+            }
         }
         .onChange(of: photos) { _, items in
             guard !items.isEmpty else { return }
             photos = []
-            controller.showToast("演示：附件不会上传")
+            controller.attach(count: items.count) { index in
+                guard let data = try await items[index].loadTransferable(type: Data.self) else { throw NativeAccountError.invalidResponse }
+                let type = items[index].supportedContentTypes.first
+                let ext = type?.preferredFilenameExtension ?? "jpg"
+                return LocalChatFile(name: "photo.\(ext)", contentType: type?.preferredMIMEType ?? "image/jpeg", bytes: data)
+            }
         }
         .onChange(of: controller.actionError) { _, message in
             guard let message else { return }
@@ -116,9 +131,18 @@ struct ConversationChrome: View {
                 }
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
+            if controller.uploading { ProgressView().controlSize(.small) }
+            if controller.attachmentCount > 0 {
+                HStack {
+                    Text("connection.attachments_staged").font(.footnote)
+                    Text(controller.attachmentCount.formatted()).font(.footnote)
+                    Button("connection.clear_attachments", action: controller.clearAttachments)
+                        .disabled(controller.sending || controller.uploading)
+                }.padding(.horizontal, 24)
+            }
             ChatComposer(draft: controller.draft, editor: editor, isStreaming: controller.isRunning,
-                         canSend: header.deviceOnline,
-                         placeholder: header.deviceOnline ? "询问 Agents" : "设备离线，暂时不能发送",
+                         canSend: header.deviceOnline && !controller.sending && !controller.uploading,
+                         placeholder: header.deviceOnline ? String(localized: "connection.ask") : String(localized: "connection.device_offline"),
                          maximumEditorHeight: maximumEditorHeight, controls: controls,
                          onSend: send, onStop: controller.stop, onOptions: { showsOptions = true })
         }

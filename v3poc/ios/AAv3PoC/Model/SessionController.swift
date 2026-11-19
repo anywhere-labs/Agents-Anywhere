@@ -18,13 +18,28 @@ final class SessionController {
     /// The latest `Session` / `Control` of the selected session. Items are not observed: they go to the renderer.
     private(set) var session: JSON?
     private(set) var control: JSON?
+    private(set) var contentConnected: Bool?
     /// Live session states for the sidebar (cache entries of sessions watched in this run).
     private(set) var activities: [String: SessionActivity] = [:]
     var toast: String?
     var openRequest: OpenRequest?
     var actionError: String?
     let draft = ComposerDraft()
+    private(set) var uploading = false
+    private(set) var sending = false
+    private var staged: [String: [StagedAttachment]] = [:]
+    @ObservationIgnored private var uploadTask: Task<Void, Never>?
+    @ObservationIgnored private var sendTask: Task<Void, Never>?
+    @ObservationIgnored private var pendingSend: PendingSend?
 
+    private struct PendingSend {
+        let session: String
+        let text: String
+        let attachments: [StagedAttachment]
+        let id: String
+    }
+
+    @ObservationIgnored var openDevices: (() -> Void)?
     @ObservationIgnored let bridge: RendererBridge
     @ObservationIgnored private let client: any SessionsClient
     @ObservationIgnored private let cache = SessionCache()
@@ -67,6 +82,14 @@ final class SessionController {
         }
     }
 
+    func close() {
+        selectedID = nil
+        watchTask?.cancel()
+        toastTask?.cancel()
+        uploadTask?.cancel()
+        sendTask?.cancel()
+    }
+
     // MARK: Memory
 
     @ObservationIgnored private var warnings: [Date] = []
@@ -88,11 +111,29 @@ final class SessionController {
 
     // MARK: Selection
 
+    var workspaceClient: MeshSessionsClient? { client as? MeshSessionsClient }
+    var workspaceRoot: String? {
+        let root = session?["cwd"]?.string ?? selectedSummary?.cwd ?? ""
+        return root.isEmpty ? workspace.projects.first?.cwd : root
+    }
+
+    var availableRuntimes: [RuntimeChoice]? { (client as? MeshSessionsClient)?.runtimes }
+
+    func create(runtime: RuntimeChoice, cwd: String, text: String, operationID: String) async throws -> String {
+        guard let mesh = client as? MeshSessionsClient else { throw NativeAccountError.invalidResponse }
+        let project = workspace.projects.first { $0.cwd == cwd }
+        let item = try await mesh.create(runtime: runtime, cwd: cwd, content: text, operationID: operationID, project: project)
+        if !workspace.sessions.contains(where: { $0.id == item.id }) { workspace.sessions.insert(item, at: 0) }
+        select(item.id)
+        return item.id
+    }
+
     var selectedSummary: Workspace.Session? { selectedID.flatMap { id in workspace.sessions.first { $0.id == id } } }
 
     func select(_ id: String) {
         guard id != selectedID else { return }
         selectedID = id
+        contentConnected = nil
         draft.clear()
         if let index = workspace.sessions.firstIndex(where: { $0.id == id }) { workspace.sessions[index].unread = false }
         // Instant from the cache; the watch snapshot replaces it a moment later.
@@ -109,19 +150,28 @@ final class SessionController {
     private func watch(_ id: String) {
         watchTask?.cancel()
         watchTask = Task { [weak self] in
+            var retry = 1
             while !Task.isCancelled {
                 guard let self else { return }
                 for await event in self.client.watch(id: id) {
                     if Task.isCancelled { return }
+                    if event["type"]?.string == "snapshot" { retry = 1 }
                     self.receive(event, for: id)
                 }
-                // The stream dropped: watch again (a real connection would back off).
-                try? await Task.sleep(for: .seconds(1))
+                try? await Task.sleep(for: .seconds(retry))
+                retry = min(retry * 2, 30)
             }
         }
     }
 
     private func receive(_ event: JSON, for id: String) {
+        if id == selectedID, client is MeshSessionsClient {
+            if event["type"]?.string == "snapshot" {
+                contentConnected = true
+            } else if event["type"]?.string == "control", event["control"]?["state"]?.string == "disconnected" {
+                contentConnected = false
+            }
+        }
         // What the renderer shows for this session right now: the cache before this event (every event of the selected
         // session also went to the renderer).
         let previous = event["type"]?.string == "snapshot" && id == selectedID ? cache.state(id) : nil
@@ -173,13 +223,70 @@ final class SessionController {
 
     // MARK: Actions
 
+    var attachmentCount: Int { selectedID.flatMap { staged[$0]?.count } ?? 0 }
+
+    func clearAttachments() {
+        if let selectedID { staged.removeValue(forKey: selectedID) }
+    }
+
+    func attach(count: Int, load: @escaping (Int) async throws -> LocalChatFile) {
+        guard let id = selectedID, let upload = (client as? MeshSessionsClient)?.upload,
+              !uploading, !sending, count > 0 else { return }
+        guard staged[id, default: []].count + count <= 5 else {
+            showToast(String(localized: "connection.attachment_limit"))
+            return
+        }
+        uploading = true
+        uploadTask = Task {
+            defer { uploading = false }
+            do {
+                for index in 0..<count {
+                    try Task.checkCancellation()
+                    let uploaded = try await upload(id, load(index))
+                    try Task.checkCancellation()
+                    staged[id, default: []].append(uploaded)
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                showToast(String(localized: "connection.attachment_failed"))
+            }
+        }
+    }
+
     func send() {
-        guard let id = selectedID else { return }
-        let text = draft.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let id = selectedID, !sending, !uploading else { return }
+        let original = draft.text
+        let text = original.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        draft.clear()
+        let files = staged[id] ?? []
+        let pending: PendingSend
+        if let previous = pendingSend, previous.session == id, previous.text == text, previous.attachments == files {
+            pending = previous
+        } else {
+            pending = PendingSend(session: id, text: text, attachments: files, id: UUID().uuidString)
+            pendingSend = pending
+        }
+        sending = true
         bridge.scrollToEnd()
-        perform { try await self.client.send(id: id, clientMsgId: "c-\(UUID().uuidString.prefix(8))", content: text) }
+        sendTask = Task {
+            defer { sending = false }
+            do {
+                if let mesh = client as? MeshSessionsClient {
+                    _ = try await mesh.send(id: id, clientMsgId: pending.id, content: text, attachments: files)
+                } else {
+                    _ = try await client.send(id: id, clientMsgId: pending.id, content: text)
+                }
+                try Task.checkCancellation()
+                pendingSend = nil
+                staged.removeValue(forKey: id)
+                if selectedID == id, draft.text == original { draft.clear() }
+            } catch is CancellationError {
+                return
+            } catch {
+                showToast(String(localized: "connection.send_failed"))
+            }
+        }
     }
 
     func stop() {
@@ -261,6 +368,7 @@ final class SessionController {
     // MARK: Debug
 
     private func scheduleAutoApprove() {
+        guard client is MockSessionsClient else { return }
         guard let seconds = DebugLaunch.autoApproveSeconds, let request = pending, !autoApproved.contains(request.requestID) else { return }
         autoApproved.insert(request.requestID)
         let option = request.options.first { !$0.isReject }?.id ?? request.options.first?.id ?? ""

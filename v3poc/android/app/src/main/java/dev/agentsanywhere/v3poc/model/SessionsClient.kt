@@ -5,9 +5,8 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 
 /**
- * The `aa.v3.Sessions` calls the phone makes (v3poc/protocol/services.ts). The real implementation will be an adapter
- * over the generated MeshCall JVM client (t4wefan/meshcall#75); `MockSessionsClient` replays fixtures. Events and
- * messages stay JSON: the app forwards them to the renderer unchanged and reads only a few fields.
+ * The native session interface. MeshSessionsClient maps Connector RPC results into renderer events,
+ * and MockSessionsClient replays fixtures through the same interface.
  * All methods are called on the main thread.
  */
 interface SessionsClient {

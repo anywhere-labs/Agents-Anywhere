@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { CommandInbox } from '../../src/application/inbound/index.js'
 import { ConversationService } from '../../src/application/index.js'
 import type { RuntimeHandles } from '../../src/application/ports/index.js'
-import { AttachHub, ControlPlane, DeviceLink, callClass, rewriteUpgradeHead, secureChannelVia, type Egress, type LinkState, type SecureChannelWire } from '../../src/link/index.js'
+import { AttachHub, ControlPlane, DeviceLink, callClass, rewriteUpgradeHead, type Egress, type LinkState } from '../../src/link/index.js'
 import { inProcessStore, openSqliteStore, type RemoteStore } from '../../src/store/index.js'
 import { DeviceReaders, MemoryChangeFeed, OutboxSignal, plainSealer } from '../../src/sync/index.js'
 import { ConnectProxy, FakeServer, RouterProcess, routerBinary } from '../support/mesh-harness.js'
@@ -80,59 +80,6 @@ describe('AttachHub', () => {
     expect(hub.isOpen).toBe(false)
     expect((await second.next()).done).toBe(true)
     hub.close()
-  })
-})
-
-describe('secureChannelVia', () => {
-  function duplex(items: Record<string, unknown>[]) {
-    const sent: Record<string, unknown>[] = []
-    let release!: () => void
-    const held = new Promise<void>(resolve => (release = resolve))
-    return {
-      sent,
-      release,
-      channel: {
-        async *[Symbol.asyncIterator]() {
-          yield* items
-          await held
-        },
-        send: async (item: Record<string, unknown>) => void sent.push(item),
-        closeSend: async () => undefined,
-      },
-    }
-  }
-  const context = () => ({ signal: new AbortController().signal }) as never
-
-  it('feeds items in order and ends the call with the code the channel gives', async () => {
-    const received: unknown[] = []
-    let wire!: SecureChannelWire
-    const hub = {
-      open: (_open: { clientId: string; ch: string }, w: SecureChannelWire) => {
-        wire = w
-        return {
-          isClosed: false,
-          receive: async (item: { n: number; ct: string }) => {
-            received.push(item.n)
-            await wire.send({ n: Number(item.n) + 100, ct: item.ct })
-            if (item.n === 2) wire.end('not_paired')
-          },
-          close: async () => undefined,
-        }
-      },
-    }
-    const io = duplex([{ n: 1, ct: 'a' }, { n: 2, ct: 'b' }])
-    await expect(secureChannelVia(hub)({ clientId: 'cl_1', ch: 'ch_1' }, io.channel as never, context())).rejects.toMatchObject({ code: 'not_paired' })
-    expect(received).toEqual([1, 2])
-    expect(io.sent).toEqual([{ n: 101, ct: 'a' }, { n: 102, ct: 'b' }])
-  })
-
-  it('closes the channel when the client ends its side', async () => {
-    const closed: string[] = []
-    const hub = { open: () => ({ isClosed: false, receive: async () => undefined, close: async (reason: string) => void closed.push(reason) }) }
-    const io = duplex([{ n: 1, ct: 'a' }])
-    io.release()
-    await secureChannelVia(hub)({ clientId: 'cl_1', ch: 'ch_1' }, io.channel as never, context())
-    expect(closed).toEqual(['shutdown'])
   })
 })
 

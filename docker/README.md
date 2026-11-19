@@ -133,7 +133,7 @@ The compose file uses:
 
 v3 devices connect to the Server over [MeshCall](https://github.com/t4wefan/meshcall)
 (`contracts/device-meshcall/1.0`). The Router is a separate Go process built
-from the pinned commit `9334405` (`docker/meshcall-router/Dockerfile`); it keeps no
+from the pinned commit `ce14d60` (`docker/meshcall-router/Dockerfile`); it keeps no
 state, so a restart only makes devices reconnect.
 
 - Devices reach it only through the gateway at `wss://<server>/api/v3/device/mesh`;

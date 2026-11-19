@@ -3,7 +3,7 @@
 // connector-ts/src/channel/formats.ts and server/agent_server/core/e2ee.py.
 
 import { b64url, buf, fromB64url, fromUtf8, toHex, utf8 } from "./bytes"
-import { MAX_MESSAGE_LEN, TAGLEN, concatBytes } from "./noise"
+import { MAX_MESSAGE_LEN, TAGLEN, concatBytes } from "./noise/crypto"
 import { gcmDecrypt, gcmEncrypt, hmacSha256, randomBytes, sha256 } from "./webcrypto"
 
 export const NOISE_PAIRING_PROTOCOL = "Noise_XXpsk0_25519_AESGCM_SHA256"

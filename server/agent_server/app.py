@@ -32,6 +32,7 @@ from agent_server.api import (
     device_link,
     device_transfers,
     e2ee,
+    mobile_mesh,
     model_config,
     oauth,
     pairing,
@@ -47,7 +48,6 @@ from agent_server.api import (
     sessions_terminal,
     shares,
     tokens_link,
-    tunnel,
 )
 from agent_server.api.e2ee_gate import E2eeGateMiddleware
 from agent_server.core.api_namespace import API_V2_PREFIX, API_V3_PREFIX
@@ -337,6 +337,7 @@ def create_app(
         usage_recorder=app.state.usage_recorder,
         e2ee_settings=_e2ee_settings,
     )
+    app.state.device_mesh.use_control_tunnels(app.state.device_link.control_key)
     app.state.connector_deletion_recovery = ConnectorDeletionRecovery(
         app.state.store, app.state.connector_presence,
         app.state.session_runtime_state_cache, app.state.timeline_broker,
@@ -487,8 +488,8 @@ def create_app(
     app.include_router(client_ws.router, prefix=API_V2_PREFIX)
     app.include_router(connector_ingress.router, prefix=API_V2_PREFIX)
     app.include_router(device_link.router)
+    app.include_router(mobile_mesh.router)
     app.include_router(device_transfers.router)
-    app.include_router(tunnel.router)
     app.include_router(agents.router, prefix=API_V2_PREFIX)
     app.include_router(pairing.router, prefix=API_V2_PREFIX)
     app.include_router(previews.router)

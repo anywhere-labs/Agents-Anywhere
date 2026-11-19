@@ -1,18 +1,8 @@
-"""E2EE 1.0: pairing, Noise channel framing and trust messages for the optional encrypted mode.
+"""Shared binding formats, device trust and sealed content objects.
 
-These models describe what travels *inside* or *alongside* the Noise channel
-between a client and a device. Clients send ``ClientTunnelFrame`` on the
-Server's tunnel WebSocket; the worker that holds it forwards ``n``/``ct`` on a
-duplex ``aa.device.v1.Secure/channel`` call
-(``agent_server.core.device_meshcall.SecureChannelItem``). The Server reads only the
-route and the counter, stores the non-content ``CommandRegistration`` and never
-sees the plaintext of anything else here.
-
-The byte-level rules (Noise suite, prologues, frame flags, client ids, sealed
-display envelopes and attachments, input digests) are pinned by the helpers at
-the bottom of this module and by ``contracts/e2ee/1.0/vectors``; TS, Kotlin and
-Swift implement the same rules and run the same vectors.
-See ``contracts/e2ee/1.0/README.md`` and ``docs/v3/11-e2ee-noise.md``.
+The MeshCall content tunnel carries device requests and responses. Command
+registrations, display envelopes, and attachment chunks use the shared
+formats in contracts/e2ee/1.0.
 """
 
 from __future__ import annotations

@@ -57,6 +57,7 @@ final class RefCaptureTests: XCTestCase {
             let kv = pair.split(separator: "=", maxSplits: 1)
             if kv.count == 2 { app.launchEnvironment[String(kv[0])] = String(kv[1]) }
         }
+        app.launchEnvironment["AA_POC_DEMO"] = "1"
         app.launch()
         return app
     }

@@ -1,4 +1,4 @@
-import { hostname, userInfo } from 'node:os'
+import { userInfo } from 'node:os'
 import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 
@@ -6,12 +6,12 @@ import type { TunnelApi } from '../application/inbound/tunnel-api.js'
 import type { DisplayEnvelope, OutboxStore } from '../application/ports/index.js'
 import type { LocalConfirmation } from '../application/ports/trust.js'
 import { DeviceTrustService } from '../application/trust/device-trust-service.js'
-import { SEALED_SEGMENT_BYTES, SecureChannelHub, fromB64url, nodeContentSealer, openSegments } from '../channel/index.js'
+import { SEALED_SEGMENT_BYTES, fromB64url, nodeContentSealer, openSegments } from '../channel/formats.js'
 import { clientIdFor, identityFingerprint, type ClientPlatform } from '../domain/trust/index.js'
-import { nodeNoiseCrypto, x25519FromSecret } from '../channel/noise/node-crypto.js'
 import type { DisplayFields } from '../domain/conversation/index.js'
 import { FileDeviceSecrets, FileTrustRepository, platformVault, type VaultKeyProvider } from '../keystore/index.js'
-import { secureChannelVia, type E2eeMode, type SecureChannelHandler } from '../link/index.js'
+import type { E2eeMode } from '../link/index.js'
+import { deviceContent, type DeviceContent } from '../link/content.js'
 import { plainSealer, type DisplaySealer } from '../sync/index.js'
 import type { ClientPairingInvitation, LocalClientGrant } from '../host/index.js'
 import type { Log } from './compose.js'
@@ -49,7 +49,6 @@ export interface DeviceTrustOptions {
   /** The client API served inside channels (`DeviceTunnelApi`). */
   readonly api: TunnelApi
   /** What clients see as this device's name in the trust list. */
-  readonly deviceLabel?: string
   /** Where the secrets' wrapping key lives (default: the platform's keychain / DPAPI / Secret Service). */
   readonly vault?: VaultKeyProvider
   /** The person at this device confirms a client approved from another client (CLI prompt, Desktop dialog). */
@@ -66,8 +65,7 @@ export interface DeviceTrustOptions {
  */
 export class DeviceTrust {
   public readonly trust: DeviceTrustService
-  public readonly hub: SecureChannelHub
-  public readonly secure: SecureChannelHandler
+  public readonly content: DeviceContent
   private serverMode: E2eeMode = 'off'
   private readonly unsubscribe: () => void
   private closed = false
@@ -77,10 +75,9 @@ export class DeviceTrust {
     this.welcomed = resolve
   })
 
-  private constructor(private readonly options: DeviceTrustOptions, trust: DeviceTrustService, hub: SecureChannelHub) {
+  private constructor(private readonly options: DeviceTrustOptions, trust: DeviceTrustService, content: DeviceContent) {
     this.trust = trust
-    this.hub = hub
-    this.secure = secureChannelVia(hub)
+    this.content = content
     this.unsubscribe = trust.onEvent(event => {
       if (event.type === 'DirectoryKeyRotated') void this.reseal(event.previousKeyId)
     })
@@ -99,9 +96,8 @@ export class DeviceTrust {
       ...(options.confirmation !== undefined ? { confirmation: options.confirmation } : {}),
     })
     await trust.init()
-    const identity = x25519FromSecret((await secrets.identityKey()).secretKey)
-    const hub = new SecureChannelHub({ deviceId: options.deviceId, deviceLabel: options.deviceLabel ?? hostname(), trust, identity, crypto: nodeNoiseCrypto, api: options.api })
-    return new DeviceTrust(options, trust, hub)
+    const privateKey = (await secrets.identityKey()).secretKey
+    return new DeviceTrust(options, trust, deviceContent(options.api, trust, privateKey))
   }
 
   /** The stricter of the Server's mode and this device's own policy (a device that once required E2EE keeps it). */
@@ -202,8 +198,6 @@ export class DeviceTrust {
   public async close(): Promise<void> {
     this.closed = true
     this.unsubscribe()
-    await this.hub.closeAll('shutdown').catch(() => undefined)
-    this.hub.dispose()
   }
 }
 

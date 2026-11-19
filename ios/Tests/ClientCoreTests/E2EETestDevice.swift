@@ -288,59 +288,8 @@ nonisolated final class E2EETestAPI: V2E2EEAPIProtocol, @unchecked Sendable {
     var duplicate = false
     private(set) var registrations: [E2EECommandRegistration] = []
 
-    func tunnelTicket(clientId: String) async throws -> V2WebSocketTicket {
-        V2WebSocketTicket(ticket: "ticket", expiresAt: "", serverTime: "")
-    }
-
     func registerCommand(_ registration: E2EECommandRegistration) async throws -> E2EECommandRegistrationResponse {
         registrations.append(registration)
         return E2EECommandRegistrationResponse(duplicate: duplicate)
-    }
-}
-
-/// 隧道 WebSocket 的内存替身：记录发出的文本，按测试的安排返回收到的文本或错误。
-nonisolated final class E2EEFakeTunnelSocket: E2EETunnelSocket, @unchecked Sendable {
-    private let lock = NSLock()
-    private var buffer: [Result<String, Error>] = []
-    private var waiter: CheckedContinuation<String, Error>?
-    private var sentTexts: [String] = []
-    private var isClosed = false
-
-    var sent: [String] { lock.withLock { sentTexts } }
-    var closed: Bool { lock.withLock { isClosed } }
-
-    func send(_ text: String) async throws {
-        lock.withLock { sentTexts.append(text) }
-    }
-
-    func receive() async throws -> String {
-        try await withCheckedThrowingContinuation { continuation in
-            lock.lock()
-            if buffer.isEmpty {
-                waiter = continuation
-                lock.unlock()
-            } else {
-                let next = buffer.removeFirst()
-                lock.unlock()
-                continuation.resume(with: next)
-            }
-        }
-    }
-
-    func push(_ result: Result<String, Error>) {
-        lock.lock()
-        if let waiter {
-            self.waiter = nil
-            lock.unlock()
-            waiter.resume(with: result)
-        } else {
-            buffer.append(result)
-            lock.unlock()
-        }
-    }
-
-    func close() {
-        lock.withLock { isClosed = true }
-        push(.failure(URLError(.cancelled)))
     }
 }

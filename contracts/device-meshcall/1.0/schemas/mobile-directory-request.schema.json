@@ -1,0 +1,54 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:mobile-directory-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "cursor": {
+      "anyOf": [
+        {
+          "maxLength": 2048,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cursor"
+    },
+    "deviceId": {
+      "anyOf": [
+        {
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Deviceid"
+    },
+    "resource": {
+      "enum": [
+        "devices",
+        "projects",
+        "sessions",
+        "runtimes"
+      ],
+      "title": "Resource",
+      "type": "string"
+    }
+  },
+  "required": [
+    "resource"
+  ],
+  "title": "MobileDirectoryRequest",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

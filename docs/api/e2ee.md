@@ -1,6 +1,8 @@
 # 端到端加密模式（Server 侧）
 
-部署配置 `AGENT_SERVER_E2EE=required` 打开可选的端到端加密模式。客户端与设备之间的 Noise 通道、配对、字节格式见 [`contracts/e2ee/1.0`](../../contracts/e2ee/1.0/README.md)；设备在该模式下注册哪些方法见 [`contracts/device-meshcall/1.0`](../../contracts/device-meshcall/1.0/README.md) 的「加密模式」。本页只说明 Server 对外的行为。
+部署配置 `AGENT_SERVER_E2EE=required` 开启端到端加密，设备授权与隧道契约见 [device-meshcall 1.0](../../contracts/device-meshcall/1.0/README.md)。展示信封、附件和输入摘要的字节格式见 [E2EE 1.0](../../contracts/e2ee/1.0/README.md)。
+
+首次登录后，客户端通过 HTTPS 领取管理入口，再由 MeshCall 的管理隧道申请通向指定 Connector 的内容隧道。移动 PoC 也通过该管理隧道读取设备、项目、会话和 Agent 目录。Connector 验证客户端的本机配对授权并解封会话正文、文件和实时事件。Server 使用独立的管理隧道连接 Connector，只交换运行状态、配置、命令回执等管理数据。Router 转发加密帧。Server 保存账号、设备、项目及会话目录等元数据，目录中的标题、摘要和工作目录以密封的展示信封保存。
 
 ## 配置
 
@@ -22,7 +24,7 @@
 
 ## 拒绝明文内容路由
 
-加密模式下，下列路由（HTTP 与 WebSocket）一律拒绝，内容改走安全通道（`WS /api/v3/tunnel`）：
+加密模式下，下列路由（HTTP 与 WebSocket）一律拒绝，内容由客户端经 MeshCall 加密隧道直接发给 Connector：
 
 - `POST /api/v2/sessions`、`POST /api/v2/sessions/create-and-start`（携带首条消息）；
 - `/api/v2/sessions/{id}/` 下除 `meta`、`runtime/state`、`runtime/capabilities` 以外的全部路由：时间线、快照、事件、会话 WebSocket、命令、审批、计划、目标、Server 排队、附件、终端、文件、服务端分享快照；
@@ -32,7 +34,7 @@
 HTTP 返回 `409`：
 
 ```json
-{"detail": {"code": "e2ee_required", "message": "This server requires end-to-end encryption; use the secure channel (/api/v3/tunnel)."}}
+{"detail": {"code": "e2ee_required", "message": "This server requires end-to-end encryption; use the encrypted device tunnel."}}
 ```
 
 WebSocket 在握手完成前以 `1008`（`e2ee_required`）关闭。拒绝发生在路由之前，CORS 头照常返回。
@@ -43,7 +45,7 @@ WebSocket 在握手完成前以 `1008`（`e2ee_required`）关闭。拒绝发生
 
 `PATCH /api/v2/sessions/{id}/meta` 仍可修改置顶、归档等状态，但请求体带明文 `title` 时同样返回 `409 e2ee_required`：加密模式下标题只能以客户端加密后的展示信封提交。
 
-会话目录（`GET /api/v2/sessions`、`…/meta`）、归档/已读/置顶、设备与设置、项目、用量、模型配置、Dashboard 推送、公开分享读取（密文）照常可用。Server 在加密模式下能看到的明文元数据见 `docs/v3/11-e2ee-noise.md` §10。
+会话目录（`GET /api/v2/sessions`、`…/meta`）、归档/已读/置顶、设备与设置、项目、用量、模型配置、Dashboard 推送、公开分享读取（密文）照常可用。
 
 ## 命令登记
 
@@ -118,4 +120,4 @@ uv run python -m scripts.e2ee_canary_scan --canary-file canaries.txt \
 
 `server/tests/test_e2ee_canary.py` 用它在进程内做一遍：真实 MeshCall Router（`MESHCALL_ROUTER_BINARY`）前面放一个记录字节的代理，两段 Router 连接都经过它；内容以密文经隧道送到设备，附件以 `x-aa-sealed` 上传，命令按摘要登记，明文请求被拒绝；之后扫描数据库、文件、日志、两段 Router 流量和发给客户端的隧道帧。设置 `AGENT_SERVER_TEST_REDIS_URL`（指向一个空的库，测试结束后会清空它）时一并扫描 Redis。
 
-还没有覆盖的：真实设备（A 的连接和 connector-ts 通道，测试里的设备只回显密文）、隧道 WebSocket 端点本身和 uvicorn 访问日志。被拒绝的明文请求仍会以路径和查询参数出现在访问日志里；正确的客户端在加密模式下不会发出这类请求。
+`server/tests/test_v3_e2e_e2ee.py` 同样通过真实 Router 检查实际 Connector 的配对、续聊、文件、终端与内容隔离。被拒绝的明文请求仍会以路径和查询参数出现在访问日志里。正确的客户端在加密模式下不会发出这类内容请求。

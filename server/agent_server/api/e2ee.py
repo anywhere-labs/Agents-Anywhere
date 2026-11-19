@@ -1,7 +1,7 @@
 """``/api/v3/e2ee``: plaintext side channels of the E2EE ``required`` mode.
 
 Only command registrations live here (contracts/e2ee/1.0 ``CommandRegistration``); the commands themselves and
-every content read travel through the secure channel (``WS /api/v3/tunnel``).
+every content read travel through the encrypted MeshCall Content service.
 """
 
 from __future__ import annotations

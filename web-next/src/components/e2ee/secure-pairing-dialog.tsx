@@ -16,7 +16,7 @@ import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Textarea } from "@/components/ui/textarea"
 import { e2eeRuntime } from "@/features/e2ee/runtime"
 import { fromB64url } from "@/lib/e2ee/bytes"
-import { parsePairingUri, type PairingPayload } from "@/lib/e2ee/client-channel"
+import { parsePairingUri, type PairingPayload } from "@/lib/e2ee/content-channel"
 import { identityFingerprint } from "@/lib/e2ee/formats"
 import { runtimeFailureOf, useRuntimeErrorText } from "@/lib/runtime-error-text"
 

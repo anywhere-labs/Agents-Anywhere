@@ -6,7 +6,7 @@
 // call ready so a Server worker holds Link/attach and Link/outbox, and keep it that way: re-register after the
 // Router connection drops, say hello again when the token is refused, retry `duplicate instance_id` at a short
 // steady interval, call ready again when the holder goes away. The token comes from `POST /api/v3/device/hello`;
-// there are no tunnels and no E2E keys at the MeshCall level (encryption is AA's own Secure/channel); the token is not refreshed while registered, because the Router keeps
+// the token is not refreshed while registered, because the Router keeps
 // connections past the token's expiry and a new hello would replace the connection generation; the WebSocket goes
 // through `RouterBridge` so proxies and the system CAs apply.
 
@@ -21,6 +21,7 @@ import { AttachHub, type AttachEnd } from './attach.js'
 import { RouterBridge } from './bridge.js'
 import { HttpError } from './http.js'
 import { MESH_MAX_FRAME_BYTES, meshGrant, type ControlPlane, type MeshGrant } from './control-plane.js'
+import { CONTENT_PRINCIPAL_PREFIX, CONTENT_SERVICE, CONTROL_PRINCIPAL, CONTROL_SERVICES, type DeviceContent } from './content.js'
 import type { Egress } from './egress.js'
 import { DEFAULT_REGISTRATION, DeviceServices, type DeviceServicesDeps, type E2eeMode, type Registration } from './services.js'
 
@@ -67,11 +68,12 @@ export interface DeviceLinkOptions {
   readonly host: 'desktop' | 'cli' | 'dsh-plugin'
   readonly capabilities?: readonly string[]
   readonly handshake: Handshake
+  readonly content?: DeviceContent
   readonly store: Pick<ConversationStore, 'sessions'>
   readonly inbox: CommandInbox
   readonly outboxSignal: OutboxSignal
   /** Everything the services need besides the generation check and the attach hub, which the link owns. */
-  readonly services: Omit<DeviceServicesDeps, 'connectionId' | 'attach' | 'inbox' | 'onCommand'>
+  readonly services: Omit<DeviceServicesDeps, 'connectionId' | 'encryptedControl' | 'attach' | 'inbox' | 'onCommand'>
   readonly egress: () => Egress
   /** Per-mode registration; pass the generated `REGISTERED_SERVICES` of `e2ee-registration.ts` once it is in. */
   readonly registration?: Readonly<Record<E2eeMode, Registration>>
@@ -165,6 +167,8 @@ export class DeviceLink {
       // Commits wake the outbox stream through the ChangeFeed; polling is only the fallback.
       outbox: { pollMs: OUTBOX_FALLBACK_POLL_MS, ...options.services.outbox },
       connectionId: () => this.generation,
+      encryptedControl: () => this.mode === 'required' && options.content !== undefined &&
+        this.grant?.services?.includes(CONTENT_SERVICE) === true,
       attach: this.attach,
       inbox: options.inbox,
       onCommand: () => options.outboxSignal.poke(),
@@ -250,6 +254,7 @@ export class DeviceLink {
       host: this.options.host,
       ...(this.options.capabilities !== undefined ? { capabilities: [...this.options.capabilities] } : {}),
       sessionsHead: heads,
+      ...(this.options.content === undefined ? {} : { meshE2eeKey: this.options.content.publicKey }),
     }, signal)
     // Clocks first: no watch stream of this generation may hand out a sequence number below the Server's floor.
     const jumped = await this.options.store.sessions.applySeqFloors(welcome.seqFloors ?? {})
@@ -369,7 +374,10 @@ export class DeviceLink {
           }
         }
         const current = this.grant!
-        const built = this.services.build(registration[this.mode], current.services, this.mode)
+        const { [CONTENT_SERVICE]: contentMethods, ...managementRegistration } = registration[this.mode] as Readonly<Record<string, readonly string[]>>
+        const built = this.services.build(managementRegistration, current.services, this.mode)
+        const content = this.options.content
+        const mountsContent = this.mode === 'required' && contentMethods && current.services?.includes(CONTENT_SERVICE)
         if (built.skipped.length > 0) this.log.warn(`not registering ${built.skipped.join(', ')} (not in the Router token, or no handler on this device)`)
         const target = this.routerTarget(current)
         let mesh: Mesh
@@ -382,7 +390,31 @@ export class DeviceLink {
             maxFrameSize: current.maxFrameBytes ?? MESH_MAX_FRAME_BYTES,
             logger: linkRpcLogger(this.log),
           })
-          mesh.mount(...built.services, { instanceId: current.instanceId, accessLog: false, logger: linkRpcLogger(this.log) })
+          if (mountsContent && content) {
+            const management = built.services.filter((_, index) => CONTROL_SERVICES.has(built.names[index] ?? ''))
+            const other = built.services.filter((_, index) => !CONTROL_SERVICES.has(built.names[index] ?? ''))
+            if (other.length > 0) {
+              mesh.mount(...other, { instanceId: current.instanceId, accessLog: false, logger: linkRpcLogger(this.log) })
+            }
+            mesh.mount(...management, {
+              instanceId: current.instanceId,
+              accessLog: false,
+              logger: linkRpcLogger(this.log),
+              acceptTunnels: offer => offer.principal === CONTROL_PRINCIPAL,
+              requireE2E: true,
+              e2ePrivateKey: content.privateKey,
+            })
+            mesh.mount(content.service, {
+              instanceId: current.instanceId,
+              accessLog: false,
+              logger: linkRpcLogger(this.log),
+              acceptTunnels: offer => offer.principal.startsWith(CONTENT_PRINCIPAL_PREFIX),
+              requireE2E: true,
+              e2ePrivateKey: content.privateKey,
+            })
+          } else {
+            mesh.mount(...built.services, { instanceId: current.instanceId, accessLog: false, logger: linkRpcLogger(this.log) })
+          }
         } catch (error) {
           problem(`cannot prepare the MeshCall link: ${(error as Error).message}`)
           await sleep(backoff.next(), signal)
@@ -423,7 +455,8 @@ export class DeviceLink {
         duplicateSince = 0
         lastProblem = ''
         this.setState('registered')
-        this.log.info(`registered ${built.names.map(name => name.replace(/^aa\.device\.v1\./u, '')).join(', ')} at ${current.routerUrl} as ${current.instanceId}` +
+        const mounted = mountsContent && content ? [...built.names, CONTENT_SERVICE] : built.names
+        this.log.info(`registered ${mounted.map(name => name.replace(/^aa\.device\.v1\./u, '')).join(', ')} at ${current.routerUrl} as ${current.instanceId}` +
           `${target.viaBridge ? ' (via bridge)' : ''}; generation ${this.generation}; e2ee ${this.mode}`)
 
         const session = new AbortController()

@@ -10,7 +10,7 @@ import { localRuntimePath, readLocalState } from '../../src/host/desktop/local-r
 import { connectorTsInstalled, launchRpcConnector, v3RouterBinary } from '../helpers/ts-connector.js'
 
 const routerBinary = v3RouterBinary()
-const skip = !connectorTsInstalled ? 'connector-ts is not installed' : !routerBinary ? 'no meshcall 9334405 Router binary' : false
+const skip = !connectorTsInstalled ? 'connector-ts is not installed' : !routerBinary ? 'no compatible MeshCall Router binary' : false
 // Nothing listens here: a started Connector keeps retrying its Server.
 const config = (id: string) => ({ serverUrl: 'http://127.0.0.1:9', connectorId: id, connectorToken: 'fixture' })
 

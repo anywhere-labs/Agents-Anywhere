@@ -5,18 +5,16 @@ import com.agentsanywhere.app.api.ApiClient
 import com.agentsanywhere.app.api.AuthApi
 import com.agentsanywhere.app.api.E2eeServerConfig
 import com.agentsanywhere.app.api.apiPath
-import com.agentsanywhere.app.api.e2ee.ChannelBinding
 import com.agentsanywhere.app.api.e2ee.ChannelClosedException
-import com.agentsanywhere.app.api.e2ee.ClientSecureChannel
+import com.agentsanywhere.app.api.e2ee.DeviceContentChannel
 import com.agentsanywhere.app.api.e2ee.DirectoryKeyGrant
 import com.agentsanywhere.app.api.e2ee.E2eeApi
 import com.agentsanywhere.app.api.e2ee.E2eeErrorCodes
 import com.agentsanywhere.app.api.e2ee.E2eeFormats
 import com.agentsanywhere.app.api.e2ee.PairingPayload
-import com.agentsanywhere.app.api.e2ee.TunnelConnection
 import com.agentsanywhere.app.api.e2ee.TunnelResponse
-import com.agentsanywhere.app.api.e2ee.TunnelRoute
-import com.agentsanywhere.app.api.e2ee.WebSocketTunnelConnection
+import com.agentsanywhere.app.api.e2ee.MeshDeviceChannel
+import com.agentsanywhere.app.api.e2ee.generated.ContentPairRequest
 import com.agentsanywhere.app.api.e2ee.requestJson
 import com.agentsanywhere.app.feature.auth.AuthSessionStore
 import kotlinx.coroutines.Dispatchers
@@ -29,7 +27,6 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
-import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 
 /** `POST /api/v3/e2ee/commands`；返回 true 表示 Server 说这是重复命令。 */
@@ -43,16 +40,23 @@ fun interface CommandRegistrar {
  * 这是「按设备选择传输的适配点」：调用方先 [transportFor]，`Secure` 时用 [request] / [subscribe] /
  * [sendCommand]，`PairingRequired` 时提示配对，`Plain` 时走现有的 HTTP / WS。
  */
-class E2eeClient(
+internal interface DeviceChannelProvider {
+    suspend fun pair(payload: PairingPayload, label: String, appVersion: String?): ChannelPair
+    suspend fun open(deviceId: String, devicePub: ByteArray): DeviceContentChannel
+}
+
+internal data class ChannelPair(val channel: DeviceContentChannel, val grantedAt: String, val directoryKey: DirectoryKeyGrant)
+
+class E2eeClient internal constructor(
     private val trust: ClientTrustStore,
-    private val tunnel: TunnelConnection,
+    private val provider: DeviceChannelProvider? = null,
     private val commands: CommandRegistrar,
     private val loadServerConfig: suspend () -> E2eeServerConfig,
-    private val now: () -> Long = System::currentTimeMillis,
     /** 每个经通道的请求（含按需重连）的统一超时；超时抛 [E2eeTimeoutException]。 */
     private val requestTimeoutMillis: Long = DEFAULT_REQUEST_TIMEOUT_MS,
+    private val bootstrapContent: (suspend () -> JSONObject)? = null,
 ) {
-    private val channels = ConcurrentHashMap<String, ClientSecureChannel>()
+    private val channels = ConcurrentHashMap<String, DeviceContentChannel>()
     private val connectLocks = ConcurrentHashMap<String, Mutex>()
     private val dismissedPrompts = ConcurrentHashMap.newKeySet<String>()
     private val pairingPromptState = MutableStateFlow<String?>(null)
@@ -110,34 +114,65 @@ class E2eeClient(
         locallyRequired = trust.instanceRequired() || trust.requiresEncryption(deviceId),
     )
 
-    /** 扫码配对（XXpsk0）；成功后保存授权、列表密钥，并记下「该设备要求加密」。 */
+    /** 扫码配对；成功后保存授权、列表密钥，并记下「该设备要求加密」。 */
     suspend fun pair(payload: PairingPayload, label: String, appVersion: String? = null): PairedDevice {
-        if (isExpired(payload)) throw ChannelClosedException(E2eeErrorCodes.PAIRING_EXPIRED)
-        val identity = trust.identity()
-        val ch = ClientSecureChannel.newChannelId()
-        val binding = ChannelBinding()
-        val wire = tunnel.open(TunnelRoute(payload.deviceId, E2eeFormats.clientIdFor(identity.publicKey), ch), binding)
-        val result = try {
-            ClientSecureChannel.pair(payload, identity, ch, wire, label, "android", appVersion, now, binding::bind)
-        } catch (error: ChannelClosedException) {
-            if (error.code in NOT_RECOVERABLE) throw error
-            // pair.committed 丢了：KK 能成功就说明授权已经写入（契约「通道的建立」）。
-            return recoverPairing(payload) ?: throw error
-        }
+        bootstrapContent?.let { return pairMesh(payload, label, it) }
+        val result = checkNotNull(provider).pair(payload, label, appVersion)
         val record = trust.savePairing(payload.deviceId, payload.deviceIdentityPubBytes, result.grantedAt, result.directoryKey)
         adopt(result.channel)
         return record
     }
 
-    /** 已配对设备的通道；没有或已断开时用 KK 重新连接（每次一个新的 `ch`）。 */
-    suspend fun channel(deviceId: String): ClientSecureChannel {
+    private suspend fun pairMesh(
+        payload: PairingPayload, label: String, bootstrap: suspend () -> JSONObject,
+    ): PairedDevice = connectLocks.getOrPut(payload.deviceId) { Mutex() }.withLock {
+        val device = trust.device(payload.deviceId)
+        val pin = payload.deviceIdentityPub
+        if (device != null && device.devicePub != pin) throw ChannelClosedException(E2eeErrorCodes.DEVICE_PIN_MISMATCH)
+        val identity = trust.identity()
+        val secret = checkNotNull(trust.meshCredential(payload.deviceId, pin, create = true))
+        val channel = MeshDeviceChannel.open(bootstrap(), payload.deviceId, pin, clientId, secret)
+        try {
+            val result = channel.pair(ContentPairRequest(
+                E2eeFormats.b64url(identity.publicKey), secret, label, payload.pairingId, payload.psk, "android",
+            ))
+            val key = result.directoryKey
+            if (result.clientId != clientId || key.deviceId != payload.deviceId)
+                throw ChannelClosedException(E2eeErrorCodes.DEVICE_PIN_MISMATCH)
+            val record = trust.savePairing(payload.deviceId, payload.deviceIdentityPubBytes, result.grantedAt,
+                DirectoryKeyGrant(key.deviceId, key.keyId, key.epoch, key.key))
+            adopt(channel)
+            channel.watchTrust()
+            record
+        } catch (error: Exception) {
+            channel.close()
+            throw error
+        }
+    }
+
+    /** 已配对设备的通道；没有或已断开时重新申请隧道。 */
+    suspend fun channel(deviceId: String): DeviceContentChannel {
         channels[deviceId]?.takeIf { it.isOpen }?.let { return it }
         return connectLocks.getOrPut(deviceId) { Mutex() }.withLock {
             channels[deviceId]?.takeIf { it.isOpen }?.let { return@withLock it }
             val device = trust.device(deviceId) ?: throw ChannelClosedException(E2eeErrorCodes.NOT_PAIRED)
-            // A Server-relayed `e2ee_not_paired` before the handshake can be forged: report it, keep the pin.
-            val channel = connect(deviceId, device.devicePubBytes)
-            syncDirectoryKey(channel)
+            val bootstrap = bootstrapContent
+            if (bootstrap != null) {
+                val secret = trust.meshCredential(deviceId, device.devicePub)
+                    ?: throw ChannelClosedException(E2eeErrorCodes.NOT_PAIRED)
+                val channel = MeshDeviceChannel.open(bootstrap(), deviceId, device.devicePub, clientId, secret)
+                try {
+                    val key = DirectoryKeyGrant.parse(channel.request("GET", "/e2ee/v1/directory-key").body as JSONObject)
+                    if (key.deviceId == deviceId) trust.updateDirectoryKey(key)
+                    adopt(channel)
+                    channel.watchTrust()
+                    return@withLock channel
+                } catch (error: Exception) {
+                    channel.close()
+                    throw error
+                }
+            }
+            val channel = checkNotNull(provider).open(deviceId, device.devicePubBytes)
             adopt(channel)
             channel
         }
@@ -217,37 +252,7 @@ class E2eeClient(
         channels.clear()
     }
 
-    private suspend fun connect(deviceId: String, devicePub: ByteArray): ClientSecureChannel {
-        val identity = trust.identity()
-        val ch = ClientSecureChannel.newChannelId()
-        val binding = ChannelBinding()
-        val wire = tunnel.open(TunnelRoute(deviceId, E2eeFormats.clientIdFor(identity.publicKey), ch), binding)
-        return ClientSecureChannel.connect(deviceId, devicePub, identity, ch, wire, now, binding::bind)
-    }
-
-    private suspend fun recoverPairing(payload: PairingPayload): PairedDevice? {
-        val channel = runCatching { connect(payload.deviceId, payload.deviceIdentityPubBytes) }.getOrNull() ?: return null
-        return runCatching {
-            val grant = DirectoryKeyGrant.parse(channel.requestJson("GET", "/e2ee/v1/directory-key"))
-            val grants = channel.requestJson("GET", "/e2ee/v1/trust").optJSONArray("grants")
-            val grantedAt = (0 until (grants?.length() ?: 0))
-                .mapNotNull { grants?.optJSONObject(it) }
-                .firstOrNull { it.optString("clientId") == channel.clientId }
-                ?.optString("grantedAt")
-                .orEmpty()
-            trust.savePairing(payload.deviceId, payload.deviceIdentityPubBytes, grantedAt, grant).also { adopt(channel) }
-        }.onFailure { channel.close() }.getOrNull()
-    }
-
-    /** `ready` 里的列表密钥与本地不同时（设备轮换过），经通道取当前的。 */
-    private suspend fun syncDirectoryKey(channel: ClientSecureChannel) {
-        val ready = channel.ready ?: return
-        val stored = trust.device(channel.deviceId) ?: return
-        if (ready.directoryKeyId == stored.directoryKeyId && ready.directoryKeyEpoch == stored.directoryKeyEpoch) return
-        runCatching { trust.updateDirectoryKey(DirectoryKeyGrant.parse(channel.requestJson("GET", "/e2ee/v1/directory-key"))) }
-    }
-
-    private fun adopt(channel: ClientSecureChannel) {
+    private fun adopt(channel: DeviceContentChannel) {
         channels.put(channel.deviceId, channel)?.takeIf { it !== channel }?.close()
         channel.onChannelEvent { event ->
             if (event.optString("type") == "e2ee.directory_key") {
@@ -264,18 +269,8 @@ class E2eeClient(
         }
     }
 
-    private fun isExpired(payload: PairingPayload): Boolean =
-        runCatching { Instant.parse(payload.expiresAt).toEpochMilli() <= now() }.getOrDefault(false)
-
     companion object {
         const val DEFAULT_REQUEST_TIMEOUT_MS = 30_000L
-
-        private val NOT_RECOVERABLE = setOf(
-            E2eeErrorCodes.DEVICE_PIN_MISMATCH,
-            E2eeErrorCodes.PAIRING_EXPIRED,
-            E2eeErrorCodes.NOT_PAIRED,
-            E2eeErrorCodes.HANDSHAKE_FAILED,
-        )
 
         @Volatile
         private var instance: E2eeClient? = null
@@ -300,11 +295,11 @@ class E2eeClient(
             val apiClient = { appApiClient ?: DEFAULT_API_CLIENT }
             return E2eeClient(
                 trust = ClientTrustStore.create(context),
-                tunnel = WebSocketTunnelConnection(
-                    serverUrl = session::readServerUrl,
-                    accessToken = session::readAccessToken,
-                    client = apiClient,
-                ),
+                bootstrapContent = {
+                    withContext(Dispatchers.IO) {
+                        E2eeApi(apiClient()).bootstrapContent(session.readServerUrl(), session.readAccessToken())
+                    }
+                },
                 commands = { commandId, deviceId, digest ->
                     withContext(Dispatchers.IO) {
                         E2eeApi(apiClient()).registerCommand(session.readServerUrl(), session.readAccessToken(), commandId, deviceId, digest).duplicate

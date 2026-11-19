@@ -1,0 +1,65 @@
+{
+  "$defs": {
+    "DirectoryKeyGrant": {
+      "description": "Sent by the device to a client inside the channel after pairing or rotation.",
+      "properties": {
+        "deviceId": {
+          "minLength": 1,
+          "title": "Deviceid",
+          "type": "string"
+        },
+        "epoch": {
+          "minimum": 0,
+          "title": "Epoch",
+          "type": "integer"
+        },
+        "key": {
+          "description": "32 bytes, base64url without padding",
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "title": "Key",
+          "type": "string"
+        },
+        "keyId": {
+          "minLength": 1,
+          "title": "Keyid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "deviceId",
+        "keyId",
+        "epoch",
+        "key"
+      ],
+      "title": "DirectoryKeyGrant",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:content-pair-result",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "clientId": {
+      "title": "Clientid",
+      "type": "string"
+    },
+    "directoryKey": {
+      "$ref": "#/$defs/DirectoryKeyGrant"
+    },
+    "grantedAt": {
+      "title": "Grantedat",
+      "type": "string"
+    }
+  },
+  "required": [
+    "clientId",
+    "grantedAt",
+    "directoryKey"
+  ],
+  "title": "ContentPairResult",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

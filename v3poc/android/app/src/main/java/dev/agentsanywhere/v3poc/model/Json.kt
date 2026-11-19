@@ -10,6 +10,7 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.longOrNull
 import java.time.Instant
 import java.time.format.DateTimeFormatter
 
@@ -22,6 +23,7 @@ val AAJson = Json { ignoreUnknownKeys = true; encodeDefaults = false }
 operator fun JsonElement?.get(key: String): JsonElement? = (this as? JsonObject)?.get(key)
 operator fun JsonElement?.get(index: Int): JsonElement? = (this as? JsonArray)?.getOrNull(index)
 val JsonElement?.str: String? get() = (this as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
+val JsonElement?.long: Long? get() = (this as? JsonPrimitive)?.longOrNull
 val JsonElement?.int: Int? get() = (this as? JsonPrimitive)?.intOrNull ?: (this as? JsonPrimitive)?.doubleOrNull?.toInt()
 val JsonElement?.double: Double? get() = (this as? JsonPrimitive)?.doubleOrNull
 val JsonElement?.bool: Boolean? get() = (this as? JsonPrimitive)?.booleanOrNull

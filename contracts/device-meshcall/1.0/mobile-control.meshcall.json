@@ -1,0 +1,218 @@
+{
+  "protocol": "meshcall/1",
+  "services": [
+    {
+      "balance": {
+        "key": null,
+        "kind": "round_robin"
+      },
+      "description": "Read the mobile workspace directory and manage device tunnel grants.",
+      "methods": [
+        {
+          "annotations": {
+            "destructive": false,
+            "idempotent": true,
+            "read_only": true
+          },
+          "balance": {
+            "key": null,
+            "kind": "round_robin"
+          },
+          "deprecated": null,
+          "description": "Read the authenticated account's device and workspace directory.",
+          "duplex_reason": null,
+          "input_item": null,
+          "name": "read_directory",
+          "output_item": null,
+          "parameters": [
+            "cursor",
+            "deviceId",
+            "resource"
+          ],
+          "request": {
+            "module": "agent_server.core.device_content",
+            "qualname": "MobileDirectoryRequest",
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "cursor": {
+                  "anyOf": [
+                    {
+                      "maxLength": 2048,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "title": "Cursor"
+                },
+                "deviceId": {
+                  "anyOf": [
+                    {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "title": "Deviceid"
+                },
+                "resource": {
+                  "enum": [
+                    "devices",
+                    "projects",
+                    "sessions",
+                    "runtimes"
+                  ],
+                  "title": "Resource",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "resource"
+              ],
+              "type": "object"
+            }
+          },
+          "response": {
+            "module": "agent_server.core.device_content",
+            "qualname": "MobileDirectoryResult",
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "body": {
+                  "additionalProperties": true,
+                  "title": "Body",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "body"
+              ],
+              "type": "object"
+            }
+          },
+          "stream": "unary"
+        },
+        {
+          "annotations": {
+            "destructive": false,
+            "idempotent": false,
+            "read_only": false
+          },
+          "balance": {
+            "key": null,
+            "kind": "round_robin"
+          },
+          "deprecated": null,
+          "description": "Issue an encrypted device content tunnel.",
+          "duplex_reason": null,
+          "input_item": null,
+          "name": "issue_content_tunnel",
+          "output_item": null,
+          "parameters": [
+            "connectionId",
+            "deviceId"
+          ],
+          "request": {
+            "module": "agent_server.core.device_content",
+            "qualname": "MobileContentTunnelRequest",
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "connectionId": {
+                  "anyOf": [
+                    {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "title": "Connectionid"
+                },
+                "deviceId": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "title": "Deviceid",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "deviceId"
+              ],
+              "type": "object"
+            }
+          },
+          "response": {
+            "module": "agent_server.core.device_content",
+            "qualname": "ContentTunnelGrant",
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "connectionId": {
+                  "title": "Connectionid",
+                  "type": "string"
+                },
+                "credential": {
+                  "title": "Credential",
+                  "type": "string"
+                },
+                "e2e_key": {
+                  "title": "E2E Key",
+                  "type": "string"
+                },
+                "expires_at_unix_ms": {
+                  "title": "Expires At Unix Ms",
+                  "type": "integer"
+                },
+                "instance_id": {
+                  "title": "Instance Id",
+                  "type": "string"
+                },
+                "maxFrameBytes": {
+                  "title": "Maxframebytes",
+                  "type": "integer"
+                },
+                "router_url": {
+                  "title": "Router Url",
+                  "type": "string"
+                },
+                "tunnel_id": {
+                  "title": "Tunnel Id",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "router_url",
+                "credential",
+                "instance_id",
+                "tunnel_id",
+                "e2e_key",
+                "expires_at_unix_ms",
+                "maxFrameBytes",
+                "connectionId"
+              ],
+              "type": "object"
+            }
+          },
+          "stream": "unary"
+        }
+      ],
+      "name": "aa.server.v1.MobileControl",
+      "source_module": "agent_server.api.mobile_mesh",
+      "source_qualname": "MobileControlService",
+      "targeted": true,
+      "version": "1"
+    }
+  ]
+}

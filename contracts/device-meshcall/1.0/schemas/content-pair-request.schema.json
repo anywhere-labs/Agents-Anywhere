@@ -1,0 +1,59 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:content-pair-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "clientIdentityPub": {
+      "pattern": "^[A-Za-z0-9_-]{43}$",
+      "title": "Clientidentitypub",
+      "type": "string"
+    },
+    "clientSecret": {
+      "pattern": "^[A-Za-z0-9_-]{43}$",
+      "title": "Clientsecret",
+      "type": "string"
+    },
+    "label": {
+      "maxLength": 120,
+      "minLength": 1,
+      "title": "Label",
+      "type": "string"
+    },
+    "pairingId": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Pairingid",
+      "type": "string"
+    },
+    "pairingSecret": {
+      "pattern": "^[A-Za-z0-9_-]{43}$",
+      "title": "Pairingsecret",
+      "type": "string"
+    },
+    "platform": {
+      "enum": [
+        "android",
+        "ios",
+        "web",
+        "desktop",
+        "cli"
+      ],
+      "title": "Platform",
+      "type": "string"
+    }
+  },
+  "required": [
+    "pairingId",
+    "pairingSecret",
+    "clientIdentityPub",
+    "clientSecret",
+    "label",
+    "platform"
+  ],
+  "title": "ContentPairRequest",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

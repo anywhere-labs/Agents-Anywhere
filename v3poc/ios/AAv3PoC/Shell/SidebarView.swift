@@ -6,6 +6,7 @@ struct SidebarView: View {
     let safeAreaInsets: EdgeInsets
     let onOpenSession: (String) -> Void
 
+    @State private var showsCreate = false
     @State private var showsPairing = false
     @State private var showsAccount = false
     @AppStorage("poc.sidebar.sessionList") private var showsSessionList = false
@@ -28,7 +29,7 @@ struct SidebarView: View {
                 ForEach(workspace.devices) { device in
                     SidebarDeviceRow(device: device)
                 }
-                Button { showsPairing = true } label: {
+                Button { if let open = controller.openDevices { open() } else { showsPairing = true } } label: {
                     Label("配对设备", appSymbol: "plus")
                         .font(.body.weight(.semibold))
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -67,8 +68,9 @@ struct SidebarView: View {
         .scrollEdgeEffectStyle(.soft, for: .bottom)
         .overlay(alignment: .bottom) {
             HStack(spacing: 10) {
-                AppGlassButton("新会话", systemImage: "square.and.pencil", style: .prominent, maxWidth: nil) {
-                    controller.showToast("演示：新会话")
+                AppGlassButton(String(localized: "connection.create"), systemImage: "square.and.pencil", style: .prominent, maxWidth: nil) {
+                    if controller.availableRuntimes != nil { showsCreate = true }
+                    else { controller.showToast("演示：新会话") }
                 }
                 Spacer(minLength: 12)
                 Button { showsAccount = true } label: {
@@ -83,8 +85,23 @@ struct SidebarView: View {
             .padding(.trailing, safeAreaInsets.trailing + 18)
             .padding(.bottom, max(safeAreaInsets.bottom, 12))
         }
+        .sheet(isPresented: $showsCreate) {
+            CreateSessionView(controller: controller, runtimes: controller.availableRuntimes ?? [], onOpen: onOpenSession)
+        }
         .sheet(isPresented: $showsPairing) { DemoSheet(title: "配对设备", message: "演示环境：在电脑上运行 Connector，扫描这里的二维码即可配对。") }
-        .sheet(isPresented: $showsAccount) { DemoSheet(title: workspace.account.name, message: workspace.account.email) }
+        .sheet(isPresented: $showsAccount) {
+            if let open = controller.openDevices {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(workspace.account.name).font(.headline)
+                    Text(workspace.account.email).foregroundStyle(.secondary)
+                    Button("connection.devices") { showsAccount = false; open() }
+                }
+                .padding(24)
+                .presentationDetents([.medium])
+            } else {
+                DemoSheet(title: workspace.account.name, message: workspace.account.email)
+            }
+        }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .tint(.primary)
     }

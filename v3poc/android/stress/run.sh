@@ -65,7 +65,7 @@ set -- --es stress "$SPEC" --ei auto_approve_seconds "$APPROVE"
 [ -n "$SWITCH" ] && set -- "$@" --es switch "$SWITCH"
 [ -n "$CACHE" ] && set -- "$@" --ei cache_items "$CACHE"
 act launch
-"$ADB" shell am start -W -n $PKG/.MainActivity "$@" > /dev/null
+"$ADB" shell am start -W -n $PKG/.MainActivity --ez demo true "$@" > /dev/null
 act launched
 
 rpid() { "$ADB" shell ps -A -o PID,NAME | awk '/sandboxed_process/ {print $1}' | tail -1 | tr -d '\r'; }

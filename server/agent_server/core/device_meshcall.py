@@ -293,25 +293,6 @@ class SessionWatchRequest(DeviceModel):
     afterSeq: Seq
 
 
-class SecureChannelOpen(DeviceModel):
-    """Request of the duplex ``Secure/channel``: one call per client channel."""
-
-    clientId: NonEmpty
-    ch: NonEmpty
-
-
-class SecureChannelItem(DeviceModel):
-    """Noise transport message in either direction; ``n`` is the per-direction counter."""
-
-    n: Seq
-    ct: str = Field(description="base64 Noise transport message")
-
-
-# ---------------------------------------------------------------------------
-# Handshake
-# ---------------------------------------------------------------------------
-
-
 class LinkHello(DeviceModel):
     """``POST /api/v3/device/hello`` (device credentials in the HTTP headers)."""
 
@@ -322,6 +303,7 @@ class LinkHello(DeviceModel):
     host: Literal["desktop", "cli", "dsh-plugin"]
     capabilities: list[str] = Field(default_factory=list)
     sessionsHead: list[SessionHead] = Field(default_factory=list)
+    meshE2eeKey: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{43}$")
 
 
 class ModelGateway(SparseModel):
@@ -1474,7 +1456,9 @@ LINK_ROUTES: dict[str, MeshRoute] = {
     "link.attach": _r("Link", "attach", "server_stream"),
     "link.outbox": _r("Link", "outbox", "server_stream"),
     "link.ackOutbox": _r("Link", "ackOutbox"),
-    "secure.channel": _r("Secure", "channel", "duplex"),
+    "content.pair": _r("Content", "pair"),
+    "content.request": _r("Content", "request"),
+    "content.subscribe": _r("Content", "subscribe", "server_stream"),
 }
 
 # ``Link/attach`` item methods (``changes`` travels on ``Sessions/watch``).
@@ -1594,8 +1578,7 @@ def validate_command_payload(method: str, payload: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 #
 # In ``required`` mode the device registers only the routes below. Everything a user starts
-# (reads, subscriptions, every other command, catalogs) goes through ``Secure/channel`` instead, so
-# the Server has no plaintext target even if it wanted one (docs/v3/06-protocols.md §2.6).
+# (reads, subscriptions, every other command, catalogs) goes through the encrypted Content tunnel.
 E2EE_REQUEST_METHODS: tuple[str, ...] = ("command.status",)
 E2EE_COMMAND_METHODS: tuple[str, ...] = (
     "runtime.apply",
@@ -1613,7 +1596,7 @@ def registered_routes(mode: E2eeMode) -> tuple[MeshRoute, ...]:
     """Routes the device registers on the Router in the given mode."""
 
     if mode == "off":
-        routes = [r for name, r in LINK_ROUTES.items() if name != "secure.channel"]
+        routes = [r for name, r in LINK_ROUTES.items() if name.startswith("link.")]
         routes += REQUEST_METHODS.values()
         routes += [command_route(name) for name in COMMAND_METHODS]
         return tuple(routes)

@@ -149,6 +149,9 @@ function UserTurn({ message, outgoing }: { message: UserMessage; outgoing?: bool
             <BubbleContent className="whitespace-pre-wrap">{text}</BubbleContent>
           </Bubble>
         )}
+        {message.delivery_error && (
+          <p className="max-w-[80%] text-end text-xs text-destructive">{message.delivery_error}</p>
+        )}
         <MessageFooter className="gap-0.5 transition-opacity pointer-fine:opacity-0 pointer-fine:group-hover/user:opacity-100 pointer-fine:focus-within:opacity-100">
           {outgoing ? (
             <span className="px-1 py-1.5">发送中…</span>

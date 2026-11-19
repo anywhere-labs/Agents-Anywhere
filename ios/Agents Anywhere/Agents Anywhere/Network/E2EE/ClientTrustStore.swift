@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import MeshCall
 import Security
 import Synchronization
 
@@ -170,6 +171,25 @@ nonisolated final class ClientTrustStore: Sendable {
     }
 
     /// `pair.committed` 之后记下授权：钉住设备公钥、保存列表密钥。
+    func meshCredential(deviceId: String, pin: String, create: Bool = false) throws -> String? {
+        try state.withLock { _ in
+            let account = "\(scope).mesh.\(deviceId)"
+            if let bytes = try storage.read(account: account),
+               let record = try? JSONDecoder().decode(MeshCredential.self, from: bytes), record.pin == pin {
+                return record.secret
+            }
+            guard create else { return nil }
+            let record = MeshCredential(pin: pin, secret: E2EKeyPair.generate().privateKey)
+            try storage.write(JSONEncoder().encode(record), account: account)
+            return record.secret
+        }
+    }
+
+    private struct MeshCredential: Codable {
+        let pin: String
+        let secret: String
+    }
+
     func savePairing(_ result: E2EEPairingResult) throws {
         try state.withLock { state in
             var devices = try loadDevices(&state)
@@ -204,6 +224,7 @@ nonisolated final class ClientTrustStore: Sendable {
 
     /// 忘记一台设备的授权（之后要重新扫码）。「要求加密」的记录保留。
     func forget(_ deviceId: String) throws {
+        try storage.delete(account: "\(scope).mesh.\(deviceId)")
         let removed = try state.withLock { state -> Bool in
             var devices = try loadDevices(&state)
             guard devices.removeValue(forKey: deviceId) != nil else { return false }

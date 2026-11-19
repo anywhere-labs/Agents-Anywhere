@@ -31,6 +31,7 @@ export interface ClientGrant {
   readonly grantedBy: GrantSource
   readonly grantedAt: string
   readonly revokedAt: string | null
+  readonly meshCredentialDigest?: string
 }
 
 export type PairingState = 'open' | 'consumed' | 'expired' | 'cancelled'
@@ -84,6 +85,7 @@ export interface NewClient {
   readonly identityPub: string
   readonly label: string
   readonly platform: ClientPlatform | null
+  readonly meshCredentialDigest?: string
 }
 
 export function newDeviceTrust(deviceId: string, identityPub: string, directoryKeyId: string): DeviceTrustState {
@@ -169,6 +171,7 @@ function addGrant(state: DeviceTrustState, client: NewClient, grantedBy: GrantSo
     grantedBy,
     grantedAt: nowIso,
     revokedAt: null,
+    ...(client.meshCredentialDigest === undefined ? {} : { meshCredentialDigest: client.meshCredentialDigest }),
   }
   // Re-pairing a revoked client (or a reinstalled one with the same key) replaces the old record.
   const grants = [...state.grants.filter((existing) => existing.clientId !== client.clientId), grant]

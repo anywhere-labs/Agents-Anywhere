@@ -15,6 +15,7 @@ final class PillLayoutTests: XCTestCase {
         app.launchEnvironment["AA_POC_AUTO_APPROVE_SECONDS"] = "4"
         app.launchEnvironment["AA_POC_LAYOUT_CHECK"] = "1"
         app.launchEnvironment["AA_POC_LOG_PATH"] = log
+        app.launchEnvironment["AA_POC_DEMO"] = "1"
         app.launch()
         sleep(5)
         func at(_ x: CGFloat, _ y: CGFloat) -> XCUICoordinate { app.coordinate(withNormalizedOffset: CGVector(dx: x, dy: y)) }

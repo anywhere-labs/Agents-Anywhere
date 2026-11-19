@@ -1,4 +1,4 @@
-// Wires the E2EE trust layer into this client: one trust store, one tunnel socket, one channel pool, and the
+// Wires the E2EE trust layer into this client: one trust store, one MeshCall channel pool, and the
 // transport resolver that sends a session's content through its device's secure channel.
 //
 // Routing (docs/v3/11-e2ee-noise.md §3, §10):
@@ -9,12 +9,11 @@
 
 import { dashboardApi } from "@/features/dashboard/api"
 import { loadStoredSession } from "@/features/auth/session"
-import { parsePairingUri, type PairingPayload } from "@/lib/e2ee/client-channel"
+import { parsePairingUri, type PairingPayload } from "@/lib/e2ee/content-channel"
 import { SecureChannelPool } from "@/lib/e2ee/secure-transport"
 import { knownSessionDevice, onServerE2eeDeclared, serverE2eeDeclaration } from "@/lib/e2ee/state"
 import { ClientTrustStore, indexedDbTrustBackend, memoryTrustBackend, type DevicePin } from "@/lib/e2ee/trust-store"
-import { TunnelMux, type TunnelSocket } from "@/lib/e2ee/tunnel"
-import { webNoiseCrypto } from "@/lib/e2ee/webcrypto"
+import type { EncryptedTunnelGrant } from "@/generated/device-content/v1_0/encrypted-tunnel-grant"
 import { onContentTransportRequired, SEALED_UPLOAD_HEADER, SEALED_UPLOAD_VALUE, setContentTransportResolver } from "@/lib/transport/content-transport"
 import { apiClient } from "@/lib/api"
 
@@ -71,15 +70,9 @@ export function startE2ee(platform: "web" | "desktop"): E2eeRuntime | null {
   if (runtime) return runtime
   if (typeof window === "undefined" || !globalThis.crypto?.subtle) return null
   const store = new ClientTrustStore(typeof indexedDB === "undefined" ? memoryTrustBackend() : indexedDbTrustBackend())
-  const mux = new TunnelMux(async () => {
-    const identity = await store.identity()
-    const ticket = await dashboardApi.createTunnelTicket(requireToken(), identity.clientId)
-    return new WebSocket(dashboardApi.tunnelWebSocketUrl(ticket.ticket)) as unknown as TunnelSocket
-  })
   const pool = new SecureChannelPool({
     store,
-    mux,
-    crypto: webNoiseCrypto,
+    bootstrap: () => apiClient.post<EncryptedTunnelGrant>("/api/v3/mobile/control-tunnel", null, { token: requireToken() }),
     label: platform === "desktop" ? "Agents Anywhere Desktop" : "Agents Anywhere Web",
     platform,
     registerCommand: (registration) => dashboardApi.registerE2eeCommand(requireToken(), registration),
@@ -133,7 +126,6 @@ export function startE2ee(platform: "web" | "desktop"): E2eeRuntime | null {
       restore()
       for (const unsubscribe of unsubscribers) unsubscribe()
       await pool.closeAll()
-      mux.close()
       runtime = null
       runtimeChanged()
     },

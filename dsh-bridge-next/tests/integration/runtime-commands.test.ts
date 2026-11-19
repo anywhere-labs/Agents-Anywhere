@@ -16,7 +16,7 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 
 const routerBinary = v3RouterBinary()
-const bridge2Skip = !connectorTsInstalled ? 'connector-ts is not installed' : !routerBinary ? 'no meshcall 9334405 Router binary' : false
+const bridge2Skip = !connectorTsInstalled ? 'connector-ts is not installed' : !routerBinary ? 'no compatible MeshCall Router binary' : false
 
 const signal = () => new AbortController().signal
 type Descriptor = { id: string, description: string, acceptsArgs: boolean, enabled: boolean, metadata: Record<string, any> }

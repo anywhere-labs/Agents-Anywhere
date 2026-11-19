@@ -7,6 +7,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.key
+import dev.agentsanywhere.v3poc.ui.ConnectionScreen
 import dev.agentsanywhere.v3poc.bridge.StressMetrics
 import dev.agentsanywhere.v3poc.ui.Root
 import dev.agentsanywhere.v3poc.ui.UiState
@@ -20,10 +23,22 @@ class MainActivity : ComponentActivity() {
         applySystemBars()
         super.onCreate(savedInstanceState)
         val app = application as App
-        app.start()
-        app.controller.bridge.attach(this)
+        app.start(BuildConfig.DEBUG && (intent.getBooleanExtra("demo", false) || DebugLaunch.stress != null))
         StressMetrics.attach(this)
-        setContent { Root(app, ui) }
+        setContent {
+            val controller = app.activeController
+            if (controller == null) {
+                ConnectionScreen(app)
+            } else {
+                key(controller) {
+                    DisposableEffect(controller) {
+                        controller.bridge.attach(this@MainActivity)
+                        onDispose { controller.bridge.attach(null) }
+                    }
+                    Root(app, ui)
+                }
+            }
+        }
     }
 
     override fun onResume() {
@@ -53,8 +68,4 @@ class MainActivity : ComponentActivity() {
         if (android.os.Build.VERSION.SDK_INT >= 29) window.isNavigationBarContrastEnforced = false
     }
 
-    override fun onDestroy() {
-        (application as App).controller.bridge.attach(null)
-        super.onDestroy()
-    }
 }

@@ -2,7 +2,7 @@
 
 v3 中 Server 与 Connector 之间的契约，取代 v2 的 `/api/v2/connector/ws` 与 `/connector/ingest`。两端经 [MeshCall](https://github.com/t4wefan/meshcall)（`meshcall/1`）通信，不再有自定义的帧协议。
 
-- **拓扑**：MeshCall Router 是独立的 Go 进程，只经反向代理对设备开放 `wss://<server>/api/v3/device/mesh`。设备在 Router 上注册 targeted 服务 `aa.device.v1.*`，`instance_id = deviceId`；Server 的每个 worker 是 Router 上的客户端，直接调用任意设备。客户端不直连 Router，仍然使用 `/api/v2` 与 protocol 1.2。
+- **拓扑**：MeshCall Router 是独立的 Go 进程，经反向代理开放 `wss://<server>/api/v3/device/mesh`。设备注册 targeted 服务 `aa.device.v1.*`，`instance_id = deviceId`；Server 的每个 worker 可以调用设备。在强制加密模式下，客户端经 Router 使用分别面向 Server 和 Connector 的隧道。
 - **握手（HTTP）**：
   1. `POST /api/v3/device/hello`，请求体为 `LinkHello`。返回 `LinkWelcome`，内容包括 `seqFloors`、`e2eeMode`、期望状态、待投递命令和 `mesh` 凭据。这个 token 只能注册本设备的 `instanceId`；签发新 token 时会吊销上一个，半死的旧连接因此立即被踢掉。
   2. 设备注册服务后调用 `POST /api/v3/device/ready`（`LinkReady`）。Server 随即打开 `Link/attach` 和 `Link/outbox` 两条流。
@@ -10,6 +10,7 @@ v3 中 Server 与 Connector 之间的契约，取代 v2 的 `/api/v2/connector/w
 - **源头**：`server/agent_server/core/device_meshcall.py` 与客户端路由表 `server/agent_server/core/client_routes.py`。生成命令：`cd server && .venv/bin/python -m scripts.export_v3_contracts`（加 `--check` 只检查）。产物：
   - `schemas/*.schema.json`：各个 payload 的 JSON Schema。
   - `device.meshcall.json`：MeshCall 可移植契约，可交给 `meshcall generate` 生成 Python 或 TS 客户端。每个方法的 request/response 都是真实模型；`Commands/*` 的 `CommandCall.p`、`CommandAck.r` 按方法带上类型（`qualname` 写作 `CommandCall[SessionSyncCommand]`）。
+  - `mobile-control.meshcall.json`：手机到 Server 的设备领票契约。内容和管理模型共用 `core/device_content.py` 中的票据字段与约束，Swift 与 Kotlin 从可移植契约生成。
   - `payloads.json`：每个业务方法的载荷类型（见[业务载荷](#业务载荷)）。
   - `client-routes.json`：客户端路由表（见 [Client 服务](#client-服务普通模式)）。
   - `client-errors.json`：转发路由的错误到 HTTP 状态的映射。
@@ -31,15 +32,22 @@ v3 中 Server 与 Connector 之间的契约，取代 v2 的 `/api/v2/connector/w
 | | `status` | unary | 查询命令回执（`command.status`） |
 | `aa.device.v1.Client` | `call` | server_stream | 仅普通模式：一次客户端 API 请求（`ClientCallRequest`），流项先是 `ClientCallHead`，再是正文分块（`ClientCallChunk`） |
 | | `subscribe` | server_stream | 仅普通模式：订阅终端（`ClientSubscribeRequest`），流项为终端 WebSocket 消息（`TerminalStreamItem`） |
-| `aa.device.v1.Secure` | `channel` | duplex | 仅加密模式使用：每个客户端通道一条调用，流项为 `SecureChannelItem {n, ct}`，Server 原样转发 |
+| `aa.server.v1.MobileControl` | `read_directory` | unary | 已登录的移动 PoC 读取设备、项目、会话和 Agent 目录。会话目录支持分页 |
+| `aa.server.v1.MobileControl` | `issue_content_tunnel` | unary | 已登录的移动 PoC 通过专用加密隧道申请绑定设备的内容票 |
+| `aa.device.v1.Content` | `pair` / `request` | unary | 在面向 Connector 的加密隧道内兑换配对邀请、读写设备 API |
+| | `subscribe` | server_stream | 在同一内容隧道内接收会话、终端和目录密钥轮换事件 |
+
+客户端先用登录凭据调用 `POST /api/v3/mobile/control-tunnel`，再向 Server 调用 `MobileControl/issue_content_tunnel`。Server 校验账号、设备归属和连接代次。随后客户端校验本地保存的 Connector 公钥，经 Router 直接访问 `Content`。会话、文件与终端载荷在客户端和 Connector 之间加密，AA Server 只处理身份和授权元数据。内容票限定路由范围，Connector 另行校验配对凭据。
+
+`Content/pair` 返回客户端 ID、授权时间和本机目录密钥。已配对客户端通过 `Content/request` 的 `GET /e2ee/v1/directory-key` 或 `Content/subscribe {stream: "trust"}` 获取轮换后的密钥。这些响应和配对凭据都在指向 Connector 的隧道内。
 
 业务方法到路由的映射见源文件的 `REQUEST_METHODS`、`command_route()`、`LINK_ROUTES`；事件与出站箱的方法名见 `EVENT_METHODS`、`OUTBOX_METHODS`。
 
-会话快照、时间线、notices、运行状态、能力、队列、目录、计划文档，设备上的文件、终端、Shell，以及用户发起的命令（发消息、引导、中断、回复审批、选择、计划、目标、排队消息），都改为经 `Client/call`（加密模式经 `Secure/channel`）调用设备的客户端 API，MeshCall 上不再有对应的方法。设备命令收件箱仍接受这些命令，载荷见 `COMMAND_PAYLOADS`（`DEVICE_COMMANDS`）。
+会话快照、时间线、notices、运行状态、能力、队列、目录、计划文档，设备上的文件、终端、Shell，以及用户发起的命令（发消息、引导、中断、回复审批、选择、计划、目标、排队消息），都改为经 `Client/call`（加密模式经 `Content/request`）调用设备的客户端 API，MeshCall 上不再有对应的方法。设备命令收件箱仍接受这些命令，载荷见 `COMMAND_PAYLOADS`（`DEVICE_COMMANDS`）。
 
 ## Client 服务（普通模式）
 
-客户端 API 里由设备回答的路由只实现一次：设备侧是同一个 tunnel API（加密模式经 `Secure/channel` 调用，普通模式经 `Client/call` 调用），Server 只做归属、准入、用量、目录广播和响应装饰。
+客户端 API 里由设备回答的路由只实现一次：设备侧是同一个 tunnel API（加密模式经 `Content/request` 调用，普通模式经 `Client/call` 调用），Server 只做归属、准入、用量、目录广播和响应装饰。
 
 **路由表**（`client-routes.json`，源头 `core/client_routes.py`）每条记录：
 
@@ -62,7 +70,7 @@ v3 中 Server 与 Connector 之间的契约，取代 v2 的 `/api/v2/connector/w
 
 - 请求 `ClientCallRequest {route, method, path, query, body, caller, command?, server?, byteBudget?}`。`path` 是客户端调用的路径（不含查询串），设备只用一个解析器；`route` 让设备在解析前先校验路由、分好执行额度。
 - `command {commandId, inputDigest, deadline}`：命令路由的回执身份，设备的 inbox 按 `commandId` 回放原结果，不重新执行。
-- `server {sessionId?, takeover?, attachments?, transfer?}`：Server 拥有的事实（建会话时分配的 `sessionId`、接管状态、附件记录、文件下载的中继位置）。设备以它为准；它只在 `Client/call` 上生效，加密通道里不存在。
+- `server {sessionId?, takeover?, attachments?, transfer?}`：Server 拥有的事实（建会话时分配的 `sessionId`、接管状态、附件记录、文件下载的中继位置）。设备以它为准；它只在 `Client/call` 上生效，内容隧道里不存在。
 - 流项：第一项 `ClientCallHead {kind: "head", status, contentType, command?}`，`command {commandId, outcome, e?}` 用来结算 Server 的回执；之后是正文 `ClientCallChunk {kind: "chunk", seq, chunk, end}`，每块最多 512 KiB，整个回答最多 16 MiB。请求体超过 1 MiB 时 Server 在转发前回 413。
 - 设备返回的错误一律是 `{detail: {code, message}}`，AA 错误码到 HTTP 状态的映射在 `client-errors.json` 的 `deviceCodeStatus`（未列出的为 409）。
 - `POST /api/v2/connectors/{connector_id}/fs/list` 未传 `root` 和 `path` 时列出设备的默认工作目录。Connector 优先选择可访问的主目录，其次按允许目录的配置顺序选择第一个可访问的目录；没有可用目录时返回现有列表结构，`path` 和 `targetPath` 为空，`targetType` 为 `missing`。显式传入目录时仍按原规则校验。加密通道使用相同语义。
@@ -152,9 +160,8 @@ Server 发送每条命令之前按请求模型校验 `p`（`validate_command_pay
 
 - `required` 时只注册：
   - `Link/*`；
-  - `Secure/channel`；
   - Server 自己发起、不含会话内容的方法：`Commands/status`、`runtimeApply`、`deviceSettingsApply`、`channelSwitch`、`previewOpen`、`previewClose`。
-- 用户发起的读、订阅、其他命令（包括 `sessionSync`）不注册，一律走 `Secure/channel`。Server 就算想发明文请求，也没有目标。
+- 用户发起的读、订阅、其他命令（包括 `sessionSync`）只由 Connector 的 `Content/request` 与 `Content/subscribe` 暴露给已配对客户端。
 - Server 签发的 Mesh token 的 scopes 也按同一张表收窄。
 - `Link/attach` 上只发 `runtime.status`、`port.listening`、`port.closed`。`runtime.notice.updated`、`runtime.queue.updated` 带有审批和排队消息的正文，只推给订阅了该会话的加密通道；列表需要的「待审批」状态由 `SessionSummary.status` 提供。
 - 出站箱与命令回执不带正文：`r` 为 null（可延迟命令除外：只保留 `DEFERRABLE_RESULT_FIELDS` 里的实例状态字段，它们描述 Server 自己保存的配置，不含会话内容），`e` 只带 `code`；展示信封必须是 `sealed`；`attachment.consumed.sha256` 用密文的摘要。Server 在存储和写日志之前，还会用 `scrub_for_e2ee()` 再清理一遍（纵深防御）。
@@ -168,7 +175,7 @@ Server 发送每条命令之前按请求模型校验 `p`（`validate_command_pay
 3. 接到 `ready` 的 worker 成为新的持有者。在线租约 `connector:presence:{deviceId}` 记录 `connectionId` 和 `holderId`（worker id 加 attach 调用 id）。持有者清理时**按 `holderId` 比较后删除**：同一个 `connectionId` 会先后被两个 worker 持有，只按代次删除会把新的租约一起删掉。
 4. 每个 `connectionId` 下，设备最多保留一条 `attach` 和一条 `outbox`。新的一条打开时，设备结束旧的那条。
 5. 持有者卡住但连接没断时，设备的心跳会因为没有 credit 而写不出去。超过 `ATTACH_STALL_SECONDS`（40 秒）就结束这两条流，然后重调 `ready`。
-6. 旧持有者打开的 `Sessions/watch` 随之失效，新持有者按 `session-subs` 重新打开；客户端按自己的游标补齐（`session.catchup_required`）。加密通道跟着客户端隧道 WS 走：worker 死了 WS 也会断，客户端用新的 `ch` 重新握手。
+6. 旧持有者打开的 `Sessions/watch` 随之失效，新持有者按 `session-subs` 重新打开；客户端按自己的游标补齐（`session.catchup_required`）。客户端的内容订阅独立于 Server worker，内容隧道断开后重新取票，并使用既有配对授权和游标恢复。
 
 ## 错误
 

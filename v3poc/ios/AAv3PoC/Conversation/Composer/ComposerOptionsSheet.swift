@@ -7,6 +7,7 @@ struct ComposerOptionsSheet: View {
     let controller: SessionController
     let onPhotos: () -> Void
     let onFiles: () -> Void
+    let onWorkspaceTool: (WorkspaceTool) -> Void
     @State private var path: [String] = []
     @Environment(\.dismiss) private var dismiss
 
@@ -17,6 +18,12 @@ struct ComposerOptionsSheet: View {
                     HStack(spacing: 12) {
                         attachmentTile("照片", icon: "photo.on.rectangle", action: onPhotos)
                         attachmentTile("文件", icon: "doc", action: onFiles)
+                    }
+                    if controller.workspaceClient != nil && controller.workspaceRoot != nil {
+                        HStack(spacing: 12) {
+                            attachmentTile(String(localized: "connection.device_file"), icon: "doc") { onWorkspaceTool(.file) }
+                            attachmentTile(String(localized: "connection.terminal"), icon: "terminal") { onWorkspaceTool(.terminal) }
+                        }
                     }
                     let config = controller.config
                     if !config.isEmpty {

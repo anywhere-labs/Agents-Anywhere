@@ -1,5 +1,7 @@
 package dev.agentsanywhere.v3poc.ui
 
+import kotlinx.coroutines.launch
+
 import dev.agentsanywhere.v3poc.design.continuousRect
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -83,8 +85,14 @@ private fun sheetBottom() = WindowInsets.navigationBars.asPaddingValues().calcul
 @Composable
 fun OptionsSheet(controller: SessionController, ui: UiState) {
     var page by remember { mutableStateOf<String?>(null) }
-    val photos = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(5)) { if (it.isNotEmpty()) controller.showToast("演示：附件不会上传") }
-    val files = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { if (it.isNotEmpty()) controller.showToast("演示：附件不会上传") }
+    var workspaceTool by remember { mutableStateOf<Boolean?>(null) }
+    val client = controller.workspaceClient
+    val root = controller.workspaceRoot
+    workspaceTool?.let { terminal ->
+        if (client != null && root != null) WorkspaceToolDialog(client, root, terminal) { workspaceTool = null }
+    }
+    val photos = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(5)) { controller.attach(it) }
+    val files = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { controller.attach(it) }
     val density = LocalDensity.current
     AASheet(ui.optionsSheet, onDismiss = { ui.optionsSheet = false; page = null }) {
         // Material's shared axis X transition between the levels of a long list: the outgoing page fades out over
@@ -113,6 +121,18 @@ fun OptionsSheet(controller: SessionController, ui: UiState) {
                                 photos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                             }
                             Tile("文件", "doc", Modifier.weight(1f)) { ui.optionsSheet = false; files.launch(arrayOf("*/*")) }
+                        }
+                        if (client != null && root != null) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(AAMetrics.sheetTileSpacing)) {
+                                Tile(androidx.compose.ui.res.stringResource(dev.agentsanywhere.v3poc.R.string.connection_device_file), "doc", Modifier.weight(1f)) {
+                                    ui.optionsSheet = false
+                                    workspaceTool = false
+                                }
+                                Tile(androidx.compose.ui.res.stringResource(dev.agentsanywhere.v3poc.R.string.connection_terminal), "terminal", Modifier.weight(1f)) {
+                                    ui.optionsSheet = false
+                                    workspaceTool = true
+                                }
+                            }
                         }
                         val config = controller.config
                         if (config.isNotEmpty()) {
@@ -293,6 +313,7 @@ fun DemoSheet(ui: UiState) {
 @Composable
 fun AccountSheet(controller: SessionController, ui: UiState, app: App) {
     val glass = app.glass
+    val connectionScope = androidx.compose.runtime.rememberCoroutineScope()
     AASheet(ui.accountSheet, onDismiss = { ui.accountSheet = false }) {
         SheetHeader("账号") { ui.accountSheet = false }
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(AAMetrics.sheetSectionSpacing)) {
@@ -302,6 +323,12 @@ fun AccountSheet(controller: SessionController, ui: UiState, app: App) {
                     AAText(controller.account.name, font = AAFonts.headline)
                     AAText(controller.account.email, font = AAFonts.subheadline, color = AA.colors.secondaryLabel)
                 }
+            }
+            if (app.online != null) {
+                androidx.compose.material3.TextButton(onClick = {
+                    ui.accountSheet = false
+                    connectionScope.launch { app.closeWorkspace(signOut = false) }
+                }) { androidx.compose.material3.Text(androidx.compose.ui.res.stringResource(dev.agentsanywhere.v3poc.R.string.connection_devices)) }
             }
             Column(Modifier.fillMaxWidth().sheetCard()) {
                 SwitchRow("毛玻璃效果", glass.enabled && glass.supported, enabled = glass.supported) { glass.updateEnabled(it) }

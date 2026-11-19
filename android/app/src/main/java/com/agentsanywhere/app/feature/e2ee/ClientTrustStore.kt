@@ -9,6 +9,7 @@ import com.agentsanywhere.app.api.e2ee.noise.NoiseCrypto
 import com.agentsanywhere.app.api.e2ee.noise.X25519KeyPair
 import org.json.JSONObject
 import java.security.KeyStore
+import java.security.SecureRandom
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -67,6 +68,22 @@ class ClientTrustStore(
             ?.takeIf { it.clientId == clientId() }
     }
 
+    fun meshCredential(deviceId: String, pin: String, create: Boolean = false): String? = synchronized(lock) {
+        val key = "mesh.$deviceId"
+        val record = storage.read(key)?.let { runCatching { JSONObject(it) }.getOrNull() }
+        if (record?.optString("pin") == pin) {
+            return@synchronized E2eeFormats.b64url(sealer.open(E2eeFormats.fromB64url(record.getString("sealed"))))
+        }
+        if (!create) return@synchronized null
+        val raw = ByteArray(32).also(SecureRandom()::nextBytes)
+        try {
+            storage.write(key, JSONObject().put("pin", pin).put("sealed", E2eeFormats.b64url(sealer.seal(raw))).toString())
+            E2eeFormats.b64url(raw)
+        } finally {
+            raw.fill(0)
+        }
+    }
+
     fun isPaired(deviceId: String): Boolean = device(deviceId) != null
 
     /** 配对成功（收到 `pair.committed`）后保存授权与列表密钥，并记下「该设备要求加密」。 */
@@ -102,7 +119,7 @@ class ClientTrustStore(
     /** 设备轮换了列表密钥（`e2ee.directory_key` 或 `GET /e2ee/v1/directory-key`）。旧纪元不覆盖新纪元。 */
     fun updateDirectoryKey(grant: DirectoryKeyGrant): Boolean = synchronized(lock) {
         val record = device(grant.deviceId) ?: return false
-        if (grant.epoch < record.directoryKeyEpoch) return false
+        if (grant.epoch < record.directoryKeyEpoch || grant.keyId == record.directoryKeyId) return false
         storage.write(directoryKeyKey(grant.deviceId), E2eeFormats.b64url(sealer.seal(grant.keyBytes)))
         storage.write(deviceKey(grant.deviceId), record.copy(directoryKeyId = grant.keyId, directoryKeyEpoch = grant.epoch).toJson().toString())
         bumpRevision()
@@ -114,6 +131,7 @@ class ClientTrustStore(
         synchronized(lock) {
             storage.write(deviceKey(deviceId), null)
             storage.write(directoryKeyKey(deviceId), null)
+            storage.write("mesh.$deviceId", null)
         }
         bumpRevision()
     }

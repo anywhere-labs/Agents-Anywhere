@@ -17,3 +17,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "AgentsAnywhereAndroid"
 include(":app")
+
+includeBuild("../vendor/meshcall/sdk/meshcall-jvm")

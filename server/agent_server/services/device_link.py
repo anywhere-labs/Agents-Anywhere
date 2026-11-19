@@ -18,6 +18,7 @@ from typing import Any
 from loguru import logger
 from pydantic import ValidationError
 
+from agent_server.core.device_content import CONTENT_SERVICE, ContentTunnelGrant
 from agent_server.core.device_meshcall import (
     DEFERRABLE_COMMANDS,
     DEVICE_MESHCALL_VERSION,
@@ -123,6 +124,20 @@ class DeviceLinkService:
         hub.on_event = self.handle_event
         hub.on_presence = self.handle_presence
 
+    async def control_key(self, device_id: str, connection_id: str) -> str | None:
+        if self._e2ee_settings().mode != "required":
+            return None
+        record = await self.link_record(device_id)
+        if record is None or record.get("connectionId") != connection_id:
+            raise DeviceCallError("not_delivered", "failed_precondition", "Device has reconnected", reason="connection_replaced")
+        key = record.get("meshE2eeKey")
+        if not isinstance(key, str) or not key:
+            raise DeviceCallError(
+                "not_delivered", "failed_precondition", "Device has no encrypted link",
+                reason="encrypted_link_required",
+            )
+        return key
+
     # -- link records (connection generation + current Router token) -----------
 
     def _record_key(self, device_id: str) -> str:
@@ -172,6 +187,8 @@ class DeviceLinkService:
         if not self._mesh.configured:
             raise DeviceLinkError(503, "mesh_unavailable", "this Server has no MeshCall Router configured")
         mode = self._e2ee_settings().mode
+        if mode == "required" and hello.meshE2eeKey is None:
+            raise DeviceLinkError(409, "encrypted_link_required", "Update Connector to use encrypted MeshCall links")
         try:
             # The token may register exactly the contract's table for this mode (``e2ee-registration.json``).
             token = await self._mesh.issue_device_token(device_id, registered_services(mode))
@@ -179,11 +196,17 @@ class DeviceLinkService:
             raise DeviceLinkError(503, "mesh_unavailable", f"MeshCall Router unavailable: {exc}") from exc
         connection_id = f"lc_{secrets.token_urlsafe(16)}"
         previous = await self._swap_record(
-            device_id, {"connectionId": connection_id, "tokenId": token.token_id}
+            device_id, {
+                "connectionId": connection_id,
+                "tokenId": token.token_id,
+                "meshE2eeKey": hello.meshE2eeKey,
+            }
         )
         if previous and previous.get("tokenId"):
             # Kicks a half-dead previous link at once (4401) so it frees the instance id.
             await self._mesh.revoke_token(str(previous["tokenId"]))
+            if previous.get("meshE2eeKey"):
+                await self._mesh.drop_control_tunnel(device_id)
         await self._store.set_connector_link_contract(device_id, LINK_CONTRACT)
         device_os = _device_os(hello.os)
         if device_os is not None:
@@ -255,6 +278,48 @@ class DeviceLinkService:
         # never undoes the state delivered here.
         return [device_runtime_entry(DeviceRuntimeView.model_validate(row)) for row in rows]
 
+    async def open_content_tunnel(
+        self, device_id: str, *, user_id: str, family_id: str, router_url: str, expected_connection: str | None,
+    ) -> ContentTunnelGrant:
+        try:
+            device = await self._store.get_connector(device_id)
+        except KeyError as exc:
+            raise DeviceLinkError(404, "device_not_found", "Device not found") from exc
+        if device.userId != user_id:
+            raise DeviceLinkError(404, "device_not_found", "Device not found")
+        if self._e2ee_settings().mode != "required":
+            raise DeviceLinkError(409, "e2ee_required", "Encrypted device content is not enabled")
+
+        record = await self.link_record(device_id)
+        connection_id = await self._hub.current_connection(device_id)
+        if not record or not connection_id or record.get("connectionId") != connection_id:
+            raise DeviceLinkError(409, "connector_offline", "Device is offline")
+        if expected_connection is not None and connection_id != expected_connection:
+            raise DeviceLinkError(409, "connection_replaced", "Device has reconnected")
+        public_key = record.get("meshE2eeKey")
+        if not isinstance(public_key, str) or not public_key:
+            raise DeviceLinkError(409, "content_tunnel_unavailable", "Device has not registered an encrypted tunnel")
+        try:
+            opened = await self._mesh.open_content_tunnel(device_id, public_key, family_id)
+        except (DeviceCallError, MeshNotConfigured) as exc:
+            raise DeviceLinkError(503, "content_tunnel_unavailable", "Encrypted tunnel unavailable") from exc
+        if not await self._store.token_family_status(user_id, family_id):
+            await self._mesh.revoke_content_tunnel(opened.tunnel_id)
+            raise DeviceLinkError(401, "login_revoked", "Login has been revoked")
+        if await self._hub.current_connection(device_id) != connection_id:
+            await self._mesh.revoke_content_tunnel(opened.tunnel_id)
+            raise DeviceLinkError(409, "connection_replaced", "Device has reconnected")
+        return ContentTunnelGrant(
+            router_url=router_url,
+            credential=opened.credential,
+            instance_id=device_id,
+            tunnel_id=opened.tunnel_id,
+            e2e_key=public_key,
+            connectionId=connection_id,
+            expires_at_unix_ms=opened.expires_at_unix_ms,
+            maxFrameBytes=MESH_MAX_FRAME_BYTES,
+        )
+
     async def ready(self, device_id: str, connection_id: str) -> None:
         record = await self.link_record(device_id)
         if record is None or record.get("connectionId") != connection_id:
@@ -263,7 +328,10 @@ class DeviceLinkService:
             registered = await self._mesh.registered_services(device_id)
         except DeviceCallError as exc:
             raise DeviceLinkError(503, "mesh_unavailable", f"MeshCall Router unavailable: {exc}") from exc
-        missing = REQUIRED_SERVICES - registered
+        required = REQUIRED_SERVICES
+        if self._e2ee_settings().required:
+            required = required | {CONTENT_SERVICE}
+        missing = required - registered
         if missing:
             raise DeviceLinkError(409, "services_not_registered", f"register {sorted(missing)} on the Router first")
         try:
@@ -295,6 +363,8 @@ class DeviceLinkService:
         record = await self._take_record(device_id)
         if record and record.get("tokenId"):
             await self._mesh.revoke_token(str(record["tokenId"]))
+            if record.get("meshE2eeKey"):
+                await self._mesh.drop_control_tunnel(device_id)
         await self._hub.drop(device_id, reason)
         evicted = await self._hub.evict(device_id)
         self.runtime_status.pop(device_id, None)

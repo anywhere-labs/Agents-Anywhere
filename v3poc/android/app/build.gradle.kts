@@ -59,6 +59,8 @@ android {
 tasks.named("preBuild") { dependsOn(copyPocAssets) }
 
 dependencies {
+    implementation("io.github.t4wefan:meshcall:0.3.0")
+    implementation("org.bouncycastle:bcprov-jdk18on:1.87")
     val composeBom = platform("androidx.compose:compose-bom:2026.09.00")
     implementation(composeBom)
     implementation("androidx.compose.ui:ui")

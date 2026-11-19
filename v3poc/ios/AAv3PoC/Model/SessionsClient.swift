@@ -1,8 +1,7 @@
 import Foundation
 
-/// The `aa.v3.Sessions` calls the phone makes (see v3poc/protocol/services.ts). The real implementation will be the
-/// generated MeshCall client (a separate Swift SDK, not part of this PoC); `MockSessionsClient` replays fixtures.
-/// Events and messages stay JSON: the app forwards them to the renderer unchanged and reads only a few fields.
+/// The native session interface. MeshSessionsClient maps Connector RPC results into renderer events,
+/// and MockSessionsClient replays fixtures through the same interface.
 @MainActor
 protocol SessionsClient: AnyObject {
     /// Snapshot, then whole replacements (`message` / `session` / `control`). Ends when the stream drops; watch again.

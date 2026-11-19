@@ -2,7 +2,7 @@
  * Builds the local MeshCall Router the embedded Connector starts, into
  * `build/meshcall-router/<platform>-<arch>/meshcall-router[.exe]` (packaged as
  * `resources/meshcall-router`). It must match the vendored TS package
- * (`vendor/meshcall`, commit 9334405); MeshCall 0.4.0 has no release binaries
+ * (`vendor/meshcall`, commit ce14d60); MeshCall 0.4.0 has no release binaries
  * yet, so the Router is built from that commit with Go.
  *
  * `MESHCALL_SOURCE_DIR` points at an existing checkout; otherwise the commit is
@@ -16,7 +16,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { exists, runtimeTargetKey } from "./bundle-targets.mjs";
 
-const MESHCALL_COMMIT = "93344059ada65735c6cc08fdf3247ea9fb808d6b";
+const MESHCALL_COMMIT = "ce14d60743c2c6d5c2d504da02748de271ed8769";
 const MESHCALL_REPOSITORY = "https://github.com/t4wefan/meshcall.git";
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const OUTPUT_ROOT = join(PROJECT_ROOT, "build", "meshcall-router");

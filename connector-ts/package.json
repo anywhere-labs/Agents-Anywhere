@@ -19,7 +19,7 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "1.4.0",
     "fflate": "^0.8.2",
-    "meshcall": "file:../vendor/meshcall/meshcall-0.4.0-dev.9334405.tgz",
+    "meshcall": "file:../vendor/meshcall/meshcall-0.4.0-dev.ce14d60.tgz",
     "node-pty": "^1.1.0",
     "qrcode-generator": "^2.0.4",
     "zod": "^4.1.0"

@@ -1,8 +1,7 @@
 import Foundation
 import Observation
 
-/// The composer's text. A trimmed copy of the real app's `ComposerDraft`: attachments are only shown as a picker in
-/// the PoC, never uploaded.
+/// Text and IME state for the native composer.
 @MainActor @Observable
 final class ComposerDraft {
     private(set) var isValid = true

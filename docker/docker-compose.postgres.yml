@@ -74,7 +74,7 @@ services:
       args:
         GO_IMAGE: ${MESHCALL_GO_IMAGE:-golang:1.26-bookworm}
         GOPROXY: ${MESHCALL_GOPROXY:-https://proxy.golang.org,direct}
-    image: agents-anywhere-meshcall-router:9334405
+    image: agents-anywhere-meshcall-router:ce14d60
     restart: unless-stopped
     depends_on:
       mesh-auth-next:

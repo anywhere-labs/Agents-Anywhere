@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { DeviceSecrets, TrustRepository } from '../../src/application/ports/trust.js'
 import { DeviceTrustService } from '../../src/application/trust/device-trust-service.js'
-import { nodeContentSealer } from '../../src/channel/index.js'
+import { nodeContentSealer } from '../../src/channel/formats.js'
 import { generateX25519 } from '../../src/channel/noise/node-crypto.js'
 import { clientIdFor, type DeviceTrustState } from '../../src/domain/trust/index.js'
 import { LocalConfirmations, type ConfirmationEvent } from '../../src/host/index.js'

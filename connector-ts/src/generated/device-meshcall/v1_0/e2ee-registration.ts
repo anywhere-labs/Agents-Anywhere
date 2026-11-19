@@ -48,13 +48,15 @@ export const REGISTERED_SERVICES = {
       "previewOpen",
       "previewClose"
     ],
+    "aa.device.v1.Content": [
+      "pair",
+      "request",
+      "subscribe"
+    ],
     "aa.device.v1.Link": [
       "attach",
       "outbox",
       "ackOutbox"
-    ],
-    "aa.device.v1.Secure": [
-      "channel"
     ]
   }
 } as const

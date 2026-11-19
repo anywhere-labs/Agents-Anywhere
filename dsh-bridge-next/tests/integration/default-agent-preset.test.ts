@@ -10,7 +10,7 @@ import { nativeSessionId } from '../../src/host/dsh-runtime/identity.js'
 import { bridge2Connector, connectorTsInstalled, v3RouterBinary } from '../helpers/ts-connector.js'
 
 const routerBinary = v3RouterBinary()
-const skip = !connectorTsInstalled ? 'connector-ts is not installed' : !routerBinary ? 'no meshcall 9334405 Router binary' : false
+const skip = !connectorTsInstalled ? 'connector-ts is not installed' : !routerBinary ? 'no compatible MeshCall Router binary' : false
 
 test('the plugin declares the DSH default mode, and a session created with it starts in that mode', { timeout: 60_000, skip }, async () => {
   const home = await mkdtemp(join(tmpdir(), 'aa-dsh-default-preset-'))

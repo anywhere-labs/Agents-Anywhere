@@ -172,30 +172,16 @@ preview on demand and exchanges a fresh one-time ticket for every open, which
 
 ## End-to-end encryption (e2ee 1.0)
 
-`Network/E2EE` implements the client side of `contracts/e2ee/1.0`; every
-primitive comes from CryptoKit. `NoiseHandshake` and friends are the Noise state
-machine (S8). `E2EEFormats` holds the byte formats (client ID, fingerprint,
-prologues, framing, display envelopes, sealed segments, input digests, the
-`aa-pair://` link) and is pinned by `aa-formats.json`. `E2EETransportSession`
-fragments, rekeys (2^20 frames or one hour, only between messages) and checks
-frame counters. `ClientSecureChannel` is an actor: frames from the tunnel reach
-it in order through one reader task, and it encrypts synchronously before
-handing frames to `E2EETunnelLink.send`, which keeps their order, so nonces
-cannot be reordered by actor reentrancy. It sends nothing before `ready`.
+The iOS client opens an authenticated MeshCall management tunnel with
+`POST /api/v3/mobile/control-tunnel` and requests a device grant through
+`MobileControl/issue_content_tunnel`. `MeshDeviceChannel` independently checks the
+Connector key against the pin from device pairing. Session payloads go directly
+to `aa.device.v1.Content` through the Router. The Keychain keeps the app's
+per-device credential, which also authorizes directory-key updates inside the tunnel.
 
-`ClientTrustStore` keeps the client identity key, each device's pinned key and
-directory key, and the sticky "this device requires encryption" policy in the
-Keychain (`AfterFirstUnlockThisDeviceOnly`, never synchronized). Only an
-in-channel `close` from the device (revoked / not paired) drops a pin; a
-`ClientTunnelEnd` relayed by the Server is reported (`E2EEError.fromDevice ==
-false`) and never changes trust records or policy.
-
-`URLSessionE2EETunnel` multiplexes routes on `WS /api/v3/tunnel` after a
-`POST /api/v2/ws-ticket {scope: {dashboard: true}}`. `V2E2EEService` reads the
-Server mode from `auth/config`, pairs, reconnects with KK and chooses each
-device's transport: `route(for:)`, `transport(for:plain:)` (an `HTTPTransport`
-that existing API resources accept), `sessionEvents(...)` and `sendCommand(...)`
-(which registers the input digest first).
+Run `sh vendor/meshcall/prepare-mobile-sdk.sh` from the repository root before
+building the app or ClientCore. Swift and Android use clients generated from the
+same device and management contracts.
 
 Every API resource except account and E2EE bookkeeping shares one
 `E2EERoutingHTTPTransport`. It classifies each request like the Server's

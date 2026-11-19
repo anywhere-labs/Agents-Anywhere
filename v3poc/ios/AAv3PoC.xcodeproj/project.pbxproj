@@ -6,6 +6,10 @@
 	objectVersion = 90;
 	objects = {
 
+		A0000000000000000000E003 /* MeshCall in Frameworks */ = {isa = PBXBuildFile; productRef = A0000000000000000000E002 /* MeshCall */; };
+		A0000000000000000000E001 /* local meshcall-swift */ = {isa = XCLocalSwiftPackageReference; relativePath = "../../vendor/meshcall/sdk/meshcall-swift"; };
+		A0000000000000000000E002 /* MeshCall */ = {isa = XCSwiftPackageProductDependency; package = A0000000000000000000E001 /* local meshcall-swift */; productName = MeshCall; };
+
 /* Begin PBXFileReference section */
 		A0000000000000000000A220 /* AAv3PoCUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AAv3PoCUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A0000000000000000000A120 /* AAv3PoC.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AAv3PoC.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -43,6 +47,7 @@
 		A0000000000000000000B130 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
+				A0000000000000000000E003 /* MeshCall in Frameworks */,
 			);
 		};
 /* End PBXFrameworksBuildPhase section */
@@ -104,6 +109,9 @@
 				A0000000000000000000A010 /* AAv3PoC */,
 			);
 			name = AAv3PoC;
+			packageProductDependencies = (
+				A0000000000000000000E002 /* MeshCall */,
+			);
 			productName = AAv3PoC;
 			productReference = A0000000000000000000A120 /* AAv3PoC.app */;
 			productType = "com.apple.product-type.application";
@@ -137,6 +145,9 @@
 			);
 			mainGroup = A0000000000000000000A001;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				A0000000000000000000E001 /* local meshcall-swift */,
+			);
 			preferredProjectObjectVersion = 90;
 			productRefGroup = A0000000000000000000A020 /* Products */;
 			projectDirPath = "";

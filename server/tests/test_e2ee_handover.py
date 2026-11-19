@@ -213,7 +213,9 @@ def test_normal_mode_user_title_wins_over_the_device_title(mesh_router: RouterPr
                 assert session.cwd == "/repo"
 
                 # Encryption turned on: the next summary leaves no plaintext, not even the user's title.
+                await device.stop()
                 app.state.e2ee_settings = E2eeSettings(mode="required")
+                device, _welcome, _access = await connect_device(client, connector_id=device_id, connector_token=token)
                 encrypted = device.state.push_outbox("session.summary", summary("sess_t1", 3, title="device three"))
                 await eventually(lambda: acked(device, encrypted.oid))
                 session = await store.get_session("sess_t1")

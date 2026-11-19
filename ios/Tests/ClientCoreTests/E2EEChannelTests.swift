@@ -234,7 +234,7 @@ import Testing
     let service: V2E2EEService
 
     init() {
-        service = V2E2EEService(trust: trust, tunnel: E2EETestTunnel(device: device), api: api, clientLabel: "iPhone")
+        service = V2E2EEService(trust: trust, provider: LegacyE2EEChannelProvider(tunnel: E2EETestTunnel(device: device)), api: api, clientLabel: "iPhone")
     }
 
     private func isPlain(_ route: V2E2EEService.ContentRoute) -> Bool {
@@ -261,12 +261,12 @@ import Testing
         }
         #expect(await channel.isOpen)
 
-        // 通道断了以后自动用 KK 重连，换一个新的 ch。
+        // 关闭后的下一次访问应打开新通道。
         await channel.close()
         guard case let .encrypted(again) = try await service.route(for: device.deviceId) else {
             Issue.record("expected an encrypted route"); return
         }
-        #expect(again.ch != channel.ch)
+        #expect(ObjectIdentifier(again) != ObjectIdentifier(channel))
         #expect(await again.isOpen)
     }
 
@@ -311,7 +311,7 @@ import Testing
 @MainActor @Test func pairingModelChecksTheCodeBeforePairing() async throws {
     let device = E2EETestDevice()
     let service = V2E2EEService(trust: ClientTrustStore(storage: E2EEMemoryStorage(), scope: "model"),
-                                tunnel: E2EETestTunnel(device: device), api: E2EETestAPI(), clientLabel: "iPad")
+                                provider: LegacyE2EEChannelProvider(tunnel: E2EETestTunnel(device: device)), api: E2EETestAPI(), clientLabel: "iPad")
     let server = URL(string: "https://AA.example.com/")!
     let early = { Date(timeIntervalSince1970: 0) }
     let uri = E2EEFormats.pairingURIPrefix + E2EEFormats.base64url(try JSONEncoder().encode(device.startPairing()))

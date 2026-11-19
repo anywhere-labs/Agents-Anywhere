@@ -2,7 +2,7 @@
 // `crypto.subtle`; the Noise state machine is ./noise. Suite: 25519_AESGCM_SHA256 (contracts/e2ee/1.0, S8).
 
 import { buf } from "./bytes"
-import { DHLEN, NoiseDecryptError, NoiseError, TAGLEN, aesGcmNonce, isAllZero, type NoiseCrypto, type NoiseKeyPair } from "./noise"
+import { DHLEN, NoiseDecryptError, NoiseError, TAGLEN, aesGcmNonce, isAllZero, type NoiseCrypto, type NoiseKeyPair } from "./noise/crypto"
 
 const subtle = (): SubtleCrypto => {
   const value = globalThis.crypto?.subtle

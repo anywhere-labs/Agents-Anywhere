@@ -106,3 +106,6 @@ export function parse(request: TunnelApiRequest): Route {
   if (segments[0] === 'api' && /^v\d+$/u.test(segments[1] ?? '')) segments.splice(0, 2)
   return { method: request.method, segments, query: url.searchParams, body: record(request.body), rawBody: request.body }
 }
+
+/** A base64 slice also receives MeshCall's encrypted envelope inside a 4 MiB frame. */
+export const CONTENT_CHUNK_BYTES = 2 * 1024 * 1024

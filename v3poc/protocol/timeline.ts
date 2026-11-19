@@ -147,6 +147,8 @@ export interface UserMessage extends MessageBase {
   role: 'user'
   /** The sender's idempotency key; an optimistic local copy is replaced when the item with this key arrives. */
   client_msg_id?: string
+  /** Localized by the host when the device records a failed delivery. */
+  delivery_error?: string
   /** Someone else in a shared session. */
   author?: string
   /** Sent while the agent was working and inserted into that turn. */

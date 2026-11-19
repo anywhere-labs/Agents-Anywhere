@@ -10,7 +10,7 @@ import {
   nodeContentSealer,
   parsePairingUri,
   type ChannelItem,
-} from '../../src/channel/index.js'
+} from './legacy/index.js'
 import { generateX25519, nodeNoiseCrypto, x25519FromSecret, type X25519KeyPair } from '../../src/channel/noise/node-crypto.js'
 import { clientIdFor, type DeviceTrustState } from '../../src/domain/trust/index.js'
 import {
@@ -25,7 +25,7 @@ import {
   turnFinished,
   type ChannelFactory,
   type ContentPath,
-} from '../../scripts/e2ee-latency.js'
+} from './legacy/latency.js'
 
 // Self-test of the E-7 measurement script: statistics, verdict, and first-screen and streaming latency on the encrypted path through a real secure channel (in-process device).
 

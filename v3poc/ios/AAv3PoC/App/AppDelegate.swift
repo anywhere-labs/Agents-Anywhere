@@ -36,6 +36,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 
 final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
+    private let account = NativeAccount()
 
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
         guard let scene = scene as? UIWindowScene else { return }
@@ -45,20 +46,46 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     func connect(_ scene: UIWindowScene) {
         guard window == nil else { return }
         LaunchClock.mark("scene connect")
-        var workspace = Fixtures.workspace()
-        if let stress = StressConfig.current { workspace.sessions.insert(stress.summary, at: 0) }
-        let client = MockSessionsClient(workspace: workspace, demo: Fixtures.demo())
-        // One WKWebView for the app's lifetime, created by the conversation page once its view is in the window
-        // (RendererBridge.makeWebView): never before the window exists.
-        let controller = SessionController(workspace: workspace, client: client, bridge: RendererBridge())
         let window = UIWindow(windowScene: scene)
         switch DebugLaunch.scheme {
         case "dark": window.overrideUserInterfaceStyle = .dark
         case "light": window.overrideUserInterfaceStyle = .light
         default: break
         }
-        window.rootViewController = ShellViewController(controller: controller)
         self.window = window
+        #if DEBUG
+        if let profile = DevContentProfile.read(), let client = profile.sessionsClient() {
+            showWorkspace(workspace: profile.workspace, client: client)
+        } else if ProcessInfo.processInfo.environment["AA_POC_DEMO"] == "1" || StressConfig.current != nil {
+            var workspace = Fixtures.workspace()
+            if let stress = StressConfig.current { workspace.sessions.insert(stress.summary, at: 0) }
+            showWorkspace(workspace: workspace, client: MockSessionsClient(workspace: workspace, demo: Fixtures.demo()))
+        } else {
+            showConnection(reopen: true)
+        }
+        #else
+        showConnection(reopen: true)
+        #endif
         window.makeKeyAndVisible()
+    }
+
+    private func showConnection(reopen: Bool) {
+        window?.rootViewController = UIHostingController(rootView: ConnectionView(account: account, reopen: reopen) { [weak self] connection in
+            self?.showWorkspace(workspace: connection.workspace, client: connection.client, close: connection.close)
+        })
+    }
+
+    private func showWorkspace(workspace: Workspace, client: any SessionsClient, close: (() async -> Void)? = nil) {
+        let controller = SessionController(workspace: workspace, client: client, bridge: RendererBridge())
+        if let close {
+            controller.openDevices = { [weak self, weak controller] in
+                controller?.close()
+                Task {
+                    await close()
+                    self?.showConnection(reopen: false)
+                }
+            }
+        }
+        window?.rootViewController = ShellViewController(controller: controller)
     }
 }

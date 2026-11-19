@@ -33,6 +33,7 @@ final class MomentumTouchTests: XCTestCase {
             app.launchEnvironment["AA_POC_STRESS"] = env["AA_POC_STRESS"] ?? "snapshot:60,hz:10,parallel:2,lines:300,difflines:60,chars:2500"
             app.launchEnvironment["AA_POC_AUTO_APPROVE_SECONDS"] = "1"
             if let path = env["AA_POC_RENDERER_PATH"] { app.launchEnvironment["AA_POC_RENDERER_PATH"] = path }
+            app.launchEnvironment["AA_POC_DEMO"] = "1"
             app.launch()
             Thread.sleep(forTimeInterval: coldStart ? 1.5 : 4)
             func at(_ x: CGFloat, _ y: CGFloat) -> XCUICoordinate { app.coordinate(withNormalizedOffset: CGVector(dx: x, dy: y)) }
@@ -69,6 +70,7 @@ final class MomentumTouchTests: XCTestCase {
         app.launchEnvironment["AA_POC_SCHEME"] = "light"
         app.launchEnvironment["AA_POC_STRESS"] = "snapshot:60,hz:2,parallel:1,lines:300,difflines:60,chars:2500"
         app.launchEnvironment["AA_POC_AUTO_APPROVE_SECONDS"] = "1"
+        app.launchEnvironment["AA_POC_DEMO"] = "1"
         app.launch()
         Thread.sleep(forTimeInterval: 6)
         func at(_ x: CGFloat, _ y: CGFloat) -> XCUICoordinate { app.coordinate(withNormalizedOffset: CGVector(dx: x, dy: y)) }

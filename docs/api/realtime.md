@@ -390,17 +390,13 @@ connector HTTP/WS transports directly.
 
 ## E2EE tunnel
 
-When the deployment sets `AGENT_SERVER_E2EE=required`, clients reach devices through
-one channel (`contracts/e2ee/1.0`):
-
-```text
-WS /api/v3/tunnel?ticket=...
-```
-
-The ticket is the same one-time dashboard ticket as `/api/v2/dashboard/ws`:
-`POST /api/v2/ws-ticket` with `{"scope": {"dashboard": true}}`. There is no separate
-tunnel scope. The Server forwards `ClientTunnelFrame`s to the device's
-`aa.device.v1.Secure/channel` and reads only the route header and frame counter.
+With `AGENT_SERVER_E2EE=required`, clients call the Connector's
+`aa.device.v1.Content/subscribe` over an encrypted MeshCall tunnel. Session
+subscriptions resume with `afterCursor` and terminal subscriptions with
+`fromSeq`. The authenticated `POST /api/v3/mobile/control-tunnel` endpoint grants
+access to `MobileControl/issue_content_tunnel`, which issues the device-scoped
+tunnel. Session and terminal payloads are opened by the client and Connector.
+See the [shared contract](../../contracts/device-meshcall/1.0/README.md).
 
 ## Terminal realtime
 

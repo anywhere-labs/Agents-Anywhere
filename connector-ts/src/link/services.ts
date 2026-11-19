@@ -1,4 +1,4 @@
-import { MeshCallError, ResourceExhaustedError, z, type DuplexChannel, type RpcContext } from 'meshcall'
+import { MeshCallError, ResourceExhaustedError, z, type RpcContext } from 'meshcall'
 
 import { CommandInbox, errorCode } from '../application/inbound/index.js'
 import type { TunnelApi } from '../application/inbound/tunnel-api.js'
@@ -9,6 +9,7 @@ import { SHARE_DEFAULT_BUDGET, outboxStream, scrubForE2ee, shareChunks, watchSes
 import { defineService, type MethodDef } from '../mesh/index.js'
 import type { AttachHub } from './attach.js'
 import type { LocalBlob } from './blobs.js'
+import { CONTROL_PRINCIPAL, CONTROL_SERVICES } from './content.js'
 import { CLIENT_CALL_REQUEST, CLIENT_SERVICE, CLIENT_SUBSCRIBE_REQUEST, DEFAULT_CLIENT_LIMITS, clientCall, clientRoute, clientSubscribe, type ClientLimits } from './client-call.js'
 import type { BlobTransfer, TransferUpload } from './device-files.js'
 import { TerminalWatchers, type WorkspaceServiceDeps } from './workspace.js'
@@ -29,14 +30,13 @@ export type Registration = Readonly<Record<string, readonly string[]>>
 export const DEFAULT_REGISTRATION: Readonly<Record<E2eeMode, Registration>> = REGISTERED_SERVICES
 
 /** Concurrency classes: long streams cannot starve approvals, notices or the outbox acknowledgements. */
-export type CallClass = 'critical' | 'command' | 'read' | 'stream' | 'secure'
+export type CallClass = 'critical' | 'command' | 'read' | 'stream'
 
 export const DEFAULT_LIMITS: Readonly<Record<CallClass, number>> = {
   critical: 64,
   command: 64,
   read: 64,
   stream: 512,
-  secure: 256,
 }
 
 /**
@@ -55,7 +55,6 @@ const CRITICAL = new Set([
 export function callClass(serviceName: string, methodName: string, request?: Record<string, unknown>): CallClass {
   if (serviceName === CLIENT_SERVICE) return methodName === 'call' ? clientRoute(request ?? {}).kind : 'stream'
   if (CRITICAL.has(methodName)) return 'critical'
-  if (serviceName === 'aa.device.v1.Secure') return 'secure'
   if (serviceName === 'aa.device.v1.Commands') return 'command'
   if (['watch', 'readBlob', 'exportShare'].includes(methodName)) return 'stream'
   return 'read'
@@ -67,17 +66,16 @@ function sessionId(request: Record<string, unknown>): string {
 }
 
 /** Secure/channel handler (F's `channel/`): runs one client's encrypted channel. */
-export type SecureChannelHandler = (request: Record<string, unknown>, channel: DuplexChannel<Record<string, unknown>, Record<string, unknown>>, context: RpcContext) => Promise<void>
 
 export interface DeviceServicesDeps {
   /** The current connection generation; calls carrying another are refused. */
   readonly connectionId: () => string | null
+  readonly encryptedControl?: () => boolean
   readonly attach: AttachHub
   readonly outbox: OutboxStreamOptions & { readonly store?: OutboxStore }
   readonly watch: WatchDeps
   readonly readers: DeviceReaders
   readonly inbox: CommandInbox
-  readonly secure?: SecureChannelHandler
   readonly limits?: Partial<Record<CallClass, number>>
   /** A command settled (its `command.result` is in the outbox). */
   readonly onCommand?: () => void
@@ -160,6 +158,10 @@ export class DeviceServices {
   }
 
   private gate(context: RpcContext, claimed?: unknown): void {
+    if (this.deps.encryptedControl?.() && CONTROL_SERVICES.has(context.service) &&
+        (context.tunnel?.sealed !== true || context.tunnel.principal !== CONTROL_PRINCIPAL)) {
+      throw new MeshCallError('permission_denied', 'Device management requires an encrypted control tunnel')
+    }
     const current = this.deps.connectionId()
     const presented = context.metadata[CONNECTION_METADATA] ?? (typeof claimed === 'string' ? claimed : undefined)
     if (current === null || presented !== current) throw connectionReplaced()
@@ -360,26 +362,6 @@ export class DeviceServices {
     })
   }
 
-  private secureMethods(): MethodDef[] {
-    const handler = this.deps.secure
-    if (handler === undefined) return []
-    return [{
-      name: 'channel',
-      kind: 'duplex',
-      description: 'One encrypted client channel; the Server forwards the frames untouched.',
-      request: z.looseObject({ clientId: z.string().min(1), ch: z.string().min(1) }),
-      handler: (async (request: Record<string, unknown>, channel: DuplexChannel<Record<string, unknown>, Record<string, unknown>>, context: RpcContext) => {
-        this.gate(context)
-        const leave = this.limiter.enter('secure')
-        try {
-          await handler(request, channel, context)
-        } finally {
-          leave()
-        }
-      }) as never,
-    }]
-  }
-
   /**
    * The services of `registration`, limited to those the Router token grants (`granted` null = all): the
    * Router refuses a whole registration that names a service the token does not cover.
@@ -392,7 +374,6 @@ export class DeviceServices {
       'aa.device.v1.Store': () => this.storeMethods(),
       'aa.device.v1.Commands': () => this.commandMethods(registration['aa.device.v1.Commands'] ?? []),
       [CLIENT_SERVICE]: () => this.clientMethods(),
-      'aa.device.v1.Secure': () => this.secureMethods(),
     }
     const services: object[] = []
     const names: string[] = []

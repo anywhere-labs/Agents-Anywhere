@@ -5950,6 +5950,350 @@
         "key": null,
         "kind": "round_robin"
       },
+      "description": "E2EE content on tunnels that terminate at the Connector and require local client approval.",
+      "methods": [
+        {
+          "annotations": {
+            "destructive": false,
+            "idempotent": false,
+            "read_only": false
+          },
+          "balance": {
+            "key": null,
+            "kind": "round_robin"
+          },
+          "deprecated": null,
+          "description": "Redeem an invitation made on this Connector.",
+          "duplex_reason": null,
+          "input_item": null,
+          "name": "pair",
+          "output_item": null,
+          "parameters": [
+            "clientIdentityPub",
+            "clientSecret",
+            "label",
+            "pairingId",
+            "pairingSecret",
+            "platform"
+          ],
+          "request": {
+            "module": "agent_server.core.device_content",
+            "qualname": "ContentPairRequest",
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "clientIdentityPub": {
+                  "pattern": "^[A-Za-z0-9_-]{43}$",
+                  "title": "Clientidentitypub",
+                  "type": "string"
+                },
+                "clientSecret": {
+                  "pattern": "^[A-Za-z0-9_-]{43}$",
+                  "title": "Clientsecret",
+                  "type": "string"
+                },
+                "label": {
+                  "maxLength": 120,
+                  "minLength": 1,
+                  "title": "Label",
+                  "type": "string"
+                },
+                "pairingId": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "title": "Pairingid",
+                  "type": "string"
+                },
+                "pairingSecret": {
+                  "pattern": "^[A-Za-z0-9_-]{43}$",
+                  "title": "Pairingsecret",
+                  "type": "string"
+                },
+                "platform": {
+                  "enum": [
+                    "android",
+                    "ios",
+                    "web",
+                    "desktop",
+                    "cli"
+                  ],
+                  "title": "Platform",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "pairingId",
+                "pairingSecret",
+                "clientIdentityPub",
+                "clientSecret",
+                "label",
+                "platform"
+              ],
+              "type": "object"
+            }
+          },
+          "response": {
+            "module": "agent_server.core.device_content",
+            "qualname": "ContentPairResult",
+            "schema": {
+              "$defs": {
+                "DirectoryKeyGrant": {
+                  "description": "Sent by the device to a client inside the channel after pairing or rotation.",
+                  "properties": {
+                    "deviceId": {
+                      "minLength": 1,
+                      "title": "Deviceid",
+                      "type": "string"
+                    },
+                    "epoch": {
+                      "minimum": 0,
+                      "title": "Epoch",
+                      "type": "integer"
+                    },
+                    "key": {
+                      "description": "32 bytes, base64url without padding",
+                      "pattern": "^[A-Za-z0-9_-]{43}$",
+                      "title": "Key",
+                      "type": "string"
+                    },
+                    "keyId": {
+                      "minLength": 1,
+                      "title": "Keyid",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "deviceId",
+                    "keyId",
+                    "epoch",
+                    "key"
+                  ],
+                  "title": "DirectoryKeyGrant",
+                  "type": "object"
+                }
+              },
+              "additionalProperties": false,
+              "properties": {
+                "clientId": {
+                  "title": "Clientid",
+                  "type": "string"
+                },
+                "directoryKey": {
+                  "$ref": "#/$defs/DirectoryKeyGrant"
+                },
+                "grantedAt": {
+                  "title": "Grantedat",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "clientId",
+                "grantedAt",
+                "directoryKey"
+              ],
+              "type": "object"
+            }
+          },
+          "stream": "unary"
+        },
+        {
+          "annotations": {
+            "destructive": false,
+            "idempotent": false,
+            "read_only": false
+          },
+          "balance": {
+            "key": null,
+            "kind": "round_robin"
+          },
+          "deprecated": null,
+          "description": "Run a client API operation on the device.",
+          "duplex_reason": null,
+          "input_item": null,
+          "name": "request",
+          "output_item": null,
+          "parameters": [
+            "body",
+            "method",
+            "path"
+          ],
+          "request": {
+            "module": "agent_server.core.device_content",
+            "qualname": "ContentRequest",
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "body": {
+                  "default": null,
+                  "title": "Body"
+                },
+                "method": {
+                  "enum": [
+                    "GET",
+                    "POST",
+                    "PUT",
+                    "PATCH",
+                    "DELETE"
+                  ],
+                  "title": "Method",
+                  "type": "string"
+                },
+                "path": {
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "title": "Path",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "method",
+                "path"
+              ],
+              "type": "object"
+            }
+          },
+          "response": {
+            "module": "agent_server.core.device_content",
+            "qualname": "ContentResult",
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "body": {
+                  "default": null,
+                  "title": "Body"
+                },
+                "contentType": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "title": "Contenttype"
+                },
+                "status": {
+                  "title": "Status",
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "status"
+              ],
+              "type": "object"
+            }
+          },
+          "stream": "unary"
+        },
+        {
+          "annotations": {
+            "destructive": false,
+            "idempotent": true,
+            "read_only": true
+          },
+          "balance": {
+            "key": null,
+            "kind": "round_robin"
+          },
+          "deprecated": null,
+          "description": "Stream client events from an existing cursor.",
+          "duplex_reason": null,
+          "input_item": null,
+          "name": "subscribe",
+          "output_item": {
+            "module": "agent_server.core.device_content",
+            "qualname": "ContentEvent",
+            "schema": {
+              "additionalProperties": true,
+              "type": "object"
+            }
+          },
+          "parameters": [
+            "afterCursor",
+            "fromSeq",
+            "sessionId",
+            "stream",
+            "terminalId"
+          ],
+          "request": {
+            "module": "agent_server.core.device_content",
+            "qualname": "ContentSubscribeRequest",
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "afterCursor": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "title": "Aftercursor"
+                },
+                "fromSeq": {
+                  "anyOf": [
+                    {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "title": "Fromseq"
+                },
+                "sessionId": {
+                  "default": "",
+                  "title": "Sessionid",
+                  "type": "string"
+                },
+                "stream": {
+                  "default": "session",
+                  "enum": [
+                    "session",
+                    "terminal",
+                    "trust"
+                  ],
+                  "title": "Stream",
+                  "type": "string"
+                },
+                "terminalId": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "title": "Terminalid"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "response": null,
+          "stream": "server_stream"
+        }
+      ],
+      "name": "aa.device.v1.Content",
+      "source_module": "agent_server.core.device_meshcall",
+      "source_qualname": "ContentService",
+      "targeted": true,
+      "version": "1"
+    },
+    {
+      "balance": {
+        "key": null,
+        "kind": "round_robin"
+      },
       "description": "Normal mode only: the client API routes the device serves (client-routes.json), one request per call.",
       "methods": [
         {
@@ -6744,115 +7088,6 @@
       "name": "aa.device.v1.Client",
       "source_module": "agent_server.core.device_meshcall",
       "source_qualname": "ClientService",
-      "targeted": true,
-      "version": "1"
-    },
-    {
-      "balance": {
-        "key": null,
-        "kind": "round_robin"
-      },
-      "description": "E2EE required mode only: opaque Noise channels between a client and this device.",
-      "methods": [
-        {
-          "annotations": {
-            "destructive": false,
-            "idempotent": false,
-            "read_only": false
-          },
-          "balance": {
-            "key": null,
-            "kind": "round_robin"
-          },
-          "deprecated": null,
-          "description": "One call per client channel; the Server forwards n/ct without reading them.",
-          "duplex_reason": "Noise transport messages flow both ways, interleaved and in order, for the whole life of a client channel.",
-          "input_item": {
-            "module": "agent_server.core.device_meshcall",
-            "qualname": "SecureChannelItem",
-            "schema": {
-              "description": "Noise transport message in either direction; ``n`` is the per-direction counter.",
-              "properties": {
-                "ct": {
-                  "description": "base64 Noise transport message",
-                  "title": "Ct",
-                  "type": "string"
-                },
-                "n": {
-                  "maximum": 9007199254740991,
-                  "minimum": 0,
-                  "title": "N",
-                  "type": "integer"
-                }
-              },
-              "required": [
-                "n",
-                "ct"
-              ],
-              "type": "object"
-            }
-          },
-          "name": "channel",
-          "output_item": {
-            "module": "agent_server.core.device_meshcall",
-            "qualname": "SecureChannelItem",
-            "schema": {
-              "description": "Noise transport message in either direction; ``n`` is the per-direction counter.",
-              "properties": {
-                "ct": {
-                  "description": "base64 Noise transport message",
-                  "title": "Ct",
-                  "type": "string"
-                },
-                "n": {
-                  "maximum": 9007199254740991,
-                  "minimum": 0,
-                  "title": "N",
-                  "type": "integer"
-                }
-              },
-              "required": [
-                "n",
-                "ct"
-              ],
-              "type": "object"
-            }
-          },
-          "parameters": [
-            "ch",
-            "clientId"
-          ],
-          "request": {
-            "module": "agent_server.core.device_meshcall",
-            "qualname": "SecureChannelOpen",
-            "schema": {
-              "description": "Request of the duplex ``Secure/channel``: one call per client channel.",
-              "properties": {
-                "ch": {
-                  "minLength": 1,
-                  "title": "Ch",
-                  "type": "string"
-                },
-                "clientId": {
-                  "minLength": 1,
-                  "title": "Clientid",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "clientId",
-                "ch"
-              ],
-              "type": "object"
-            }
-          },
-          "response": null,
-          "stream": "duplex"
-        }
-      ],
-      "name": "aa.device.v1.Secure",
-      "source_module": "agent_server.core.device_meshcall",
-      "source_qualname": "SecureService",
       "targeted": true,
       "version": "1"
     }

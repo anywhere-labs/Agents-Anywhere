@@ -5,7 +5,7 @@
       "model": "LinkHello",
       "path": "schemas/link-hello.schema.json",
       "pydanticMode": "validation",
-      "sha256": "d82df604a2d17d183e081181464d8bdd85a6c921fa0c96742f78c71fbed9a75c",
+      "sha256": "a14b5930c10e1781c16f9fce0eceac81baa59da1e40ce42587f8869bf5e338ff",
       "slug": "link-hello"
     },
     {
@@ -23,6 +23,94 @@
       "pydanticMode": "validation",
       "sha256": "f635372b15ca2f55348ae8d9d6171f00079fe36358c3168071aa127def424936",
       "slug": "link-ready"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "MobileDirectoryRequest",
+      "path": "schemas/mobile-directory-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "c74dd189018bc5b3ddea2709338096dc5e37fea317a2160d2e63d3703e5342c7",
+      "slug": "mobile-directory-request"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "MobileDirectoryResult",
+      "path": "schemas/mobile-directory-result.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "e3fbebee5622d7daf2a1d1d371393f9b5e694ce27ee6bef913e9feb06b614d9e",
+      "slug": "mobile-directory-result"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "MobileContentTunnelRequest",
+      "path": "schemas/mobile-content-tunnel-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "b0f13c9c9ff88aa246886367ba71f2835ffebefed9dd3ff08965b9caa723e762",
+      "slug": "mobile-content-tunnel-request"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "EncryptedTunnelGrant",
+      "path": "schemas/encrypted-tunnel-grant.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "895f1ba2a5448bf46852f70b4670e35add72fd8e54c19972264db251fbdf7b22",
+      "slug": "encrypted-tunnel-grant"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "ContentTunnelGrant",
+      "path": "schemas/content-tunnel-grant.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "1e8d660afc69588df8d27b87c2e180971a6114d86d68a8307ad1754ca8768d28",
+      "slug": "content-tunnel-grant"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "ContentPairRequest",
+      "path": "schemas/content-pair-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "09ef506645bb3344021fb5336ab5b2132dbd7a63d9eabaf90ff45484b29f7004",
+      "slug": "content-pair-request"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "ContentPairResult",
+      "path": "schemas/content-pair-result.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "620f9086ee4c7fdc1b067ed35055be5abfc789a0dd186eb51b13805d90c70409",
+      "slug": "content-pair-result"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "ContentRequest",
+      "path": "schemas/content-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "2ca4f140d8738c8124202126572dd0f1ec3cbf2b51eae8d21a476628a33c404f",
+      "slug": "content-request"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "ContentResult",
+      "path": "schemas/content-result.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "fff3b1dc8cd8328f7d975107d38348598ecde32a6dbd5bc4f49ba61ef4254b91",
+      "slug": "content-result"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "ContentSubscribeRequest",
+      "path": "schemas/content-subscribe-request.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "bdab59c6f7769c39da5e1e5813772a2a7989e769e8661ae3752c80b50d435b62",
+      "slug": "content-subscribe-request"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "ContentEvent",
+      "path": "schemas/content-event.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "f07808b803709e27af24d511006cdfb6c4a281ade8192b69e017b177fc89ba00",
+      "slug": "content-event"
     },
     {
       "direction": "bidirectional",
@@ -111,22 +199,6 @@
       "pydanticMode": "validation",
       "sha256": "b674a0c0174eccdbdb2569544d7923188a64faeaacafb56697bde090fe921ee1",
       "slug": "session-watch-request"
-    },
-    {
-      "direction": "bidirectional",
-      "model": "SecureChannelOpen",
-      "path": "schemas/secure-channel-open.schema.json",
-      "pydanticMode": "validation",
-      "sha256": "12a9bd332bc2feee1dfdfeaa5a95530af3d6a7bf31498bda01073796fc56dceb",
-      "slug": "secure-channel-open"
-    },
-    {
-      "direction": "bidirectional",
-      "model": "SecureChannelItem",
-      "path": "schemas/secure-channel-item.schema.json",
-      "pydanticMode": "validation",
-      "sha256": "a93364dd8eeacabed31a49cf44078f7be7f6b283d37f2a3c89e683a6b136a6e5",
-      "slug": "secure-channel-item"
     },
     {
       "direction": "bidirectional",
@@ -646,7 +718,11 @@
   "extras": [
     {
       "path": "device.meshcall.json",
-      "sha256": "90c89c58a052d3a33bf51b9ce539907ab895bc49fd9a7143b42645be59359c0a"
+      "sha256": "c8f4ee483d3cff4bc66e21849e47dfa74f4ba16dcd7381559cefb4760167ef11"
+    },
+    {
+      "path": "mobile-control.meshcall.json",
+      "sha256": "2c57a8482aae9176b241b5f9f0e8262d2bf950058ad0d79bd3280e964512ae6b"
     },
     {
       "path": "mesh-errors.json",
@@ -654,7 +730,7 @@
     },
     {
       "path": "e2ee-registration.json",
-      "sha256": "5aaa9da2d9606524a65bdfbd8c8310e4f6c3dcf0450f9e2cb2d6d86f37d54cc5"
+      "sha256": "3fd5b2bb3540bb337df89f3b6baa003c525db9ba9ba4819b95ee1a23fb36cc73"
     },
     {
       "path": "payloads.json",

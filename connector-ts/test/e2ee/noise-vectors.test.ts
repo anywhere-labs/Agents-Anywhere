@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { HandshakeState, type TransportPair } from '../../src/channel/noise/index.js'
+import { HandshakeState, type TransportPair } from './legacy/noise/index.js'
 import { nodeNoiseCrypto, x25519FromSecret } from '../../src/channel/noise/node-crypto.js'
 
 type Hex = string

@@ -34,6 +34,7 @@ final class StressInteractionTests: XCTestCase {
         let seconds = Double(env["AA_POC_STRESS_SECONDS"] ?? "") ?? 240
         let start = Date()
         mark("launch")
+        app.launchEnvironment["AA_POC_DEMO"] = "1"
         app.launch()
         mark("launched")
         func at(_ x: CGFloat, _ y: CGFloat) -> XCUICoordinate { app.coordinate(withNormalizedOffset: CGVector(dx: x, dy: y)) }

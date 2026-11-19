@@ -11,10 +11,10 @@ import {
   nodeContentSealer,
   openSegments,
   pairingPrologue,
-  parsePairingUri,
   sealSegments,
   sealWithNonce,
-} from '../../src/channel/index.js'
+} from '../../src/channel/formats.js'
+import { parsePairingUri } from './legacy/client-channel.js'
 import { clientIdFor, e2eeLabel, identityFingerprint } from '../../src/domain/trust/index.js'
 
 const formats = JSON.parse(readFileSync(new URL('../../../contracts/e2ee/1.0/vectors/aa-formats.json', import.meta.url), 'utf8'))

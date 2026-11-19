@@ -4,8 +4,8 @@
  * `runtime.test.ts` runs it against an in-process Bridge client.
  *
  * It is also the cross-version check from docs/v3 08 (risk table): the plugin keeps its own
- * meshcall 0.3.0 client while the Connector runs meshcall 9334405 and that version's Router.
- * Skipped when connector-ts is not installed next to this package or no 9334405 Router binary
+ * meshcall 0.3.0 client while the Connector runs the pinned MeshCall version and its Router.
+ * Skipped when connector-ts is not installed next to this package or no compatible Router binary
  * is found (`MESHCALL_V3_ROUTER_BINARY`, else `/tmp/aa-mc/bin/meshcall-router`).
  */
 import assert from 'node:assert/strict'
@@ -34,7 +34,7 @@ function v3RouterBinary(): string | undefined {
   return undefined
 }
 const routerBinary = v3RouterBinary()
-const skip = !installed ? 'connector-ts is not installed' : !routerBinary ? 'no meshcall 9334405 Router binary' : false
+const skip = !installed ? 'connector-ts is not installed' : !routerBinary ? 'no compatible MeshCall Router binary' : false
 
 async function until(check: () => boolean | Promise<boolean>, label: string, attempts = 1500) {
   for (let n = 0; n < attempts; n++) { if (await check()) return; await delay(10) }
@@ -47,7 +47,8 @@ interface Notification { method: string, params: Json }
 test('the plugin syncs and answers through the TS Connector 2.0 compatibility layer', { timeout: 60_000, skip }, async () => {
   // The point of the check: two meshcall versions on one local Router.
   assert.equal(meshcallVersion(new URL('../../', import.meta.url)), '0.3.0', 'the plugin keeps meshcall 0.3.0')
-  assert.match(meshcallVersion(connectorTs), /9334405/, 'the Connector runs meshcall 9334405')
+  const routerLock = JSON.parse(readFileSync(new URL('scripts/meshcall-router.json', connectorTs), 'utf8'))
+  assert.equal(meshcallVersion(connectorTs), routerLock.version, 'Connector and Router use the same MeshCall pin')
   const compat = await import(new URL('src/runtime/dsh-bridge2/index.ts', connectorTs).href) as typeof import('../../../connector-ts/src/runtime/dsh-bridge2/index.js')
   const storage = await import(new URL('src/store/index.ts', connectorTs).href) as typeof import('../../../connector-ts/src/store/index.js')
   const feeds = await import(new URL('src/sync/change-feed.ts', connectorTs).href) as typeof import('../../../connector-ts/src/sync/change-feed.js')

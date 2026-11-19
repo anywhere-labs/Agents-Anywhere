@@ -3,7 +3,7 @@ import Foundation
 /// 让现有的 API 资源（`V2SessionAPI(transport:)` 等）不改代码就能走安全通道：
 /// 请求变成通道内的 `request`，路径与普通模式相同，响应按普通 HTTP 的规则解码。
 nonisolated struct E2EEChannelHTTPTransport: HTTPTransport {
-    let channel: ClientSecureChannel
+    let channel: any E2EEDeviceChannel
     var encoder = JSONEncoder()
     var decoder = JSONDecoder()
     /// 经通道的每个请求最多等这么久，超时报 `e2ee_timeout`（请求可能已经被设备执行）。
@@ -71,7 +71,7 @@ nonisolated struct E2EEChannelHTTPTransport: HTTPTransport {
     }
 }
 
-nonisolated extension ClientSecureChannel {
+nonisolated extension E2EEDeviceChannel {
     /// 会话事件流：与普通模式的会话 WS 相同的事件，经通道 `subscribe` 送达。
     func sessionEvents(sessionId: V2SessionID, afterCursor: String?) async throws -> AsyncThrowingStream<V2SessionEvent, Error> {
         let (_, raw) = try await subscribe(sessionId: sessionId, afterCursor: afterCursor)

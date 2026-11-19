@@ -4,7 +4,7 @@
 // ported from Agents-Anywhere v2 server/agent_server/services/terminal.py @4c8012369 (TerminalService.create_for_connector, list_for_connector, rename_for_connector, close_for_connector, resize_for_connector)
 // ported from Agents-Anywhere v2 server/agent_server/api/connector_runtimes.py @4c8012369 (get_connector_runtime_model_catalog, get_connector_runtime_permission_catalog, get_connector_runtime_commands)
 import type { TunnelApiResponse } from '../../application/inbound/tunnel-api.js'
-import { TunnelHttpError, int, invalid, isRecord, notFound, okBody, record, text, withStatus, type Route } from './http.js'
+import { CONTENT_CHUNK_BYTES, TunnelHttpError, int, invalid, isRecord, notFound, okBody, record, text, withStatus, type Route } from './http.js'
 import { listingPath, resolveWorkspacePath } from './paths.js'
 import { TerminalRoots, browseScope, modelCatalogView, permissionCatalogView, terminalLabel, terminalV1View, terminalV2View } from './views.js'
 
@@ -166,7 +166,7 @@ export class WorkspaceRoutes {
             root,
             path: this.resolve(root, route.query.get('path') ?? ''),
             offset: int(route.query.get('offset'), 0, 0, Number.MAX_SAFE_INTEGER),
-            length: int(route.query.get('length'), 8 * 1024 * 1024, 1, 8 * 1024 * 1024),
+            length: Math.min(int(route.query.get('length'), CONTENT_CHUNK_BYTES, 1, 8 * 1024 * 1024), CONTENT_CHUNK_BYTES),
           }),
         }
       }

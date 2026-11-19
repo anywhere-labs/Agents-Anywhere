@@ -39,7 +39,6 @@ export {
   type DeviceServicesDeps,
   type E2eeMode,
   type Registration,
-  type SecureChannelHandler,
 } from './services.js'
 export {
   Backoff,
@@ -53,7 +52,6 @@ export {
   type LinkLogger,
   type LinkState,
 } from './device-link.js'
-export { secureChannelVia, type SecureChannelFrame, type SecureChannelHubLike, type SecureChannelLike, type SecureChannelWire } from './secure.js'
 export { MAX_COMMAND_CATALOGS, SessionCommandCatalog, type SessionCommand } from './session-commands.js'
 export {
   TERMINAL_OUTPUT_ITEM_BYTES,

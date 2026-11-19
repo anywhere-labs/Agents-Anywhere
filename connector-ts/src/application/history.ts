@@ -383,14 +383,21 @@ export class NativeHistory {
   public async scan(runtimeId: string, scanId: string): Promise<{ sessions: number; complete: boolean }> {
     const handle = await this.deps.runtimes.handle(runtimeId)
     if (handle === null) return { sessions: 0, complete: false }
+    if (handle.type === 'pi') {
+      return this.serial('native-history-scan:pi', () => this.scanRuntime(handle, runtimeId, scanId))
+    }
+    return this.scanRuntime(handle, runtimeId, scanId)
+  }
+
+  private async scanRuntime(handle: RuntimeHandle, runtimeId: string, scanId: string): Promise<{ sessions: number; complete: boolean }> {
     // DSH generates its own IDs and skips open sessions in session/list. Reuse the Conversation already bound
-    // to a native ID, even across Connector restarts, and keep bound sessions in a complete inventory.
-    const dshSessions = handle.type === 'dsh'
-      ? (await this.deps.store.sessions.list()).filter(session => session.runtimeType === 'dsh' && session.externalSessionId !== null)
+    // to a native ID. Pi profiles can scan the same history directory and must keep the Conversation's original owner.
+    const sharedSessions = handle.type === 'dsh' || handle.type === 'pi'
+      ? (await this.deps.store.sessions.list()).filter(session => session.runtimeType === handle.type && session.externalSessionId !== null)
       : []
-    const knownDshSessions = dshSessions.filter(session => session.runtimeId === runtimeId)
-    const dshIds = new Map(knownDshSessions.map(session => [session.externalSessionId, session.sessionId]))
-    const otherDshIds = new Set(dshSessions.filter(session => session.runtimeId !== runtimeId).map(session => session.externalSessionId))
+    const knownSessions = sharedSessions.filter(session => session.runtimeId === runtimeId)
+    const knownIds = new Map(knownSessions.map(session => [session.externalSessionId, session.sessionId]))
+    const otherIds = new Set(sharedSessions.filter(session => session.runtimeId !== runtimeId).map(session => session.externalSessionId))
     const facts: SummaryFacts[] = []
     let complete = true
     let cursor: string | undefined
@@ -407,9 +414,8 @@ export class NativeHistory {
       if (page.complete === false) complete = false
       for (const summary of page.sessions) {
         try {
-          const knownSessionId = dshIds.get(summary.nativeSessionId)
-          // The implicit legacy instance can share the named instance's DSH home.
-          if (knownSessionId === undefined && otherDshIds.has(summary.nativeSessionId)) continue
+          const knownSessionId = knownIds.get(summary.nativeSessionId)
+          if (knownSessionId === undefined && otherIds.has(summary.nativeSessionId)) continue
           const session = await this.discover(handle, runtimeId, summary, knownSessionId)
           if (seen.has(session.sessionId)) continue
           seen.add(session.sessionId)
@@ -421,9 +427,11 @@ export class NativeHistory {
       }
       cursor = page.nextCursor
     } while (cursor !== undefined)
-    for (const session of knownDshSessions) {
-      if (!seen.has(session.sessionId) && this.deps.isBound?.(session.sessionId) === true) {
-        facts.push(summarize(session, await this.deps.store.timeline.latest(session.sessionId)))
+    if (handle.type === 'dsh') {
+      for (const session of knownSessions) {
+        if (!seen.has(session.sessionId) && this.deps.isBound?.(session.sessionId) === true) {
+          facts.push(summarize(session, await this.deps.store.timeline.latest(session.sessionId)))
+        }
       }
     }
     const at = this.deps.clock.nowIso()

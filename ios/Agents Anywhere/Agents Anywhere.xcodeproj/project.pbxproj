@@ -6,6 +6,10 @@
 	objectVersion = 90;
 	objects = {
 
+		000000000000000300000010 /* MeshCall package */ = {isa = XCLocalSwiftPackageReference; relativePath = "../../vendor/meshcall/sdk/meshcall-swift"; };
+		000000000000000300000011 /* MeshCall */ = {isa = XCSwiftPackageProductDependency; package = 000000000000000300000010; productName = MeshCall; };
+		000000000000000300000012 /* MeshCall in Frameworks */ = {isa = PBXBuildFile; productRef = 000000000000000300000011; };
+
 /* Begin PBXBuildFile section */
 		000000000000000130000001 /* Textual in Frameworks */ = {isa = PBXBuildFile; productRef = 000000000000000300000001 /* Textual */; };
 /* End PBXBuildFile section */
@@ -27,6 +31,7 @@
 		000000000000000130000000 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
+				000000000000000300000012 /* MeshCall in Frameworks */,
 				000000000000000130000001 /* Textual in Frameworks */,
 			);
 		};
@@ -69,6 +74,7 @@
 			name = "Agents Anywhere";
 			packageProductDependencies = (
 				000000000000000300000001 /* Textual */,
+				000000000000000300000011 /* MeshCall */,
 			);
 			productName = MyApp;
 			productReference = 000000000000000000000120 /* Agents Anywhere.app */;
@@ -104,6 +110,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				000000000000000300000000 /* XCLocalSwiftPackageReference "../Packages/Textual" */,
+				000000000000000300000010 /* MeshCall package */,
 			);
 			preferredProjectObjectVersion = 90;
 			productRefGroup = 000000000000000000000020 /* Products */;

@@ -1,14 +1,14 @@
 {
   "repository": "https://github.com/t4wefan/meshcall.git",
-  "commit": "93344059ada65735c6cc08fdf3247ea9fb808d6b",
-  "version": "0.4.0-dev.9334405",
+  "commit": "ce14d60743c2c6d5c2d504da02748de271ed8769",
+  "version": "0.4.0-dev.ce14d60",
   "go": "go1.26.0",
   "targets": {
-    "darwin-arm64": "69851eeb10006c0905a9d4df3658a5991236f10a781ce1de10c7f8580d1bbbc8",
-    "darwin-x64": "2acdfe7fa21e5b8684f8b3ae11e3eef5f9147a7a6b925e33b48114b13ce0c546",
-    "linux-arm64": "21cbd0e0a9a402a1d78cdc2e106c7e94871c0eee76473ea1ae693cb96d2e6691",
-    "linux-x64": "419d4195e8abf7eacbcee8b5000c8d5cd6a8880cbc316a88bc31532a1b2d9cac",
-    "win32-arm64": "eef2d0b9ecf79cb32b23f0801f9bb1055a0b95c0aac30829839787427d8d77d3",
-    "win32-x64": "3266aa6ef9fba04633e6c0eb59202c7313289c0b1be7a3ebef36be73fbcd7679"
+    "darwin-arm64": "31ec6a88c920bd08dc7f7c209366ae6bbec15ba926283728cbd844dbb7a0a944",
+    "darwin-x64": "46c13382a05ec1b5cd651d365cf44a361a43f73c7b1482c14f9a0f6789a024d0",
+    "linux-arm64": "145c1b53105dcd126ad5acc09e0d00cb0a1595ac20650a5722ed066708d6bbd7",
+    "linux-x64": "e33781ca7b11c51a1b49c40b88b7f21076875677501423a58eb73b20b7bc8e21",
+    "win32-arm64": "78695d2b9d0bac19537b04996a0becb2e8649f9232796fe6eafed3ad3e302a58",
+    "win32-x64": "8dd40be746bf4119e34cba8ad7c6ac6e477e28ad3238e2cab42ebbdf390b6251"
   }
 }

@@ -1,0 +1,36 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:mobile-content-tunnel-request",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "connectionId": {
+      "anyOf": [
+        {
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Connectionid"
+    },
+    "deviceId": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Deviceid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "deviceId"
+  ],
+  "title": "MobileContentTunnelRequest",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

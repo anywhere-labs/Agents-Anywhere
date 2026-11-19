@@ -2,7 +2,7 @@
 
 v3 架构验证的 Android 部分，行为和外观照着 iOS PoC（[`../ios/`](../ios/README.md)）做：对话线程画在**一个常驻的 Android System WebView** 里（渲染包和 iOS、Web 是同一份 `renderer.html`），线程周围的控件是原生 Jetpack Compose：侧栏抽屉、顶栏、输入框、审批区、「到底部」按钮、Sheet、菜单。数据契约见 [`../protocol/`](../protocol/README.md)，设计数值和两端的组件对照见 [`../design/`](../design/README.md)。
 
-这个 PoC 不联网，用 `MockSessionsClient` 回放 [`../fixtures/`](../fixtures/)，代替电脑上的 Connector。
+启动时可登录 Server、选择设备并配对。Debug 版可通过 `--ez demo true` 启动内置演示。构建、加密连接与调试入口见 [MeshCall 联调](../meshcall.md)。
 
 ## 目录
 
@@ -29,6 +29,8 @@ v3 架构验证的 Android 部分，行为和外观照着 iOS PoC（[`../ios/`](
 - lockfile 不提交；`local.properties` 写 `sdk.dir`（已忽略）
 
 ## 构建与运行
+
+先在仓库根目录执行 `sh vendor/meshcall/prepare-mobile-sdk.sh`，获取锁定版本的 Swift 和 JVM SDK。
 
 ```sh
 cd v3poc/android
@@ -95,7 +97,7 @@ ANDROID_SERIAL=emulator-5556 PYTHON=/path/to/python-with-pillow tools/compare.sh
 - 拖动线程时收起键盘：在 WebView 自己身上挂一个只观察、返回 `false` 的 `OnTouchListener`，不在祖先上。
 - 2026-11-18 之前违反过两处：抽屉的拖动手势挂在包含 WebView 的整页容器上（Initial pass），以及 WebView 外面一层观察拖动的 `pointerInput`；都已移除。
 
-## 将来换成 MeshCall 客户端
+## 接入 MeshCall 客户端
 
 `SessionController` 只依赖 `model/SessionsClient.kt` 里的接口：
 
@@ -110,7 +112,7 @@ interface SessionsClient {
 }
 ```
 
-它和 `protocol/services.ts` 的 `aa.v3.Sessions` 一一对应。MeshCall 有 JVM / Kotlin 客户端后，写一个适配器实现这个接口（`watch` 流断开时结束 Flow，控制器会重新 `watch`），在 `App.start()` 里替换 `MockSessionsClient` 即可。事件保持 JSON，原样转给渲染包。`MockSessionsClient` 的回放语义和 iOS 相同，答复审批时 `device` 写 `Android`。
+`MeshSessionsClient` 实现同一个接口，把 Connector 的会话快照和事件转换成渲染模型。`watch` 流断开后，控制器重新订阅。没有联调配置时，`App.start()` 使用 `MockSessionsClient`。
 
 ## 与 iOS 保持一致
 

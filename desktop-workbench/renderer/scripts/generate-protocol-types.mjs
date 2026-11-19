@@ -14,6 +14,9 @@ const contracts = [
     generatedDir: path.join(webRoot, "src", "generated", "protocol", "v1_1") },
   { contractDir: path.join(repositoryRoot, "contracts", "protocol", "1.2"),
     generatedDir: path.join(webRoot, "src", "generated", "protocol", "v1_2") },
+  { contractDir: path.join(repositoryRoot, "contracts", "device-meshcall", "1.0"),
+    generatedDir: path.join(webRoot, "src", "generated", "device-content", "v1_0"),
+    include: /^(?:content-|encrypted-tunnel-grant$|mobile-content-tunnel-request$)/ },
   // v3: end-to-end encryption (pairing, tunnel frames) and port preview.
   { contractDir: path.join(repositoryRoot, "contracts", "e2ee", "1.0"),
     generatedDir: path.join(webRoot, "src", "generated", "e2ee", "v1_0") },
@@ -23,9 +26,9 @@ const contracts = [
     generatedDir: path.join(webRoot, "src", "generated", "runtime-workflows", "v1_2") },
 ]
 
-for (const { contractDir, generatedDir } of contracts) {
+for (const { contractDir, generatedDir, include } of contracts) {
   const manifest = JSON.parse(await readFile(path.join(contractDir, "manifest.json"), "utf8"))
-  const artifacts = manifest.artifacts.filter((artifact) => artifact.direction !== "ingress")
+  const artifacts = manifest.artifacts.filter((artifact) => artifact.direction !== "ingress" && (!include || include.test(artifact.slug)))
   const expected = new Map()
 
   for (const artifact of artifacts) {

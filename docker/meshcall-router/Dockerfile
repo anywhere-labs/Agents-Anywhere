@@ -1,10 +1,10 @@
 # MeshCall Router built from a pinned commit of github.com/t4wefan/meshcall.
-# main 9334405 (#69: tokens with instance_ids, renew/revoke and 4401 close codes) has no release yet;
+# main ce14d60 (#69: tokens with instance_ids, renew/revoke and 4401 close codes) has no release yet;
 # the Server's meshcall Python dependency is pinned to the same commit (server/pyproject.toml).
 ARG GO_IMAGE=golang:1.26-bookworm
 FROM ${GO_IMAGE} AS build
 ARG GOPROXY=https://proxy.golang.org,direct
-ARG MESHCALL_REF=93344059ada65735c6cc08fdf3247ea9fb808d6b
+ARG MESHCALL_REF=ce14d60743c2c6d5c2d504da02748de271ed8769
 WORKDIR /src
 RUN git init -q . && git remote add origin https://github.com/t4wefan/meshcall.git \
  && git fetch -q --depth 1 origin "${MESHCALL_REF}" && git checkout -q FETCH_HEAD

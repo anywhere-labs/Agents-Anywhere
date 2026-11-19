@@ -695,6 +695,7 @@ async def auth_logout(request: Request, claims: tuple[str, str | None] = Depends
     user_id, family_id = claims
     if family_id is not None:
         await _user_tokens(request).revoke(user_id, family_id, reason="logout")
+        await request.app.state.device_mesh.revoke_content_family(family_id)
 
 
 def _iso_from_epoch(value: int) -> str:

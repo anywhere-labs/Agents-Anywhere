@@ -87,9 +87,6 @@ final class V2ClientServices {
         let e2eeAPI = api.e2ee
         e2ee = V2E2EEService(
             trust: trust,
-            tunnel: URLSessionE2EETunnel(serverURL: api.serverURL, urlSession: api.urlSession) {
-                try await e2eeAPI.tunnelTicket(clientId: try trust.clientId()).ticket
-            },
             api: e2eeAPI,
             clientLabel: Self.clientLabel
         )

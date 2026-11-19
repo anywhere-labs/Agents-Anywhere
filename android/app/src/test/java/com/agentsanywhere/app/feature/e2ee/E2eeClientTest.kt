@@ -47,13 +47,12 @@ class E2eeClientTest {
 
     private fun client(device: TestDevice) = E2eeClient(
         trust = trust,
-        tunnel = device,
+        provider = LegacyE2eeProvider(trust, device),
         commands = { commandId, deviceId, digest ->
             registered += Triple(commandId, deviceId, digest)
             duplicate
         },
         loadServerConfig = { server },
-        now = { 0L },
     )
 
     @Test

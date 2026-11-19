@@ -2,7 +2,7 @@
 
 ``AGENT_SERVER_E2EE=required``. Random canaries go into everything a user can produce (messages, replies, files,
 terminal output, titles, attachments and their names, shares, paths, the client name) and travel the way the
-clients send them: content as ciphertext through ``WS /api/v3/tunnel`` -> ``Secure/channel`` -> device, encrypted
+clients send them: content as ciphertext through MeshCall Router -> Connector, encrypted
 attachments as ``x-aa-sealed`` uploads, commands registered by keyed digest. A careless client that still sends
 plaintext is refused. Afterwards every place the Server side keeps or sends bytes must have zero hits:
 
@@ -18,7 +18,7 @@ Positive controls make sure each scan can see something: plaintext metadata the 
 
 What this test cannot cover yet: the real device (A's link and the connector-ts channel; the fake device here
 echoes ciphertext), the real tunnel WebSocket endpoint and the uvicorn access log (frames are handed to
-``TunnelSession`` directly), S3 (``scripts/e2ee_canary_scan.py --files-root`` on a mirrored bucket).
+MeshCall directly), S3 (``scripts/e2ee_canary_scan.py --files-root`` on a mirrored bucket).
 """
 
 from __future__ import annotations
@@ -49,7 +49,8 @@ from agent_server.core.e2ee import (
     SEALED_UPLOAD_VALUE,
     input_digest,
 )
-from agent_server.services.device_tunnel import TunnelSession
+from agent_server.core.device_content import CONTENT_SERVICE, ContentRequest, ContentResult
+from meshcall import Mesh, Router
 from scripts.e2ee_canary_scan import (
     Hit,
     new_canary,
@@ -61,7 +62,6 @@ from scripts.e2ee_canary_scan import (
 )
 from scripts.v3_fake_device import connect_device
 
-CLIENT = "cli_" + "c" * 26
 
 
 # ---------------------------------------------------------------------------
@@ -292,9 +292,7 @@ def test_required_mode_keeps_every_canary_off_the_server_side(canary_env, monkey
     }
     secret = list(canaries.values())
     control_device = new_canary("controldevice")
-    control_channel = new_canary("ctl").lower()[:40]
     sealer = Sealer()
-    client_frames: list[dict[str, Any]] = []
     seen: dict[str, str] = {}
 
     # The Router URL the device is told to use is the proxy, so both Router legs are recorded.
@@ -334,15 +332,9 @@ def test_required_mode_keeps_every_canary_off_the_server_side(canary_env, monkey
                 session = await store.get_session("sess_e1")
                 assert session.title is None
 
-                # Content through the tunnel: ciphertext only.
-                tunnel = TunnelSession(
-                    user_id=user.userId,
-                    store=store,
-                    mesh=app.state.device_mesh,
-                    hub=app.state.device_link_hub,
-                    send=_collect(client_frames),
-                )
-                route = {"deviceId": device_id, "clientId": CLIENT, "ch": control_channel}
+                # The client and Connector terminate the encrypted tunnel themselves.
+                key = device.e2ee_key.public_key
+                ticket = await app.state.device_mesh.open_content_tunnel(device_id, key, "canary-family")
                 payloads = [
                     {"method": "POST", "path": "/api/v2/sessions/sess_e1/runtime/messages",
                      "body": {"content": canaries["message"], "clientMessageId": "m1",
@@ -355,13 +347,13 @@ def test_required_mode_keeps_every_canary_off_the_server_side(canary_env, monkey
                     {"method": "PUT", "path": "/api/v2/sessions/sess_e1/plan", "body": {"text": canaries["plan"]}},
                     {"hello": {"clientName": canaries["clientname"]}},
                 ]
-                try:
-                    for n, payload in enumerate(payloads):
-                        await tunnel.handle({"t": "tun", "route": route, "n": n, "ct": sealer.seal(payload)})
-                    await eventually(lambda: _count(client_frames, len(payloads)))
-                    assert all(frame["t"] == "tun" for frame in client_frames)
-                finally:
-                    await tunnel.close()
+                async with Mesh(Router(device.router_url), tunnel=ticket.credential, e2e_key=key) as peer:
+                    for payload in payloads:
+                        request = ContentRequest(method="POST", path="/audit", body=payload)
+                        answer = await peer.call_unary(
+                            CONTENT_SERVICE, "request", request, ContentResult, instance=device_id, timeout=5,
+                        )
+                        assert answer.body == payload
 
                 # The command is registered by keyed digest before it goes through the channel.
                 digest = input_digest(sealer.key, json.dumps({"content": canaries["message"]}).encode())
@@ -418,7 +410,6 @@ def test_required_mode_keeps_every_canary_off_the_server_side(canary_env, monkey
     captures = proxy.captures()
     for name, stream in captures.items():
         hits += scan_websocket(f"router traffic {name}", stream, secret)
-    hits += scan_bytes("tunnel frames to the client", json.dumps(client_frames).encode(), secret)
     if redis_url:
         hits += asyncio.run(scan_redis(redis_url, secret))
     assert not hits, "canaries reached the Server side:\n" + _report(hits)
@@ -428,8 +419,8 @@ def test_required_mode_keeps_every_canary_off_the_server_side(canary_env, monkey
     assert scanned_files >= 1, "no attachment reached object storage"
     assert len(captures) >= 4, f"expected both Router legs in both directions, got {sorted(captures)}"
     assert any(
-        scan_websocket(name, stream, [control_channel]) for name, stream in captures.items()
-    ), "the Router traffic scan did not see the channel id"
+        scan_websocket(name, stream, [seen["device_id"]]) for name, stream in captures.items()
+    ), "the Router traffic scan did not see the target Connector identity"
     assert logs.lines, "no Server log line was captured"
     if redis_url:
         assert asyncio.run(scan_redis(redis_url, [seen["device_id"]])), "Redis scan saw nothing"
@@ -531,17 +522,6 @@ def test_required_mode_drops_plaintext_a_device_sends(canary_env, monkeypatch) -
     asyncio.run(scenario())
     hits = asyncio.run(scan_postgres(os.environ["AGENT_SERVER_DB_URL"], [title, result]))
     assert not hits, _report(hits)
-
-
-def _collect(frames: list[dict[str, Any]]):
-    async def send(frame: dict[str, Any]) -> None:
-        frames.append(frame)
-
-    return send
-
-
-async def _count(frames: list[dict[str, Any]], n: int) -> bool:
-    return len(frames) >= n
 
 
 async def _acked(device: Any, oid: int) -> bool:

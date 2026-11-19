@@ -9,6 +9,7 @@ export type Connectorversion = string
 export type Contractversions = ["1.0", ..."1.0"[]]
 export type Deviceid = string
 export type Host = "desktop" | "cli" | "dsh-plugin"
+export type Meshe2Eekey = string | null
 export type Os = string
 export type Headseq = number
 export type Resetseq = number
@@ -24,6 +25,7 @@ export interface LinkHello {
   contractVersions: Contractversions
   deviceId: Deviceid
   host: Host
+  meshE2eeKey?: Meshe2Eekey
   os: Os
   sessionsHead?: Sessionshead
   [k: string]: unknown

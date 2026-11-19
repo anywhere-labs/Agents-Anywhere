@@ -1,0 +1,50 @@
+{
+  "$id": "urn:agents-anywhere:device-meshcall:1.0:encrypted-tunnel-grant",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "credential": {
+      "title": "Credential",
+      "type": "string"
+    },
+    "e2e_key": {
+      "title": "E2E Key",
+      "type": "string"
+    },
+    "expires_at_unix_ms": {
+      "title": "Expires At Unix Ms",
+      "type": "integer"
+    },
+    "instance_id": {
+      "title": "Instance Id",
+      "type": "string"
+    },
+    "maxFrameBytes": {
+      "title": "Maxframebytes",
+      "type": "integer"
+    },
+    "router_url": {
+      "title": "Router Url",
+      "type": "string"
+    },
+    "tunnel_id": {
+      "title": "Tunnel Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "router_url",
+    "credential",
+    "instance_id",
+    "tunnel_id",
+    "e2e_key",
+    "expires_at_unix_ms",
+    "maxFrameBytes"
+  ],
+  "title": "EncryptedTunnelGrant",
+  "type": "object",
+  "x-contract": "device-meshcall",
+  "x-direction": "bidirectional",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "validation"
+}

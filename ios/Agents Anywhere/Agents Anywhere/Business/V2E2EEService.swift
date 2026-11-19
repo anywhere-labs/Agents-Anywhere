@@ -1,5 +1,10 @@
 import Foundation
 
+nonisolated protocol E2EEChannelProvider: Sendable {
+    func pair(_ payload: E2EEPairingPayload, trust: ClientTrustStore, label: String) async throws -> any E2EEDeviceChannel
+    func connect(_ record: E2EEDeviceTrust, trust: ClientTrustStore) async throws -> any E2EEDeviceChannel
+}
+
 /// 加密模式（e2ee 1.0）的接入点：Server 的模式、本机信任记录、每台设备的安全通道，
 /// 以及「这台设备的内容请求走明文还是走通道」的选择。
 ///
@@ -9,31 +14,28 @@ actor V2E2EEService {
     enum ContentRoute {
         /// Server 没开加密、本机也没记过「要求加密」：照常走明文 HTTP。
         case plain
-        case encrypted(ClientSecureChannel)
+        case encrypted(any E2EEDeviceChannel)
     }
 
     nonisolated let trust: ClientTrustStore
-    private let tunnel: any E2EETunnel
+    private let provider: (any E2EEChannelProvider)?
     private let api: any V2E2EEAPIProtocol
     private let clientLabel: String
-    private let options: ClientSecureChannel.Options
     private var serverMode: E2EEMode = .off
     private var configLoad: Task<Void, Never>?
-    private var channels: [String: ClientSecureChannel] = [:]
-    private var connecting: [String: Task<ClientSecureChannel, Error>] = [:]
+    private var channels: [String: any E2EEDeviceChannel] = [:]
+    private var connecting: [String: Task<any E2EEDeviceChannel, Error>] = [:]
 
     init(
         trust: ClientTrustStore,
-        tunnel: any E2EETunnel,
+        provider: (any E2EEChannelProvider)? = nil,
         api: any V2E2EEAPIProtocol,
-        clientLabel: String,
-        options: ClientSecureChannel.Options = .init()
+        clientLabel: String
     ) {
         self.trust = trust
-        self.tunnel = tunnel
+        self.provider = provider
         self.api = api
         self.clientLabel = clientLabel
-        self.options = options
     }
 
     // MARK: 模式
@@ -130,10 +132,8 @@ actor V2E2EEService {
     /// 扫码配对。成功后授权与列表密钥已经存进 Keychain，通道留着继续用。
     func pair(_ payload: E2EEPairingPayload) async throws -> E2EEDeviceTrust {
         await dropChannel(payload.deviceId)
-        let (channel, _) = try await ClientSecureChannel.pair(
-            payload, identity: try trust.identity(), tunnel: tunnel, trust: trust,
-            label: clientLabel, platform: "ios", options: options
-        )
+        guard let provider else { return try await pairMesh(payload) }
+        let channel = try await provider.pair(payload, trust: trust, label: clientLabel)
         channels[payload.deviceId] = channel
         if payload.requiresEncryption || serverMode == .required { try trust.markRequired(payload.deviceId) }
         guard let record = try trust.device(payload.deviceId) else {
@@ -142,19 +142,69 @@ actor V2E2EEService {
         return record
     }
 
-    /// 已配对设备的通道：有打开的就复用，否则用钉住的公钥做 KK 重连（每次新的 `ch`）。
-    func channel(for deviceId: String) async throws -> ClientSecureChannel {
-        if let channel = channels[deviceId], await channel.isOpen { return channel }
-        if let task = connecting[deviceId] { return try await task.value }
-        guard let record = try trust.device(deviceId), let devicePub = record.devicePubBytes else {
-            throw E2EEError(code: E2EEError.notPaired, message: "device \(deviceId) is not paired")
+    private func pairMesh(_ payload: E2EEPairingPayload) async throws -> E2EEDeviceTrust {
+        let pin = payload.deviceIdentityPub
+        if let record = try trust.device(payload.deviceId), record.devicePub != pin {
+            throw E2EEError(code: E2EEError.pinMismatch, message: "Connector public key changed")
         }
         let identity = try trust.identity()
-        let task = Task { [tunnel, trust, options] in
-            try await ClientSecureChannel.connect(
-                deviceId: deviceId, devicePub: devicePub, identity: identity,
-                tunnel: tunnel, trust: trust, options: options
-            )
+        let clientId = try trust.clientId()
+        guard let secret = try trust.meshCredential(deviceId: payload.deviceId, pin: pin, create: true) else {
+            throw E2EEError(code: E2EEError.notPaired, message: "Content credential unavailable")
+        }
+        let channel = try await MeshDeviceChannel.open(bootstrap: api.bootstrapContent(), deviceID: payload.deviceId,
+                                                       pin: pin, clientID: clientId, secret: secret)
+        do {
+            let result = try await channel.pair(ContentPairRequest(
+                clientIdentityPub: E2EEFormats.base64url(identity.publicKey), clientSecret: secret,
+                label: clientLabel, pairingId: payload.pairingId, pairingSecret: payload.psk, platform: "ios"
+            ))
+            let key = result.directoryKey
+            guard result.clientId == clientId, key.deviceId == payload.deviceId else {
+                throw E2EEError(code: E2EEError.pinMismatch, message: "Content grant belongs to another identity")
+            }
+            try trust.savePairing(E2EEPairingResult(
+                deviceId: payload.deviceId, clientId: clientId, devicePub: try E2EEFormats.fromBase64url(pin),
+                grantedAt: result.grantedAt,
+                directoryKey: E2EEDirectoryKeyGrant(deviceId: key.deviceId, keyId: key.keyId, epoch: key.epoch, key: key.key)
+            ))
+            try trust.markRequired(payload.deviceId)
+            guard let record = try trust.device(payload.deviceId) else {
+                throw E2EEError(code: E2EEError.protocolError, message: "pairing was not saved")
+            }
+            channels[payload.deviceId] = channel
+            await channel.watchTrust(trust)
+            return record
+        } catch {
+            await channel.close()
+            throw error
+        }
+    }
+
+    /// 已配对设备的通道：有打开的就复用，否则重新申请连接到已验证公钥的隧道。
+    func channel(for deviceId: String) async throws -> any E2EEDeviceChannel {
+        if let channel = channels[deviceId], await channel.isOpen { return channel }
+        if let task = connecting[deviceId] { return try await task.value }
+        guard let record = try trust.device(deviceId), record.devicePubBytes != nil else {
+            throw E2EEError(code: E2EEError.notPaired, message: "device \(deviceId) is not paired")
+        }
+        let task = Task<any E2EEDeviceChannel, Error> { [provider, trust, api] in
+            if let provider { return try await provider.connect(record, trust: trust) }
+            guard let secret = try trust.meshCredential(deviceId: deviceId, pin: record.devicePub) else {
+                throw E2EEError(code: E2EEError.notPaired, message: "Pair this device through MeshCall")
+            }
+            let channel = try await MeshDeviceChannel.open(bootstrap: api.bootstrapContent(), deviceID: deviceId,
+                                                           pin: record.devicePub, clientID: trust.clientId(), secret: secret)
+            do {
+                let response = try await channel.request(.get, path: "/e2ee/v1/directory-key")
+                let grant = try JSONDecoder().decode(E2EEDirectoryKeyGrant.self, from: response.body)
+                if grant.deviceId == deviceId { _ = try trust.updateDirectoryKey(grant) }
+                await channel.watchTrust(trust)
+                return channel
+            } catch {
+                await channel.close()
+                throw error
+            }
         }
         connecting[deviceId] = task
         defer { connecting[deviceId] = nil }
@@ -175,7 +225,6 @@ actor V2E2EEService {
         connecting = [:]
         for channel in channels.values { await channel.close() }
         channels = [:]
-        await tunnel.shutdown()
     }
 
     private func dropChannel(_ deviceId: String) async {
@@ -183,7 +232,7 @@ actor V2E2EEService {
     }
 
     /// `ready` 里的列表密钥纪元比本机新时（期间有撤销或轮换），经通道取一次新的列表密钥。
-    private func refreshDirectoryKeyIfNeeded(_ channel: ClientSecureChannel, record: E2EEDeviceTrust) async {
+    private func refreshDirectoryKeyIfNeeded(_ channel: any E2EEDeviceChannel, record: E2EEDeviceTrust) async {
         guard let ready = await channel.ready, ready.directoryKeyId != record.directoryKey.keyId,
               ready.directoryKeyEpoch >= record.directoryKey.epoch,
               let response = try? await channel.request(.get, path: "/e2ee/v1/directory-key"),

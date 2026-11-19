@@ -256,7 +256,8 @@ def test_e2ee_noise_vectors_use_real_client_ids() -> None:
 
 def test_required_mode_registers_no_content_methods() -> None:
     required = dl.registered_services("required")
-    assert required["aa.device.v1.Secure"] == ["channel"]
+    assert required["aa.device.v1.Content"] == ["pair", "request", "subscribe"]
+    assert "aa.device.v1.Secure" not in required
     assert "aa.device.v1.Sessions" not in required and "aa.device.v1.Store" not in required
     assert "aa.device.v1.Runtime" not in required
     commands = set(required["aa.device.v1.Commands"])
@@ -265,7 +266,7 @@ def test_required_mode_registers_no_content_methods() -> None:
     assert set(dl.E2EE_COMMAND_METHODS) <= set(dl.COMMAND_METHODS)
     assert set(dl.E2EE_EVENT_METHODS) <= set(dl.EVENT_METHODS)
     off = dl.registered_services("off")
-    assert "aa.device.v1.Secure" not in off
+    assert "aa.device.v1.Content" not in off
     assert len(dl.registered_routes("off")) == len(dl.REQUEST_METHODS) + len(dl.COMMAND_METHODS) + 3
 
 

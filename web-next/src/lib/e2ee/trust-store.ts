@@ -5,11 +5,11 @@
 // stored as structured clones in IndexedDB. Script on the page can use them while it runs, but cannot read the
 // bytes out. Only this client's own actions change the record; nothing the Server says relaxes it (E-3).
 
-import { buf, fromB64url } from "./bytes"
-import type { DirectoryKeyGrant } from "./client-channel"
+import { b64url, buf, fromB64url } from "./bytes"
+import type { DirectoryKeyGrant } from "./content-channel"
 import { clientIdFor, e2eeLabel, identityFingerprint } from "./formats"
-import type { NoiseKeyPair } from "./noise"
-import { generateIdentity, hmacSha256, keyPairFromCryptoKeys } from "./webcrypto"
+import type { NoiseKeyPair } from "./noise/crypto"
+import { generateIdentity, hmacSha256, keyPairFromCryptoKeys, randomBytes } from "./webcrypto"
 
 export interface StoredDirectoryKey {
   readonly keyId: string
@@ -29,6 +29,13 @@ export interface DevicePin {
   readonly grantedAt: string
   /** Current key first; earlier epochs are kept until the device retires them. */
   readonly directoryKeys: readonly StoredDirectoryKey[]
+}
+
+interface StoredMeshCredential {
+  readonly devicePub: string
+  readonly key: CryptoKey
+  readonly iv: Uint8Array<ArrayBuffer>
+  readonly wrapped: ArrayBuffer
 }
 
 export interface ClientIdentity {
@@ -126,6 +133,23 @@ export class ClientTrustStore {
     return pins.filter((pin): pin is DevicePin => Boolean(pin))
   }
 
+  async meshCredential(deviceId: string, devicePub: string, create = false): Promise<string | undefined> {
+    const recordKey = `mesh:${deviceId}`
+    const stored = await this.#backend.get<StoredMeshCredential>(recordKey)
+    const subtle = globalThis.crypto.subtle
+    if (stored?.devicePub === devicePub) {
+      const raw = await subtle.decrypt({ name: "AES-GCM", iv: stored.iv }, stored.key, stored.wrapped)
+      return b64url(new Uint8Array(raw))
+    }
+    if (!create) return undefined
+    const key = await subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"])
+    const iv = new Uint8Array(randomBytes(12))
+    const raw = new Uint8Array(randomBytes(32))
+    const wrapped = await subtle.encrypt({ name: "AES-GCM", iv }, key, raw)
+    await this.#backend.put(recordKey, { devicePub, key, iv, wrapped } satisfies StoredMeshCredential)
+    return b64url(raw)
+  }
+
   /** After `pair.committed`: pin the device key and keep the directory key. Pairing also turns encryption on. */
   async savePairing(input: {
     deviceId: string
@@ -144,7 +168,10 @@ export class ClientTrustStore {
       fingerprint: await identityFingerprint(fromB64url(input.devicePub)),
       label: input.label,
       grantedAt: input.grantedAt,
-      directoryKeys: [await importDirectoryKey(input.directoryKey)],
+      directoryKeys: [
+        await importDirectoryKey(input.directoryKey),
+        ...(existing?.directoryKeys.filter((key) => key.keyId !== input.directoryKey.keyId) ?? []),
+      ].sort((a, b) => b.epoch - a.epoch).slice(0, 4),
     }
     await this.#backend.put(devicePinKey(input.deviceId), pin)
     await this.requireEncryption()
@@ -165,6 +192,7 @@ export class ClientTrustStore {
   /** The device said this client is no longer trusted (revoked / not paired): drop the pin, keep the policy. */
   async forget(deviceId: string): Promise<void> {
     await this.#backend.delete(devicePinKey(deviceId))
+    await this.#backend.delete(`mesh:${deviceId}`)
     this.#changed()
   }
 

@@ -254,11 +254,6 @@ export class DashboardApi {
     });
   }
 
-  /** Ticket for the secure-channel tunnel `WS /api/v3/tunnel` (E2EE). */
-  createTunnelTicket(token: string, clientId: string): Promise<WsTicketResponse> {
-    return this.createDashboardWsTicket(token, clientId);
-  }
-
   /** `POST /api/v3/e2ee/commands`: plaintext registration of a command sent through a secure channel. */
   registerE2eeCommand(
     token: string,
@@ -545,14 +540,6 @@ export class DashboardApi {
 
   sessionWebSocketUrl(sessionId: string, ticket: string): string {
     const path = `${apiPath(`/sessions/${encodeURIComponent(sessionId)}/ws`)}?ticket=${encodeURIComponent(ticket)}`;
-    if (typeof window === "undefined") return path;
-    const url = new URL(path, window.location.origin);
-    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    return url.toString();
-  }
-
-  tunnelWebSocketUrl(ticket: string): string {
-    const path = `/api/v3/tunnel?ticket=${encodeURIComponent(ticket)}`;
     if (typeof window === "undefined") return path;
     const url = new URL(path, window.location.origin);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";

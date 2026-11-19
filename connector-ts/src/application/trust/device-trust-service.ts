@@ -199,6 +199,22 @@ export class DeviceTrustService {
     return Uint8Array.from(psk)
   }
 
+  /** Redeem a local invitation. A client retrying a lost reply can prove it holds the saved credential. */
+  async commitMeshPairing(
+    pairingId: string,
+    client: NewClient,
+    matches: (secret: Uint8Array) => boolean,
+    matchesCredential: (digest: string | undefined) => boolean,
+  ): Promise<void> {
+    const state = await this.#apply((current) => {
+      const existing = current.grants.find(grant => grant.clientId === client.clientId && grant.revokedAt === null)
+      if (existing && matchesCredential(existing.meshCredentialDigest)) return { state: current, events: [] }
+      if (!matches(this.pairingPsk(pairingId))) throw new TrustError('pairing_expired', 'invalid pairing invitation')
+      return completePairing(current, pairingId, client, this.#deps.clock.nowMs(), this.#deps.clock.nowIso())
+    })
+    if (!state.pairings.some(pairing => pairing.pairingId === pairingId)) this.#forgetPsk(pairingId)
+  }
+
   /** XXpsk0 finished: consume the pairing, write the grant, return the directory key the client receives. */
   async completePairing(pairingId: string, client: NewClient): Promise<{ grant: ClientGrant; directoryKey: DirectoryKeyGrant }> {
     const nowMs = this.#deps.clock.nowMs()

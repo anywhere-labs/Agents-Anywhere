@@ -1,6 +1,6 @@
 """S5: first-screen latency and MeshCall Router / worker capacity.
 
-Two measurements, both against a real MeshCall Router (``9334405``):
+Two measurements, both against a real MeshCall Router (``ce14d60``):
 
 ``firstscreen``
     2.x baseline: ``GET /api/v2/sessions/{id}/snapshot`` on a session with N
@@ -56,7 +56,7 @@ ROUTER_SERVICES = ("meshcall.router.v1.AuthService", "meshcall.router.v1.Registr
 def router_binary() -> str:
     path = os.environ.get("MESHCALL_ROUTER_BINARY", "").strip()
     if not path or not Path(path).exists():
-        raise SystemExit("set MESHCALL_ROUTER_BINARY to a meshcall-router binary (9334405)")
+        raise SystemExit("set MESHCALL_ROUTER_BINARY to a meshcall-router binary (ce14d60)")
     return path
 
 

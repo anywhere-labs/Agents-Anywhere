@@ -10,3 +10,7 @@ export type ChannelTrust = Pick<
   | 'pairingPsk' | 'pinnedKey' | 'completePairing' | 'authorize' | 'state' | 'trustList' | 'directoryKeyGrant' | 'revokeClient' | 'approveClient'
   | 'onEvent' | 'activeClientIds'
 >
+
+/** The trust operations available inside a MeshCall content tunnel. */
+export type ContentTrust = Pick<DeviceTrustService,
+  'state' | 'authorize' | 'commitMeshPairing' | 'directoryKeyGrant' | 'trustList' | 'revokeClient' | 'onEvent'>

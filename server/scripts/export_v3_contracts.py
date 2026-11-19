@@ -24,14 +24,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, create_model
-
 from agent_server.core import client_routes as cr
+from agent_server.core import device_content, e2ee, preview
 from agent_server.core import device_meshcall as dl
-from agent_server.core import e2ee, preview
 from agent_server.core import protocol as p11
 from agent_server.core import protocol_v1_2 as p12
 from agent_server.core.runtime_workflows import WorkflowState
+from pydantic import BaseModel, create_model
 
 JSON_SCHEMA_DRAFT = "https://json-schema.org/draft/2020-12/schema"
 
@@ -72,6 +71,17 @@ DEVICE_MESHCALL = Contract(
         _a("link-hello", dl.LinkHello),
         _a("link-welcome", dl.LinkWelcome),
         _a("link-ready", dl.LinkReady),
+        _a("mobile-directory-request", device_content.MobileDirectoryRequest),
+        _a("mobile-directory-result", device_content.MobileDirectoryResult),
+        _a("mobile-content-tunnel-request", device_content.MobileContentTunnelRequest),
+        _a("encrypted-tunnel-grant", device_content.EncryptedTunnelGrant),
+        _a("content-tunnel-grant", device_content.ContentTunnelGrant),
+        _a("content-pair-request", device_content.ContentPairRequest),
+        _a("content-pair-result", device_content.ContentPairResult),
+        _a("content-request", device_content.ContentRequest),
+        _a("content-result", device_content.ContentResult),
+        _a("content-subscribe-request", device_content.ContentSubscribeRequest),
+        _a("content-event", device_content.ContentEvent),
         _a("display-envelope", dl.DisplayEnvelope),
         _a("session-summary", dl.SessionSummary),
         _a("command-call", dl.CommandCall),
@@ -83,8 +93,6 @@ DEVICE_MESHCALL = Contract(
         _a("outbox-item", dl.OutboxItem),
         _a("outbox-ack", dl.OutboxAck),
         _a("session-watch-request", dl.SessionWatchRequest),
-        _a("secure-channel-open", dl.SecureChannelOpen),
-        _a("secure-channel-item", dl.SecureChannelItem),
         _a("changes-event", dl.ChangesEvent),
         _a("runtime-status-event", dl.RuntimeStatusEvent),
         _a("session-summary-out", dl.SessionSummaryOut),
@@ -333,6 +341,19 @@ MESH_SERVICES: tuple[tuple[str, str, tuple[MeshMethod, ...]], ...] = (
     ),
     ("Commands", "State-changing intents with durable receipts.", _commands()),
     (
+        "Content",
+        "E2EE content on tunnels that terminate at the Connector and require local client approval.",
+        (
+            MeshMethod("pair", "Redeem an invitation made on this Connector.",
+                       device_content.ContentPairRequest, device_content.ContentPairResult, annotations=ONCE),
+            MeshMethod("request", "Run a client API operation on the device.",
+                       device_content.ContentRequest, device_content.ContentResult, annotations=ONCE),
+            MeshMethod("subscribe", "Stream client events from an existing cursor.",
+                       device_content.ContentSubscribeRequest, output_item=device_content.ContentEvent,
+                       annotations=RO),
+        ),
+    ),
+    (
         "Client",
         "Normal mode only: the client API routes the device serves (client-routes.json), one request per call.",
         (
@@ -344,17 +365,7 @@ MESH_SERVICES: tuple[tuple[str, str, tuple[MeshMethod, ...]], ...] = (
                        annotations=RO),
         ),
     ),
-    (
-        "Secure",
-        "E2EE required mode only: opaque Noise channels between a client and this device.",
-        (
-            MeshMethod("channel", "One call per client channel; the Server forwards n/ct without reading them.",
-                       dl.SecureChannelOpen, input_item=dl.SecureChannelItem, output_item=dl.SecureChannelItem,
-                       annotations=DUPLEX,
-                       duplex_reason="Noise transport messages flow both ways, interleaved and in order, "
-                       "for the whole life of a client channel."),
-        ),
-    ),
+
 )
 
 
@@ -375,16 +386,21 @@ def _model_ref(model: type[BaseModel] | None) -> dict[str, Any] | None:
     return {"module": model.__module__, "qualname": qualname, "schema": schema}
 
 
-def render_mesh_contract() -> dict[str, Any]:
+def render_mesh_contract(
+    declarations: tuple[tuple[str, str, tuple[MeshMethod, ...]], ...] = MESH_SERVICES,
+    *,
+    prefix: str = dl.MESH_SERVICE_PREFIX,
+    source_module: str = "agent_server.core.device_meshcall",
+) -> dict[str, Any]:
     services = []
-    for short, description, methods in MESH_SERVICES:
-        name = f"{dl.MESH_SERVICE_PREFIX}.{short}"
+    for short, description, methods in declarations:
+        name = f"{prefix}.{short}"
         balance = {"kind": "round_robin", "key": None}
         services.append(
             {
                 "name": name,
                 "version": "1",
-                "source_module": "agent_server.core.device_meshcall",
+                "source_module": source_module,
                 "source_qualname": f"{short}Service",
                 "balance": balance,
                 "description": description,
@@ -409,6 +425,24 @@ def render_mesh_contract() -> dict[str, Any]:
             }
         )
     return {"protocol": dl.MESHCALL_PROTOCOL, "services": services}
+
+
+def render_mobile_control_contract() -> dict[str, Any]:
+    prefix, _, name = device_content.MOBILE_CONTROL_SERVICE.rpartition(".")
+    return render_mesh_contract(
+        ((name, "Read the mobile workspace directory and manage device tunnel grants.", (
+            MeshMethod(
+                device_content.MOBILE_DIRECTORY_METHOD, "Read the authenticated account's device and workspace directory.",
+                device_content.MobileDirectoryRequest, device_content.MobileDirectoryResult, annotations=RO,
+            ),
+            MeshMethod(
+                device_content.MOBILE_CONTENT_GRANT_METHOD, "Issue an encrypted device content tunnel.",
+                device_content.MobileContentTunnelRequest, device_content.ContentTunnelGrant, annotations=ONCE,
+            ),
+        )),),
+        prefix=prefix,
+        source_module="agent_server.api.mobile_mesh",
+    )
 
 
 def render_mesh_errors() -> dict[str, Any]:
@@ -566,6 +600,7 @@ def render(contract: Contract) -> dict[str, bytes]:
     if contract is DEVICE_MESHCALL:
         for rel, value in (
             ("device.meshcall.json", render_mesh_contract()),
+            ("mobile-control.meshcall.json", render_mobile_control_contract()),
             ("mesh-errors.json", render_mesh_errors()),
             ("e2ee-registration.json", render_e2ee_registration()),
             ("payloads.json", render_payloads()),

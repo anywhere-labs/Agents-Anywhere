@@ -1,9 +1,10 @@
-// Encrypted session content (docs/v3/11-e2ee-noise.md §10): implements the transport adapter's
+// Encrypted session content (contracts/device-meshcall/1.0): implements the transport adapter's
 // `SessionContentTransport` over one secure channel per device. Requests become `TunnelRequest`s, the session
 // stream a `TunnelSubscribe`; commands are registered with the Server first (`POST /api/v3/e2ee/commands`).
 // Device content without a session (files, terminals, session creation) uses the same channel; attachments are
 // sealed and uploaded as ciphertext, their keys travel with the request that uses them.
 
+import type { EncryptedTunnelGrant } from "@/generated/device-content/v1_0/encrypted-tunnel-grant"
 import { ApiError, apiErrorKind } from "@/lib/api/errors"
 import {
   isContentTransportRequired,
@@ -12,21 +13,19 @@ import {
   type SessionContentTransport,
   type SessionEventStream,
 } from "@/lib/transport/content-transport"
-import { b64url, buf, fromB64url, utf8 } from "./bytes"
+import { b64url, buf, utf8 } from "./bytes"
 import {
   ChannelClosedError,
-  ClientSecureChannel,
+  type ContentChannel,
   type ChannelMethod,
   type DirectoryKeyGrant,
   type PairingPayload,
   type SubscribeTarget,
-} from "./client-channel"
+} from "./content-channel"
 import { inputDigest } from "./formats"
-import type { NoiseCrypto } from "./noise"
+import { openMeshContent } from "./mesh-content-channel"
 import { AttachmentKeyRing, SEALED_UPLOAD_NAME, SEALED_UPLOAD_TYPE, sealAttachment } from "./sealed-attachments"
 import type { ClientTrustStore, DevicePin } from "./trust-store"
-import type { TunnelMux } from "./tunnel"
-import { randomBytes } from "./webcrypto"
 
 export interface CommandRegistrationView {
   readonly commandId: string
@@ -35,10 +34,8 @@ export interface CommandRegistrationView {
   readonly duplicate: boolean
 }
 
-export interface SecureTransportDeps {
+interface SecureTransportServices {
   readonly store: ClientTrustStore
-  readonly mux: TunnelMux
-  readonly crypto: NoiseCrypto
   readonly label: string
   readonly platform: "web" | "desktop"
   /** `POST /api/v3/e2ee/commands`. */
@@ -55,6 +52,16 @@ export interface SecureTransportDeps {
   /** How long a session creation through the channel may take before its result counts as unknown (75 s). */
   readonly createTimeoutMs?: number
 }
+
+interface ContentChannelProvider {
+  pair(payload: PairingPayload): Promise<{ channel: ContentChannel; grantedAt: string; directoryKey: DirectoryKeyGrant }>
+  connect(deviceId: string, pin: DevicePin): Promise<ContentChannel>
+}
+
+export type SecureTransportDeps = SecureTransportServices & (
+  | { readonly bootstrap: () => Promise<EncryptedTunnelGrant>; readonly provider?: never }
+  | { readonly bootstrap?: never; readonly provider: ContentChannelProvider }
+)
 
 type ContentTarget = { readonly sessionId: string } | { readonly deviceId: string }
 
@@ -87,10 +94,6 @@ function toApiError(error: unknown): ApiError {
   return new ApiError({ status: 0, kind: "network", detail: (error as Error)?.message ?? "secure channel failed" })
 }
 
-function newChannelId(): string {
-  return `c_${b64url(randomBytes(12))}`
-}
-
 /** The device's answer, or an unknown outcome after `ms` (the request may still have been carried out). */
 function withTimeout<T>(pending: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -100,10 +103,11 @@ function withTimeout<T>(pending: Promise<T>, ms: number): Promise<T> {
   return Promise.race([pending, expired]).finally(() => clearTimeout(timer))
 }
 
-/** One secure channel per paired device, opened on demand (KK) and shared by every session of that device. */
+/** One secure channel per paired device, opened on demand and shared by every session of that device. */
 export class SecureChannelPool {
   readonly #deps: SecureTransportDeps
-  readonly #channels = new Map<string, Promise<ClientSecureChannel>>()
+  readonly #channels = new Map<string, Promise<ContentChannel>>()
+  readonly #pairing = new Map<string, Promise<DevicePin>>()
   readonly #sessionDevices = new Map<string, string>()
   readonly #attachmentKeys = new AttachmentKeyRing()
 
@@ -113,24 +117,17 @@ export class SecureChannelPool {
 
   /** First pairing from a QR code / `aa-pair://` link. Keeps the new channel open for use. */
   async pair(payload: PairingPayload, deviceLabel?: string): Promise<DevicePin> {
-    const identity = await this.#deps.store.identity()
-    const ch = newChannelId()
-    let channel: ClientSecureChannel | null = null
-    const wire = this.#deps.mux.wire({ deviceId: payload.deviceId, clientId: identity.clientId, ch }, {
-      receive: (item) => channel?.receive(item),
-      ended: (code) => channel?.ended(code),
-    })
-    const result = await ClientSecureChannel.pair(payload, {
-      crypto: this.#deps.crypto,
-      identity: identity.noise,
-      ch,
-      wire,
-      label: this.#deps.label,
-      platform: this.#deps.platform,
-      bind: (value) => {
-        channel = value
-      },
-    })
+    if (this.#deps.bootstrap) {
+      if (this.#pairing.has(payload.deviceId)) throw new ChannelClosedError("pairing_in_progress")
+      const pending = this.#pairMesh(payload, this.#deps.bootstrap, deviceLabel)
+      this.#pairing.set(payload.deviceId, pending)
+      try {
+        return await pending
+      } finally {
+        this.#pairing.delete(payload.deviceId)
+      }
+    }
+    const result = await this.#deps.provider.pair(payload)
     const pin = await this.#deps.store.savePairing({
       deviceId: payload.deviceId,
       devicePub: payload.deviceIdentityPub,
@@ -143,8 +140,49 @@ export class SecureChannelPool {
     return pin
   }
 
-  /** The open channel to `deviceId`, reconnecting with KK when needed. */
-  channel(deviceId: string): Promise<ClientSecureChannel> {
+  async #pairMesh(
+    payload: PairingPayload, bootstrap: () => Promise<EncryptedTunnelGrant>, label?: string,
+  ): Promise<DevicePin> {
+    const old = await this.#deps.store.pin(payload.deviceId)
+    if (old && old.devicePub !== payload.deviceIdentityPub) throw new ChannelClosedError("device_pin_mismatch")
+    const identity = await this.#deps.store.identity()
+    const secret = await this.#deps.store.meshCredential(payload.deviceId, payload.deviceIdentityPub, true)
+    if (!secret) throw notPaired(payload.deviceId)
+    const channel = await openMeshContent(bootstrap, payload.deviceId, payload.deviceIdentityPub)
+    try {
+      const paired = await channel.pair({
+        pairingId: payload.pairingId,
+        pairingSecret: payload.psk,
+        clientIdentityPub: b64url(identity.publicKey),
+        clientSecret: secret,
+        label: this.#deps.label,
+        platform: this.#deps.platform,
+      })
+      if (paired.clientId !== identity.clientId || paired.directoryKey.deviceId !== payload.deviceId) {
+        throw new ChannelClosedError("device_pin_mismatch")
+      }
+      const pin = await this.#deps.store.savePairing({
+        deviceId: payload.deviceId,
+        devicePub: payload.deviceIdentityPub,
+        label: label || payload.deviceId,
+        grantedAt: paired.grantedAt,
+        directoryKey: paired.directoryKey,
+      })
+      const previous = this.#channels.get(payload.deviceId)
+      this.#channels.set(payload.deviceId, Promise.resolve(channel))
+      channel.authorize(identity.clientId, secret)
+      this.#adopt(payload.deviceId, channel)
+      channel.watchTrust()
+      void previous?.then((oldChannel) => oldChannel.close()).catch(() => undefined)
+      return pin
+    } catch (error) {
+      await channel.close()
+      throw error
+    }
+  }
+
+  /** The open channel to `deviceId`, opening a new scoped tunnel when needed. */
+  channel(deviceId: string): Promise<ContentChannel> {
     let pending = this.#channels.get(deviceId)
     if (!pending) {
       pending = this.#connect(deviceId)
@@ -195,30 +233,25 @@ export class SecureChannelPool {
     await Promise.all(channels.map((pending) => pending.then((channel) => channel.close()).catch(() => undefined)))
   }
 
-  async #connect(deviceId: string): Promise<ClientSecureChannel> {
+  async #connect(deviceId: string): Promise<ContentChannel> {
     const pin = await this.#deps.store.pin(deviceId)
     if (!pin) throw notPaired(deviceId)
     const identity = await this.#deps.store.identity()
-    const ch = newChannelId()
-    let channel: ClientSecureChannel | null = null
-    const wire = this.#deps.mux.wire({ deviceId, clientId: identity.clientId, ch }, {
-      receive: (item) => channel?.receive(item),
-      ended: (code) => channel?.ended(code),
-    })
-    const opened = await ClientSecureChannel.connect(deviceId, fromB64url(pin.devicePub), {
-      crypto: this.#deps.crypto,
-      identity: identity.noise,
-      ch,
-      wire,
-      bind: (value) => {
-        channel = value
-      },
-    })
+    if (this.#deps.bootstrap) {
+      const secret = await this.#deps.store.meshCredential(deviceId, pin.devicePub)
+      if (!secret) throw notPaired(deviceId)
+      const channel = await openMeshContent(this.#deps.bootstrap, deviceId, pin.devicePub)
+      channel.authorize(identity.clientId, secret)
+      this.#adopt(deviceId, channel)
+      channel.watchTrust()
+      return channel
+    }
+    const opened = await this.#deps.provider.connect(deviceId, pin)
     this.#adopt(deviceId, opened)
     return opened
   }
 
-  #adopt(deviceId: string, channel: ClientSecureChannel): void {
+  #adopt(deviceId: string, channel: ContentChannel): void {
     channel.onChannelEvent((event) => {
       if (event["type"] === "e2ee.directory_key") void this.#deps.store.addDirectoryKey(event as unknown as DirectoryKeyGrant)
     })
@@ -336,7 +369,7 @@ export class SecureChannelPool {
   }
 
   #openStream(target: ContentTarget, spec: SubscribeTarget): SessionEventStream {
-    let subscription: { channel: ClientSecureChannel; id: string } | null = null
+    let subscription: { channel: ContentChannel; id: string } | null = null
     let closed = false
     let detachClose: (() => void) | null = null
     const stream: SessionEventStream = {
@@ -357,7 +390,12 @@ export class SecureChannelPool {
         const deviceId = "deviceId" in target ? target.deviceId : await this.deviceOf(target.sessionId)
         const channel = await this.channel(deviceId)
         if (closed) return
-        detachClose = channel.onClose(() => stream.close())
+        detachClose = channel.onClose((error) => {
+          if (isContentTransportRequired(error.code)) {
+            reportContentTransportRequired("sessionId" in target ? target.sessionId : null, error.code)
+          }
+          stream.close()
+        })
         const id = await channel.subscribe(spec, (event) => {
           if (!closed) stream.onmessage?.({ data: JSON.stringify(event) })
         })
@@ -368,7 +406,10 @@ export class SecureChannelPool {
         if (closed) return
         stream.onerror?.()
         stream.close()
-        void error
+        const apiError = toApiError(error)
+        if (isContentTransportRequired(apiError.code)) {
+          reportContentTransportRequired("sessionId" in target ? target.sessionId : null, apiError.code!)
+        }
       }
     })()
     return stream

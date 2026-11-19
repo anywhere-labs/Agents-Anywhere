@@ -39,6 +39,6 @@ dev = [
 pythonpath = ["."]
 
 [tool.uv.sources]
-# MeshCall main 9334405 (tokens with instance_ids, renew/revoke close codes); no release carries it yet.
-meshcall = { git = "https://github.com/t4wefan/meshcall.git", rev = "93344059ada65735c6cc08fdf3247ea9fb808d6b", subdirectory = "meshcall-py" }
+# MeshCall main ce14d60 (tokens with instance_ids, renew/revoke close codes); no release carries it yet.
+meshcall = { git = "https://github.com/t4wefan/meshcall.git", rev = "ce14d60743c2c6d5c2d504da02748de271ed8769", subdirectory = "meshcall-py" }
 httpx-s3-client = { git = "https://github.com/t4wefan/httpx-s3-client.git" }

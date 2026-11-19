@@ -4,9 +4,11 @@ import PackageDescription
 let package = Package(
     name: "AgentsAnywhereClient",
     platforms: [.macOS(.v15), .iOS("26.5")],
+    dependencies: [.package(path: "../vendor/meshcall/sdk/meshcall-swift")],
     targets: [
         .target(
             name: "ClientCore",
+            dependencies: [.product(name: "MeshCall", package: "meshcall-swift")],
             path: "Agents Anywhere/Agents Anywhere",
             exclude: [
                 "App", "Assets.xcassets", "Resources", "Services", "Stores", "Views",

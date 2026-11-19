@@ -50,6 +50,7 @@ final class WheelScrollTests: XCTestCase {
         app.launchEnvironment["AA_POC_LOG_PATH"] = log
         // A session longer than the cache keeps (300 items), short enough to wheel to its top: `loadOlder` must fire.
         app.launchEnvironment["AA_POC_STRESS"] = env["AA_POC_STRESS"] ?? "snapshot:320,items:0,chars:120,lines:6,difflines:4,approve:0"
+        app.launchEnvironment["AA_POC_DEMO"] = "1"
         app.launch()
         sleep(6)
         let thread = app.coordinate(withNormalizedOffset: CGVector(dx: 0.62, dy: 0.45))
@@ -100,6 +101,7 @@ final class WheelScrollTests: XCTestCase {
         app.launchEnvironment["AA_POC_LOG_PATH"] = log
         app.launchEnvironment["AA_POC_SESSION"] = "s-unread"
         app.launchEnvironment["AA_POC_AUTO_APPROVE_SECONDS"] = "1"
+        app.launchEnvironment["AA_POC_DEMO"] = "1"
         app.launch()
         sleep(25) // the demo turn streams and finishes
         mark("sideways")

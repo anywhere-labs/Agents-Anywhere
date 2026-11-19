@@ -53,7 +53,7 @@ export interface ComposeOptions {
    * Device Trust (E2EE): `false` turns it off (the device then never serves an encrypted mode); the object
    * overrides the secrets' vault (tests use `noVault()`), the local confirmation and the device label.
    */
-  readonly trust?: false | Partial<Pick<DeviceTrustOptions, 'vault' | 'confirmation' | 'deviceLabel'>>
+  readonly trust?: false | Partial<Pick<DeviceTrustOptions, 'vault' | 'confirmation'>>
   /** Workspace roots (default `AGENT_CONNECTOR_WORKSPACE_ROOTS`, else the home directory). */
   readonly workspaceRoots?: readonly string[] | 'any'
   /** Terminals need node-pty; `false` leaves them out (tests, hosts without it). */
@@ -363,6 +363,7 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
           deviceId: settings.connectorId,
           host: options.host,
           handshake,
+          ...(deviceTrust === null ? {} : { content: deviceTrust.content }),
           store,
           inbox,
           outboxSignal,
@@ -375,7 +376,6 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
               upload: deviceTransferUploader(settings.serverUrl, handshake, egress),
             },
             workspace: workspaceService,
-            ...(deviceTrust !== null ? { secure: deviceTrust.secure } : {}),
             // Normal mode: the client API the secure channel answers, as `aa.device.v1.Client`.
             client: tunnel,
           },

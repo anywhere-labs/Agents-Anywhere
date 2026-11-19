@@ -6,7 +6,8 @@
 
 ### 升级须知
 
-- 不用 Compose、手动部署 MeshCall Router 的环境，升级 Server 后要重新执行一次 Router 的 `init-auth`，否则 v3 设备连不上；Compose 部署每次启动会自动重新生成，不用处理。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
+- 不用 Compose、手动部署 MeshCall Router 的环境，升级 Server 后要重新执行一次 Router 的 `init-auth`，否则 v3 设备和移动端 PoC 无法建立加密连接；Compose 部署每次启动会自动重新生成，不用处理。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
+- 使用旧加密链路配对过的客户端升级后需要重新扫描一次设备邀请；新配对保存在客户端上，重启后会自动重新领票。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - Server 需要执行 `v2_64` 数据库迁移：操作记录里保存的消息原文、排队文本和计划反馈会被清除，只保留结果状态；之后用同一个操作重试时只返回是否成功，不再返回设备当时的完整结果。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - Server 需要执行 `v2_65`、`v2_66` 数据库迁移：加密模式的命令记录并入操作记录表，并删除一张不再使用的渠道表，已有会话和设置不受影响。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - Server 需要执行 `v2_62` 数据库迁移，删除记录终端工作目录的表，终端的工作目录改由设备自己记录。（[#739](https://github.com/anywhere-labs/Agents-Anywhere/pull/739)、[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
@@ -27,7 +28,8 @@
 
 ### 会话创建与消息交付
 
-- 修复 Pi 会话刷新或重连后重复显示旧回复的问题，已出现的重复回复会在读取会话时清理。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
+- 移动端 PoC 可登录自托管 Server 并连接已配对设备，在 Android 和 iOS 上新建、继续加密会话，并使用附件、设备文件和终端。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
+- 修复 Pi 会话刷新或重连后重复显示旧回复的问题，已出现的重复回复会在读取会话时清理，共用历史目录的 Pi 实例也会保留原会话。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 修复 Web、Desktop、Android 和 iOS 无法完成加密配对的问题，并恢复加密会话的实时消息更新。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - Web 和 Desktop 新建会话时会选用设备允许访问的默认工作目录，主目录受限时可从允许的工作目录加载 Agent 配置。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - Web 和 Desktop 新建会话时，准备过期或模型加载失败会在模型控件旁显示原因和「重试」。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）

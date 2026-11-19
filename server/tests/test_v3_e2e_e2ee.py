@@ -1,7 +1,7 @@
 """v3 encrypted mode end to end: ``AGENT_SERVER_E2EE=required`` with the real Server, Router and TS Connector.
 
 Same environment as ``test_v3_e2e.py`` (``v3_e2e_harness``), with the Server in ``required`` mode. The client is the
-TS client channel (``connector-ts/test/support/e2ee-client.ts``: ``ClientSecureChannel`` over ``WS /api/v3/tunnel``)
+TS MeshCall client (``connector-ts/test/support/e2ee-client.ts``)
 driven by this test as JSON lines; the Server only relays ciphertext between it and the device.
 
 - The device registers no plaintext service; the Server refuses plaintext content requests.
@@ -33,6 +33,7 @@ from typing import Any
 
 import pytest
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from mesh_fixtures import RouterProcess
 from test_e2ee_canary import LoggedRouter, RecordingProxy
 from v3_e2e_harness import (
     CONNECTOR_TS,
@@ -89,7 +90,7 @@ class ChannelError(AssertionError):
 
 
 class TunnelClient:
-    """``e2ee-client.ts`` in its own process: one encrypted channel to the device through the Server."""
+    """``e2ee-client.ts`` in its own process: an encrypted device tunnel using MeshCall."""
 
     def __init__(self, root: Path, server_url: str, token: str) -> None:
         self.stderr = (root / "e2ee-client.log").open("ab")
@@ -273,7 +274,7 @@ def test_device_registers_no_plaintext_service_and_the_server_refuses_plaintext(
     registered = env.device.log.find(r"registered (.*) at .* as .*; e2ee (\w+)")
     assert registered is not None and registered.group(2) == "required", env.diagnostics()
     services = [name.strip() for name in registered.group(1).split(",")]
-    assert "Secure" in services and not set(services) & set(PLAINTEXT_SERVICES), services
+    assert "Content" in services and not set(services) & set(PLAINTEXT_SERVICES), services
     sid = secure.ensure_session()
     api = env.api
     body = {"content": "plain", "clientMessageId": f"cm_{uuid.uuid4().hex}"}
@@ -291,14 +292,59 @@ def test_device_registers_no_plaintext_service_and_the_server_refuses_plaintext(
         assert "e2ee" in refused.text, (path, refused.text)
 
 
-def test_pairing_then_kk_reconnect_and_a_wrong_pin_is_refused(secure: Secure) -> None:
+def test_mobile_directory_uses_a_scoped_encrypted_tunnel(secure: Secure) -> None:
+    from meshcall import Mesh, MeshCallError, Router
+
+    from agent_server.core.device_content import (
+        MOBILE_CONTROL_SERVICE,
+        MOBILE_DIRECTORY_METHOD,
+        EncryptedTunnelGrant,
+        MobileDirectoryRequest,
+        MobileDirectoryResult,
+    )
+
+    env = secure.env
+    session_id = secure.ensure_session()
+    response = env.api.http.post(
+        f"{env.server.url}/api/v3/mobile/control-tunnel",
+        headers={"Authorization": f"Bearer {env.api.token}"},
+    )
+    response.raise_for_status()
+    grant = EncryptedTunnelGrant.model_validate(response.json())
+
+    async def scenario() -> None:
+        async with Mesh(Router(grant.router_url), tunnel=grant.credential, e2e_key=grant.e2e_key) as client:
+            async def read(resource, **options):
+                return await client.call_unary(
+                    MOBILE_CONTROL_SERVICE, MOBILE_DIRECTORY_METHOD, MobileDirectoryRequest(resource=resource, **options),
+                    MobileDirectoryResult, instance=grant.instance_id, timeout=10,
+                )
+
+            devices = (await read("devices")).body["connectors"]
+            assert any(device["id"] == secure.device_id and device["status"] == "online" for device in devices)
+            projects = (await read("projects")).body["projects"]
+            assert any(project["id"] == env.project_id for project in projects)
+            runtimes = (await read("runtimes", deviceId=secure.device_id)).body["runtimes"]
+            assert any(runtime["runtimeId"] == env.runtime_id for runtime in runtimes)
+            page = (await read("sessions")).body
+            entry = next(row for row in page["sessions"] if row["id"] == session_id)
+            assert entry["title"] is None and entry["cwd"] is None
+            assert entry["displayDevice"]["mode"] == "sealed"
+            with pytest.raises(MeshCallError) as forbidden:
+                await read("runtimes", deviceId="unknown-device")
+            assert forbidden.value.code == "not_found"
+
+    asyncio.run(scenario())
+
+
+def test_pairing_then_reconnect_and_a_wrong_pin_is_refused(secure: Secure) -> None:
     client = secure.client
     connected = client.call("connect")
     assert connected["ready"]["deviceId"] == secure.device_id, connected
     assert connected["ready"]["clientId"] == connected["clientId"]
     # The reconnected channel serves requests.
     secure.ensure_session()
-    # Another device key than the pinned one: the client refuses the device (it cannot answer KK).
+    # Another device key than the pinned one: the client refuses the device (the grant must match the saved identity).
     with pytest.raises(ChannelError) as wrong:
         client.call("connect", devicePub=base64.urlsafe_b64encode(b"\x09" * 32).decode().rstrip("="), timeout=30)
     assert wrong.value.code in {"device_pin_mismatch", "e2ee_handshake_failed", "e2ee_not_paired"}, wrong.value
@@ -340,6 +386,24 @@ def test_session_create_reply_list_and_display_envelope(secure: Secure) -> None:
     assert f"echo: {text}" in json.dumps(snapshot["timeline"]), snapshot
 
 
+def test_mobile_approval_snapshot_and_answer_use_the_content_tunnel(secure: Secure) -> None:
+    client = secure.client
+    sid = secure.ensure_session()
+    secure.send(sid, f"#approve {secure.canary('approval')}")
+    root = f"/api/v2/sessions/{sid}"
+
+    def pending():
+        snapshot = client.ok("GET", f"{root}/snapshot")
+        return next((row for row in snapshot["notices"] if row.get("status") == "open"), None)
+
+    notice = wait_for(pending, 15, 0.1, "the device approval")
+    assert notice["interactionType"] == "approval" and notice["responseRequired"] is True
+    assert {action["actionId"] for action in notice["actions"]} == {"qa-allow", "qa-deny"}
+    client.ok("POST", f"{root}/runtime/notices/{notice['noticeId']}/respond", {"actionId": "qa-allow"})
+    secure.wait_reply(sid, "approval: qa-allow")
+    assert not pending()
+
+
 def test_selections_planning_and_goal(secure: Secure) -> None:
     sid = secure.ensure_session()
     client = secure.client
@@ -377,6 +441,19 @@ def test_files_read_and_write(secure: Secure) -> None:
     assert text["content"] == content, text
     chunk = client.ok("GET", f"{dev}/fs/read?root={root}&path={name}&offset=0&length=1024")
     assert base64.b64decode(chunk["data"]).decode() == content and chunk["eof"] is True, chunk
+
+    # Both the file slice and the encrypted RPC response are base64-encoded on the wire.
+    # A client can still ask for the larger protocol maximum and advance by the returned length.
+    large = (content.encode() * (5 * 1024 * 1024 // len(content) + 1))[:5 * 1024 * 1024]
+    (secure.env.device.workspace / "large.txt").write_bytes(large)
+    offset = 0
+    for chunk_size in (2 * 1024 * 1024, 2 * 1024 * 1024, 1024 * 1024):
+        chunk = client.ok("GET", f"{dev}/fs/read?root={root}&path=large.txt&offset={offset}&length=8388608")
+        assert chunk["offset"] == offset and chunk["size"] == len(large)
+        assert base64.b64decode(chunk["data"]) == large[offset:offset + chunk_size]
+        offset += chunk_size
+        assert chunk["eof"] is (offset == len(large))
+
 
 
 def test_spilled_tool_output_reads_back_through_the_channel(secure: Secure) -> None:
@@ -546,3 +623,50 @@ def test_no_canary_reaches_the_server_side(secure: Secure) -> None:
     # Positive controls: each scan sees what it is allowed to see.
     assert asyncio.run(scan_postgres(env.database_url, ["e2e laptop"])), "the device name is not in PostgreSQL"
     assert any(scan_websocket(name, stream, [secure.device_id]) for name, stream in captures.items())
+
+
+def test_restarts_preserve_pairing_and_continue_the_same_session(secure: Secure) -> None:
+    session_id = secure.ensure_session()
+    env = secure.env
+    secure.client.call("close")
+    env.device.stop()
+    env.server.stop()
+    # Keep the recording proxy on the same public address during the Router restart.
+    RouterProcess.stop(env.router)
+    env.router.start()
+    env.server.start()
+    env.device.start("start")
+    env.wait_status("online", STARTUP_TIMEOUT)
+
+    secure.client.call("connect")
+    existing = secure.assistant_texts(session_id)
+    assert existing
+    marker = f"after restart {secure.canary('restart')}"
+    secure.send(session_id, marker)
+    replies = secure.wait_reply(session_id, f"echo: {marker}")
+    assert all(text in replies for text in existing)
+    assert sum(f"echo: {marker}" in reply for reply in replies) == 1
+
+
+def test_local_revocation_ends_active_stream_and_requires_new_pairing(secure: Secure) -> None:
+    session_id = secure.ensure_session()
+    env = secure.env
+    other = TunnelClient(env.root, env.server.url, env.api.token)
+    try:
+        paired = other.call("pair", uri=_pairing_uri(env), label="client to revoke")
+        stream = other.call("subscribe", sessionId=session_id)["sub"]
+        wait_for(
+            lambda: any(event.get("type") == "session.subscribed" for event in other.seen(stream)),
+            15, 0.1, "the second client's active subscription",
+        )
+
+        secure.client.ok("POST", "/e2ee/v1/trust/revoke", {"clientId": paired["clientId"]})
+        wait_for(lambda: "permission_denied" in other.closed, 10, 0.1, "revocation of the active subscription")
+        with pytest.raises(ChannelError) as denied:
+            other.call("connect")
+        assert denied.value.code == "unauthenticated"
+
+        refreshed = secure.client.ok("GET", "/e2ee/v1/directory-key")
+        assert refreshed["keyId"] != paired["directoryKey"]["keyId"]
+    finally:
+        other.close()

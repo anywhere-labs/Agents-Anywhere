@@ -7,7 +7,7 @@
 import type { SealedAttachmentKey } from "@/generated/e2ee/v1_0/sealed-attachment-key"
 import { b64url, fromB64url, toHex } from "./bytes"
 import { SEALED_SEGMENT_BYTES, openSegments, sealSegments } from "./formats"
-import { TAGLEN, concatBytes } from "./noise"
+import { TAGLEN, concatBytes } from "./noise/crypto"
 import { randomBytes, sha256 } from "./webcrypto"
 
 export type { SealedAttachmentKey }

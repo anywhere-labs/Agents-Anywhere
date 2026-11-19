@@ -14,6 +14,7 @@ nonisolated struct Workspace: Decodable, Sendable {
         let device_id: String
         let cwd: String
         let name: String
+        var remoteId: String? = nil
         var id: String { "\(device_id):\(cwd)" }
     }
     struct Session: Decodable, Identifiable, Sendable {

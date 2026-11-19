@@ -1,6 +1,6 @@
 // ported from Agents-Anywhere v2 connector/connector/mesh/hub.py @98dd0e6e5 (LocalHub)
 //
-// The Connector's local MeshCall Router, built on meshcall 9334405.
+// The Connector's local MeshCall Router, built on meshcall ce14d60.
 import { createHash, randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync, chmodSync, renameSync } from 'node:fs'
 import { connect } from 'node:net'

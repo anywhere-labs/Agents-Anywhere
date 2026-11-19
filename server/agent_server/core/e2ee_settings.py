@@ -86,7 +86,7 @@ def requires_secure_channel(method: str, path: str, *, sealed_upload: bool = Fal
 def e2ee_required_error() -> dict[str, str]:
     return {
         "code": "e2ee_required",
-        "message": "This server requires end-to-end encryption; use the secure channel (/api/v3/tunnel).",
+        "message": "This server requires end-to-end encryption; use the encrypted device tunnel.",
     }
 
 

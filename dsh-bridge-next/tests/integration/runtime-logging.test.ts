@@ -12,7 +12,7 @@ import { writeJson } from '../../src/host/storage/files.js'
 import { connectorTs, connectorTsInstalled, v3RouterBinary } from '../helpers/ts-connector.js'
 
 const routerBinary = v3RouterBinary()
-const skip = !connectorTsInstalled ? 'connector-ts is not installed' : !routerBinary ? 'no meshcall 9334405 Router binary' : false
+const skip = !connectorTsInstalled ? 'connector-ts is not installed' : !routerBinary ? 'no compatible MeshCall Router binary' : false
 
 /** The Connector's local Router with its Logs service (connector-ts `host/`), as a running Connector serves it. */
 async function connector(home: string) {
