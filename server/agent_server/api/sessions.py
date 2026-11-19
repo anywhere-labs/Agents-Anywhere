@@ -342,6 +342,8 @@ async def _forward_create_and_start(
         if origin is not None:
             await request.app.state.store.set_session_origin(session.id, origin)
         body = payload.model_dump(mode="json", exclude_none=True)
+        if origin is not None:
+            body["originDepth"] = origin["depth"]
         # Inline attachments are staged on the Server; the device gets their records in ``server``.
         body.pop("attachments", None)
         refs = [AttachmentRef.model_validate(item) for item in attachments]
@@ -360,7 +362,9 @@ async def _forward_create_and_start(
         )
 
     try:
-        created = await run_service.create_and_start_session(payload, user_id=user_id, deliver=deliver)
+        created = await run_service.create_and_start_session(
+            payload, user_id=user_id, deliver=deliver, infer_agent_project=origin is not None
+        )
     except SessionRunError as exc:
         _raise_session_run_error(exc)
     except ClientForwardError as exc:
@@ -434,6 +438,8 @@ async def create_and_start_session(
     # directory entry for an existing session (``POST /sessions``) stays allowed.
     await owned_device(request, user_id=user_id, connector_id=payload.connectorId)
     origin = await _agent_origin(request, db, payload.connectorId)
+    if (payload.collaborationCheckout is not None or payload.originDepth is not None) and origin is None:
+        raise HTTPException(403, {"code": "agent_route_denied"})
     forwarded, refused = await _forward_create_and_start(
         request, payload, user_id=user_id, run_service=run_service, manager=manager, origin=origin
     )

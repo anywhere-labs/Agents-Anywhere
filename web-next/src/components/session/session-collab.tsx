@@ -4,6 +4,7 @@
 // for a supervisor session, the 「协作」 sheet listing the sessions it supervises with their controls.
 
 import * as React from "react"
+import { CollabReviewProgress } from "@/components/session/collab-review"
 import { Bot, Eye, Loader2, Network, Plus, RefreshCw } from "lucide-react"
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
@@ -119,6 +120,13 @@ export function SessionCollabButton({ session }: { session: CollabSession }) {
   const online = session.connectorStatus !== "offline"
   const controller = useSessionCollab(token, session.id, { enabled: Boolean(token) && online, refreshKey: `${edgesKey(edges)}:${online}` })
   const [open, setOpen] = React.useState(false)
+  const refresh = controller.refresh
+  React.useEffect(() => {
+    if (!open || !online) return
+    void refresh()
+    const timer = window.setInterval(() => void refresh(), 5000)
+    return () => window.clearInterval(timer)
+  }, [online, open, refresh])
   if (!collabPanelVisible(controller.collab, edges)) return null
   return (
     <>
@@ -186,6 +194,7 @@ export function SessionCollabPanel({
 
   return (
     <div className="flex flex-col gap-6 text-sm" data-slot="session-collab-panel">
+      {collab?.review ? <CollabReviewProgress review={collab.review} panel /> : null}
       <div className="flex flex-col gap-2">
         {error || (!collab && session.connectorStatus === "offline") ? <p className="text-muted-foreground">{t("deviceUnavailable")}</p> : null}
         {collab && !collab.available ? <p className="text-muted-foreground">{t("notAvailable")}</p> : null}

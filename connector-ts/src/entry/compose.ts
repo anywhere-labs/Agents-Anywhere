@@ -31,6 +31,7 @@ import { DeviceReaders, DeviceTunnelApi, MemoryChangeFeed, OutboxSignal, Session
 import { browseScope } from '../sync/client-api/views.js'
 import type { ProtocolCapabilitySet } from '../generated/protocol/v1_2/capability-set.js'
 import { AttachmentCache, FileOps, PrintedUrls, RootPolicy, ShellOps, Terminals, nodePtySpawner, previewHost, rootsFromEnv, workspaceMethods, type PreviewHost, type TerminalOptions } from '../workspace/index.js'
+import { ReviewGit } from '../workspace/review-git.js'
 import { instanceCatalogs, preparedDownloadUpload } from './client-api.js'
 import { DshHosts } from './dsh-hosts.js'
 import { importLegacyV2 } from './legacy-import.js'
@@ -181,6 +182,7 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
       })
       const scans = new RuntimeScans(history, ids, log)
       const policy = new RootPolicy({ roots: options.workspaceRoots ?? rootsFromEnv() })
+      const reviewGit = new ReviewGit(options.dataDir, policy)
       const files = new FileOps(policy)
       const terminals = await openTerminals(policy, options.terminals !== false, log, previewWiring === null ? undefined : (sessionId, terminalId, text) => printed.observe(sessionId, text, terminalId))
       const shell = new ShellOps(policy)
@@ -216,6 +218,7 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
           ids,
           log,
           onOutbox: () => outboxSignal.poke(),
+          reviewGit,
           hostsTools: async runtimeId => ((await runtimes.handle(runtimeId))?.capabilities().items ?? []).some(item => item.id === 'runtime.agent_tools.host' && item.supported),
           localRuntimes: async () => runtimes.instances().filter(spec => spec.enabled).map(spec => ({ runtimeId: spec.runtimeId, runtimeType: spec.runtimeType, name: spec.name ?? null })),
           ...(options.collaboration ?? {}),
@@ -279,7 +282,6 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
         })
         preparations = prepared
         await prepared.recover()
-        await conversation.recover()
         prepared.start()
         // Runtime Control 3.0 (runtime.apply, channel.switch, device.settings.apply); a host's own handlers win.
         const applySettings = (desired: Record<string, unknown>): void => {
@@ -345,7 +347,11 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
           platform: process.platform,
           agent: conversation,
           blobs: blobSlices(findBlob),
-          ...(collaboration !== null ? { collab: lazyCollabApi(collaboration) } : {}),
+          ...(collaboration !== null ? {
+            collab: lazyCollabApi(collaboration),
+            a2aReview: (caller, method, body) => collaboration.a2aRequest(caller, method, body),
+            prepareCollaborationCheckout: (cwd, owner, input) => reviewGit.prepare(cwd, owner, input),
+          } : {}),
         })
         const agentPeers = collaboration !== null && options.trust !== false ? new FileAgentPeers(options.dataDir, clock.nowIso) : null
         if (options.trust !== false) {
@@ -374,6 +380,7 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
           })
           await collaboration.start()
         }
+        await conversation.recover()
         if (options.dshHosts) {
           // Started before the link: a host's native sessions reach the local store while the device is offline.
           const hosts = new DshHosts({
@@ -430,7 +437,10 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
           },
           onState: state => {
             options.log('info', `device link ${state}`)
-            if (state === 'online') void announceRuntimes(runtimes, live, log, options.scanOnStart !== false ? spec => void scans.now(spec.runtimeId) : undefined)
+            if (state === 'online') {
+              collaboration?.onOnline()
+              void announceRuntimes(runtimes, live, log, options.scanOnStart !== false ? spec => void scans.now(spec.runtimeId) : undefined)
+            }
           },
         })
         preview?.onLink(link)

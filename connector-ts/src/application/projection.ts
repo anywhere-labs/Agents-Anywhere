@@ -132,6 +132,11 @@ export class TimelineProjector {
         }
         if (event.input !== undefined) content.input = event.input
         if (event.type === 'tool.updated' && event.output !== undefined) content.output = event.output
+        if (event.type === 'tool.updated' && event.outputDelta !== undefined) {
+          const key = content.output !== undefined && typeof content.output !== 'string' ? 'terminalOutput' : 'output'
+          const output = content[key]
+          content[key] = ((typeof output === 'string' ? output : '') + event.outputDelta).slice(-65_536)
+        }
         if (event.locations !== undefined) content.locations = event.locations.map(location => ({ ...location }))
         if (event.content !== undefined) content.content = event.content.map(block => ({ ...block }) as JsonValue)
         shapeTool(content, toolKind)

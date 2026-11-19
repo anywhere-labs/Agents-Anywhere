@@ -77,6 +77,10 @@ export const AGENT_TOOLS = {
               ]
             },
             "description": "When to wake this session about the target. Default: turn_end, turn_failed, notice_opened, plan_proposed, stalled."
+          },
+          "projectId": {
+            "type": "string",
+            "description": "Target project's id. On the normal cross-device route, the Server can also resolve the registered project from the target cwd."
           }
         },
         "required": [
@@ -418,6 +422,109 @@ export const AGENT_TOOLS = {
         },
         "required": [
           "sessionId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "aa_review",
+      "verb": "spawn",
+      "description": "Run a user-requested Codex implementation plus independent Claude Code or Pi review as a persistent task. Start once with the user’s chosen devices, registered review project and requirement. Progress and handoffs continue in the main session. Use advance to resume after an explicit user decision or a recoverable failure, and status to read the run. Do not declare delivery before this tool reports delivered.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "enum": [
+              "start",
+              "advance",
+              "status"
+            ]
+          },
+          "requirement": {
+            "type": "string"
+          },
+          "implementationRuntimeId": {
+            "type": "string"
+          },
+          "reviewDeviceId": {
+            "type": "string"
+          },
+          "reviewRuntimeId": {
+            "type": "string"
+          },
+          "reviewRuntimeType": {
+            "enum": [
+              "claude",
+              "pi"
+            ],
+            "description": "Review runtime type. Defaults to claude. Set pi to review with Pi."
+          },
+          "reviewProjectId": {
+            "type": "string",
+            "description": "Registered project on the review device."
+          },
+          "reviewCwd": {
+            "type": "string",
+            "description": "Repository root of the review project's existing checkout."
+          },
+          "remote": {
+            "type": "string",
+            "description": "Configured shared Git remote name; defaults to origin. The Codex worker uses its existing permissions if it needs to publish a temporary reference."
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "aa_submit_review",
+      "verb": "reviewPlan",
+      "description": "Submit the verdict for the exact candidate already bound to this dedicated read-only review session. Include a description and file location or evidence for every blocker. Use changes_requested when any blocker remains, or approved with an empty list.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "verdict": {
+            "enum": [
+              "approved",
+              "changes_requested"
+            ]
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2400
+          },
+          "blockers": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "object",
+              "properties": {
+                "description": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 600
+                },
+                "evidence": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 300
+                }
+              },
+              "required": [
+                "description",
+                "evidence"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "verdict",
+          "summary",
+          "blockers"
         ],
         "additionalProperties": false
       }

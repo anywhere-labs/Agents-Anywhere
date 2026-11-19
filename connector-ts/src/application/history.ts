@@ -391,6 +391,14 @@ export class NativeHistory {
     const knownDshSessions = dshSessions.filter(session => session.runtimeId === runtimeId)
     const dshIds = new Map(knownDshSessions.map(session => [session.externalSessionId, session.sessionId]))
     const otherDshIds = new Set(dshSessions.filter(session => session.runtimeId !== runtimeId).map(session => session.externalSessionId))
+    const piSessions = handle.type === 'pi'
+      ? (await this.deps.store.sessions.list()).filter(session => session.runtimeType === 'pi' && session.externalSessionId !== null)
+      : []
+    const knownPiSessions = new Map(piSessions.filter(session => session.runtimeId === runtimeId).map(session => [session.externalSessionId, session]))
+    // A Pi transcript can be visible to multiple instances that share a history directory. An Agent-created
+    // session already owns its transcript in its worktree and must retain its runtime and tool binding.
+    const ownedPiTranscripts = new Map(piSessions.filter(session => session.origin?.kind === 'agent' && session.cwd !== null)
+      .map(session => [JSON.stringify([session.externalSessionId, session.cwd]), session]))
     const facts: SummaryFacts[] = []
     let complete = true
     let cursor: string | undefined
@@ -407,7 +415,19 @@ export class NativeHistory {
       if (page.complete === false) complete = false
       for (const summary of page.sessions) {
         try {
-          const knownSessionId = dshIds.get(summary.nativeSessionId)
+          const knownPiSession = knownPiSessions.get(summary.nativeSessionId)
+          const owner = ownedPiTranscripts.get(JSON.stringify([summary.nativeSessionId, summary.cwd]))
+          if (owner !== undefined && owner.runtimeId !== runtimeId && knownPiSession?.origin == null) {
+            // Retire an already imported, still passive alias without deleting its history.
+            if (knownPiSession !== undefined && !knownPiSession.takeover && knownPiSession.cwd === owner.cwd
+                && knownPiSession.sessionId === this.deps.sessionIdFor(handle, runtimeId, summary)) {
+              const alias = knownPiSession.sourceAvailability === 'archived' ? knownPiSession
+                : (await this.deps.store.sessions.update(knownPiSession.sessionId, { sourceAvailability: 'archived' })).session
+              facts.push(summarize(alias, await this.deps.store.timeline.latest(alias.sessionId)))
+            }
+            continue
+          }
+          const knownSessionId = knownPiSession?.sessionId ?? dshIds.get(summary.nativeSessionId)
           // The implicit legacy instance can share the named instance's DSH home.
           if (knownSessionId === undefined && otherDshIds.has(summary.nativeSessionId)) continue
           const session = await this.discover(handle, runtimeId, summary, knownSessionId)

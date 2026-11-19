@@ -109,6 +109,7 @@ Server 发送每条命令之前按请求模型校验 `p`（`validate_command_pay
 
 - `session.select`（经 `Client/call` 到达收件箱）：`p` 为 `{sessionId, runtime, runtimeId, externalSessionId?, selections}`，`selections` 可一次带多项，值为 null 的项跳过。返回 v2 形状 `{updated, applied, sessionId, externalSessionId, selections, state}`。
 - 建会话并开始（`POST /sessions/create-and-start`，经 `Client/call` 到达设备的客户端 API）：请求体可带 `planningIntent`、`goalIntent`，各为 `{mode, operationId}`。带计划意图时设备先进入计划模式再发首条消息，失败则拒发；带目标意图时把内容设为目标，不当作消息发出。它是设备上的独立用例，不经 `session.creation.begin`；`session.creation.begin` 只消费工作区准备，`p` 可带 `planningIntent`。
+- Agent 创建会话时可传 `collaborationCheckout: { runId, role, round, commit, remote? }`。目标设备从所选项目准备独立 Git 工作目录。`implement` 从本地基准提交创建，`review` 从指定候选提交创建，缺少对象时从项目配置的远程读取本轮引用。审查启动前固定 Claude 的只读权限，准备失败时拒发首条消息。
 - 接管开关用现有的 `session.sync {sessionId, takeover}`。设备离线或没有确认时，Server 记在 Redis 的 `device-takeover:{deviceId}` 里，设备上线后按 Server 当时的值重发。
 - `runtime.status` 里的计划、目标事件为 `status: {event, revision, state}`。
 

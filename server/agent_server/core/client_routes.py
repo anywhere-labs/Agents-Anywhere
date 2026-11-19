@@ -214,6 +214,9 @@ CLIENT_ROUTES: tuple[ClientRoute, ...] = (
     _command("session.terminals.resize", "POST", f"{SESSION}/terminals/{{terminal_id}}/resize", None),
     _route("session.terminals.stream", "WS", f"{SESSION}/terminals/{{terminal_id}}/stream", "device", "stream",
            "subscribe"),
+    # -- device A2A review --------------------------------------------------------------------------
+    _read("connector.a2a.card", f"{CONNECTOR}/a2a/agent-card.json", agent=True),
+    _route("connector.a2a.review", "POST", f"{CONNECTOR}/a2a/review", "device", "critical", agent=True, timeout="long"),
     # -- device files -----------------------------------------------------------------------------------------
     _route("connector.fs.list", "POST", f"{CONNECTOR}/fs/list", "device", "read"),
     _route("connector.fs.readText", "POST", f"{CONNECTOR}/fs/readText", "device", "read"),
@@ -284,6 +287,7 @@ CLIENT_ROUTES: tuple[ClientRoute, ...] = (
 ROUTE_FAMILIES: tuple[RouteFamily, ...] = (
     # Everything under a session except its directory entry and scheduling state (the plain routes below).
     RouteFamily("session", SESSION, bare=False),
+    RouteFamily("connector.a2a", f"{CONNECTOR}/a2a", bare=True),
     RouteFamily("connector.fs", f"{CONNECTOR}/fs", bare=True),
     RouteFamily("connector.shell", f"{CONNECTOR}/shell", bare=True),
     RouteFamily("connector.terminals", f"{CONNECTOR}/terminals", bare=True),

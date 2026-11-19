@@ -650,6 +650,8 @@ export type TimelineItemEvent =
       readonly status?: ToolStatus
       readonly input?: JsonValue
       readonly output?: JsonValue
+      /** Incremental terminal output carried by ACP command updates. */
+      readonly outputDelta?: string
       readonly content?: readonly ToolContent[]
       readonly locations?: readonly ToolLocation[]
     })

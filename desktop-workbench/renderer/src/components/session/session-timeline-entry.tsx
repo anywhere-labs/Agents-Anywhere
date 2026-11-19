@@ -27,7 +27,8 @@ import { MessageAttachments } from "@/components/session/message-attachments"
 import { CollapsibleUserMessage } from "@/components/session/collapsible-user-message"
 import { TimelineBlobs, hasTimelineBlobs } from "@/components/session/timeline-blobs"
 import { AgentAuthorLabel, CollabEscalationCard, CollabToolSessionLink, SupervisionNoticeCard } from "@/components/session/collab-timeline"
-import { collabEscalationOf, collabToolOf, messageAuthorOf } from "@/features/collab/model"
+import { collabEscalationOf, collabToolOf, messageAuthorOf, parseCollabReview } from "@/features/collab/model"
+import { CollabReviewProgress } from "@/components/session/collab-review"
 
 const MarkdownText = dynamic(() => import("../markdown-text").then((mod) => ({ default: mod.MarkdownText })), { ssr: false })
 const INLINE_REASONING_SUMMARY_MAX_CHARS = 80
@@ -228,6 +229,8 @@ function SystemCard({ token, session, item }: { token: string; session: SessionV
   if (kind === "reasoning") return <ReasoningEntry token={token} session={session} item={item} />
   if (kind === "compact") return <CompactMarker item={item} />
   if (kind === "goal") return <GoalTimelineOutcome item={item} />
+  const review = kind === "collab_review" ? parseCollabReview(item.content) : null
+  if (review) return <CollabReviewProgress review={review} token={token} sessionId={session.id} />
   const escalation = collabEscalationOf(item)
   if (escalation) return <CollabEscalationCard escalation={escalation} />
   const text = textOf(item.content.text) || textOf(item.content.message) || textOf(item.content.rawText)

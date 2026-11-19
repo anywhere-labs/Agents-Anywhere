@@ -17,6 +17,8 @@ import {
 import type { AgentActorRef, Clock, ConversationStore, EscalationSink, GatewayRequest, GatewayResponse, IdSource, SessionGateway, SupervisorFacts, TargetView } from '../ports/index.js'
 import type { GrantService } from './grant-service.js'
 import type { SupervisionService } from './supervision-service.js'
+import type { ReviewService } from './review-service.js'
+import type { CollaborationCheckout } from '../../domain/collab/review.js'
 
 /** `aa_wait` returns within this, below the 60-second MCP call limit of Pi and DSH (agent-tools 1.0). */
 export const WAIT_MAX_SECONDS = 50
@@ -35,6 +37,7 @@ export interface ToolServiceDeps {
   readonly facts: SupervisorFacts
   readonly supervisions: SupervisionService
   readonly escalations: EscalationSink
+  readonly review?: ReviewService
   /** Pause between `aa_wait` polls; default 1.5 seconds. */
   readonly waitPollMs?: number
   readonly sleep?: (ms: number) => Promise<void>
@@ -96,6 +99,25 @@ export class ToolService {
     }
   }
 
+  public async pollReviews(): Promise<void> {
+    await this.deps.review?.poll(async sessionId => {
+      const grant = await this.deps.store.collab.activeGrantOf(sessionId)
+      const session = grant === null ? null : await this.deps.store.sessions.get(sessionId)
+      if (grant === null || session === null || session.archived) return null
+      const authority = capByPermission(grant.authority, await this.deps.facts.permissionLevel(sessionId))
+      if (!authority.steer) return null
+      const live = { ...grant, authority }
+      return { grant: live, actions: this.reviewActions(live) }
+    })
+  }
+
+  private reviewActions(grant: AgentGrant) {
+    return {
+      spawn: (params: Args, checkout: CollaborationCheckout) => this.spawn(grant, params, checkout),
+      send: (params: Args) => this.message(grant, params, 'send', true),
+    }
+  }
+
   private dispatch(grant: AgentGrant, tool: string, args: Args): Promise<Record<string, unknown>> {
     switch (tool) {
       case 'aa_targets': return this.targets(grant, args)
@@ -112,6 +134,9 @@ export class ToolService {
       case 'aa_unsupervise': return this.unsupervise(grant, args)
       case 'aa_escalate': return this.escalate(grant, args)
       case 'aa_close': return this.close(grant, args)
+      case 'aa_review':
+        if (this.deps.review === undefined) throw new CollabError('invalid_argument', 'Collaborative review is unavailable on this device.')
+        return this.deps.review.run(grant, args, this.reviewActions(grant))
       default: throw new CollabError('invalid_argument', `Unknown tool ${tool}.`)
     }
   }
@@ -208,7 +233,7 @@ export class ToolService {
   // Actions
   // -------------------------------------------------------------------------------------------
 
-  private async spawn(grant: AgentGrant, args: Args): Promise<Record<string, unknown>> {
+  private async spawn(grant: AgentGrant, args: Args, checkout?: CollaborationCheckout): Promise<Record<string, unknown>> {
     const cwd = str(args.cwd)
     const prompt = str(args.prompt)
     if (cwd === null || prompt === null) throw new CollabError('invalid_argument', 'cwd and prompt are required.')
@@ -232,13 +257,14 @@ export class ToolService {
         throw new CollabError('invalid_argument', `Runtime instance ${instanceId} is of type ${runtimeType}, not ${requestedRuntimeType}.`)
       }
     }
+    const savedAction = str(args.actionId) === null ? null : await this.deps.store.collab.action(String(args.actionId))
     assertAuthorized(grant, {
       verb: 'spawn',
       target: { address, runtimeId, runtimeType, cwd },
-      activeChildren: await this.deps.store.collab.openChildren(grant.supervisor.sessionId),
+      activeChildren: savedAction?.target == null ? await this.deps.store.collab.openChildren(grant.supervisor.sessionId) : 0,
     })
     const mode = args.mode === 'plan' || args.mode === 'goal' ? args.mode : 'normal'
-    return this.act(grant, 'spawn', address, args, async actionId => {
+    const result = await this.act(grant, 'spawn', address, checkout === undefined ? args : { ...args, checkout }, async actionId => {
       const body: Record<string, unknown> = {
         runtime: runtimeType,
         runtimeId,
@@ -247,6 +273,8 @@ export class ToolService {
         clientMessageId: actionId,
         connectorId: deviceId,
         originDepth: grant.depth + 1,
+        ...(str(args.projectId) !== null ? { projectId: args.projectId } : {}),
+        ...(checkout !== undefined ? { collaborationCheckout: checkout } : {}),
         ...(str(args.title) !== null ? { title: args.title } : {}),
         ...(mode === 'plan' ? { planningIntent: { mode: 'plan', operationId: `${actionId}_plan` } } : {}),
         ...(mode === 'goal' ? { goalIntent: { mode: 'goal', operationId: `${actionId}_goal` } } : {}),
@@ -256,25 +284,26 @@ export class ToolService {
       const sessionId = str(session.id)
       if (sessionId === null) throw new GatewayError('command_outcome_unknown', 'The session was requested but its id did not come back; check aa_targets before trying again.')
       await this.deps.store.collab.putChild({ childSessionId: sessionId, childDeviceId: deviceId, grantId: grant.grantId, supervisorSessionId: grant.supervisor.sessionId, depth: grant.depth + 1, closed: false, createdAt: this.deps.clock.nowIso() })
-      const result: Record<string, unknown> = { sessionId, deviceId, status: str(session.status) ?? 'pending' }
-      if (args.supervise !== false) {
-        const supervision = await this.deps.supervisions.startSupervision({
-          supervisor: grant.supervisor,
-          target: { deviceId, sessionId },
-          createdBy: 'agent',
-          ...(args.triggers !== undefined ? { triggers: parseTriggers(args.triggers) } : {}),
-          authority: grant.authority,
-        }).catch(error => (error instanceof CollabError ? null : Promise.reject(error)))
-        if (supervision !== null) {
-          result.supervisionId = supervision.supervisionId
-          result.hint = 'You will get a message in this session when it finishes or needs attention; you can end your turn.'
-        }
-      }
-      return result
+      return { sessionId, deviceId, status: str(session.status) ?? 'pending' }
+    }, checkout !== undefined)
+    const sessionId = str(result.sessionId)
+    if (args.supervise === false || sessionId === null) return result
+    const supervision = await this.deps.supervisions.startSupervision({
+      supervisor: grant.supervisor,
+      target: { deviceId, sessionId },
+      createdBy: 'agent',
+      ...(args.triggers !== undefined ? { triggers: parseTriggers(args.triggers) } : {}),
+      authority: grant.authority,
+      catchUpFirstTurn: true,
+    }).catch(error => {
+      if (error instanceof CollabError && error.code === 'agent_supervision_exists') return null
+      if (checkout === undefined && error instanceof CollabError) return null
+      throw error
     })
+    return supervision === null ? result : { ...result, supervisionId: supervision.supervisionId, hint: 'You will get a message in this session when it finishes or needs attention; you can end your turn.' }
   }
 
-  private async message(grant: AgentGrant, args: Args, verb: 'send' | 'steer'): Promise<Record<string, unknown>> {
+  private async message(grant: AgentGrant, args: Args, verb: 'send' | 'steer', workflow = false): Promise<Record<string, unknown>> {
     const message = str(args.message)
     if (message === null) throw new CollabError('invalid_argument', 'message is required.')
     const { view, authority } = await this.target(grant, args, verb)
@@ -283,7 +312,7 @@ export class ToolService {
       const body = verb === 'send' ? { content: message, clientMessageId: actionId, queue: 'auto' } : { content: message, clientMessageId: actionId }
       const response = await this.send(view.address.deviceId, grant, { method: 'POST', path, body })
       return { sessionId: view.address.sessionId, accepted: true, ...pick(record(response.body), ['queued', 'status', 'messageId']) }
-    })
+    }, workflow)
   }
 
   private async interrupt(grant: AgentGrant, args: Args): Promise<Record<string, unknown>> {
@@ -409,7 +438,7 @@ export class ToolService {
 
   private async send(deviceId: string, grant: AgentGrant, request: GatewayRequest): Promise<GatewayResponse> {
     const response = await this.deps.gateway.request(deviceId, this.actor(grant), request)
-    if (response.status >= 300) throw failure(response)
+    if (response.status >= 300 || record(response.body).ok === false) throw failure(response)
     return response
   }
 
@@ -435,11 +464,23 @@ export class ToolService {
   }
 
   /** Runs one state-changing call as an AgentAction; a replay of the same input returns the earlier outcome. */
-  private async act(grant: AgentGrant, verb: AgentVerb, target: SessionAddress, args: Args, run: (actionId: string) => Promise<Record<string, unknown>>): Promise<Record<string, unknown>> {
+  private async act(grant: AgentGrant, verb: AgentVerb, target: SessionAddress, args: Args, run: (actionId: string) => Promise<Record<string, unknown>>, workflow = false): Promise<Record<string, unknown>> {
     const inputDigest = digestOf(verb, target, args)
     const actionId = str(args.actionId) ?? `act_${inputDigest.slice(0, 24)}_${this.deps.ids.newId('')}`
     const previous = str(args.actionId) !== null ? await this.deps.store.collab.action(actionId) : null
-    if (previous !== null && previous.outcome === 'unknown') throw new GatewayError('command_outcome_unknown', 'The earlier call with this actionId has an unknown outcome; check the session before acting again.')
+    if (previous !== null) {
+      if (previous.supervisor.sessionId !== grant.supervisor.sessionId || previous.inputDigest !== inputDigest) {
+        throw new GatewayError('command_conflict', 'This actionId already belongs to another collaboration operation.')
+      }
+      if (previous.outcome === 'accepted' && previous.target !== null && workflow) {
+        const view = await this.deps.gateway.facts(previous.target, this.actor(grant))
+        if (view === null) throw new CollabError('agent_target_unknown', 'The existing worker session is no longer available.')
+        return { ...previous.target, status: view.signal.status, accepted: true, actionId }
+      }
+      // Workflow inputs are persisted before acting. Reconciliation uses the exact same id and payload; the
+      // downstream receipt can recover the result without creating a second worker or sending a second message.
+      if (previous.outcome === 'unknown' && !workflow) throw new GatewayError('command_outcome_unknown', 'The earlier call with this actionId has an unknown outcome; check the session before acting again.')
+    }
     const pending: AgentAction = {
       actionId,
       grantId: grant.grantId,

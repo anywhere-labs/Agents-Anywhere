@@ -922,6 +922,10 @@ export function openSqliteStore(options: OpenStoreOptions): SyncStore {
       const row = get('SELECT value_json FROM runtime_kv WHERE runtime_id = ? AND key = ?', runtimeId, key)
       return row === undefined ? undefined : parse<unknown>(row.value_json)
     },
+    entries(runtimeId) {
+      return all('SELECT key, value_json FROM runtime_kv WHERE runtime_id = ?', runtimeId)
+        .map(row => ({ key: String(row.key), value: parse<unknown>(row.value_json) }))
+    },
     set(runtimeId, key, value) {
       tx(() => {
         run('INSERT INTO runtime_kv(runtime_id, key, value_json) VALUES (?, ?, ?) ON CONFLICT(runtime_id, key) DO UPDATE SET value_json = excluded.value_json', runtimeId, key, json(value))

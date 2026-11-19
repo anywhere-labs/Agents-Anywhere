@@ -19,6 +19,8 @@ from agent_server.core.agent_collab import (
     AgentDelegationRequest,
     AgentDelegationResponse,
     AgentDelegationRevokeResponse,
+    ReviewAdmission,
+    ReviewAdmissionRequest,
 )
 from agent_server.deps import current_user_id, get_store
 from agent_server.infra.repositories.facade import Store
@@ -86,3 +88,17 @@ async def revoke_agent_delegations(
 ) -> AgentDelegationRevokeResponse:
     device_id = await _require_active_connector(authorization, db)
     return AgentDelegationRevokeResponse(grantId=grant_id, revoked=await collab.revoke_grant(device_id, grant_id))
+
+@device_router.post("/a2a-review-admission", response_model=ReviewAdmission)
+async def authorize_review_execution(
+    payload: ReviewAdmissionRequest,
+    db: Annotated[Store, Depends(get_store)],
+    collab: Collab,
+    authorization: Annotated[str | None, Header(alias="Authorization")] = None,
+) -> ReviewAdmission:
+    device_id = await _require_active_connector(authorization, db)
+    try:
+        return await collab.review_admission(device_id, payload)
+    except CollabError as exc:
+        _raise(exc)
+    raise AssertionError("unreachable")

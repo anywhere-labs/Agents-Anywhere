@@ -21,6 +21,7 @@ export interface GrantServiceDeps {
   readonly facts: SupervisorFacts
   /** How to start the tool server; null when this host cannot (the bundle has no `agent-tools` entry). */
   readonly launch: ToolServerLaunch | null
+  readonly scopedSecret?: (sessionId: string) => Promise<string | undefined>
   readonly onOutbox?: () => void
 }
 
@@ -34,6 +35,15 @@ export class GrantService implements SessionToolProvider {
 
   public async toolServers(session: { readonly sessionId: string; readonly runtimeId: string; readonly runtimeType: string }): Promise<readonly ToolServerSpec[]> {
     const launch = this.deps.launch
+    const scoped = await this.deps.scopedSecret?.(session.sessionId)
+    if (scoped !== undefined) {
+      await this.revokeFor(session.sessionId)
+      if (launch === null || !(await this.deps.facts.canHostTools(session.runtimeId))) return []
+      return [{
+        name: TOOL_SERVER_NAME, command: launch.command, args: launch.args, autoApprove: true, purpose: 'code-review',
+        env: { ...launch.env, AA_AGENT_TOOLS_ENDPOINT: launch.endpoint, AA_AGENT_TOOLS_TOKEN: scoped, AA_AGENT_TOOLS_REVIEW_ONLY: '1' },
+      }]
+    }
     const effective = effectiveFor(this.deps.settings(), session.runtimeId)
     if (launch === null || !effective.enabled || !(await this.deps.facts.canHostTools(session.runtimeId))) {
       await this.revokeFor(session.sessionId)

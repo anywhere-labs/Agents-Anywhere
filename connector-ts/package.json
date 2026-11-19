@@ -17,6 +17,7 @@
     "bundle": "node scripts/bundle.mjs"
   },
   "dependencies": {
+    "@a2a-js/sdk": "1.3.0",
     "@agentclientprotocol/sdk": "1.4.0",
     "fflate": "^0.8.2",
     "meshcall": "file:../vendor/meshcall/meshcall-0.4.0-dev.9334405.tgz",

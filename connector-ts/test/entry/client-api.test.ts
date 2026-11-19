@@ -33,6 +33,8 @@ describe('client API dependencies of the composition root', () => {
     const rows = new Map<string, unknown>()
     const kv: RuntimeKv = {
       get: async (runtimeId, key) => rows.get(`${runtimeId}/${key}`) ?? null,
+      entries: async runtimeId => [...rows].filter(([key]) => key.startsWith(`${runtimeId}/`))
+        .map(([key, value]) => ({ key: key.slice(runtimeId.length + 1), value })),
       set: async (runtimeId, key, value) => void rows.set(`${runtimeId}/${key}`, JSON.parse(JSON.stringify(value))),
       delete: async (runtimeId, key) => void rows.delete(`${runtimeId}/${key}`),
     }

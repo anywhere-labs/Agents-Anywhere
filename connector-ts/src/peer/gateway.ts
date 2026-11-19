@@ -64,7 +64,9 @@ export class PeerGateway implements SessionGateway {
     const response = await this.request(target.deviceId, actor, { method: 'GET', path: `sessions/${encodeURIComponent(target.sessionId)}/meta` })
     if (response.status === 404) return null
     if (response.status >= 300) throw failure(response)
-    const view = targetView(target.deviceId, response.body, this.deps.now())
+    const body = record(response.body)
+    // The ordinary Server route returns SessionResponse. Local and encrypted device routes return the view itself.
+    const view = targetView(target.deviceId, body.session ?? body, this.deps.now())
     return view === null ? null : { ...view, address: target }
   }
 

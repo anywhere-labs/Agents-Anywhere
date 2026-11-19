@@ -296,8 +296,10 @@ export class AcpRuntimeHandle implements RuntimeHandle {
       }
     }
     const config = normalizeConfig({ configOptions: response.configOptions, modes: response.modes, models: response.models }, dialect.legacyModes)
+    const readOnlyReview = dialect.runtime === 'claude' && tools.some(server => server.purpose === 'code-review')
     const session = new AcpRuntimeSession({
       client, dialect, sessionId: options.sessionId, nativeSessionId, info, config, canClose: hasSessionCapability(info, 'close'),
+      readOnlyReview,
       autoApproveServers: tools.filter(server => server.autoApprove).map(server => server.name),
     })
     this.lastConfig = session.configOptions
@@ -314,6 +316,17 @@ export class AcpRuntimeHandle implements RuntimeHandle {
     }
     if (replayed.length) session.replay(replayed)
     if (target.kind === 'new' && target.spec.selections) await this.applySelections(session, target.spec.selections)
+    if (readOnlyReview) {
+      try {
+        const permission = session.configOptions.find(option => option.category === 'permission' || option.id === 'mode')
+        if (permission === undefined) throw new Error('Missing permission option')
+        if (permission.currentValue !== 'plan') await session.configure({ optionId: permission.id, value: 'plan' })
+        if (session.configOptions.find(option => option.id === permission.id)?.currentValue !== 'plan') throw new Error('Plan mode not applied')
+      } catch {
+        await session.close().catch(() => undefined)
+        throw new RuntimeFailure({ code: 'review_read_only_unavailable', message: 'Claude Code could not enter read-only plan mode.' })
+      }
+    }
     this.announceCatalogs()
     return session
   }

@@ -150,6 +150,28 @@ class AgentDelegationResponse(BaseModel):
     expiresAt: str
 
 
+class ReviewAdmissionRequest(_Settings):
+    """Metadata only. Review requests, commit IDs, and results stay in the review data plane."""
+
+    deviceId: str = Field(min_length=1, max_length=200)
+    sessionId: str = Field(min_length=1, max_length=200)
+    grantId: str = Field(min_length=1, max_length=200)
+    delegation: str | None = Field(default=None, max_length=8192)
+    projectId: str | None = Field(default=None, max_length=200)
+    cwd: str | None = Field(default=None, max_length=4096)
+
+
+class ReviewProject(_Settings):
+    id: str
+    cwd: str
+
+
+class ReviewAdmission(_Settings):
+    depth: int
+    interrupt: bool
+    project: ReviewProject | None = None
+
+
 class AgentDelegationRevokeResponse(BaseModel):
     grantId: str
     revoked: int

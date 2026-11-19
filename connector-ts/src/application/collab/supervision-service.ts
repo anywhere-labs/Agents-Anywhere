@@ -35,6 +35,7 @@ export interface SupervisionServiceDeps {
   readonly onError?: (supervisionId: string, error: unknown) => void
   /** How often local targets are polled and stalls checked; default 5 seconds. */
   readonly tickMs?: number
+  readonly reviewWorker?: (supervisorSessionId: string, target: SessionAddress) => Promise<boolean>
 }
 
 export interface StartRequest {
@@ -44,6 +45,7 @@ export interface StartRequest {
   readonly triggers?: readonly Trigger[]
   readonly authority?: Authority
   readonly stalledMinutes?: number
+  readonly catchUpFirstTurn?: boolean
 }
 
 export interface SignalInput {
@@ -59,6 +61,7 @@ export interface SignalInput {
 export class SupervisionService {
   private timer: ReturnType<typeof setInterval> | null = null
   private ticking = false
+  private nextRemoteReconciliationAt = 0
   private readonly chains = new Map<string, Promise<unknown>>()
 
   public constructor(private readonly deps: SupervisionServiceDeps) {}
@@ -72,6 +75,12 @@ export class SupervisionService {
   public close(): void {
     if (this.timer !== null) clearInterval(this.timer)
     this.timer = null
+  }
+
+  /** Reconnect immediately reconciles target states instead of waiting for the periodic check. */
+  public onOnline(): void {
+    this.nextRemoteReconciliationAt = 0
+    void this.tick()
   }
 
   /** Starts a supervision; one active per (supervisor, target), never a cycle. */
@@ -92,11 +101,13 @@ export class SupervisionService {
       ...(request.triggers !== undefined ? { triggers: request.triggers } : {}),
       ...(request.stalledMinutes !== undefined ? { stalledMinutes: request.stalledMinutes } : {}),
       authority: request.authority ?? DEFAULT_AUTHORITY,
-      cursor: { seq: view.signal.headSeq, resetSeq: view.signal.resetSeq },
+      cursor: { seq: request.catchUpFirstTurn ? 0 : view.signal.headSeq, resetSeq: view.signal.resetSeq },
       createdBy: request.createdBy,
       at,
     })
-    supervision = observe(supervision, view.signal, this.deps.clock.nowMs())
+    const now = this.deps.clock.nowMs()
+    if (request.catchUpFirstTurn) supervision = observe(supervision, { ...view.signal, status: 'pending', headSeq: 0, latestTurnEndSeq: null }, now)
+    supervision = observe(supervision, view.signal, now)
     await this.save(supervision, true)
     return supervision
   }
@@ -145,26 +156,37 @@ export class SupervisionService {
     return accepted
   }
 
-  /** One pass: polls targets on this device, checks stalls, delivers due wakes. */
+  /** One pass: polls local targets, reconciles remote targets after reconnect, and delivers due wakes. */
   public async tick(): Promise<void> {
     if (this.ticking) return
     this.ticking = true
     try {
-      for (const live of await this.deps.store.collab.liveSupervisions()) {
-        if (live.supervisor.deviceId !== this.deps.deviceId) continue
+      const liveSupervisions = (await this.deps.store.collab.liveSupervisions())
+        .filter(live => live.supervisor.deviceId === this.deps.deviceId)
+      const now = this.deps.clock.nowMs()
+      const reconcile = now >= this.nextRemoteReconciliationAt
+      if (reconcile) this.nextRemoteReconciliationAt = now + 30_000
+      for (const live of liveSupervisions) {
         await this.serial(live.supervisionId, async () => {
           const current = await this.deps.store.collab.supervision(live.supervisionId)
           if (current === null || current.state === 'ended') return
           let next = current
-          if (current.target.deviceId === this.deps.deviceId) {
-            const view = await this.deps.gateway.facts(current.target, await this.actorOf(current.supervisor.sessionId, current.supervisionId)).catch(() => null)
-            if (view !== null) next = observe(next, view.signal, this.deps.clock.nowMs())
+          const remote = current.target.deviceId !== this.deps.deviceId
+          if (!remote || (reconcile && current.state === 'active')) {
+            try {
+              const view = await this.deps.gateway.facts(current.target, await this.actorOf(current.supervisor.sessionId, current.supervisionId))
+              if (view !== null) next = observe(next, view.signal, this.deps.clock.nowMs())
+            } catch (error) {
+              this.deps.onError?.(current.supervisionId, error)
+            }
           }
           next = checkStalled(next, this.deps.clock.nowMs(), this.deps.clock.nowIso())
           if (next !== current) await this.save(next, false)
           await this.maybeWake(next)
         }).catch(error => this.deps.onError?.(live.supervisionId, error))
       }
+    } catch (error) {
+      this.deps.onError?.('reconcile', error)
     } finally {
       this.ticking = false
     }
@@ -252,6 +274,8 @@ export class SupervisionService {
     const notices = await this.deps.gateway.notices(supervision.target, actor).catch(() => [])
     const view = await this.deps.gateway.facts(supervision.target, actor).catch(() => null)
     const signal = supervision.lastSignal
+    const reviewWorker = await this.deps.reviewWorker?.(supervision.supervisor.sessionId, supervision.target)
+    const next = reviewWorker ? '\nThis is a tracked implementation or review. Call aa_review with action advance to reconcile the saved task.' : ''
     const digest = buildDigest({
       targetLabel: view?.title ?? `Session ${supervision.target.sessionId}`,
       targetSessionId: supervision.target.sessionId,
@@ -263,7 +287,8 @@ export class SupervisionService {
       goalState: signal?.goalState ?? 'none',
       historyReset: page.resetSeq > supervision.cursor.resetSeq && supervision.cursor.seq > 0,
       deviceOnline: signal?.deviceOnline ?? true,
-    })
+      ...(reviewWorker ? { budgetBytes: 3800 } : {}),
+    }) + next
     const response = await this.deps.gateway.request(this.deps.deviceId, actor, {
       method: 'POST',
       path: `sessions/${encodeURIComponent(supervision.supervisor.sessionId)}/runtime/messages`,
@@ -274,8 +299,8 @@ export class SupervisionService {
       this.deps.onError?.(supervision.supervisionId, new Error(`wake delivery answered ${response.status}`))
       return
     }
-    const { supervision: next, overBudget } = recordWake(supervision, { seq: page.headSeq, resetSeq: page.resetSeq }, nowMs, at)
-    await this.save(next, overBudget)
+    const { supervision: delivered, overBudget } = recordWake(supervision, { seq: page.headSeq, resetSeq: page.resetSeq }, nowMs, at)
+    await this.save(delivered, overBudget)
   }
 
   private async save(supervision: Supervision, crossing: boolean): Promise<void> {

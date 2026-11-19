@@ -13,6 +13,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 
+import { modelFailureReason } from '../../../domain/collab/review-execution.js'
 import type { HistoryItem, ToolKind } from '../../../application/ports/runtime-session.js'
 import {
   claudeHistoryTurnId,
@@ -52,6 +53,35 @@ export async function findClaudeTranscript(nativeSessionId: string, projectsDir 
 }
 
 const record = (value: unknown): Json => (value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Json : {})
+
+/** Claude may finish ACP normally even when its native turn ends on a provider error. */
+export async function claudeProviderFailure(nativeSessionId: string): Promise<'timeout' | 'failed' | undefined> {
+  const file = await findClaudeTranscript(nativeSessionId)
+  if (file === undefined) return undefined
+  let failure: 'timeout' | 'failed' | undefined
+  const lines = createInterface({ input: createReadStream(file, { encoding: 'utf8' }), crlfDelay: Infinity })
+  try {
+    for await (const line of lines) {
+      let entry: Json
+      try { entry = record(JSON.parse(line)) } catch { continue }
+      if (entry.isSidechain === true) continue
+      const message = record(entry.message)
+      if (entry.type === 'user') {
+        const content = message.content
+        if (typeof content === 'string' || (Array.isArray(content) && content.some(block => record(block).type === 'text'))) failure = undefined
+        continue
+      }
+      if (entry.type !== 'assistant') continue
+      failure = undefined
+      if (entry.isApiErrorMessage !== true && typeof entry.error !== 'string') continue
+      const text = Array.isArray(message.content) ? message.content.map(part => record(part).text).filter(value => typeof value === 'string').join(' ') : ''
+      failure = modelFailureReason(text)
+    }
+  } catch {
+    return undefined
+  }
+  return failure
+}
 
 function claudeToolKind(name: string): ToolKind {
   switch (name) {

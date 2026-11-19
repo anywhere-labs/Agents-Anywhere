@@ -145,6 +145,17 @@ export class ControlPlane {
     return response
   }
 
+  public async reviewAdmission(body: {
+    readonly deviceId: string
+    readonly sessionId: string
+    readonly grantId: string
+    readonly delegation?: string
+    readonly projectId?: string
+    readonly cwd?: string
+  }): Promise<{ depth: number; interrupt: boolean; project: { id: string; cwd: string } | null }> {
+    return this.authorized('api/v3/device/a2a-review-admission', body)
+  }
+
   /** The Server's base URL, for the client API calls of a delegated Agent. */
   public get serverUrl(): URL {
     return this.base

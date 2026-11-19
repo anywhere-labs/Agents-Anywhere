@@ -400,9 +400,10 @@ class DeviceLinkService:
                 title=display.get("title") if isinstance(display.get("title"), str) else None,
                 cwd=display.get("cwd") if isinstance(display.get("cwd"), str) else None,
                 last_activity_at=summary.lastActivityAt,
-                # Required mode: the working directory is sealed, so a new session is placed by the
-                # reported ``projectId`` or stays unplaced until a client assigns it (contracts/e2ee/1.0).
-                project_id=summary.projectId if required else None,
+                # Agent-created sessions already have a selected project and are controlled by their
+                # Connector. Apply that only on insert so a person's later release still wins.
+                project_id=summary.projectId if required or summary.origin is not None else None,
+                initial_takeover=summary.origin is not None,
                 allow_unplaced=required,
             )
         except (KeyError, ValueError) as exc:

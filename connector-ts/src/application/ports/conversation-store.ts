@@ -341,6 +341,7 @@ export interface BlobRepository {
 /** Per-Runtime key/value bookkeeping. */
 export interface RuntimeKv {
   get(runtimeId: string, key: string): Promise<unknown>
+  entries(runtimeId: string): Promise<{ key: string; value: unknown }[]>
   set(runtimeId: string, key: string, value: unknown): Promise<void>
   delete(runtimeId: string, key: string): Promise<void>
 }

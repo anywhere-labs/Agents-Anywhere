@@ -44,6 +44,8 @@ export interface TunnelApiResponse {
  * through a secure channel has none.
  */
 export interface TunnelCallContext {
+  /** A checkout prepared and verified by the local A2A worker. */
+  readonly reviewCheckoutPath?: string
   /** The receipt identity of a command route: the inbox runs (or replays) the request's command under it. */
   readonly command?: { readonly commandId: string; readonly inputDigest: string; readonly deadline: string }
   /** Facts the Server owns; they win over the body. */

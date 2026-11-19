@@ -14,6 +14,7 @@ export interface ObservedItem {
   readonly files?: readonly { readonly path: string; readonly added?: number; readonly removed?: number }[]
   /** Who sent a user message, when not a person (`MessageAuthor.kind`). */
   readonly author?: 'agent' | 'supervision'
+  readonly execution?: { readonly command: string; readonly exitCode: number; readonly sha: string | null }
 }
 
 export interface DigestInput {

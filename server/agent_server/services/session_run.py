@@ -158,6 +158,7 @@ class SessionRunService:
         *,
         user_id: str,
         deliver: ForwardedCreation,
+        infer_agent_project: bool = False,
     ) -> dict[str, Any]:
         """``deliver`` forwards the creation with ``Client/call``; the result is ``{session, attachments, answer}``
         with the device's ``ClientAnswer``."""
@@ -192,12 +193,30 @@ class SessionRunService:
                 raise KeyError(payload.connectorId)
         except KeyError:
             raise SessionRunNotFoundError("connector not found") from None
+        selected_project = payload.projectId
+        if selected_project is None and infer_agent_project and payload.cwd:
+            try:
+                _, requested_key = _clean_workspace_path(payload.cwd, None)
+            except ValueError as exc:
+                raise SessionRunInvalidConfigError(
+                    {"code": "project_workspace_mismatch", "message": "Invalid project workspace."}
+                ) from exc
+            selected_project = next(
+                (
+                    project.id
+                    for project in await self._store.list_projects(user_id=user_id)
+                    if project.connectorId == payload.connectorId
+                    and _clean_workspace_path(project.workspacePath, None)[1] == requested_key
+                ),
+                None,
+            )
         project_id, project_cwd = await self._validate_project_binding(
-            payload.projectId,
+            selected_project,
             connector_id=payload.connectorId,
             cwd=payload.cwd,
             user_id=user_id,
         )
+        payload.projectId = project_id
         payload.cwd = project_cwd
         runtime_id = _request_runtime_id(payload)
         if self._prepare_model_channel is not None:

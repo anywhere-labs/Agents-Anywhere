@@ -187,6 +187,7 @@ export function translateUpdate(update: JsonRecord, context: TranslateContext): 
       if (itemId === null) return []
       const content = toolContent(update.content)
       const locs = locations(update.locations)
+      const outputDelta = asRecord(asRecord(update._meta).terminal_output_delta).data
       return [{
         ...base,
         type: 'tool.updated',
@@ -197,6 +198,7 @@ export function translateUpdate(update: JsonRecord, context: TranslateContext): 
         ...(update.status !== undefined && update.status !== null ? { status: toolStatus(update.status, 'running') } : {}),
         ...(update.rawInput !== undefined ? { input: update.rawInput as JsonValue } : {}),
         ...(update.rawOutput !== undefined ? { output: update.rawOutput as JsonValue } : {}),
+        ...(typeof outputDelta === 'string' ? { outputDelta } : {}),
         ...(content ? { content } : {}),
         ...(locs ? { locations: locs } : {}),
       }]

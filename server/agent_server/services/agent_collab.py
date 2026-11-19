@@ -24,10 +24,14 @@ from loguru import logger
 from agent_server.core.agent_collab import (
     DELEGATION_TOKEN_KIND,
     DELEGATION_TTL_SECONDS,
+    MAX_ORIGIN_DEPTH,
     AgentCollaborationSettings,
     AgentDelegationRequest,
     AgentDelegationResponse,
     AgentPrincipal,
+    ReviewAdmission,
+    ReviewAdmissionRequest,
+    ReviewProject,
     collaboration_settings_from_stored,
     delegation_token_hash,
     scope_devices,
@@ -222,6 +226,57 @@ class CollabService:
             grant_id=row["grantId"],
             delegation_id=row["delegationId"],
             devices=scope_devices(row["scope"]),
+        )
+
+    async def review_admission(self, target_id: str, request: ReviewAdmissionRequest) -> ReviewAdmission:
+        """Resolve current collaboration authority and the selected project for a review worker."""
+
+        denied = CollabError(403, "agent_scope_denied", "review is outside the current collaboration scope")
+        connector = await self._store.get_connector(target_id)
+        user_id = connector.userId
+        if request.delegation is not None:
+            principal = await self.authenticate(request.delegation)
+            if (
+                (principal.user_id, principal.device_id, principal.supervisor_session_id, principal.grant_id)
+                != (user_id, request.deviceId, request.sessionId, request.grantId)
+                or not principal.may_reach(target_id)
+            ):
+                raise denied
+        elif target_id != request.deviceId:
+            raise denied
+        try:
+            session = await self._store.get_session(request.sessionId, user_id=user_id)
+        except KeyError:
+            raise denied from None
+        if session.connectorId != request.deviceId or session.archived:
+            raise denied
+        settings = await self.get_settings(user_id)
+        authority = settings.instance(session.runtimeId).authority
+        depth = int((session.origin or {}).get("depth", 0)) + 1
+        if not settings.instance_enabled(session.runtimeId) or not authority.steer or depth > MAX_ORIGIN_DEPTH:
+            raise denied
+        project = None
+        if request.projectId is not None:
+            try:
+                project = await self._store.get_project(request.projectId, user_id=user_id)
+            except KeyError:
+                raise denied from None
+        elif request.cwd is not None:
+            project = next(
+                (
+                    row for row in await self._store.list_projects(user_id=user_id)
+                    if row.connectorId == target_id and row.workspacePath == request.cwd
+                ),
+                None,
+            )
+        if (request.projectId is not None or request.cwd is not None) and (
+            project is None or project.connectorId != target_id or project.workspacePath != request.cwd
+        ):
+            raise denied
+        return ReviewAdmission(
+            depth=depth,
+            interrupt=authority.interrupt,
+            project=ReviewProject(id=project.id, cwd=project.workspacePath) if project is not None else None,
         )
 
     # -- outbox of the supervisor's device ---------------------------------------------------

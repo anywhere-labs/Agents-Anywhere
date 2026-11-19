@@ -1298,7 +1298,8 @@
         "aa_supervise": "开始监督",
         "aa_unsupervise": "停止监督",
         "aa_escalate": "交给人决定",
-        "aa_close": "关闭会话"
+        "aa_close": "关闭会话",
+        "aa_review": "实现并审查"
       }
     },
     "sessionStatus": {
@@ -2926,6 +2927,56 @@
     }
   },
   "collab": {
+    "review": {
+      "title": "实现并审查",
+      "implementation": "Codex · {device}",
+      "reviewer": "{runtime} · {device}",
+      "phase": {
+        "starting": "准备中",
+        "implementing": "实现中",
+        "preparing_review": "准备审查提交",
+        "reviewing": "审查中",
+        "review_failed": "审查失败",
+        "returning": "交回修复",
+        "delivered": "已交付",
+        "blocked": "需要你决定"
+      },
+      "attention": {
+        "default": "协作暂缓",
+        "waiting_approval": "需要你决定",
+        "device_offline": "等待设备上线",
+        "connector_offline": "等待设备上线",
+        "review_commit_unavailable": "等待审查设备取得提交",
+        "agent_peer_not_trusted": "需要授权设备之间的 Agent 访问",
+        "review_a2a_upgrade_required": "请更新 Server 和审查设备后继续",
+        "review_a2a_legacy_run": "此轮审查开始于更新前",
+        "review_a2a_unavailable": "等待审查服务恢复",
+        "review_model_timeout": "模型服务超时，可重试。",
+        "review_result_missing": "审查助手已结束，本轮缺少审查结论",
+        "review_runtime_failed": "审查助手未能完成审查",
+        "review_read_only_unavailable": "审查助手无法进入只读模式",
+        "review_checkout_changed": "审查工作区与候选提交不一致",
+        "review_canceled": "本轮审查已取消",
+        "review_retry_limit": "需要你决定"
+      },
+      "openSource": "打开来源会话",
+      "openImplementation": "打开实现会话",
+      "openReview": "打开审查会话",
+      "round": "第 {number} 轮 · {sha}",
+      "changes": "查看改动",
+      "verdict": "查看审查结论",
+      "checks": "查看检查结果",
+      "approved": "审查通过",
+      "changesRequested": "有阻塞项",
+      "partialDiff": "预览只显示部分内容，完整改动可在实现会话查看。",
+      "checksIncomplete": "检查记录待补齐",
+      "checkPassed": "通过",
+      "checkFailed": "退出码 {code}",
+      "resume": "继续协作",
+      "resumeMessage": "从已保存的阶段继续当前实现和独立审查任务。",
+      "resumeFailed": "无法继续协作",
+      "approvalFailed": "无法处理审批"
+    },
     "createdBy": "由 {title} 创建",
     "supervisedBy": "被 {title} 监督",
     "supervisedByState": "被 {title} 监督（{state}）",

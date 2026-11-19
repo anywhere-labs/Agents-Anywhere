@@ -22,6 +22,7 @@ export interface RelayOptions {
 
 /** Runs the relay until stdin ends. */
 export function runAgentToolsRelay(options: RelayOptions): Promise<void> {
+  const tools = AGENT_TOOLS.tools.filter(tool => (String(tool.name) === 'aa_submit_review') === (options.env.AA_AGENT_TOOLS_REVIEW_ONLY === '1'))
   const endpoint = options.env[ENDPOINT_ENV] ?? ''
   const token = options.env[TOKEN_ENV] ?? ''
   const send = (message: Json): void => {
@@ -86,11 +87,11 @@ export function runAgentToolsRelay(options: RelayOptions): Promise<void> {
         send({ id, result: {} })
         return
       case 'tools/list':
-        send({ id, result: { tools: AGENT_TOOLS.tools.map(tool => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema })) } })
+        send({ id, result: { tools: tools.map(tool => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema })) } })
         return
       case 'tools/call': {
         const name = typeof params.name === 'string' ? params.name : ''
-        if (!AGENT_TOOLS.tools.some(tool => tool.name === name)) {
+        if (!tools.some(tool => tool.name === name)) {
           send({ id, error: { code: -32602, message: `Unknown tool ${name}` } })
           return
         }

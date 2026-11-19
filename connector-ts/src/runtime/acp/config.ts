@@ -268,10 +268,13 @@ function decodeModelSelection(config: readonly ConfigOption[], selectionId: stri
 }
 
 function decodePermissionSelection(config: readonly ConfigOption[], selectionId: string, codec: SelectionCodec): string {
-  for (const value of config.find(o => o.category === 'permission' && o.type === 'select')?.values ?? []) {
-    if (codec.permissionSelectionId(value.value) === selectionId) return value.value
-  }
-  return fail('invalid_selection', '权限选择不在当前可用范围。')
+  const option = config.find(o => o.category === 'permission' && o.type === 'select')
+  return permissionValueForSelection(option, selectionId, codec) ?? fail('invalid_selection', '权限选择不在当前可用范围。')
+}
+
+/** Resolves a catalog permission selection against the native choices of a session. */
+export function permissionValueForSelection(option: ConfigOption | undefined, selectionId: string, codec: SelectionCodec): string | undefined {
+  return option?.values?.find(choice => codec.permissionSelectionId(choice.value) === selectionId)?.value
 }
 
 /**

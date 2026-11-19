@@ -9,6 +9,11 @@ Connector's local agent-tools socket, which checks the session's collaboration g
   one MCP text content block holding JSON; a failure is an MCP error result whose text is `{"error": {"code", "message"}}`.
 - `errors.json`: the error codes a tool returns, plus the client API codes passed through unchanged.
 
+`aa_review` starts or advances a persisted implementation and independent review in the calling session. Saved
+handoffs identify the source session, timeline item, round and complete Git commit. The main session calls
+`advance` after a supervision wake and can call `status` to recover the current state. Target Git data travels
+through the selected projects' shared remote and their existing Git authorization.
+
 Rules that hold for every tool:
 
 1. The grant decides (`domain/collab/grant.ts`): authority never exceeds the user's setting nor the supervisor's own

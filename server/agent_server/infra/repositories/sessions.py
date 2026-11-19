@@ -410,6 +410,7 @@ class SessionRepositoryMixin:
         source_state: str | None = None,
         project_id: str | None = None,
         allow_unplaced: bool = False,
+        initial_takeover: bool = False,
     ) -> SessionView:
         """Create or update a session a device reports.
 
@@ -462,6 +463,7 @@ class SessionRepositoryMixin:
             source_state=source_state,
             project_id=project_id,
             allow_unplaced=allow_unplaced,
+            initial_takeover=initial_takeover,
         )
 
     async def _upsert_connector_session_canonical(
@@ -484,6 +486,7 @@ class SessionRepositoryMixin:
         source_state: str | None = None,
         project_id: str | None = None,
         allow_unplaced: bool = False,
+        initial_takeover: bool = False,
     ) -> SessionView:
         identity = _runtime_identity(runtime, runtime_id)
         runtime = str(identity.runtime_type)
@@ -543,7 +546,7 @@ class SessionRepositoryMixin:
                         title_source=TITLE_SOURCE_CONNECTOR if title is not None else None,
                         cwd=normalized_cwd,
                         status=status or "idle",
-                        takeover=0,
+                        takeover=int(initial_takeover),
                         last_synced_at=last_synced_at,
                         source_observed_at=source_observed_at,
                         last_activity_at=last_activity_at,

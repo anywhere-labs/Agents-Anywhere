@@ -21,6 +21,7 @@ export const COLLAB_TOOLS = [
   "aa_unsupervise",
   "aa_escalate",
   "aa_close",
+  "aa_review",
 ] as const
 export type CollabToolName = (typeof COLLAB_TOOLS)[number]
 
@@ -249,6 +250,77 @@ export type CollabView = {
   grant: CollabGrant | null
   supervisions: SupervisionDetail[]
   actions: CollabAction[]
+  review?: CollabReview | null
+}
+
+const REVIEW_PHASES = ["starting", "implementing", "preparing_review", "reviewing", "review_failed", "returning", "delivered", "blocked"] as const
+type ReviewAddress = { deviceId: string; sessionId: string }
+type ReviewRound = {
+  number: number
+  sha: string
+  changes: { summary: string; patch: string; truncated: boolean }
+  checks: { command: string; exitCode: number }[]
+  checksComplete: boolean
+  reviewer: ReviewAddress | null
+  review: { summary: string; blockers: string[]; approved: boolean } | null
+}
+
+export type CollabReview = {
+  phase: (typeof REVIEW_PHASES)[number]
+  implementationDeviceId: string
+  reviewDeviceId: string
+  reviewRuntimeType?: "claude" | "pi"
+  codeSession: ReviewAddress | null
+  rounds: ReviewRound[]
+  attention: { code: string; message: string; target: ReviewAddress | null; noticeId: string | null } | null
+}
+
+function reviewAddress(value: unknown): ReviewAddress | null {
+  const address = record(value)
+  const deviceId = text(address?.deviceId)
+  const sessionId = text(address?.sessionId)
+  return deviceId && sessionId ? { deviceId, sessionId } : null
+}
+
+function reviewRound(value: unknown): ReviewRound | null {
+  const round = record(value)
+  const sha = text(round?.sha)
+  if (!round || !sha || typeof round.number !== "number") return null
+  const review = record(round.review)
+  const changes = record(round.changes)
+  return {
+    number: round.number, sha,
+    changes: { summary: text(changes?.summary) ?? "", patch: text(changes?.patch) ?? "", truncated: changes?.truncated === true },
+    checksComplete: round.checksComplete === true,
+    reviewer: reviewAddress(round.reviewer),
+    checks: list(round.checks, item => {
+      const check = record(item)
+      const command = text(check?.command)
+      return command && typeof check?.exitCode === "number" ? { command, exitCode: check.exitCode } : null
+    }),
+    review: review && (review.verdict === "approved" || review.verdict === "changes_requested") ? {
+      summary: text(review.summary) ?? "",
+      blockers: list(review.blockers, text),
+      approved: review.verdict === "approved",
+    } : null,
+  }
+}
+
+export function parseCollabReview(value: unknown): CollabReview | null {
+  const raw = record(value)
+  const phase = REVIEW_PHASES.find(item => item === raw?.phase)
+  const implementationDeviceId = text(raw?.implementationDeviceId)
+  const reviewDeviceId = text(raw?.reviewDeviceId)
+  if (!raw || !phase || !implementationDeviceId || !reviewDeviceId) return null
+  const attention = record(raw.attention)
+  const code = text(attention?.code)
+  return {
+    phase, implementationDeviceId, reviewDeviceId,
+    reviewRuntimeType: raw.reviewRuntimeType === "pi" ? "pi" : "claude",
+    codeSession: reviewAddress(raw.codeSession),
+    rounds: list(raw.rounds, reviewRound),
+    attention: attention && code ? { code, message: text(attention.message) ?? "", target: reviewAddress(attention.target), noticeId: text(attention.noticeId) } : null,
+  }
 }
 
 export function parseAuthority(value: unknown, fallback: Readonly<CollabAuthority> = DEFAULT_AUTHORITY): CollabAuthority {
@@ -337,12 +409,13 @@ export function parseCollabView(value: unknown, sessionId: string): CollabView {
     grant: parseGrant(raw?.grant),
     supervisions: list(raw?.supervisions, parseSupervisionDetail),
     actions: list(raw?.actions, parseAction),
+    ...(raw?.review != null ? { review: parseCollabReview(raw.review) } : {}),
   }
 }
 
 /** The collaboration panel shows when the device offers collaboration or the session already has supervision edges. */
 export function collabPanelVisible(collab: CollabView | null, edges: SessionCollabEdges): boolean {
-  return Boolean(collab?.available) || (collab?.supervisions.length ?? 0) > 0 || edges.supervised.length > 0
+  return Boolean(collab?.available || collab?.review) || (collab?.supervisions.length ?? 0) > 0 || edges.supervised.length > 0
 }
 
 export type SupervisedRow = {

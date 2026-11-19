@@ -24,6 +24,9 @@ const SESSION_ROUTES: ReadonlySet<string> = new Set([
 /** Whether an Agent caller may call `method` on `segments` (the path under `/api/v2`, split). */
 export function agentRouteAllowed(method: string, segments: readonly string[]): boolean {
   const [area, id, ...rest] = segments
+  if (area === 'connectors' && id !== undefined && rest.length === 2 && rest[0] === 'a2a') {
+    return method === 'GET' && rest[1] === 'agent-card.json' || method === 'POST' && rest[1] === 'review'
+  }
   if (area === 'sessions' && id === 'create-and-start' && rest.length === 0) return method === 'POST'
   // Releasing a session's Agent session (`aa_close`).
   if (area === 'runtime-workflows' && id === 'sessions' && rest.length === 2 && rest[1] === 'close') return method === 'POST'

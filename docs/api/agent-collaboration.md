@@ -89,4 +89,10 @@ Agent 调用 `create-and-start` 时，新会话的 `origin` 为 `{"kind": "agent
 
 ## 调度信号
 
-被监督会话的 `status`、`headSeq`、`resetSeq`、`latestTurnEndSeq`、`planState`、`goalState` 有变化，或它所在的设备上线、离线时，Server 向每台监督方设备发一条 `collab.signal`，每条关系一个 `CollabTargetSignal`。信号可丢失：不重试、不记回执，监督方设备离线就错过；它不在摘要入库的路径上等待。
+被监督会话的 `status`、`headSeq`、`resetSeq`、`latestTurnEndSeq`、`planState`、`goalState` 有变化，或它所在的设备上线、离线时，Server 向每台监督方设备发一条 `collab.signal`，每条关系一个 `CollabTargetSignal`。信号可丢失：不重试、不记回执；它不在摘要入库的路径上等待。监督方设备重新上线后和每隔 30 秒，通过现有会话详情接口对照远端状态和已保存的监督状态，补获错过的回合结束或待审批事项。普通和加密模式沿用各自的访问路径。
+
+## 实现并审查
+
+任务和每次交接保存在监督方设备的 Connector。领域模型校验候选、轮次、审查结论和检查证据。应用层通过现有会话网关派活、读交付和返修，Git 只在持有所选仓库的设备执行。
+
+主会话的时间线以固定的 `runId` 更新一个 `system` 项，`content.kind` 为 `collab_review`。`GET /api/v2/sessions/{id}/collab` 也可以返回同一结构的可选 `review` 字段。视图含当前阶段、工作设备、子会话引用、按轮次保存的 SHA、改动预览、审查结果、检查记录和待处理审批。客户端用任务阶段显示进度，用审批引用定位原会话里的请求。

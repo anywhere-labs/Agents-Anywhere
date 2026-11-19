@@ -59,6 +59,10 @@ export const AGENT_TOOL_ERRORS = {
     {
       "code": "agent_tools_unavailable",
       "message": "The Connector is not running or does not serve the collaboration tools."
+    },
+    {
+      "code": "review_commit_unavailable",
+      "message": "The selected review device cannot resolve the candidate Git commit."
     }
   ],
   "passthrough": [

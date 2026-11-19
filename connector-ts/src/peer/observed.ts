@@ -70,6 +70,18 @@ export function observedItem(raw: unknown): ObservedItem | null {
   }
   if (type === 'tool') {
     const files = filesOf(content)
+    const input = record(content.input)
+    const output = record(content.output)
+    const command = text(input.command) ?? text(input.cmd) ?? text(content.command)
+    const exit = output.exitCode ?? output.exit_code ?? content.exitCode
+    const blocks = Array.isArray(content.content) ? content.content : []
+    const resultText = [content.output, output.output, output.stdout, content.terminalOutput, content.text, ...blocks.map(block => {
+      const value = record(block)
+      return value.text ?? record(value.content).text
+    })].filter(value => typeof value === 'string').join('\n')
+    const marker = /(?:^|\n)AA_CHECK_EXIT:(-?\d+)(?=\s|$)/u.exec(resultText)
+    const sha = /(?:^|\n)AA_CHECK_SHA:([a-f0-9]{40}|[a-f0-9]{64})(?=\s|$)/u.exec(resultText)?.[1] ?? null
+    const exitCode = typeof exit === 'number' && Number.isInteger(exit) ? exit : marker === null ? null : Number(marker[1])
     return {
       id,
       seq,
@@ -77,11 +89,27 @@ export function observedItem(raw: unknown): ObservedItem | null {
       title: text(content.title) ?? text(content.command) ?? 'tool',
       ...(status !== undefined ? { status } : {}),
       ...(files.length > 0 ? { files } : {}),
+      ...(command !== null && exitCode !== null && Number.isSafeInteger(exitCode) ? { execution: { command: shellCommand(command), exitCode, sha } } : {}),
     }
   }
   if (type === 'plan') return { id, seq, kind: 'plan', title: text(content.title) ?? 'Plan', ...(status !== undefined ? { status } : {}) }
   if (type === 'system') return { id, seq, kind: 'system', text: text(content.text) ?? text(content.question) ?? '', ...(status !== undefined ? { status } : {}) }
   return null
+}
+
+/** Codex records the Runner's argv as a shell-quoted display string. Decode just its -c argument. */
+function shellCommand(display: string): string {
+  const argument = /^(?:[^\s]+\/)?(?:bash|dash|sh|zsh)\s+-(?:l?c|cl)\s+(.+)$/su.exec(display)?.[1]
+  if (argument === undefined) return display
+  let decoded = ''
+  let offset = 0
+  const segment = /'([^']*)'|"((?:\\.|[^"\\])*)"|\\(.)|([^\s'"\\]+)/gsu
+  for (const match of argument.matchAll(segment)) {
+    if (match.index !== offset) return display
+    decoded += match[1] ?? match[2]?.replace(/\\(["\\$`])/gu, '$1') ?? match[3] ?? match[4]
+    offset += match[0].length
+  }
+  return offset === argument.length ? decoded : display
 }
 
 function filesOf(content: Json): { path: string; added?: number; removed?: number }[] {

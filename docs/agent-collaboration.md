@@ -25,6 +25,28 @@
 
 ## 3. 谁能当监督者
 
+### 跨设备实现并审查
+
+在项目的主会话里说「让本机 Codex 实现，在另一台设备上用 Claude Code 审查同一个提交。有阻塞项就返修，需要我决定时叫我，最后给我改动、审查结论和实际检查」。如果有多个可用 Runtime 或项目，指明设备和审查项目目录。两台设备都需要已有的 Git 检出。跨设备使用两边配置的同一 Git 远程（默认 `origin`）；首次发布临时审查引用时，由 Codex 使用用户授予的 Git 权限。
+
+审查设备需要注册目标项目并安装支持协作工具的 Claude Code 或 Pi。每轮审查通过 A2A 1.0 创建一个任务，审查助手在固定 SHA 的独立目录中以只读权限运行。使用工具启动时，设置 `reviewRuntimeType: "pi"` 可选用 Pi。发现阻塞项后，原 Codex 会话收到返修任务。新提交会触发下一轮审查，最多自动返修两次。
+
+Web 和 Desktop 的主会话显示实现设备、审查设备、当前轮次、完整候选 SHA 和审批入口。「协作」面板可以查看各轮改动、审查结论、实际检查和原会话。审查结论通过且该 SHA 的实际检查全部成功后，主会话才显示已交付。
+
+已确认的审查失败会保留在主会话中。模型服务超时时可以点「继续」重试同一提交。
+
+如果审查设备还取不到候选提交，发布临时引用后在主会话点「继续」，恢复同一个任务。发起设备重连后会查询审查进度，补齐离线期间的交接。启用端到端加密时，两个设备需要完成 Agent 配对。Server 和两台 Connector 都需要支持 A2A 审查。升级前先结束旧版本中进行中的审查。
+
+开发者可以查看 [A2A 审查契约](../contracts/review-a2a/1.0/README.md)，其中包含 Agent Card、任务输入、产物和授权规则。
+
+在 `connector-ts` 目录运行独立的 A2A 验收脚本，可以验证 SDK 互操作、任务去重、审批恢复、产物和交付规则。
+
+```sh
+node --experimental-transform-types --import ./test/support/ts-resolve.mjs scripts/verify-a2a-review.ts
+```
+
+### 可用 Runtime
+
 只有能注入 MCP 工具的 Runtime 能当监督者（AC11），所有 Runtime 都可以当目标。按实测结果（§12）声明：
 
 | Runtime | 能当监督者 | 免确认方式 |
@@ -51,6 +73,7 @@
 | `aa_plan_review` | 批准或打回计划 | `reviewPlan` |
 | `aa_supervise` / `aa_unsupervise` | 建立 / 结束监督 | 只能监督自己创建的会话 |
 | `aa_escalate` | 把问题交给人 | — |
+| `aa_review` | 启动、推进或查询当前会话的实现审查任务 | `steer`（启动和推进），派生会话仍受原有范围和上限约束 |
 | `aa_close` | 释放自己创建的会话 | `close` |
 
 每个改变状态的调用都是一条操作记录，记录 id 同时作为下游的命令 id，所以重试不会重复执行；结果不确定时返回 `command_outcome_unknown`，不会自动重发。错误码见 `contracts/agent-tools/1.0/errors.json`。

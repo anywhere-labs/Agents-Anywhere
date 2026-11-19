@@ -1,5 +1,6 @@
 import { CollabError } from '../../domain/collab/index.js'
 import type { SupervisionService } from './supervision-service.js'
+import type { ReviewService } from './review-service.js'
 
 /**
  * The people's side of collaboration on the supervisor's device (`GET /sessions/{id}/collab`, `POST
@@ -10,10 +11,15 @@ export class CollabPeopleApi {
     private readonly supervisions: SupervisionService,
     /** Whether the session's Agent gets the collaboration tools (settings on, its Runtime can host them). */
     private readonly available: (sessionId: string) => Promise<boolean>,
+    private readonly review?: ReviewService,
   ) {}
 
   public async view(sessionId: string): Promise<Record<string, unknown>> {
-    return this.supervisions.view(sessionId, await this.available(sessionId).catch(() => false))
+    const [supervision, review] = await Promise.all([
+      this.available(sessionId).catch(() => false).then(available => this.supervisions.view(sessionId, available)),
+      this.review?.read(sessionId),
+    ])
+    return { ...supervision, ...(review != null ? { review } : {}) }
   }
 
   public async supervise(caller: { readonly clientId: string; readonly agent?: unknown }, supervisorSessionId: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {

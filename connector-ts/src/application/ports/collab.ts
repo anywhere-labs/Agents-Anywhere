@@ -3,6 +3,13 @@
 // read about this device's own sessions.
 
 import type { Authority, ObservedItem, PermissionLevel, SessionAddress, TargetSignal } from '../../domain/collab/index.js'
+import type { ReviewRun } from '../../domain/collab/review.js'
+
+export interface ReviewRunRepository {
+  get(supervisorSessionId: string): Promise<ReviewRun | null>
+  unfinishedDispatches(): Promise<{ sessionId: string; run: ReviewRun; pendingTimeline?: boolean }[]>
+  save(supervisorSessionId: string, run: ReviewRun, pendingTimeline?: boolean): Promise<void>
+}
 
 /** The supervisor session a collaboration request acts for; `supervisionId`: the request is a supervision wake. */
 export interface AgentActorRef {
@@ -102,6 +109,7 @@ export interface ToolServerSpec {
   readonly env: Readonly<Record<string, string>>
   /** The Runtime should run its tools without asking a person: the collaboration grant already decides. */
   readonly autoApprove: boolean
+  readonly purpose?: 'code-review'
 }
 
 /** What to inject when a session's Agent session opens (new, load, resume). */

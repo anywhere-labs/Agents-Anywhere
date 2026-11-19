@@ -913,6 +913,40 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": true,
+    "commandId": null,
+    "decorate": [],
+    "e2ee": "channel",
+    "forward": null,
+    "id": "connector.a2a.card",
+    "kind": "read",
+    "method": "GET",
+    "offline": false,
+    "owner": "device",
+    "path": "/api/v2/connectors/{connector_id}/a2a/agent-card.json",
+    "sealedUpload": false,
+    "timeout": "read",
+    "via": "call",
+    "writesCommandId": false
+  },
+  {
+    "agent": true,
+    "commandId": null,
+    "decorate": [],
+    "e2ee": "channel",
+    "forward": null,
+    "id": "connector.a2a.review",
+    "kind": "critical",
+    "method": "POST",
+    "offline": false,
+    "owner": "device",
+    "path": "/api/v2/connectors/{connector_id}/a2a/review",
+    "sealedUpload": false,
+    "timeout": "long",
+    "via": "call",
+    "writesCommandId": false
+  },
+  {
     "agent": false,
     "commandId": null,
     "decorate": [],
@@ -1655,6 +1689,11 @@ export const ROUTE_FAMILIES = [
     "bare": false,
     "id": "session",
     "prefix": "/api/v2/sessions/{session_id}"
+  },
+  {
+    "bare": true,
+    "id": "connector.a2a",
+    "prefix": "/api/v2/connectors/{connector_id}/a2a"
   },
   {
     "bare": true,

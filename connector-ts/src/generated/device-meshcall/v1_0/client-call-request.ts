@@ -55,6 +55,8 @@ export type Route =
   | "session.terminals.close"
   | "session.terminals.rename"
   | "session.terminals.resize"
+  | "connector.a2a.card"
+  | "connector.a2a.review"
   | "connector.fs.list"
   | "connector.fs.readText"
   | "connector.fs.write"

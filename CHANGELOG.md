@@ -29,6 +29,7 @@
 ### 会话创建与消息交付
 
 - 连接 v3 Connector 的设备上，开启「Agent 协作」后，Claude、Codex、Pi 和 DSH 会话里的 Agent 可以新建、驱动和监督同一账号的其他会话（也可以在其他设备上）：仅指定运行实例也可以派活并建立监督，派出的会话结束、失败、等待审批或提交计划时，监督它的会话会自动收到一段进展摘要；默认只能发消息和关闭自己创建的会话，打断、代答审批和批准计划要单独允许，且不超过监督会话自己的权限模式；端到端加密模式下同样可用。（[#786](https://github.com/anywhere-labs/Agents-Anywhere/pull/786)）
+- 修复跨设备审查时重启 Connector 导致 Pi 审查会话重复显示，以及在已有 Codex 会话切换「请求审批」时出错的问题。（[#786](https://github.com/anywhere-labs/Agents-Anywhere/pull/786)）
 - 修复 Pi 会话刷新或重连后重复显示旧回复的问题，已出现的重复回复会在读取会话时清理。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 修复 Web、Desktop、Android 和 iOS 无法完成加密配对的问题，并恢复加密会话的实时消息更新。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - Web 和 Desktop 新建会话时会选用设备允许访问的默认工作目录，主目录受限时可从允许的工作目录加载 Agent 配置。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
@@ -90,6 +91,8 @@
 - 准备 Pi 时会复用本机 Node 22.19 及以上版本（包括 Node 24），不再强制下载；需要下载时，官方源连不上会自动改用 npmmirror，Python 安装源选了镜像的设备会优先使用 npmmirror；Windows 上多个进程同时准备不再报 `Resource deadlock avoided`，而是排队等待；数据目录通过 Junction 挂到其他盘时，不再误报「Node 安装包路径无效」；Node 下载失败时会提示检查网络。（[#657](https://github.com/anywhere-labs/Agents-Anywhere/pull/657)）
 
 ### Web 与 Desktop 界面
+
+- 在 Web 和 Desktop 主会话发一次需求，即可让一台设备上的 Codex 实现、另一台设备上的 Claude Code 或 Pi 独立审查，处理审批，断线重连后继续跟进返修，并回查最终提交的改动、审查结论和实际检查；设备断开后，主会话仍保留已确认的审查失败原因，例如模型服务超时。（[#786](https://github.com/anywhere-labs/Agents-Anywhere/pull/786)）
 
 - Web 和 Desktop 新增「设置 → Agent 协作」和会话页的「协作」面板：可以按 Runtime 实例开启协作、选择 Agent 可以代你做的事，查看和暂停、结束监督，或让一个会话监督另一个会话；Agent 创建或被监督的会话带标记，Agent 发出的消息、监督通知和「需要你决定」的问题在时间线上单独显示；加密模式下可以在「安全连接」里允许一台设备上的 Agent 访问另一台设备。（[#786](https://github.com/anywhere-labs/Agents-Anywhere/pull/786)）
 - Claude 退出规划模式时，会话里只显示计划审阅面板，不再同时弹出一张列着原生选项的审批卡片；审批卡片的选项较长时会换行显示，标题不再被挤成竖排。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）

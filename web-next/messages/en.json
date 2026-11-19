@@ -1246,7 +1246,8 @@
         "aa_supervise": "Start supervising",
         "aa_unsupervise": "Stop supervising",
         "aa_escalate": "Ask a person",
-        "aa_close": "Close session"
+        "aa_close": "Close session",
+        "aa_review": "Implementation and review"
       }
     },
     "sessionStatus": {
@@ -2774,6 +2775,56 @@
     }
   },
   "collab": {
+    "review": {
+      "title": "Implementation and review",
+      "implementation": "Codex · {device}",
+      "reviewer": "{runtime} · {device}",
+      "phase": {
+        "starting": "Preparing",
+        "implementing": "Implementing",
+        "preparing_review": "Preparing candidate",
+        "reviewing": "Reviewing",
+        "review_failed": "Review failed",
+        "returning": "Requesting changes",
+        "delivered": "Delivered",
+        "blocked": "Needs your decision"
+      },
+      "attention": {
+        "default": "Collaboration paused",
+        "waiting_approval": "Needs your decision",
+        "device_offline": "Waiting for device",
+        "connector_offline": "Waiting for device",
+        "review_commit_unavailable": "Waiting for the review device to obtain the commit",
+        "agent_peer_not_trusted": "Authorize Agent access between the devices",
+        "review_a2a_upgrade_required": "Update the Server and review device to continue",
+        "review_a2a_legacy_run": "This review started before the update",
+        "review_a2a_unavailable": "Waiting for the review service",
+        "review_model_timeout": "The model service timed out. Retry the review.",
+        "review_result_missing": "The reviewer ended without submitting a verdict",
+        "review_runtime_failed": "The reviewer could not finish the review",
+        "review_read_only_unavailable": "The reviewer could not enter read-only mode",
+        "review_checkout_changed": "The review checkout no longer matches the candidate",
+        "review_canceled": "The review was canceled",
+        "review_retry_limit": "Needs your decision"
+      },
+      "openSource": "Open source session",
+      "openImplementation": "Open implementation",
+      "openReview": "Open review",
+      "round": "Round {number} · {sha}",
+      "changes": "View changes",
+      "verdict": "View review",
+      "checks": "View checks",
+      "approved": "Review passed",
+      "changesRequested": "Blocking findings",
+      "partialDiff": "Preview is truncated. See the implementation session for the full changes.",
+      "checksIncomplete": "Check records are incomplete",
+      "checkPassed": "Passed",
+      "checkFailed": "Exit code {code}",
+      "resume": "Resume collaboration",
+      "resumeMessage": "Continue the current implementation and review from its saved stage.",
+      "resumeFailed": "Could not resume collaboration",
+      "approvalFailed": "Could not respond to the approval request"
+    },
     "createdBy": "Created by {title}",
     "supervisedBy": "Supervised by {title}",
     "supervisedByState": "Supervised by {title} ({state})",

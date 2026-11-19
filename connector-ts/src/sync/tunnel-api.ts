@@ -18,6 +18,8 @@ import type { CollabClientApi } from '../application/inbound/collab-api.js'
 import type { ChannelCaller, TunnelApi, TunnelApiRequest, TunnelApiResponse, TunnelCallContext, TunnelSubscription } from '../application/inbound/tunnel-api.js'
 import type { Clock, ConversationStore } from '../application/ports/index.js'
 import { eventCursor, type Session } from '../domain/conversation/index.js'
+import { collaborationCheckout, isReviewRuntime, type CollaborationCheckout } from '../domain/collab/review.js'
+import { claudePermissionSelectionId } from '../domain/identity/index.js'
 import type { AttachmentRef } from '../generated/device-meshcall/v1_0/client-call-request.js'
 import type { CommandAck } from '../generated/device-meshcall/v1_0/command-ack.js'
 import type { CommandCall } from '../generated/device-meshcall/v1_0/command-call.js'
@@ -83,6 +85,7 @@ interface Call {
   readonly transfer: TransferFacts | null
   readonly preview: PreviewFacts | null
   readonly onCommand: TunnelCallContext['onCommand'] | null
+  readonly reviewCheckoutPath: string | null
 }
 
 function nonEmpty(value: unknown): string | null {
@@ -108,6 +111,7 @@ export function callOf(context: TunnelCallContext | undefined): Call {
     transfer: transferId !== null && token !== null && uploadPath !== null ? { transferId, token, path: uploadPath, ...(nonEmpty(transfer.downloadUrl) !== null ? { downloadUrl: transfer.downloadUrl as string } : {}) } : null,
     preview: previewRoot !== null && previewPath !== null ? { root: previewRoot, path: previewPath } : null,
     onCommand: context?.onCommand ?? null,
+    reviewCheckoutPath: context?.reviewCheckoutPath ?? null,
   }
 }
 
@@ -139,6 +143,8 @@ export interface DeviceTunnelApiDeps {
   readonly blobs?: SessionBlobReader
   /** Agent collaboration routes (`sessions/{id}/collab*`); absent: they are 404. */
   readonly collab?: CollabClientApi
+  readonly a2aReview?: (caller: ChannelCaller, method: string, body: unknown) => Promise<TunnelApiResponse>
+  readonly prepareCollaborationCheckout?: (cwd: string, owner: string, input: CollaborationCheckout) => Promise<string>
 }
 
 const READ_ONLY = 'session is read-only until takeover is enabled'
@@ -286,6 +292,9 @@ export class DeviceTunnelApi implements TunnelApi {
       if (area === 'runtime-workflows' && id === 'sessions' && route.segments.length === 4) return await this.agentSession(caller, call, route.segments[2] as string, route)
       if (area === 'connectors' && id !== undefined) {
         if (id !== this.deps.deviceId) throw notFound(`connector ${id} is not this device`)
+        if (route.segments[2] === 'a2a' && route.segments.length === 4 && agentRouteAllowed(route.method, route.segments) && this.deps.a2aReview !== undefined) {
+          return await this.deps.a2aReview(caller, route.method, route.rawBody)
+        }
         return await this.files.device(route, call.transfer, call.preview)
       }
       throw notFound(`${request.method} ${route.segments.join('/')} is not served by this device`)
@@ -844,11 +853,26 @@ export class DeviceTunnelApi implements TunnelApi {
       throw new TunnelHttpError(409, 'e2ee_attachments_unsupported', 'The first message of an end-to-end encrypted session cannot carry attachments yet.')
     }
     const runtimeType = text(body.runtime) ?? 'codex'
-    const cwd = text(body.cwd)
+    let cwd = text(body.cwd)
     if (cwd === null) throw invalid('cwd is required')
     const clientMessageId = call.command?.commandId ?? text(body.clientMessageId) ?? this.newId('create_')
     const previous = await this.deps.store.commands.get(clientMessageId)
     const sessionId = call.sessionId ?? (typeof previous?.sessionId === 'string' ? previous.sessionId : `sess_${randomBytes(16).toString('hex')}`)
+    let selections = record(body.selections)
+    if (body.collaborationCheckout != null) {
+      if (caller.agent == null || this.deps.prepareCollaborationCheckout === undefined) {
+        throw new TunnelHttpError(403, 'agent_route_denied', 'This collaboration checkout is not available.')
+      }
+      const checkout = collaborationCheckout(body.collaborationCheckout)
+      if ((checkout.role === 'implement' ? runtimeType !== 'codex' : !isReviewRuntime(runtimeType)) || body.planningIntent != null || body.goalIntent != null) {
+        throw invalid('The collaboration checkout requires its designated Runtime and a normal first message.')
+      }
+      if (checkout.role === 'review' && call.reviewCheckoutPath === null) {
+        throw new TunnelHttpError(403, 'agent_route_denied', 'Start a code review through the A2A review skill.')
+      }
+      cwd = call.reviewCheckoutPath ?? await this.deps.prepareCollaborationCheckout(cwd, `${caller.agent.deviceId}/${caller.agent.sessionId}`, checkout)
+      if (checkout.role === 'review') selections = { permission: runtimeType === 'pi' ? 'readonly' : claudePermissionSelectionId('plan') }
+    }
     const payload = {
       sessionId,
       runtimeId: text(body.runtimeId) ?? runtimeType,
@@ -856,7 +880,7 @@ export class DeviceTunnelApi implements TunnelApi {
       cwd,
       ...(text(body.projectId) !== null ? { projectId: body.projectId } : {}),
       ...(text(body.title) !== null ? { title: body.title } : {}),
-      ...(Object.keys(record(body.selections)).length > 0 ? { selections: record(body.selections) } : {}),
+      ...(Object.keys(selections).length > 0 ? { selections } : {}),
       clientMessageId,
       content: typeof body.content === 'string' ? body.content : '',
       ...(attachments.length > 0 ? { attachments } : {}),

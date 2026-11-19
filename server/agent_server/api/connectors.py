@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse
+from json import JSONDecodeError
+from typing import Annotated
 
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse, Response
+
+from agent_server.api.client_forward import forward_connector, raw_body
 from agent_server.api.connector_common import require_owned_connector
 from agent_server.api.device_link import get_device_link_service
 from agent_server.core.device_settings import (
@@ -52,6 +56,36 @@ from agent_server.services.device_link import DeviceLinkService
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 
 router = APIRouter(prefix="/connectors", tags=["connectors"])
+
+
+@router.get("/{connector_id}/a2a/agent-card.json")
+@router.post("/{connector_id}/a2a/review")
+async def a2a_review(
+    request: Request,
+    connector_id: str,
+    user_id: Annotated[str, Depends(current_user_id)],
+) -> Response:
+    principal = agent_principal(request)
+    if principal is None:
+        raise HTTPException(403, detail={"code": "agent_scope_denied", "message": "A review delegation is required."})
+    version = request.headers.get("a2a-version", "1.0")
+    card = request.method == "GET"
+    if not card and version != "1.0":
+        return JSONResponse({
+            "jsonrpc": "2.0", "id": None,
+            "error": {"code": -32009, "message": "The requested A2A version is not supported."},
+        })
+    try:
+        payload = None if card else await raw_body(request)
+    except JSONDecodeError:
+        return JSONResponse({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}})
+    return await forward_connector(
+        request,
+        "connector.a2a.card" if card else "connector.a2a.review",
+        user_id=user_id,
+        connector_id=connector_id,
+        body={"payload": payload, "delegation": request.headers["authorization"].split(None, 1)[1]},
+    )
 
 
 @router.get("", response_model=ConnectorListResponse)

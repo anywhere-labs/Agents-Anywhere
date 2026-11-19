@@ -14,6 +14,7 @@ export type CollabErrorCode =
   | 'agent_peer_not_trusted'
   | 'agent_wake_budget_exceeded'
   | 'agent_target_unknown'
+  | 'review_commit_unavailable'
   | 'invalid_argument'
 
 export class CollabError extends Error {
