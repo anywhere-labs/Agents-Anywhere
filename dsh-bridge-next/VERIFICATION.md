@@ -1,5 +1,35 @@
 # DSH Bridge Next 验证记录
 
+## DSH 0.2.2-rc.5 测试基线（2026-11-18）
+
+`@deepseek-ai/dsh-*` 开发依赖从 `0.2.2-rc.4` 升到 `0.2.2-rc.5`。rc.4 到 rc.5 各包的 `package.json` 只改了版本号：Cordis 4.1.0、Schemastery 3.19.0 不变，不需要新增开发依赖，peer 范围不变。只升依赖、不改其他文件，检查全部通过，测试和插件 `src/**` 都无需改动。
+
+本机 Node 22.23.3（CI 为 22.23.2）上 `corepack yarn check`（check:deps、typecheck、build、check:build、test）exit 0，251 项全部通过，没有跳过，包括需要 PostgreSQL 的探针；Node 24.14.0 上 `corepack yarn test` 同样 251 项全部通过。在全新临时 `DSH_HOME` 中，用官方 `@deepseek-ai/dsh@0.2.2-rc.5` 执行 `dsh plugin --profile aa-025-smoke add "link:$PWD"` 成功，`--dump-config` 包含 `agents-anywhere-bridge-next` 配置行，`web` 行只剩 `fetchProvider: http`（即 rc.5 的新默认）；除 pnpm 对 `link:` 依赖的通用 peer 提示外没有报错。
+
+rc.4 到 rc.5 只有 3 个提交，核对过、无需改动：
+
+- 网页搜索不再固定使用 DeepSeek Search API（DSH 仓库 `docs/upgrade-guide/v0.2.2-rc.4/web-search-deepseek-model-default/`）：基础组合去掉了 `web.searchProvider`，由 `dsh-web` 按模型路由选择。使用 DeepSeek 模型的会话改用旧版 Messages 搜索，每次搜索向会话日志追加一条 `web/deepseek-search-llm-request` 事件。这个事件类型从会话格式的初始基线起就有，插件的历史投影不为它生成时间线条目；同步队列按字节计入它，超过上限时与其他事件一样折叠为一次重新校准。插件不引用任何网页搜索相关的包。
+- 实验性 liveshare 的一个测试改用真实时钟，不影响运行时。
+
+上一节记下的三项 master 变化（Client 模块改由 renderer 安装样式、Cordis 4.0.0-rc.12、Connection 默认 Token 登录迁入 Provider 插件）都还没有进入 rc.5。
+
+未做：DSH Desktop、Windows、手机端实机验收。
+
+## DSH 0.2.2-rc.4 测试基线（2026-11-18）
+
+`@deepseek-ai/dsh-*` 开发依赖从 `0.2.2-rc.3` 升到 `0.2.2-rc.4`。rc.3 到 rc.4 各包的 `package.json` 只改了版本号：Cordis 4.1.0、Schemastery 3.19.0 不变，不需要新增开发依赖，peer 范围不变。只升依赖、不改其他文件，检查全部通过，测试和插件 `src/**` 都无需改动。
+
+本机 Node 22.23.3（CI 为 22.23.2）上 `corepack yarn check`（check:deps、typecheck、build、check:build、test）exit 0，251 项全部通过，没有跳过，包括需要 PostgreSQL 的探针；Node 24.14.0 上 `corepack yarn test` 同样 251 项全部通过。Node 24 第一次全量运行时，`local-ownership` 的「CLI ownership blocks both RPC launchers」失败了一次：并发负载下 Python CLI Connector 没在约 6 秒内打印 `backend-ready`。这项测试只启动 Python Connector，不涉及 DSH 的包；单独重跑 5 次、全量重跑 1 次都通过。在全新临时 `DSH_HOME` 中，用官方 `@deepseek-ai/dsh@0.2.2-rc.4` 执行 `dsh plugin --profile aa-024-smoke add "link:$PWD"` 成功，`--dump-config` 包含 `agents-anywhere-bridge-next` 配置行；除 pnpm 对 `link:` 依赖的通用 peer 提示外没有报错。
+
+rc.3 到 rc.4 只有 6 个提交，核对过、无需改动：
+
+- DeepSeek 以内容安全拒答（`stop_reason: "refusal"`）结束回复时，错误码从 `MALFORMED_RESPONSE` 改为新增的 `CONTENT_REFUSED`（DSH 仓库 `docs/upgrade-guide/v0.2.2-rc.3/deepseek-refusal-code/`），已经流式输出的回复只记在 `assistant/attempt` 里。用 rc.4 自带的拒答会话快照（`snapshots/session/deepseek-content-refusal/`）回放插件的历史投影：流式期间的草稿在 `assistant/attempt` 到达时删除，重新读取历史也不包含它；回合结束后 AA 收到「DSH 本轮执行失败」卡片，内容是 DSH 的英文原文。DSH 的可继续判断不包含 `CONTENT_REFUSED`，卡片上没有「继续」。
+- 实验性 liveshare 的隧道进程改在 Host 的 Electron Node 模式下启动，插件不使用 liveshare。
+
+上一节记下的两项 master 变化（Client 模块改由 renderer 安装样式、Cordis 4.0.0-rc.12），以及 Connection 默认 Token 登录迁入 Provider 插件，都还没有进入 rc.4。
+
+未做：DSH Desktop、Windows、手机端实机验收。
+
 ## DSH 0.2.2-rc.3 测试基线（2026-11-13）
 
 `@deepseek-ai/dsh-*` 开发依赖从 `0.2.2-rc.1` 升到 `0.2.2-rc.3`。rc.3 自带的 Cordis 4.1.0（`cordis-plugin-group`、`cordis-plugin-include`、`cordis-plugin-loader` 1.1.0）和 Schemastery 3.19.0 与 rc.1 相同，peer 范围不变。新增开发依赖 `@deepseek-ai/dsh-error`：rc.3 把 `HarnessError` 拆到这个包，`dsh-llm`、`dsh-attachment`、`dsh-sandbox` 只把它列为 peer 依赖。

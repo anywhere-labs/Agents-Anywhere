@@ -1,0 +1,133 @@
+{
+ "account": {
+  "name": "t4wefan",
+  "email": "t4wefan@example.com"
+ },
+ "devices": [
+  {
+   "id": "dev-mbp",
+   "name": "t4wefan 的 MacBook Pro",
+   "presence": "online",
+   "platform": "macos"
+  },
+  {
+   "id": "dev-box",
+   "name": "devbox-sh",
+   "presence": "online",
+   "platform": "linux"
+  },
+  {
+   "id": "dev-win",
+   "name": "office-win",
+   "presence": "offline",
+   "platform": "windows"
+  }
+ ],
+ "projects": [
+  {
+   "device_id": "dev-mbp",
+   "cwd": "~/code/github/Agents-Anywhere",
+   "name": "Agents-Anywhere"
+  },
+  {
+   "device_id": "dev-mbp",
+   "cwd": "~/code/local/effi-evo",
+   "name": "effi-evo"
+  },
+  {
+   "device_id": "dev-box",
+   "cwd": "/srv/AA-landingpage",
+   "name": "AA-landingpage"
+  }
+ ],
+ "sessions": [
+  {
+   "id": "s-unread",
+   "title": "修复已读后又变回未读",
+   "agent": "codex",
+   "device_id": "dev-mbp",
+   "cwd": "~/code/github/Agents-Anywhere",
+   "state": "running",
+   "unread": false,
+   "pinned": true,
+   "updated_at": "2026-11-17T09:30:00Z"
+  },
+  {
+   "id": "s-release",
+   "title": "2.1.0 发布说明定稿",
+   "agent": "claude",
+   "device_id": "dev-mbp",
+   "cwd": "~/code/github/Agents-Anywhere",
+   "state": "idle",
+   "unread": false,
+   "pinned": true,
+   "updated_at": "2026-11-16T15:12:00Z"
+  },
+  {
+   "id": "s-meshcall",
+   "title": "MeshCall 0.4 升级评估",
+   "agent": "claude",
+   "device_id": "dev-mbp",
+   "cwd": "~/code/local/effi-evo",
+   "state": "waiting",
+   "unread": true,
+   "pinned": false,
+   "updated_at": "2026-11-17T08:58:00Z"
+  },
+  {
+   "id": "s-ios-glass",
+   "title": "iOS 液态玻璃输入框动画",
+   "agent": "codex",
+   "device_id": "dev-mbp",
+   "cwd": "~/code/github/Agents-Anywhere",
+   "state": "idle",
+   "unread": true,
+   "pinned": false,
+   "updated_at": "2026-11-17T07:41:00Z"
+  },
+  {
+   "id": "s-sponsors",
+   "title": "落地页赞助商栏位",
+   "agent": "dsh",
+   "device_id": "dev-box",
+   "cwd": "/srv/AA-landingpage",
+   "state": "idle",
+   "unread": false,
+   "pinned": false,
+   "updated_at": "2026-11-16T11:03:00Z"
+  },
+  {
+   "id": "s-usage",
+   "title": "用量报表 SQL 下推",
+   "agent": "codex",
+   "device_id": "dev-box",
+   "cwd": "/srv/AA-landingpage",
+   "state": "error",
+   "unread": false,
+   "pinned": false,
+   "updated_at": "2026-11-15T20:44:00Z"
+  },
+  {
+   "id": "s-cloud",
+   "title": "Effi Cloud 设备页改版",
+   "agent": "claude",
+   "device_id": "dev-mbp",
+   "cwd": "~/code/local/effi-evo",
+   "state": "idle",
+   "unread": false,
+   "pinned": false,
+   "updated_at": "2026-11-14T10:20:00Z"
+  },
+  {
+   "id": "s-misc",
+   "title": "解释一下 Alembic 迁移编号",
+   "agent": "claude",
+   "device_id": "dev-win",
+   "cwd": "C:\\work\\scratch",
+   "state": "idle",
+   "unread": false,
+   "pinned": false,
+   "updated_at": "2026-11-12T09:00:00Z"
+  }
+ ]
+}

@@ -25,7 +25,7 @@ from ...domain.sessions import SessionBinding
 from ...runtime import AcpRuntime
 from .history import discover_history_files, read_history, timeline
 
-PROJECTION_REVISION = 2
+PROJECTION_REVISION = 3
 
 
 class NativePiRuntime(AcpRuntime):

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- No Material: a bare platform theme; Compose draws everything. The window background matches the page. -->
+    <style name="Theme.AAv3PoC" parent="android:Theme.DeviceDefault.Light.NoActionBar">
+        <item name="android:windowBackground">@android:color/white</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+    <!-- Window-level blur evaluation (WindowGlassSpike): DecorView only applies setBackgroundBlurRadius to a window whose
+         THEME says windowIsTranslucent; a translucent pixel format alone is not enough. -->
+    <style name="Theme.AAv3PoC.GlassWindow" parent="android:Theme.DeviceDefault.Light.Dialog.NoActionBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowIsFloating">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:backgroundDimEnabled">false</item>
+    </style>
+</resources>

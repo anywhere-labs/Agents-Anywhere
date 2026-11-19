@@ -1,0 +1,11 @@
+@import "tailwindcss";
+@import "@fontsource-variable/geist";
+@import "./theme.css";
+
+@source not "../renderer";
+
+html,
+body,
+#root {
+  height: 100%;
+}
