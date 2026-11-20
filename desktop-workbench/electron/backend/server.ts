@@ -116,6 +116,7 @@ export class BackendServer {
       if (path === "/config") return this.state.saveConfig(body as never);
       if (path === "/settings") return this.state.saveSettings(body as never);
       if (path === "/onboarding/complete") return this.state.completeOnboarding(body);
+      if (path === "/client-pairing") return this.state.startClientPairing();
       if (path === "/start") return this.state.startConnector();
       if (path === "/stop") return this.state.stopConnector();
       if (path === "/restart") return this.state.restartConnector();

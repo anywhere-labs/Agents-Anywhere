@@ -8,6 +8,7 @@ import { Copy, ShieldCheck, ShieldOff, Trash2 } from "lucide-react"
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 
+import { MobilePairingCode } from "@/components/e2ee/mobile-pairing-code"
 import { useDeviceName } from "@/components/e2ee/secure-pairing-dialog"
 import { SettingsSection } from "@/components/settings/settings-section"
 import {
@@ -66,10 +67,13 @@ export function SecureConnectionsTab() {
         title={t("title")}
         description={view.policy.required || serverRequires ? t("statusRequired") : t("statusOptional")}
         action={
-          <Button onClick={() => requestSecurePairing()}>
-            <ShieldCheck data-icon="inline-start" aria-hidden />
-            {t("pairDevice")}
-          </Button>
+          <>
+            <MobilePairingCode />
+            <Button variant="outline" onClick={() => requestSecurePairing()}>
+              <ShieldCheck data-icon="inline-start" aria-hidden />
+              {t("pairDevice")}
+            </Button>
+          </>
         }
       >
         <div className="flex flex-col gap-1 text-sm">

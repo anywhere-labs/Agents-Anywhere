@@ -27,6 +27,7 @@ export type LocalOwnershipState = {
   recovery?: LocalOwnershipRecovery
   external?: LocalExternalConnector
 }
+import type { ClientPairingResult } from "../../../../shared/client-pairing"
 import type { DesktopUpdateState } from "../../../../shared/desktop-updates"
 export type { DesktopUpdateState } from "../../../../shared/desktop-updates"
 
@@ -230,6 +231,7 @@ export type DesktopWorkbenchBridge = {
     updateLocalBindingName: (input: { name: string }) => Promise<DesktopLocalBinding>
   }
   connector?: {
+    startClientPairing: () => Promise<ClientPairingResult>
     getState: () => Promise<DesktopConnectorState>
     getConfig: () => Promise<DesktopConnectorConfig | null>
     saveConfig: (config: DesktopConnectorConfigPatch) => Promise<DesktopConnectorState>

@@ -2,11 +2,9 @@
  * Bundles the v3 TS Connector (`../connector-ts`) into `dist/connector/`, which
  * Desktop forks as an Electron utility process (v3 design 04-connector.md §9.4).
  *
- * Two entries: `desktop-main.js` (`connector-entry/desktop-main.mts`, connector-ts's
- * desktop-host with the features Desktop bundles binaries for) and
- * `worker-entry.js` (the store's worker thread, loaded next to it through
- * `new URL("./worker-entry.js", import.meta.url)`). The output is ESM, so the
- * directory carries its own `package.json` with `"type": "module"`.
+ * `desktop-main.js` runs the Desktop host and `worker-entry.js` runs its store worker.
+ * The backend loads `client-pairing.js` separately to request an invitation from the local owner.
+ * The output is ESM, so the directory carries its own `package.json` with `"type": "module"`.
  *
  * It needs `connector-ts` dependencies installed (`cd ../connector-ts && yarn install`).
  */
@@ -45,6 +43,7 @@ await esbuild.build({
   entryPoints: {
     // Desktop's own entry: connector-ts's desktop-host plus the port preview wiring.
     "desktop-main": join(PROJECT_ROOT, "connector-entry", "desktop-main.mts"),
+    "client-pairing": join(PROJECT_ROOT, "connector-entry", "client-pairing.mts"),
     "worker-entry": join(CONNECTOR_ROOT, "src", "store", "worker-entry.ts"),
   },
   outdir: OUTPUT_DIR,

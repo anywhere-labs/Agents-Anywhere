@@ -325,6 +325,13 @@ not create a duplicate device. Tokens remain private. See the
 Sidebar devices use fixed Chinese pinyin/name ordering and an ID tie-breaker,
 so polling, presence changes and same-name devices do not reorder the list.
 
+## Pair a phone for end-to-end encryption
+
+On the work computer, open **Settings → Secure connections → Show pairing QR code**.
+In the Android or iOS app, open that computer’s device details and choose **End-to-end encryption → Pair**.
+Scan the code, compare the device fingerprint on both screens, and confirm on the phone.
+The running local Connector issues the code. It can be used once and expires after ten minutes.
+
 ## Desktop onboarding
 
 Desktop owns its onboarding at `#/onboarding`: four pages (认识 Agent → 配置设备
