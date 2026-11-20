@@ -15,6 +15,8 @@ import androidx.compose.ui.unit.dp
 import dev.agentsanywhere.v3poc.App
 import dev.agentsanywhere.v3poc.R
 import dev.agentsanywhere.v3poc.model.AccountRequestFailed
+import dev.agentsanywhere.v3poc.model.DeviceGrantUnavailable
+import dev.agentsanywhere.v3poc.model.PairingInvitation
 import dev.agentsanywhere.v3poc.model.DeviceIdentityMismatch
 import dev.agentsanywhere.v3poc.model.InvalidServer
 import dev.agentsanywhere.v3poc.model.PairingTargetMismatch
@@ -129,6 +131,19 @@ internal fun ConnectionScreen(app: App) {
                 } else {
                     val device = checkNotNull(selected)
                     Text(device.name)
+                    PairingScanner(enabled = !busy, onScan = { link ->
+                        try {
+                            val invite = PairingInvitation.parse(link)
+                            if (invite.deviceId == device.id) {
+                                invitation = link
+                                error = null
+                            } else {
+                                error = R.string.connection_wrong_device
+                            }
+                        } catch (_: DeviceGrantUnavailable) {
+                            error = R.string.connection_invalid_qr
+                        }
+                    }, onError = { error = it })
                     OutlinedTextField(invitation, { invitation = it }, Modifier.fillMaxWidth(),
                         label = { Text(stringResource(R.string.connection_invite)) }, singleLine = true, enabled = !busy)
                     Button(onClick = { scope.launch {

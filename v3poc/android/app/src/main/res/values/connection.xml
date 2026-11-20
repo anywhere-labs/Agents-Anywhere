@@ -7,6 +7,10 @@
     <string name="connection_devices">Devices</string>
     <string name="connection_pair">Pair device</string>
     <string name="connection_invite">Pairing link from your Connector</string>
+    <string name="connection_scan">Scan pairing QR code</string>
+    <string name="connection_camera_permission">Allow camera access to scan, or paste the pairing link.</string>
+    <string name="connection_camera_unavailable">Camera unavailable. Paste the pairing link or try again.</string>
+    <string name="connection_invalid_qr">This QR code does not contain a pairing link.</string>
     <string name="connection_open">Open workspace</string>
     <string name="connection_no_devices">No devices found.</string>
     <string name="connection_refresh">Refresh</string>

@@ -11,6 +11,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -23,10 +24,12 @@ import dev.agentsanywhere.v3poc.design.AATheme
 import dev.agentsanywhere.v3poc.design.GlassMode
 import dev.agentsanywhere.v3poc.design.LocalGlassMode
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /** The shell: drawer (sidebar + page), sheets and menus over it, appearance sent to the renderer. */
 @Composable
 fun Root(app: App, ui: UiState) {
+    val scope = rememberCoroutineScope()
     val controller = app.controller
     val dark = isSystemInDarkTheme()
     val configuration = LocalConfiguration.current
@@ -83,7 +86,13 @@ fun Root(app: App, ui: UiState) {
                     SidebarDrawer(
                         open = ui.drawerOpen,
                         onOpenChange = { ui.drawerOpen = it; if (it) ui.focusRequest = false },
-                        sidebar = { Sidebar(controller, ui) { id -> controller.select(id); ui.drawerOpen = false } },
+                        sidebar = {
+                            Sidebar(controller, ui, onPairDevice = {
+                                ui.drawerOpen = false
+                                app.resumeWorkspace = false
+                                scope.launch { app.closeWorkspace(signOut = false) }
+                            }) { id -> controller.select(id); ui.drawerOpen = false }
+                        },
                         content = { ConversationPage(controller, ui) { ui.focusRequest = false; ui.drawerOpen = !ui.drawerOpen } },
                     )
                 }

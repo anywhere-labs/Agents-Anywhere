@@ -43,6 +43,8 @@ import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.stringResource
+import dev.agentsanywhere.v3poc.R
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import dev.agentsanywhere.v3poc.design.AA
@@ -72,7 +74,7 @@ import dev.agentsanywhere.v3poc.model.Workspace
 
 /** The iOS PoC's `SidebarView`: devices, pair, pinned, projects (by working folder) with their sessions, new session, account. */
 @Composable
-fun Sidebar(controller: SessionController, ui: UiState, onOpenSession: (String) -> Unit) {
+fun Sidebar(controller: SessionController, ui: UiState, onPairDevice: () -> Unit, onOpenSession: (String) -> Unit) {
     val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     var showsSessionList by rememberSaveable { mutableStateOf(false) }
@@ -97,12 +99,12 @@ fun Sidebar(controller: SessionController, ui: UiState, onOpenSession: (String) 
                 for (device in controller.devices) DeviceRow(device, ui, controller)
                 Row(
                     Modifier.fillMaxWidth().defaultMinSize(minHeight = AAMetrics.sidebarPairRowMinHeight)
-                        .pressable { ui.demoSheet = "配对设备" to "演示环境：在电脑上运行 Connector，扫描这里的二维码即可配对。" }
+                        .pressable { onPairDevice() }
                         .padding(horizontal = AAMetrics.sidebarRowPaddingHorizontal),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     AASymbol("plus")
-                    AAText("配对设备", weight = 600)
+                    AAText(stringResource(R.string.connection_pair), weight = 600)
                 }
                 val pinned = sessions.filter { it.pinned }
                 if (pinned.isNotEmpty()) {

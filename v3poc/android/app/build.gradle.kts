@@ -60,6 +60,11 @@ tasks.named("preBuild") { dependsOn(copyPocAssets) }
 
 dependencies {
     implementation("io.github.t4wefan:meshcall:0.3.0")
+    val cameraX = "1.4.1"
+    implementation("androidx.camera:camera-camera2:$cameraX")
+    implementation("androidx.camera:camera-view:$cameraX")
+    implementation("androidx.camera:camera-mlkit-vision:$cameraX")
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")
     implementation("org.bouncycastle:bcprov-jdk18on:1.87")
     val composeBom = platform("androidx.compose:compose-bom:2026.09.00")
     implementation(composeBom)

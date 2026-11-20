@@ -7,6 +7,10 @@
     <string name="connection_devices">设备</string>
     <string name="connection_pair">配对设备</string>
     <string name="connection_invite">从 Connector 获取的配对链接</string>
+    <string name="connection_scan">扫描配对二维码</string>
+    <string name="connection_camera_permission">请允许使用摄像头扫码，或粘贴配对链接。</string>
+    <string name="connection_camera_unavailable">摄像头暂时不可用，请粘贴配对链接或重试。</string>
+    <string name="connection_invalid_qr">这个二维码不包含有效的配对链接。</string>
     <string name="connection_open">打开工作区</string>
     <string name="connection_no_devices">未找到设备。</string>
     <string name="connection_refresh">刷新</string>

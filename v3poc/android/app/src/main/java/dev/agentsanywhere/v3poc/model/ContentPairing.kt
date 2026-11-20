@@ -98,7 +98,7 @@ internal class PairingTargetMismatch : IllegalArgumentException()
 internal class PairedContent(val transport: DeviceContentTransport, val authorization: ContentAuthorization)
 
 @Serializable
-private class PairingInvitation(
+internal class PairingInvitation(
     val v: Int,
     val deviceId: String,
     val deviceIdentityPub: String,
