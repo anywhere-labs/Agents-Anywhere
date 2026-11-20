@@ -2891,6 +2891,7 @@
       "copyFailed": "复制配对链接失败。",
       "loading": "正在生成配对二维码…",
       "expired": "此二维码已过期。",
+      "refresh": "刷新二维码",
       "retry": "重新生成",
       "close": "关闭",
       "connector_not_running": "请先启动这台电脑上的 Connector。",
