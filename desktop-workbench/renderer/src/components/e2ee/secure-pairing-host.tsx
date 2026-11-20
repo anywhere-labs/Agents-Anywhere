@@ -6,6 +6,7 @@
 //   have yet (`e2ee_not_paired`, or the Server's `e2ee_required` before any pairing).
 
 import * as React from "react"
+import type { StoredSession } from "@/features/auth/types"
 
 import { SecurePairingDialog } from "@/components/e2ee/secure-pairing-dialog"
 import { knownSessionDevice, onSecurePairingRequested } from "@/lib/e2ee/state"
@@ -13,7 +14,7 @@ import { onContentTransportRequired } from "@/lib/transport/content-transport"
 
 const PROMPT_CODES = new Set(["e2ee_not_paired", "e2ee_required"])
 
-export function SecurePairingHost() {
+export function SecurePairingHost({ session }: { session?: StoredSession | null }) {
   const [open, setOpen] = React.useState(false)
   const [device, setDevice] = React.useState<string | null>(null)
   const prompted = React.useRef(new Set<string>())
@@ -38,5 +39,5 @@ export function SecurePairingHost() {
     }
   }, [])
 
-  return <SecurePairingDialog open={open} onOpenChange={setOpen} deviceHint={device} />
+  return <SecurePairingDialog open={open} onOpenChange={setOpen} deviceHint={device} session={session} />
 }

@@ -327,7 +327,7 @@ so polling, presence changes and same-name devices do not reorder the list.
 
 ## Pair a phone for end-to-end encryption
 
-Open **Phone connection → Connect phone** in Desktop. With encryption required, the existing sign-in QR shows a shield and a countdown. Scan it with the Android v3 PoC and confirm the requesting phone on the computer. Desktop and Android show completion after the local Connector grants access. On the phone, choose **Open workspace** to select or create a session. Click an expired QR to generate a new one.
+Open **Phone connection → Connect phone** in Desktop. With encryption required, the existing sign-in QR shows a shield and a countdown. You can also open **Settings → Secure connections → Pair device → Connect phone** to display the same type of QR directly. Scan it with the Android v3 PoC, or choose **Copy pairing details** and paste them in the app. Confirm the requesting phone on the computer. Desktop and Android show completion after the local Connector grants access. On the phone, choose **Open workspace** to select or create a session. Click an expired QR to generate a new one.
 
 Manage access in **Settings → Secure connections**. For a standalone device invitation, run `anywhere-cli pair-client` on the work computer.
 

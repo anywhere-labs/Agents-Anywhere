@@ -16,6 +16,8 @@ import { useLocale, useTranslations } from "next-intl"
 import { getDesktopServerConnection } from "@/features/desktop/server-connection"
 import { getDesktopWorkbenchBridge } from "@/features/desktop/bridge"
 import QRCode from "qrcode"
+import { toast } from "sonner"
+import { copyText } from "@/lib/clipboard"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -115,7 +117,8 @@ export function MobileConnectionDialog({ token, userId, children, open: controll
   </Dialog>
 }
 
-export function MobileConnectionContent({ token, userId, onComplete, onCancel, onBusyChange, onStepChange }: {
+export function MobileConnectionContent({ token, userId, onComplete, onCancel, onBusyChange, onStepChange, directScan = false }: {
+  directScan?: boolean
   token: string
   userId: string
   onComplete: () => void
@@ -125,10 +128,11 @@ export function MobileConnectionContent({ token, userId, onComplete, onCancel, o
 }) {
   const t = useTranslations("dashboard.mobileConnections")
   const tCommon = useTranslations("common")
-  const [stage, setStage] = React.useState<Stage>("install")
+  const [stage, setStage] = React.useState<Stage>(directScan ? "generating" : "install")
   const [error, setError] = React.useState<string | null>(null)
   const [qrLogin, setQrLogin] = React.useState<MobileLoginQrCreateResponse | null>(null)
   const [qrStatus, setQrStatus] = React.useState<MobileLoginStatusResponse | null>(null)
+  const [qrPayload, setQrPayload] = React.useState("")
   const [qrImage, setQrImage] = React.useState<string | null>(null)
   const [invitation, setInvitation] = React.useState<{ id: string; expiresAt: number } | null>(null)
   const pairingId = invitation?.id
@@ -143,6 +147,7 @@ export function MobileConnectionContent({ token, userId, onComplete, onCancel, o
     setError(null)
     setQrLogin(null)
     setQrStatus(null)
+    setQrPayload("")
     setQrImage(null)
     setInvitation(null)
     setPaired(false)
@@ -151,11 +156,12 @@ export function MobileConnectionContent({ token, userId, onComplete, onCancel, o
 
   const reset = React.useCallback(() => {
     clearQr()
-    setStage("install")
-  }, [clearQr])
+    setStage(directScan ? "generating" : "install")
+  }, [clearQr, directScan])
 
   React.useEffect(() => {
     generation.current++
+    operationPending.current = false
     reset()
     return () => { generation.current++ }
   }, [reset, token, userId])
@@ -192,7 +198,8 @@ export function MobileConnectionContent({ token, userId, onComplete, onCancel, o
       if (encrypted && !qr.pairingKey) throw new Error(t("connectorRequired"))
       const sealed = invite?.ok && qr.pairingKey ? await sealInvitation(invite.uri, qr.pairingKey, qr.loginToken) : undefined
       if (current !== generation.current) return
-      const image = await QRCode.toDataURL(JSON.stringify(mobileLoginQrPayload(qr, sealed)), {
+      const payload = JSON.stringify(mobileLoginQrPayload(qr, sealed))
+      const image = await QRCode.toDataURL(payload, {
         errorCorrectionLevel: "M",
         margin: 4,
         scale: 5,
@@ -202,6 +209,7 @@ export function MobileConnectionContent({ token, userId, onComplete, onCancel, o
       setNow(Date.now())
       setInvitation(invite?.ok ? { id: invite.pairingId, expiresAt: Date.parse(invite.expiresAt) } : null)
       setQrLogin(qr)
+      setQrPayload(payload)
       setQrImage(image)
       setStage("scan")
     } catch (err) {
@@ -209,9 +217,16 @@ export function MobileConnectionContent({ token, userId, onComplete, onCancel, o
       setError(err instanceof Error ? err.message : t("generateFailed"))
       setStage("scan")
     } finally {
-      operationPending.current = false
+      if (current === generation.current) operationPending.current = false
     }
   }, [clearQr, connector, t, token])
+
+  const startScan = React.useEffectEvent(generateQr)
+  React.useEffect(() => {
+    if (!directScan) return
+    const timer = setTimeout(() => void startScan(), 0)
+    return () => clearTimeout(timer)
+  }, [directScan, token, userId])
 
   const confirmQrLogin = React.useCallback(async (approved: boolean) => {
     if (!qrLogin || operationPending.current) return
@@ -231,7 +246,7 @@ export function MobileConnectionContent({ token, userId, onComplete, onCancel, o
       setError(err instanceof Error ? err.message : t("confirmFailed"))
       setStage("scan")
     } finally {
-      operationPending.current = false
+      if (current === generation.current) operationPending.current = false
     }
   }, [qrLogin, t, token])
 
@@ -304,6 +319,10 @@ export function MobileConnectionContent({ token, userId, onComplete, onCancel, o
     setStage("install")
   }
 
+  const backButton = <Button type="button" variant="outline" onClick={directScan ? handleExit : returnToInstall}>
+    {tCommon(directScan ? "close" : "back")}
+  </Button>
+
   // One heading, one description and one action row per state, mirroring the
   // onboarding slides instead of stacking boxed alerts inside the dialog.
   let title = t("scanTitle")
@@ -369,7 +388,7 @@ export function MobileConnectionContent({ token, userId, onComplete, onCancel, o
       tone={status === "rejected" ? "destructive" : "default"}
     />
     actions = <>
-      <Button type="button" variant="outline" onClick={returnToInstall}>{tCommon("back")}</Button>
+      {backButton}
       {!(status === "expired" && qrImage) && <Button type="button" onClick={() => void generateQr()}>
         <RefreshCw data-icon="inline-start" />
         {t("generateNew")}
@@ -379,13 +398,18 @@ export function MobileConnectionContent({ token, userId, onComplete, onCancel, o
     const remaining = Math.max(0, Math.ceil((Date.parse(qrLogin.expiresAt) - now) / 1000))
     body = <><QrPanel image={qrImage} expiresAt={qrLogin.expiresAt} />
       <p role="timer" className="text-center text-sm tabular-nums">{t("remaining", { time: `${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, "0")}` })}</p></>
-    actions = <Button type="button" variant="outline" onClick={returnToInstall}>{tCommon("back")}</Button>
+    actions = <>
+      <Button type="button" variant="outline" onClick={() => {
+        void copyText(qrPayload).then(() => toast.success(t("pairingCodeCopied")), () => toast.error(t("pairingCodeCopyFailed")))
+      }}>{t("copyPairingCode")}</Button>
+      {backButton}
+    </>
   }
 
   return (
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-3">
-        <StepIndicator current={currentStep} total={TOTAL_STEPS} label={t("stepProgress", { current: currentStep, total: TOTAL_STEPS })} />
+        {!directScan && <StepIndicator current={currentStep} total={TOTAL_STEPS} label={t("stepProgress", { current: currentStep, total: TOTAL_STEPS })} />}
         <div className="flex flex-col gap-2">
           {pairingId && <span className="inline-flex items-center gap-1 text-sm"><ShieldCheck size={16} />{t("encrypted")}</span>}
           <h2 className="text-balance text-2xl font-medium leading-tight tracking-[-0.025em]">{title}</h2>

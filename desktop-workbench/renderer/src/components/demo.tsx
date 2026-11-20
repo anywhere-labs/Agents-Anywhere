@@ -56,9 +56,10 @@ const DESKTOP_SIDEBAR_MIN_WIDTH = 224
 const SIDEBAR_MOTION_DURATION_MS = 220
 
 export function Demo() {
+  const { session } = useAuth()
   return (
     <WorkspaceProvider>
-      <SecurePairingHost />
+      <SecurePairingHost session={session} />
       <DevicePairingProvider>
         <DesktopConnectorProvider>
           <DesktopSessionNotifications />
