@@ -100,7 +100,9 @@ nonisolated final class E2EERoutingHTTPTransport: HTTPTransport, @unchecked Send
     func send<Body: Encodable, Response: Decodable>(_ request: HTTPRequest<Body, Response>) async throws -> Response {
         let target = E2EEContentTarget.classify(method: request.method, path: request.path)
         guard let router = router.withLock({ $0 }) else { return try await plain.send(request) }
-        let body = try request.body.map { try JSONEncoder().encode($0) }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let body = try request.body.map { try encoder.encode($0) }
         if target == .metadata {
             try await refuseEncryptedRename(request.method, path: request.path, body: body, router: router)
             return try await plain.send(request)
@@ -220,7 +222,7 @@ nonisolated final class E2EERoutingHTTPTransport: HTTPTransport, @unchecked Send
         let keys = attachments.compactMap { ($0["fileId"] as? String).flatMap { known[$0] } }
         guard !keys.isEmpty else { return body }
         fields["sealedAttachmentKeys"] = keys.map(\.json)
-        return (try? JSONSerialization.data(withJSONObject: fields, options: [.withoutEscapingSlashes])) ?? body
+        return (try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys, .withoutEscapingSlashes])) ?? body
     }
 
     // MARK: 路由
@@ -273,20 +275,24 @@ nonisolated final class E2EERoutingHTTPTransport: HTTPTransport, @unchecked Send
         throw E2EEError(code: E2EEError.renameUnavailable, message: "renaming is not available in encrypted mode yet")
     }
 
-    /// 写操作：先登记命令（输入摘要按请求体原始字节），再经通道发出；Server 说已经登记过时不再重发。
+    /// 写操作：先登记命令（输入摘要按请求体原始字节），再经通道发出；登记和设备收件箱共用同一个命令 ID。
     private func command<Body: Encodable, Response: Decodable>(
         _ request: HTTPRequest<Body, Response>, path: String, body: Data?, channel: any E2EEDeviceChannel, router: Router
     ) async throws -> E2EETunnelResponse {
-        let fields = body.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
-        let commandId = request.headers.first { $0.key.lowercased() == "idempotency-key" }?.value
-            ?? (fields?["clientMessageId"] as? String).map { "msg_\($0)" }
+        let fields = try body.flatMap { try JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        let identity = ["clientMessageId", "operationId", "responseId", "commandId"]
+            .compactMap { fields?[$0] as? String }.first { !$0.isEmpty }
+        let commandId = identity ?? request.headers.first { $0.key.lowercased() == "idempotency-key" }?.value
             ?? "cmd_\(UUID().uuidString.lowercased())"
-        guard let response = try await router.service.sendCommand(
-            deviceId: channel.deviceId, commandId: commandId, method: request.method, path: path, body: body, timeout: channelTimeout
-        ) else {
-            throw E2EEError(code: E2EEError.commandDuplicate, message: "command \(commandId) was already registered")
+        var commandBody = body
+        if identity == nil {
+            var envelope = fields ?? [:]
+            envelope["commandId"] = commandId
+            commandBody = try JSONSerialization.data(withJSONObject: envelope, options: [.sortedKeys, .withoutEscapingSlashes])
         }
-        return response
+        return try await router.service.sendCommand(
+            deviceId: channel.deviceId, commandId: commandId, method: request.method, path: path, body: commandBody, timeout: channelTimeout
+        )
     }
 }
 

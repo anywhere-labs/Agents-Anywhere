@@ -33,7 +33,7 @@ export class AuthApi {
 
   async config(): Promise<AuthConfig> {
     const config = await this.client.get<AuthConfig>("/auth/config", { auth: false });
-    declareServerE2ee(config.e2ee?.mode);
+    declareServerE2ee(config.e2ee?.mode ?? "off");
     return config;
   }
 

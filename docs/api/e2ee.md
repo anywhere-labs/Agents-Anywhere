@@ -49,7 +49,7 @@ WebSocket 在握手完成前以 `1008`（`e2ee_required`）关闭。拒绝发生
 
 ## 命令登记
 
-命令（发消息、审批、计划、目标、设置等）在安全通道里，Server 读不到。客户端在发送前另发一条明文登记，Server 据此保证同一 `commandId` 只执行一次，并记录结果状态：
+命令（发消息、审批、计划、目标、设置等）在安全通道里，Server 读不到。客户端在发送前另发一条明文登记，设备收件箱按同一 `commandId` 去重执行，Server 保存设备报告的结果状态：
 
 ```http
 POST /api/v3/e2ee/commands
@@ -61,7 +61,7 @@ POST /api/v3/e2ee/commands
 | 情况 | 结果 |
 | --- | --- |
 | 新的 `commandId` | `200`，`duplicate: false`；客户端随后经安全通道发送命令 |
-| 同一 `commandId`、同一设备、同一摘要 | `200`，`duplicate: true`，返回已有的登记与结果；客户端不要重复执行 |
+| 同一 `commandId`、同一设备、同一摘要 | `200`，`duplicate: true`，返回已有登记及设备报告的结果；已拒绝时保留错误码，结果待确认或需要原会话时用同一 ID 经安全通道重试，由设备回放原结果 |
 | 同一 `commandId`，设备或摘要不同（含其他用户用过的 ID） | `409 command_conflict` |
 | 设备不存在或不属于当前用户 | `404 not_found` |
 

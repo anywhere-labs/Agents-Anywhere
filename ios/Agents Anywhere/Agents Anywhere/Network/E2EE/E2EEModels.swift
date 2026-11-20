@@ -212,12 +212,12 @@ nonisolated struct E2EECommandRegistration: Codable, Hashable, Sendable {
 nonisolated struct E2EECommandRegistrationResponse: Decodable, Hashable, Sendable {
     let duplicate: Bool
 
-    private enum CodingKeys: String, CodingKey { case duplicate }
+    let outcome: String?
+    let errorCode: String?
 
-    init(duplicate: Bool) { self.duplicate = duplicate }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        duplicate = (try? container.decodeIfPresent(Bool.self, forKey: .duplicate)) ?? false
+    init(duplicate: Bool, outcome: String? = nil, errorCode: String? = nil) {
+        self.duplicate = duplicate
+        self.outcome = outcome
+        self.errorCode = errorCode
     }
 }

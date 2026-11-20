@@ -317,9 +317,8 @@ export class DashboardApi {
   }
 
   /**
-   * Same request through the device's channel. When its outcome is unknown (no answer in time, or a repeated
-   * command), the Server's session list says whether the device created it: a single new session of the same
-   * device and project is offered to the user to check (never bound automatically, never resent).
+   * If the device does not confirm creation in time, offer a single new directory entry
+   * for the same device and project so the user can check the result.
    */
   private async createAndStartThroughChannel(
     token: string,

@@ -28,7 +28,9 @@
 
 ### 会话创建与消息交付
 
-- 移动端 PoC 可登录自托管 Server 并连接已配对设备，在 Android 和 iOS 上新建、继续加密会话，并使用附件、设备文件和终端；并发重试新建会话时会回到同一个会话，思考内容与正文分别显示，流式回复结束后才标记完成。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
+- 重试创建会话时，两种连接模式都沿用原会话；普通连接并发创建只保留一条会话记录，重复请求更换首条消息附件时会提示冲突。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
+- 加密连接恢复后，手机可以用原消息 ID 确认发送结果，设备拒绝的消息会保留错误状态；Web 和 Desktop 在启动时读完本机加密策略后才打开工作区。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
+- 移动端 PoC 可登录自托管 Server 并连接已配对设备，在 Android 和 iOS 上新建、继续加密会话，并使用附件、设备文件和终端；思考内容与正文分别显示，流式回复结束后才标记完成。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 修复 Pi 会话刷新或重连后重复显示旧回复的问题，已出现的重复回复会在读取会话时清理，共用历史目录的 Pi 实例也会保留原会话。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 修复 Web、Desktop、Android 和 iOS 无法完成加密配对的问题，并恢复加密会话的实时消息更新。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - Web 和 Desktop 新建会话时会选用设备允许访问的默认工作目录，主目录受限时可从允许的工作目录加载 Agent 配置。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）

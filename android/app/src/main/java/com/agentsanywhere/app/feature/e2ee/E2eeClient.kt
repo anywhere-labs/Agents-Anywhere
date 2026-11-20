@@ -2,6 +2,7 @@ package com.agentsanywhere.app.feature.e2ee
 
 import android.content.Context
 import com.agentsanywhere.app.api.ApiClient
+import com.agentsanywhere.app.api.ApiException
 import com.agentsanywhere.app.api.AuthApi
 import com.agentsanywhere.app.api.E2eeServerConfig
 import com.agentsanywhere.app.api.apiPath
@@ -29,7 +30,7 @@ import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 
-/** `POST /api/v3/e2ee/commands`；返回 true 表示 Server 说这是重复命令。 */
+/** `POST /api/v3/e2ee/commands`；已拒绝的登记保留设备错误码，其余由设备收件箱返回实际结果。 */
 fun interface CommandRegistrar {
     suspend fun register(commandId: String, deviceId: String, inputDigest: String): Boolean
 }
@@ -224,7 +225,7 @@ class E2eeClient internal constructor(
 
     /**
      * 加密模式下发命令：先 `POST /api/v3/e2ee/commands`（输入摘要用当前列表密钥），
-     * Server 说重复时返回 null、不再发；否则经通道发出 `bodyJson` 原文。
+     * 相同命令经通道查询设备收件箱，设备以实际执行结果回答。
      */
     suspend fun sendCommand(
         deviceId: String,
@@ -233,12 +234,16 @@ class E2eeClient internal constructor(
         path: String,
         bodyJson: String,
         timeoutMillis: Long = requestTimeoutMillis,
-    ): TunnelResponse? = timed(timeoutMillis) {
-        val channel = channel(deviceId)
+    ): TunnelResponse = timed(timeoutMillis) {
         val key = trust.directoryKey(deviceId) ?: throw ChannelClosedException(E2eeErrorCodes.NOT_PAIRED)
         val digest = E2eeFormats.inputDigest(key.keyBytes, bodyJson.toByteArray(Charsets.UTF_8))
-        if (commands.register(commandId, deviceId, digest)) return@timed null
-        channel.request(method, apiPath(path), bodyJson)
+        val duplicate = commands.register(commandId, deviceId, digest)
+        val route = apiPath(path).substringBefore('?')
+        // Session terminals and native app slash commands run outside the command inbox.
+        if (duplicate && (route.endsWith("/runtime/commands") || "/terminals/" in "$route/")) {
+            throw ApiException(message = "command_outcome_unknown", statusCode = 409, errorCode = "command_outcome_unknown")
+        }
+        channel(deviceId).request(method, apiPath(path), bodyJson)
     }
 
     private suspend fun <T> timed(timeoutMillis: Long = requestTimeoutMillis, block: suspend () -> T): T = try {
@@ -302,7 +307,7 @@ class E2eeClient internal constructor(
                 },
                 commands = { commandId, deviceId, digest ->
                     withContext(Dispatchers.IO) {
-                        E2eeApi(apiClient()).registerCommand(session.readServerUrl(), session.readAccessToken(), commandId, deviceId, digest).duplicate
+                        E2eeApi(apiClient()).registerCommand(session.readServerUrl(), session.readAccessToken(), commandId, deviceId, digest)
                     }
                 },
                 loadServerConfig = { withContext(Dispatchers.IO) { AuthApi(apiClient()).authConfig(session.readServerUrl()).e2ee } },

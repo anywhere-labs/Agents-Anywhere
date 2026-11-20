@@ -29,6 +29,7 @@ One table holds the receipts of every origin (docs/v3/14-unified-client-path.md 
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from collections.abc import Callable
@@ -154,6 +155,22 @@ class DeviceCommandService:
             payload=payload,
             origin=origin,
         )
+
+    async def wait_for_creation(self, receipt: dict[str, Any], timeout: float) -> dict[str, Any] | None:
+        """Join the original create while its delivery timeout is still open, including across workers."""
+        deadline = datetime.fromisoformat(receipt["createdAt"]) + timedelta(seconds=timeout)
+        delay = 0.05
+        while receipt["state"] == "pending":
+            remaining = (deadline - datetime.now(UTC)).total_seconds()
+            if remaining <= 0:
+                break
+            await asyncio.sleep(min(delay, remaining))
+            current = await self._store.get_device_command(receipt["userId"], receipt["commandId"])
+            if current is None or current["sessionId"] != receipt["sessionId"]:
+                return None
+            receipt = current
+            delay = min(delay * 2, 1.0)
+        return receipt
 
     async def record_result(
         self,

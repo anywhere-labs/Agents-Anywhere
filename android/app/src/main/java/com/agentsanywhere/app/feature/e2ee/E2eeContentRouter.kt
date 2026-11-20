@@ -212,12 +212,12 @@ class E2eeContentRouter(
         if (route !is Route.Secure) return null
         if ((body.optJSONArray("attachments")?.length() ?: 0) > 0) throw failure(E2eeClientErrorCodes.CREATE_UNSUPPORTED, 409)
         val created = try {
-            sendThroughChannel(deviceId, "POST", request.path, request.bodyText, CREATE_TIMEOUT_MS, duplicateResult = null)
+            sendThroughChannel(deviceId, "POST", request.path, request.bodyText, CREATE_TIMEOUT_MS)
         } catch (error: ApiException) {
             // The device may have created the session before the answer was lost: let the caller reconcile.
             if (error.errorCode == E2eeClientErrorCodes.TIMEOUT) throw unknownCreateOutcome(error)
             throw error
-        } ?: throw unknownCreateOutcome(null)
+        }
         val sessionId = created.optJSONObject("session")?.optString("id").orEmpty()
         if (sessionId.isBlank()) throw ApiException("The device returned an invalid session.", 502)
         SessionDeviceDirectory.remember(sessionId, deviceId)
@@ -244,36 +244,23 @@ class E2eeContentRouter(
         errorCode = E2eeClientErrorCodes.TIMEOUT,
     )
 
-    private fun sendThroughChannel(deviceId: String, method: String, path: String, bodyText: String?): JSONObject =
-        // The Server already has this command: it was sent before, do not send it again.
-        sendThroughChannel(deviceId, method, path, bodyText, null, JSONObject().put("ok", true).put("duplicate", true))!!
-
-    /** [duplicateResult]：Server 说这条命令已经发过时的返回值（不再重发）。 */
     private fun sendThroughChannel(
         deviceId: String,
         method: String,
         path: String,
         bodyText: String?,
-        timeoutMillis: Long?,
-        duplicateResult: JSONObject?,
-    ): JSONObject? = runChannel(deviceId) {
+        timeoutMillis: Long? = null,
+    ): JSONObject = runChannel(deviceId) {
         val body = bodyText?.let { withSealedKeys(it, deviceId) }
         val commandId = commandId(method, body)
-        if (commandId != null) {
-            val response = if (timeoutMillis != null) {
-                client.sendCommand(deviceId, commandId, method, path, body!!, timeoutMillis)
-            } else {
-                client.sendCommand(deviceId, commandId, method, path, body!!)
-            }
-            response?.toJsonObjectOrThrow() ?: duplicateResult
+        val response = if (commandId != null && body != null) {
+            if (timeoutMillis != null) client.sendCommand(deviceId, commandId, method, path, body, timeoutMillis)
+            else client.sendCommand(deviceId, commandId, method, path, body)
         } else {
-            val response = if (timeoutMillis != null) {
-                client.requestRaw(deviceId, method, path, body, timeoutMillis)
-            } else {
-                client.requestRaw(deviceId, method, path, body)
-            }
-            response.toJsonObjectOrThrow()
+            if (timeoutMillis != null) client.requestRaw(deviceId, method, path, body, timeoutMillis)
+            else client.requestRaw(deviceId, method, path, body)
         }
+        response.toJsonObjectOrThrow()
     }
 
     /** 引用了加密附件的请求体：在同一请求体里附上 `sealedAttachmentKeys`（只经通道，不经 Server）。 */
@@ -312,7 +299,9 @@ class E2eeContentRouter(
 
     private fun commandId(method: String, bodyText: String?): String? {
         if (method == "GET" || bodyText.isNullOrBlank()) return null
-        return runCatching { JSONObject(bodyText).optString("clientMessageId") }.getOrNull()?.takeIf { it.isNotBlank() }
+        val body = runCatching { JSONObject(bodyText) }.getOrNull() ?: return null
+        return sequenceOf("clientMessageId", "operationId", "responseId", "commandId")
+            .mapNotNull { body.opt(it) as? String }.firstOrNull { it.isNotBlank() }
     }
 
     private fun isCreateAndStart(path: String): Boolean =

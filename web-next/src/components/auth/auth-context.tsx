@@ -205,6 +205,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     clearOAuthQueryParams()
 
     async function boot() {
+      const policyReady = startE2ee("web")?.ready
       if (initialOAuthError && !cancelled) {
         setError(initialOAuthError)
       }
@@ -234,6 +235,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
         return
       }
+      if (nextScreen === "preview") await policyReady
       if (!stored) {
         if (!cancelled) {
           setScreenState(nextScreen === "app" ? "login" : nextScreen)
@@ -241,6 +243,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
         return
       }
+      await policyReady
+      if (cancelled) return
       setSession(stored)
       try {
         const currentUser = await authApi.me(stored.accessToken)
@@ -278,6 +282,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const finishAuth = React.useCallback(async (auth: Parameters<typeof authResponseToSession>[0]) => {
     const nextSession = authResponseToSession(auth)
+    await startE2ee("web")?.ready
     saveStoredSession(nextSession)
     setSession(nextSession)
     const currentUser = await authApi.me(nextSession.accessToken)
@@ -410,10 +415,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [session?.accessToken])
 
   // End-to-end encryption: the trust layer runs while signed in; this client's identity stays on the device.
-  React.useEffect(() => {
-    if (session?.accessToken) startE2ee("web")
-  }, [session?.accessToken])
-
   const signOutUserRef = React.useRef<string | null>(null)
   signOutUserRef.current = session?.userId ?? null
   const signOut = React.useCallback(() => {

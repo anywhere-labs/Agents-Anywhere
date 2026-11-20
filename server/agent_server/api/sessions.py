@@ -334,7 +334,9 @@ async def _forward_create_and_start(
 
     forwarder = request.app.state.client_forwarder
 
-    async def deliver(session: SessionView, attachments: list[dict[str, Any]], command_id: str) -> Any:
+    async def deliver(
+        session: SessionView, attachments: list[dict[str, Any]], creation: tuple[dict[str, Any], bool],
+    ) -> Any:
         body = payload.model_dump(mode="json", exclude_none=True)
         # Inline attachments are staged on the Server; the device gets their records in ``server``.
         body.pop("attachments", None)
@@ -350,11 +352,12 @@ async def _forward_create_and_start(
             body=body,
             server=facts,
             session_id=session.id,
-            command_id=command_id,
+            command_id=creation[0]["commandId"],
+            creation=creation,
         )
 
     try:
-        created = await run_service.create_and_start_session(payload, user_id=user_id, deliver=deliver)
+        created = await run_service.create_and_start_session(payload, user_id=user_id, forwarder=forwarder, deliver=deliver)
     except SessionRunError as exc:
         _raise_session_run_error(exc)
     except ClientForwardError as exc:

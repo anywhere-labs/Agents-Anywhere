@@ -103,9 +103,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const nextScreen = hashToScreen(window.location.hash)
 
     async function boot() {
+      const policyReady = startE2ee("desktop")?.ready
       try {
         const bridge = getDesktopWorkbenchBridge()?.auth
         if (bridge) setDesktopServerConnection(await bridge.getServer())
+        if (stored || nextScreen === "preview") await Promise.all([authApi.config(), policyReady])
       } catch {
         if (!cancelled) {
           if (nextScreen === "preview") setScreenState("preview")
@@ -170,6 +172,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       role: currentUser.role,
       serverUrl: getDesktopServerConnection()?.serverUrl,
     }
+    await Promise.all([authApi.config(), startE2ee("desktop")?.ready])
     saveStoredSession(nextSession)
     setSession(nextSession)
     setMe(currentUser)
@@ -270,11 +273,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setMe(currentUser)
     return currentUser
   }, [session])
-
-  // End-to-end encryption: the trust layer runs while signed in; this client's identity stays on the computer.
-  React.useEffect(() => {
-    if (session?.accessToken) startE2ee("desktop")
-  }, [session?.accessToken])
 
   const signOutSessionRef = React.useRef<StoredSession | null>(null)
   signOutSessionRef.current = session

@@ -362,9 +362,8 @@ export class SecureChannelPool {
     if (!registration.duplicate) return undefined
     if (registration.outcome === "rejected")
       throw new ApiError({ status: 409, kind: "http", code: registration.errorCode ?? "command_rejected", detail: "The device rejected this command.", ...(creating ? { payload: { detail: NOT_CREATED } } : {}) })
-    // A repeated creation must not create a second session: its result is unknown until the session list says.
-    if (creating) throw creationOutcomeUnknown()
-    if (registration.outcome === null) return undefined
+    // Only the device can return the created session; its inbox replays the same creation id.
+    if (creating || registration.outcome === null) return undefined
     return { accepted: true, duplicate: true, commandId }
   }
 

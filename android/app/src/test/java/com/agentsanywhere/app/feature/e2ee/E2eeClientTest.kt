@@ -96,10 +96,10 @@ class E2eeClientTest {
         val client = client(device)
         client.pair(device.pairingPayload(), label = "Pixel")
         val body = """{"content":"hello","clientMessageId":"m_1"}"""
-        val response = client.sendCommand(device.deviceId, "cmd_1", "POST", "/sessions/s1/messages", body)
-        assertEquals(200, response!!.status)
+        val response = client.sendCommand(device.deviceId, "m_1", "POST", "/sessions/s1/messages", body)
+        assertEquals(200, response.status)
         val (commandId, deviceId, digest) = registered.single()
-        assertEquals("cmd_1", commandId)
+        assertEquals("m_1", commandId)
         assertEquals(device.deviceId, deviceId)
         assertEquals(E2eeFormats.inputDigest(device.directoryKey.keyBytes, body.toByteArray()), digest)
         // The device receives exactly the bytes the digest covers.
@@ -109,8 +109,11 @@ class E2eeClientTest {
 
         duplicate = true
         val before = device.requests.size
-        assertNull(client.sendCommand(device.deviceId, "cmd_1", "POST", "/sessions/s1/messages", body))
-        assertEquals(before, device.requests.size)
+        val replay = client.sendCommand(device.deviceId, "m_1", "POST", "/sessions/s1/messages", body)
+        assertEquals(200, replay.status)
+        assertEquals(before + 1, device.requests.size)
+        assertTrue(jsonSimilar(sent.getJSONObject("body"), device.requests.last().getJSONObject("body")))
+        assertEquals(registered.first(), registered.last())
     }
 
     @Test

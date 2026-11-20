@@ -3,6 +3,7 @@ package com.agentsanywhere.app.feature.e2ee
 import com.agentsanywhere.app.api.ApiClient
 import com.agentsanywhere.app.api.ApiException
 import com.agentsanywhere.app.api.E2eeServerConfig
+import com.agentsanywhere.app.api.e2ee.E2eeApi
 import com.agentsanywhere.app.api.FilesApi
 import com.agentsanywhere.app.api.SessionsApi
 import com.agentsanywhere.app.api.TerminalApi
@@ -21,6 +22,7 @@ import okhttp3.mockwebserver.MockWebServer
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -57,7 +59,7 @@ class E2eeContentRoutingTest {
     private val trust = ClientTrustStore(InMemoryTrustStorage(), Sealer())
     private val registered = mutableListOf<String>()
     private val digests = mutableListOf<String>()
-    private var duplicate = false
+    private var registerOverHttp = false
     private var serverConfig = E2eeServerConfig()
     private val sessionDevices = mutableMapOf("sess_paired" to "dev_paired", "sess_other" to "dev_other")
     private var timeoutMillis = E2eeClient.DEFAULT_REQUEST_TIMEOUT_MS
@@ -66,10 +68,10 @@ class E2eeContentRoutingTest {
         E2eeClient(
             trust = trust,
             provider = LegacyE2eeProvider(trust, device),
-            commands = { commandId, _, digest ->
+            commands = { commandId, deviceId, digest ->
                 registered += commandId
                 digests += digest
-                duplicate
+                registerOverHttp && E2eeApi().registerCommand(serverUrl, "token", commandId, deviceId, digest)
             },
             loadServerConfig = { serverConfig },
             requestTimeoutMillis = timeoutMillis,
@@ -157,21 +159,34 @@ class E2eeContentRoutingTest {
     }
 
     @Test
-    fun messagesAreRegisteredCommandsAndDuplicatesAreNotResent() {
+    fun messagesUseTheDeviceResultForPendingCommandsAndPreserveRejections() {
         pairDevice()
+        registerOverHttp = true
+        server.enqueue(json("""{"duplicate":false}"""))
         val sessions = SessionsApi(apiClient)
-        sessions.sendSessionMessage(serverUrl, "token", "sess_paired", content = "hello", clientMessageId = "m_1")
+        val first = sessions.sendSessionMessage(serverUrl, "token", "sess_paired", content = "hello", clientMessageId = "m_1")
         assertEquals(listOf("m_1"), registered)
         val sent = device.requests.last()
         assertEquals("/api/v2/sessions/sess_paired/runtime/messages", sent.getString("path"))
         assertEquals("hello", sent.getJSONObject("body").getString("content"))
 
-        duplicate = true
+        server.enqueue(json("""{"duplicate":true,"outcome":null}"""))
         val before = device.requests.size
         val response = sessions.sendSessionMessage(serverUrl, "token", "sess_paired", content = "hello", clientMessageId = "m_1")
-        assertTrue(response.ok)
-        assertEquals(before, device.requests.size)
-        assertEquals(0, server.requestCount)
+        // This fixture echoes the request without an RPC acknowledgement.
+        assertFalse(first.ok)
+        assertEquals(first, response)
+        assertEquals(listOf("m_1", "m_1"), registered)
+        assertEquals(digests.first(), digests.last())
+        assertEquals("m_1", device.requests.last().getJSONObject("body").getString("clientMessageId"))
+        assertEquals(before + 1, device.requests.size)
+        server.enqueue(json("""{"duplicate":true,"outcome":"rejected","errorCode":"session_busy"}"""))
+        expectRefused("session_busy") {
+            sessions.sendSessionMessage(serverUrl, "token", "sess_paired", content = "hello", clientMessageId = "m_1")
+        }
+        assertEquals(before + 1, device.requests.size)
+        assertEquals(3, server.requestCount)
+        repeat(3) { assertEquals("/api/v3/e2ee/commands", server.takeRequest().path) }
     }
 
     @Test

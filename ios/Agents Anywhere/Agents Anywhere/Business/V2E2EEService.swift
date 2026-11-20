@@ -113,17 +113,24 @@ actor V2E2EEService {
     }
 
     /// 加密命令：先 `POST /api/v3/e2ee/commands` 登记（输入摘要按请求体原始字节计算），
-    /// 再经通道发出。Server 回 `duplicate: true` 时说明这条命令已经发过，不再重发，返回 nil。
+    /// 再经通道发出。相同命令从设备收件箱读取原结果。
     /// 没有请求体时，摘要按空字节计算，通道里的 `body` 为 null。
     func sendCommand(deviceId: String, commandId: String, method: HTTPMethod, path: String, body: Data?,
-                     timeout: Duration = E2EEChannelHTTPTransport.defaultTimeout) async throws -> E2EETunnelResponse? {
-        let channel = try await channel(for: deviceId)
+                     timeout: Duration = E2EEChannelHTTPTransport.defaultTimeout) async throws -> E2EETunnelResponse {
         guard let key = try trust.device(deviceId)?.directoryKeyBytes else {
             throw E2EEError(code: E2EEError.notPaired, message: "no directory key for \(deviceId)")
         }
         let digest = try E2EEFormats.inputDigest(directoryKey: key, body: body ?? Data())
         let registration = try await api.registerCommand(.init(commandId: commandId, deviceId: deviceId, inputDigest: digest))
-        guard !registration.duplicate else { return nil }
+        if registration.outcome == "rejected" {
+            throw E2EEError(code: registration.errorCode ?? "command_rejected")
+        }
+        let route = v2APIPath(path).split(separator: "?", maxSplits: 1).first.map(String.init) ?? path
+        // Session terminals and native app slash commands run outside the command inbox.
+        if registration.duplicate && (route.hasSuffix("/runtime/commands") || (route + "/").contains("/terminals/")) {
+            throw E2EEError(code: "command_outcome_unknown")
+        }
+        let channel = try await channel(for: deviceId)
         return try await E2EEChannelHTTPTransport(channel: channel, timeout: timeout).perform(method, path: v2APIPath(path), body: body)
     }
 

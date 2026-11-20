@@ -88,7 +88,7 @@ function nonEmpty(value: unknown): string | null {
 }
 
 /** The `Client/call` context as a `Call`; the Server's facts are read defensively (the contract allows more keys). */
-export function callOf(context: TunnelCallContext | undefined): Call {
+export function callOf(context: TunnelCallContext | undefined, clientCommandId: string | null = null): Call {
   const server = record(context?.server)
   const transfer = record(server.transfer)
   const preview = record(server.preview)
@@ -98,7 +98,9 @@ export function callOf(context: TunnelCallContext | undefined): Call {
   const previewRoot = nonEmpty(preview.root)
   const previewPath = nonEmpty(preview.path)
   return {
-    command: context?.command === undefined ? null : { commandId: context.command.commandId, inputDigest: nonEmpty(context.command.inputDigest), deadline: nonEmpty(context.command.deadline) },
+    command: context?.command !== undefined
+      ? { commandId: context.command.commandId, inputDigest: nonEmpty(context.command.inputDigest), deadline: nonEmpty(context.command.deadline) }
+      : clientCommandId === null ? null : { commandId: clientCommandId, inputDigest: null, deadline: null },
     sessionId: nonEmpty(server.sessionId),
     takeover: typeof server.takeover === 'boolean' ? server.takeover : null,
     archived: typeof server.archived === 'boolean' ? server.archived : null,
@@ -264,8 +266,12 @@ export class DeviceTunnelApi implements TunnelApi {
 
   public async request(caller: ChannelCaller, request: TunnelApiRequest, context?: TunnelCallContext): Promise<TunnelApiResponse> {
     try {
-      const call = callOf(context)
       const route = parse(request)
+      // Match the identity registered by the secure client, including writes without a route-specific ID.
+      const commandId = context === undefined
+        ? text(route.body.clientMessageId) ?? text(route.body.operationId) ?? text(route.body.responseId) ?? text(route.body.commandId)
+        : null
+      const call = callOf(context, commandId)
       const [area, id] = route.segments
       if (area === 'sessions' && id === 'create-and-start' && route.segments.length === 2 && route.method === 'POST') return await this.createAndStart(caller, call, route.body)
       if (area === 'sessions' && id !== undefined && route.segments.length >= 3) return await this.session(caller, call, id, route)
@@ -839,7 +845,11 @@ export class DeviceTunnelApi implements TunnelApi {
       throw new TunnelHttpError(statusOf(error.code), error.code, error.message)
     }
     const session = await this.requireSession(text(result.sessionId) ?? sessionId)
-    return { status: 200, body: { session: sessionView(this.deps.deviceId, session, text(body.title)), connectorResult: result, attachments } }
+    const { attachments: originalAttachments, ...connectorResult } = result
+    return { status: 200, body: {
+      session: sessionView(this.deps.deviceId, session, text(body.title)), connectorResult,
+      attachments: Array.isArray(originalAttachments) ? originalAttachments : attachments,
+    } }
   }
 
   private async subscribeSession(clientId: string, sessionId: string, afterCursor: string | null, emit: (event: Record<string, unknown>) => void): Promise<() => void> {

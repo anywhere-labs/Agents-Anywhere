@@ -99,7 +99,10 @@ export class MessageService {
           open,
         },
         commandId: context.commandId,
-        receipt: withResult(context.receipt, { sessionId: command.sessionId, delivery: 'accepted', clientMessageId: command.clientMessageId }),
+        receipt: withResult(context.receipt, {
+          sessionId: command.sessionId, delivery: 'accepted', clientMessageId: command.clientMessageId,
+          ...(command.attachments?.length ? { attachments: command.attachments } : {}),
+        }),
         at,
       })
       if (received.duplicate) return { delivery: 'duplicate', clientMessageId: command.clientMessageId, state: received.delivery.state }

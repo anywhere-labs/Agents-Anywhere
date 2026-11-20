@@ -18,6 +18,7 @@ import { onContentTransportRequired, SEALED_UPLOAD_HEADER, SEALED_UPLOAD_VALUE, 
 import { apiClient } from "@/lib/api"
 
 export interface E2eeRuntime {
+  readonly ready: Promise<void>
   readonly store: ClientTrustStore
   readonly pool: SecureChannelPool
   /** Pair with a device from its QR code text (`aa-pair://…`); `deviceLabel` is the device name to remember. */
@@ -68,7 +69,7 @@ export function e2eeRuntime(): E2eeRuntime | null {
 /** Starts the trust layer once per page; safe to call again. Needs WebCrypto X25519 and a secure context. */
 export function startE2ee(platform: "web" | "desktop"): E2eeRuntime | null {
   if (runtime) return runtime
-  if (typeof window === "undefined" || !globalThis.crypto?.subtle) return null
+  if (typeof window === "undefined") return null
   const store = new ClientTrustStore(typeof indexedDB === "undefined" ? memoryTrustBackend() : indexedDbTrustBackend())
   const pool = new SecureChannelPool({
     store,
@@ -83,11 +84,13 @@ export function startE2ee(platform: "web" | "desktop"): E2eeRuntime | null {
   })
 
   let required = serverE2eeDeclaration() === "required"
+  let policyLoaded = false
   let pinned = new Set<string>()
   const refresh = async () => {
     const [policy, pins] = await Promise.all([store.policy(), store.pins()])
     required = required || policy.required
     pinned = new Set(pins.map((pin) => pin.deviceId))
+    policyLoaded = true
   }
   const tighten = (mode: string) => {
     if (mode !== "required") return
@@ -97,20 +100,22 @@ export function startE2ee(platform: "web" | "desktop"): E2eeRuntime | null {
   if (required) tighten("required")
   const unsubscribers = [
     onServerE2eeDeclared(tighten),
-    store.onChange(() => void refresh()),
+    store.onChange(() => void refresh().catch(() => { policyLoaded = false })),
     onContentTransportRequired(({ code }) => {
       if (code === "e2ee_required") tighten("required")
     }),
   ]
-  void refresh()
+  // If local storage is unavailable, content continues to require a channel.
+  const ready = refresh().catch(() => undefined)
 
-  const requiresChannel = (deviceId: string) => required || pinned.has(deviceId)
+  const policyRequiresChannel = () => !policyLoaded || required || serverE2eeDeclaration() === null
+  const requiresChannel = (deviceId: string) => policyRequiresChannel() || pinned.has(deviceId)
   const restore = setContentTransportResolver(({ sessionId, deviceId, path }) => {
     // Device files, terminals and session creation: the device is known up front.
     if (deviceId !== null) return requiresChannel(deviceId) ? pool.transportForDevice(deviceId) : null
     // Directory entry and scheduling state stay plaintext in E2EE mode (the Server serves them).
     if (isPlaintextMetadataPath(path)) return null
-    if (required) return pool.transportFor(sessionId)
+    if (policyRequiresChannel()) return pool.transportFor(sessionId)
     if (pinned.size === 0) return null
     const sessionDevice = knownSessionDevice(sessionId)
     if (sessionDevice === undefined || pinned.has(sessionDevice)) return pool.transportFor(sessionId)
@@ -118,6 +123,7 @@ export function startE2ee(platform: "web" | "desktop"): E2eeRuntime | null {
   })
 
   runtime = {
+    ready,
     store,
     pool,
     pair: (uri, deviceLabel) => pool.pair(typeof uri === "string" ? parsePairingUri(uri) : uri, deviceLabel),
@@ -125,9 +131,9 @@ export function startE2ee(platform: "web" | "desktop"): E2eeRuntime | null {
     async dispose() {
       restore()
       for (const unsubscribe of unsubscribers) unsubscribe()
-      await pool.closeAll()
       runtime = null
       runtimeChanged()
+      await pool.closeAll()
     },
   }
   runtimeChanged()

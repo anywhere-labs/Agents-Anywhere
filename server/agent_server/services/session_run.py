@@ -24,7 +24,12 @@ from agent_server.core.models import (
     SessionView,
 )
 from agent_server.infra.repositories.projects import _clean_workspace_path
-from agent_server.services.client_forward import ClientAnswer, ClientForwardError
+from agent_server.services.client_forward import (
+    ClientAnswer,
+    ClientForwarder,
+    ClientForwardError,
+    client_input_digest,
+)
 from agent_server.services.device_runtimes import (
     DeviceRuntimeError,
     DeviceRuntimeService,
@@ -39,8 +44,8 @@ from agent_server.services.usage_events import (
 
 #: Route whose receipts a forwarded create-and-start leaves (``core.client_routes``).
 FORWARDED_CREATION_ROUTE = "session.createAndStart"
-#: ``deliver(session, staged attachments, command id)`` of a forwarded create-and-start.
-ForwardedCreation = Callable[[SessionView, list[dict[str, Any]], str], Awaitable[ClientAnswer]]
+#: The reserved command receipt and whether this request owns the allocation.
+ForwardedCreation = Callable[[SessionView, list[dict[str, Any]], tuple[dict[str, Any], bool]], Awaitable[ClientAnswer]]
 
 
 class SessionRunError(RuntimeError):
@@ -157,6 +162,7 @@ class SessionRunService:
         payload: SessionCreateAndStartRequest,
         *,
         user_id: str,
+        forwarder: ClientForwarder,
         deliver: ForwardedCreation,
     ) -> dict[str, Any]:
         """``deliver`` forwards the creation with ``Client/call``; the result is ``{session, attachments, answer}``
@@ -205,7 +211,7 @@ class SessionRunService:
             payload.runtimeId = runtime_id
         async with self._admitted(payload.connectorId, runtime_id, user_id=user_id):
             return await self._create_and_start_forwarded(
-                payload, user_id=user_id, runtime_id=runtime_id, project_id=project_id, deliver=deliver
+                payload, user_id=user_id, runtime_id=runtime_id, project_id=project_id, forwarder=forwarder, deliver=deliver
             )
 
     async def _create_and_start_forwarded(
@@ -215,6 +221,7 @@ class SessionRunService:
         user_id: str,
         runtime_id: str,
         project_id: str | None,
+        forwarder: ClientForwarder,
         deliver: ForwardedCreation,
     ) -> dict[str, Any]:
         """create-and-start through ``Client/call``: the Server keeps the directory row, the staged attachments and
@@ -227,45 +234,68 @@ class SessionRunService:
 
         command_id = payload.clientMessageId or f"create_{uuid4().hex}"
         payload.clientMessageId = command_id
-        previous = await self._store.get_device_command(user_id, command_id)
-        session: SessionView | None = None
-        if previous is not None and previous["kind"] == FORWARDED_CREATION_ROUTE and previous.get("sessionId"):
-            try:
-                session = await self._store.get_session(previous["sessionId"], user_id=user_id)
-            except KeyError:
-                session = None
-        created = session is None
-        attachments: list[dict[str, Any]] = []
-        if session is None:
-            session = await self._store.create_session(
-                connector_id=payload.connectorId,
-                project_id=project_id,
-                user_id=user_id,
-                runtime=payload.runtime,
-                runtime_id=runtime_id,
-                external_session_id=None,
-                title=payload.title,
-                cwd=payload.cwd,
-                selections=_selections_from_mapping(payload.selections),
-                takeover=True,
-            )
-            attachments = [
+        body = payload.model_dump(mode="json", exclude_none=True, exclude={"attachments"})
+        if payload.attachments:
+            # The device receives server-generated file ids. Bind the receipt to the client's content instead.
+            body["attachments"] = [
                 {
-                    "fileId": item.file_id,
+                    "fileId": item.fileId,
                     "name": item.name,
-                    "mediaType": item.media_type,
-                    "size": item.size,
-                    "sha256": item.sha256,
+                    "mediaType": item.mediaType,
+                    "sha256": hashlib.sha256(_decode_inline_attachment(item)).hexdigest(),
                 }
-                for item in await self._persist_inline_attachments(
-                    session_id=session.id, user_id=user_id, attachments=payload.attachments
-                )
+                for item in payload.attachments
             ]
+        reservation = await forwarder.reserve_creation(
+            user_id=user_id, device_id=payload.connectorId, command_id=command_id,
+            digest=client_input_digest(FORWARDED_CREATION_ROUTE, body),
+        )
+        receipt, created = reservation
+        session_id = receipt["sessionId"]
+        attachments: list[dict[str, Any]] = []
+        if created:
+            try:
+                session = await self._store.create_session(
+                    session_id=session_id,
+                    connector_id=payload.connectorId,
+                    project_id=project_id,
+                    user_id=user_id,
+                    runtime=payload.runtime,
+                    runtime_id=runtime_id,
+                    external_session_id=None,
+                    title=payload.title,
+                    cwd=payload.cwd,
+                    selections=_selections_from_mapping(payload.selections),
+                    takeover=True,
+                )
+                attachments = [
+                    {
+                        "fileId": item.file_id,
+                        "name": item.name,
+                        "mediaType": item.media_type,
+                        "size": item.size,
+                        "sha256": item.sha256,
+                    }
+                    for item in await self._persist_inline_attachments(
+                        session_id=session.id, user_id=user_id, attachments=payload.attachments
+                    )
+                ]
+            except BaseException:
+                await self._discard_device_session(session_id)
+                await self._store.delete_device_command(user_id, command_id, only_state="pending")
+                raise
+        else:
+            try:
+                session = await self._store.get_session(session_id, user_id=user_id)
+            except KeyError as exc:
+                raise SessionRunNotFoundError("session no longer exists") from exc
         try:
-            answer = await deliver(session, attachments, command_id)
+            answer = await deliver(session, attachments, reservation)
         except ClientForwardError as exc:
             if created and exc.code in ("connector_offline", "device_busy", "request_too_large"):
                 await self._discard_device_session(session.id)
+                if exc.code == "request_too_large":
+                    await self._store.delete_device_command(user_id, command_id, only_state="pending")
             raise
         refused = not answer.ok and (answer.command is None or answer.command.outcome == "rejected")
         if created and refused:

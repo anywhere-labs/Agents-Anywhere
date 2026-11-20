@@ -6,9 +6,6 @@ import com.agentsanywhere.app.api.apiPath
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** 加密模式下 Server 能看到的唯一一条命令信息：`POST /api/v3/e2ee/commands`。 */
-data class CommandRegistrationResult(val duplicate: Boolean)
-
 class E2eeApi(
     private val client: ApiClient = ApiClient(),
 ) {
@@ -16,21 +13,25 @@ class E2eeApi(
         serverUrl = serverUrl, path = "/api/v3/mobile/control-tunnel", body = JSONObject(), authorizationToken = authorizationToken,
     )
 
-    /** 发命令前登记 `CommandRegistration`；返回 `duplicate: true` 时这条命令已经发过，不要再发。 */
+    /** 发命令前登记 `CommandRegistration`；登记与设备确认的结果分别返回。 */
     fun registerCommand(
         serverUrl: String,
         authorizationToken: String,
         commandId: String,
         deviceId: String,
         inputDigest: String,
-    ): CommandRegistrationResult {
+    ): Boolean {
         val response = client.postJson(
             serverUrl = serverUrl,
             path = "/api/v3/e2ee/commands",
             body = JSONObject().put("commandId", commandId).put("deviceId", deviceId).put("inputDigest", inputDigest),
             authorizationToken = authorizationToken,
         )
-        return CommandRegistrationResult(duplicate = response.optBoolean("duplicate", false))
+        if (response.optString("outcome") == "rejected") {
+            val code = response.opt("errorCode") as? String ?: "command_rejected"
+            throw ApiException(message = code, statusCode = 409, errorCode = code)
+        }
+        return response.getBoolean("duplicate")
     }
 }
 

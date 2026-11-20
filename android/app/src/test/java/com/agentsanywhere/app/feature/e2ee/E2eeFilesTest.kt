@@ -299,18 +299,16 @@ class E2eeFilesTest {
     }
 
     @Test
-    fun aRepeatedCreateLeavesTheOutcomeToBeReconciled() {
+    fun aRepeatedCreateGetsTheSessionFromTheDevice() {
         val body = JSONObject().put("connectorId", "dev_paired").put("content", "again").put("clientMessageId", "m_dup")
-        // The Server says this command was already sent: the device's answer is not known here.
+        val first = apiClient.postJson(serverUrl, "/sessions/create-and-start", body, "token")
         duplicateCommands = true
-        try {
-            apiClient.postJson(serverUrl, "/sessions/create-and-start", body, "token")
-            fail("expected an unknown outcome")
-        } catch (error: ApiException) {
-            // No status code and an IO cause: the caller looks for the session instead of reporting a failure.
-            assertNull(error.statusCode)
-            assertTrue(error.cause is java.io.IOException)
-        }
+        val replay = apiClient.postJson(serverUrl, "/sessions/create-and-start", body, "token")
+        assertEquals("sess_created", first.getJSONObject("session").getString("id"))
+        assertEquals(first.getJSONObject("session").getString("id"), replay.getJSONObject("session").getString("id"))
+        assertEquals(listOf("m_dup", "m_dup"), registered)
+        val creates = device.requests.filter { it.getString("path").endsWith("/create-and-start") }
+        assertEquals(listOf("m_dup", "m_dup"), creates.map { it.getJSONObject("body").getString("clientMessageId") })
         assertTrue(serverRequests.isEmpty())
     }
 

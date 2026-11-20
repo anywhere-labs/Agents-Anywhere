@@ -278,23 +278,24 @@ import Testing
         #expect(!(await service.noteRejection(HTTPError.server(statusCode: 409, message: "", detail: nil), deviceId: nil)))
     }
 
-    @Test func commandsRegisterDigestAndSkipDuplicates() async throws {
+    @Test func commandsRegisterTheSameDigestAndReadTheDeviceResultOnRetry() async throws {
         _ = try await service.pair(device.startPairing())
         let body = Data(#"{"content":"hello","clientMessageId":"m_1"}"#.utf8)
-        let response = try await service.sendCommand(deviceId: device.deviceId, commandId: "cmd_1", method: .post,
+        let response = try await service.sendCommand(deviceId: device.deviceId, commandId: "m_1", method: .post,
                                                      path: "/sessions/s1/messages", body: body)
-        #expect(response?.status == 200)
+        #expect(response.status == 200)
         let key = try #require(try trust.device(device.deviceId)?.directoryKeyBytes)
-        #expect(api.registrations == [E2EECommandRegistration(commandId: "cmd_1", deviceId: device.deviceId,
+        #expect(api.registrations == [E2EECommandRegistration(commandId: "m_1", deviceId: device.deviceId,
                                                              inputDigest: try E2EEFormats.inputDigest(directoryKey: key, body: body))])
         #expect(device.requests.last?.path == "/api/v2/sessions/s1/messages")
 
         api.duplicate = true
         let count = device.requests.count
-        let duplicate = try await service.sendCommand(deviceId: device.deviceId, commandId: "cmd_1", method: .post,
+        let duplicate = try await service.sendCommand(deviceId: device.deviceId, commandId: "m_1", method: .post,
                                                       path: "/sessions/s1/messages", body: body)
-        #expect(duplicate == nil)
-        #expect(device.requests.count == count)
+        #expect(duplicate.status == response.status)
+        #expect(api.registrations.count == 2 && api.registrations.first == api.registrations.last)
+        #expect(device.requests.count == count + 1)
     }
 
     @Test func directoryKeyRefreshesWhenDeviceRotated() async throws {

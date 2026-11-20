@@ -130,16 +130,17 @@ import Testing
         _ = try await V2RuntimeAPI(transport: routing).sendMessage(sessionId: "s1", request: message("m1"))
         #expect(device.requests.last?.path == "/api/v2/sessions/s1/runtime/messages")
         #expect((device.requests.last?.body as? [String: Any])?["clientMessageId"] as? String == "m1")
-        #expect(api.registrations.last?.commandId == "msg_m1")
+        #expect(api.registrations.last?.commandId == "m1")
         #expect(api.registrations.last?.deviceId == device.deviceId)
         #expect(api.registrations.last?.inputDigest.hasPrefix("hmac-sha256:") == true)
 
-        // Server 说这条命令登记过：不再发给设备。
+        // 重试沿用原登记和请求体，由设备确认结果。
         api.duplicate = true
         let sent = device.requests.count
-        #expect(await code { try await V2RuntimeAPI(transport: routing).sendMessage(sessionId: "s1", request: message("m1")) }
-                == E2EEError.commandDuplicate)
-        #expect(device.requests.count == sent)
+        _ = try await V2RuntimeAPI(transport: routing).sendMessage(sessionId: "s1", request: message("m1"))
+        #expect(device.requests.count == sent + 1)
+        #expect(api.registrations.count == 2 && api.registrations.first == api.registrations.last)
+        #expect((device.requests.last?.body as? [String: Any])?["clientMessageId"] as? String == "m1")
         api.duplicate = false
 
         // 文件请求与新建会话按设备走通道。
@@ -239,7 +240,7 @@ import Testing
         #expect(throws: E2EEError.self) { try E2EEFormats.openAttachment(request.files[1].data, key: keys[0]) }
         #expect(throws: E2EEError.self) { try E2EEFormats.openAttachment(request.files[1].data.dropLast(16), key: keys[1]) }
         // 摘要按带上密钥后实际发出的请求体计算。
-        #expect(api.registrations.last?.commandId == "msg_m9")
+        #expect(api.registrations.last?.commandId == body["clientMessageId"] as? String)
     }
 
     @Test func deviceFilesDownloadInChunksThroughTheChannel() async throws {

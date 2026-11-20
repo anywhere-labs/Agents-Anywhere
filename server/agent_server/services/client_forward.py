@@ -261,6 +261,19 @@ class ClientForwarder:
 
     # -- Client/call ------------------------------------------------------------------
 
+    async def reserve_creation(
+        self, *, user_id: str, device_id: str, command_id: str, digest: str,
+    ) -> tuple[dict[str, Any], bool]:
+        """Claim the id before allocating a directory row or staging any uploads."""
+        route = ROUTES_BY_ID["session.createAndStart"]
+        receipt, created = await self._commands.register(
+            origin="client", user_id=user_id, device_id=device_id, command_id=command_id,
+            kind=route.id, input_digest=digest, session_id=f"sess_{uuid.uuid4().hex}",
+        )
+        if not created:
+            receipt = await self._replayable(receipt, route=route, device_id=device_id, digest=digest)
+        return receipt, created
+
     async def call(
         self,
         route_id: str,
@@ -278,6 +291,7 @@ class ClientForwarder:
         command_id: str | None = None,
         timeout: float | None = None,
         byte_budget: int | None = None,
+        creation: tuple[dict[str, Any], bool] | None = None,
     ) -> ClientAnswer:
         """Forward one request. Raises ``ClientForwardError`` for what the Server answers itself; the device's own
         answers, errors included, come back as ``ClientAnswer``.
@@ -305,7 +319,7 @@ class ClientForwarder:
         return await self._call(
             route, user_id=user_id, device_id=device_id, path=path, caller=caller, query=query, body=body,
             server=server, response_model=response_model, offline=offline, session_id=session_id,
-            command_id=command_id, timeout=timeout, byte_budget=byte_budget,
+            command_id=command_id, timeout=timeout, byte_budget=byte_budget, creation=creation,
         )
 
     async def _shared(self, key: tuple[Any, ...], work: Callable[[], Awaitable[ClientAnswer]]) -> ClientAnswer:
@@ -355,6 +369,7 @@ class ClientForwarder:
         command_id: str | None,
         timeout: float | None,
         byte_budget: int | None,
+        creation: tuple[dict[str, Any], bool] | None = None,
     ) -> ClientAnswer:
         if command_id is None:
             command_id, body = command_identity(route, body)
@@ -363,18 +378,23 @@ class ClientForwarder:
 
         receipt: dict[str, Any] | None = None
         replayed = False
-        if command_id is not None:
+        if creation is not None:
+            receipt, created = creation
+            replayed = not created
+            assert route.id == "session.createAndStart" and receipt["commandId"] == command_id
+        elif command_id is not None:
+            digest = client_input_digest(route.id, body)
             receipt, created = await self._commands.register(
                 origin="client",
                 user_id=user_id,
                 device_id=device_id,
                 command_id=command_id,
                 kind=route.id,
-                input_digest=client_input_digest(route.id, body),
+                input_digest=digest,
                 session_id=session_id,
             )
             if not created:
-                receipt = await self._replayable(receipt, route=route, device_id=device_id, body=body)
+                receipt = await self._replayable(receipt, route=route, device_id=device_id, digest=digest)
                 replayed = True
 
         connection_id = await self._hub.current_connection(device_id)
@@ -559,11 +579,10 @@ class ClientForwarder:
         )
 
     async def _replayable(
-        self, receipt: dict[str, Any], *, route: ClientRoute, device_id: str, body: Any
+        self, receipt: dict[str, Any], *, route: ClientRoute, device_id: str, digest: str
     ) -> dict[str, Any]:
         """A repeated command id: the receipt to forward again with, or the error the replay answers."""
 
-        digest = client_input_digest(route.id, body)
         if (
             receipt.get("origin") != "client"
             or receipt["kind"] != route.id
@@ -571,6 +590,11 @@ class ClientForwarder:
             or (receipt["inputDigest"] and receipt["inputDigest"] != digest)
         ):
             raise ClientForwardError(409, "command_conflict", "this command id was already used for a different command")
+        if route.id == "session.createAndStart" and receipt["state"] == "pending":
+            completed = await self._commands.wait_for_creation(receipt, self.timeout(route))
+            if completed is None:
+                raise _failure("not_delivered", route)
+            receipt = completed
         if receipt["state"] in ("pending", "unknown"):
             receipt = await self._commands.reconcile_one(receipt, settle_unseen=False) or receipt
         if receipt["state"] in ("pending", "unknown"):

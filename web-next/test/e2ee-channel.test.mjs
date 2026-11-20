@@ -590,7 +590,7 @@ test("an unanswered session creation times out as unknown and is looked up in th
     error.code === "command_outcome_unknown" && error.payload.detail.sessionId === undefined)
 })
 
-test("a repeated session creation is not resent; its result is unknown", async (t) => {
+test("a repeated session creation gets its result from the device with the original message ID", async (t) => {
   const { device, pool, setRegistration } = await setup()
   await pool.pair(device.pairing())
   routeThrough(t, pool)
@@ -598,9 +598,12 @@ test("a repeated session creation is not resent; its result is unknown", async (
   const body = { connectorId: "dev_1", projectId: "p", runtime: "codex", content: "again", clientMessageId: "m_dup" }
   for (const outcome of ["accepted", null]) {
     setRegistration((reg) => ({ commandId: reg.commandId, outcome, errorCode: null, duplicate: true }))
-    await assert.rejects(dashboardApi.createAndStartSession("t", body), (error) => error.code === "command_outcome_unknown" && error.payload.detail.resultUnknown === true)
+    const created = await dashboardApi.createAndStartSession("t", body)
+    assert.equal(created.session.id, "sess_new")
   }
-  assert.equal(device.requests.length, 0)
+  setRegistration((reg) => ({ commandId: reg.commandId, outcome: "rejected", errorCode: "session_busy", duplicate: true }))
+  await assert.rejects(dashboardApi.createAndStartSession("t", body), (error) => error.code === "session_busy")
+  assert.deepEqual(device.requests.map((request) => request.body.clientMessageId), ["m_dup", "m_dup"])
 })
 
 test("the first message of an encrypted session creation carries no attachments", async (t) => {
