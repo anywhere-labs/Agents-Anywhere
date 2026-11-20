@@ -4,14 +4,14 @@ import asyncio
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import Field
 from meshcall import MeshCallError, RpcContext, method, service
+from pydantic import Field
 
-from agent_server.api.connectors import list_connectors
 from agent_server.api.connector_runtimes import list_connector_runtimes
+from agent_server.api.connectors import list_connectors
+from agent_server.api.device_link import device_router_url, get_device_link_service
 from agent_server.api.projects import list_projects
 from agent_server.api.sessions import list_sessions
-from agent_server.api.device_link import device_router_url, get_device_link_service
 from agent_server.core.device_content import (
     MOBILE_CONTROL_SERVICE,
     ConnectionID,
@@ -20,6 +20,9 @@ from agent_server.core.device_content import (
     EncryptedTunnelGrant,
     MobileDirectoryResource,
     MobileDirectoryResult,
+)
+from agent_server.core.tunnel_authorization import (
+    MOBILE_CONTROL,
     mobile_control_identity,
 )
 from agent_server.deps import (
@@ -54,6 +57,8 @@ class MobileControl:
         identity = mobile_control_identity(tunnel.principal) if tunnel and tunnel.sealed else None
         if identity is None:
             raise MeshCallError("unauthenticated", "An encrypted mobile management tunnel is required")
+        if not MOBILE_CONTROL.allows(ctx.service, ctx.method):
+            raise MeshCallError("permission_denied", "Method outside mobile management scope")
         return identity
 
     @method(read_only=True, idempotent=True)
@@ -126,9 +131,9 @@ class MobileControl:
 async def bootstrap_mobile_control(
     request: Request,
     response: Response,
-    claims: tuple[str, str | None] = Depends(current_user_claims),
-    links: DeviceLinkService = Depends(get_device_link_service),
-    store: Store = Depends(get_store),
+    claims: Annotated[tuple[str, str | None], Depends(current_user_claims)],
+    links: Annotated[DeviceLinkService, Depends(get_device_link_service)],
+    store: Annotated[Store, Depends(get_store)],
 ) -> EncryptedTunnelGrant:
     user_id, family_id = claims
     if family_id is None:

@@ -23,7 +23,7 @@ import tempfile
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from loguru import logger
 from pydantic import BaseModel
@@ -31,14 +31,9 @@ from pydantic import BaseModel
 from agent_server.core.device_content import (
     CONTENT_METHODS,
     CONTENT_SERVICE,
-    CONTROL_PRINCIPAL,
-    MOBILE_CONTENT_GRANT_METHOD,
-    MOBILE_DIRECTORY_METHOD,
     MOBILE_CONTROL_SERVICE,
     EncryptedTunnelGrant,
     content_tunnel_principal,
-    mobile_control_identity,
-    mobile_control_principal,
 )
 from agent_server.core.device_meshcall import (
     CONNECTION_ID_METADATA,
@@ -47,8 +42,18 @@ from agent_server.core.device_meshcall import (
     FailureClass,
     MeshRoute,
     classify_mesh_error,
-    registered_services,
 )
+from agent_server.core.tunnel_authorization import (
+    DEVICE_CONTROL,
+    MOBILE_CONTROL,
+    TunnelAuthorization,
+    mobile_control_identity,
+    mobile_control_principal,
+)
+
+if TYPE_CHECKING:
+    from meshcall import Mesh, OpenedTunnel, TunnelOffer
+
 
 ResponseT = TypeVar("ResponseT", bound=BaseModel)
 
@@ -193,6 +198,15 @@ class DeviceToken:
     token_id: str
     expires_at_ms: int
     services: tuple[str, ...]
+
+
+def accepts_mobile_control(offer: TunnelOffer) -> bool:
+    if not offer.e2e_key or not offer.scopes or mobile_control_identity(offer.principal) is None:
+        return False
+    return all(
+        scope.methods and all(MOBILE_CONTROL.allows(scope.service, method) for method in scope.methods)
+        for scope in offer.scopes
+    )
 
 
 class DeviceMesh:
@@ -395,6 +409,19 @@ class DeviceMesh:
         except Exception as exc:
             raise self._classify(exc, opened=True) from exc
 
+    async def _open_management_tunnel(
+        self, issuer: Mesh, policy: TunnelAuthorization, *, instance: str, public_key: str, principal: str,
+    ) -> OpenedTunnel:
+        from meshcall import TunnelScope
+
+        options = {} if policy.ttl_seconds is None else {"ttl_seconds": policy.ttl_seconds}
+        async with asyncio.timeout(self.settings.read_timeout_seconds):
+            return await issuer.tunnels.open(
+                instance=instance, principal=principal, e2e_key=public_key,
+                scopes=[TunnelScope(service=name, methods=list(methods)) for name, methods in policy.scopes.items()],
+                max_connections=policy.max_connections, **options,
+            )
+
     async def _close_mobile_host(self) -> None:
         host, self._mobile_host = self._mobile_host, None
         if host is not None:
@@ -408,7 +435,6 @@ class DeviceMesh:
             Mesh,
             Router,
             RouterCredentials,
-            TunnelScope,
             generate_e2e_key,
         )
 
@@ -427,9 +453,9 @@ class DeviceMesh:
                 host.mount(
                     service,
                     instance_id=instance,
-                    accept_tunnels=lambda offer: mobile_control_identity(offer.principal) is not None,
+                    accept_tunnels=accepts_mobile_control,
                     e2e_private_key=key.private_key,
-                    require_e2e=True,
+                    require_e2e=MOBILE_CONTROL.require_e2e,
                 )
                 try:
                     async with asyncio.timeout(self.settings.read_timeout_seconds):
@@ -442,15 +468,10 @@ class DeviceMesh:
                 self._mobile_host = host, instance, key.public_key
             _, instance, public_key = self._mobile_host
             try:
-                async with asyncio.timeout(self.settings.read_timeout_seconds):
-                    ticket = await issuer.tunnels.open(
-                        instance=instance,
-                        scopes=[TunnelScope(service=MOBILE_CONTROL_SERVICE, methods=[MOBILE_CONTENT_GRANT_METHOD, MOBILE_DIRECTORY_METHOD])],
-                        principal=mobile_control_principal(user_id, family_id, public_router_url),
-                        ttl_seconds=300,
-                        max_connections=1,
-                        e2e_key=public_key,
-                    )
+                ticket = await self._open_management_tunnel(
+                    issuer, MOBILE_CONTROL, instance=instance, public_key=public_key,
+                    principal=mobile_control_principal(user_id, family_id, public_router_url),
+                )
             except Exception as exc:
                 if getattr(exc, "reason", None) in {"instance_unknown", "instance_offline", "instance_changed"}:
                     await self._close_mobile_host()
@@ -489,36 +510,27 @@ class DeviceMesh:
         self._control_key = key
 
     async def _control_client(self, device_id: str, connection_id: str | None, route: MeshRoute) -> Any:
-        if self._control_key is None or connection_id is None or route.service not in {
-            "aa.device.v1.Link", "aa.device.v1.Commands",
-        }:
+        if self._control_key is None or connection_id is None:
             return await self._connect(5)
         lock = self._control_locks.setdefault(device_id, asyncio.Lock())
         async with lock:
             key = await self._control_key(device_id, connection_id)
             if key is None:
                 return await self._connect(5)
+            if not DEVICE_CONTROL.allows(route.service, route.method):
+                raise DeviceCallError("not_delivered", "permission_denied", "Method outside device management scope")
             current = self._control_clients.get(device_id)
             if current and current[0] == connection_id:
                 return current[2]
             if current:
                 await self.drop_control_tunnel(device_id)
-            from meshcall import Mesh, ReconnectPolicy, RetryPolicy, Router, TunnelScope
+            from meshcall import Mesh, ReconnectPolicy, RetryPolicy, Router
 
             issuer = await self._connect(5)
             try:
-                async with asyncio.timeout(self.settings.read_timeout_seconds):
-                    ticket = await issuer.tunnels.open(
-                        instance=device_id,
-                        scopes=[
-                            TunnelScope(service=name, methods=methods)
-                            for name, methods in registered_services("required").items()
-                            if name in {"aa.device.v1.Link", "aa.device.v1.Commands"}
-                        ],
-                        principal=CONTROL_PRINCIPAL,
-                        e2e_key=key,
-                        max_connections=1,
-                    )
+                ticket = await self._open_management_tunnel(
+                    issuer, DEVICE_CONTROL, instance=device_id, public_key=key, principal=DEVICE_CONTROL.principal,
+                )
             except Exception as exc:
                 raise self._classify(exc, opened=False) from exc
             client = Mesh(

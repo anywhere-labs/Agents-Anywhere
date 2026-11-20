@@ -1,6 +1,5 @@
 """Routing credentials and RPC payloads for mobile management and device content."""
 
-import json
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel
@@ -10,31 +9,9 @@ from agent_server.core.e2ee import DirectoryKeyGrant
 CONTENT_SERVICE = "aa.device.v1.Content"
 CONTENT_METHODS = ("pair", "request", "subscribe")
 CONTENT_PRINCIPAL = "aa-content-client"
-CONTROL_PRINCIPAL = "aa-server-control"
 MOBILE_CONTROL_SERVICE = "aa.server.v1.MobileControl"
 MOBILE_CONTENT_GRANT_METHOD = "issue_content_tunnel"
 MOBILE_DIRECTORY_METHOD = "read_directory"
-MOBILE_CONTROL_PRINCIPAL = "aa-mobile-control/"
-
-
-def mobile_control_principal(user_id: str, family_id: str, public_router_url: str) -> str:
-    return MOBILE_CONTROL_PRINCIPAL + json.dumps(
-        [user_id, family_id, public_router_url], separators=(",", ":")
-    )
-
-
-def mobile_control_identity(principal: str) -> tuple[str, str, str] | None:
-    if not principal.startswith(MOBILE_CONTROL_PRINCIPAL):
-        return None
-    try:
-        values = json.loads(principal[len(MOBILE_CONTROL_PRINCIPAL):])
-    except ValueError:
-        return None
-    if not isinstance(values, list) or len(values) != 3 or not all(
-        isinstance(value, str) and value for value in values
-    ):
-        return None
-    return values[0], values[1], values[2]
 
 
 def content_tunnel_principal(family_id: str) -> str:
