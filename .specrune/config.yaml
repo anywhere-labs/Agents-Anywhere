@@ -76,13 +76,11 @@ max_journal_lines: 2000
 # Spec Check
 #-------------------------------------------------------------------------------
 #
-# The specs --check gate scans .specrune/spec/** plus Go comments under the
-# source roots. Auto-fix (specs --fix) repairs mechanically-detectable
-# reference rot (index-ref / path-ref / index-orphan) and commits on its own.
+# The specs --check gate scans .specrune/spec/**. Auto-fix (specs --fix)
+# repairs mechanically-detectable reference rot (index-ref / path-ref /
+# index-orphan) and commits on its own.
 #
 # spec_check:
-#   source_roots:            # Go-comment scan roots (default: [core])
-#     - core
 #   auto_commit: true        # false: fix files but never commit (CI: report only)
 
 #-------------------------------------------------------------------------------
