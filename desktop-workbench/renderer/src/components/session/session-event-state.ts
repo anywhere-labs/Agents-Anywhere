@@ -62,6 +62,8 @@ export function drainSessionEventBuffer(
 export function sessionEventUsesDurableEventIdDedup(
   event: ProtocolEventEnvelope,
 ): boolean {
+  // An unsequenced notice can reopen with the same payload (and event ID) after a refused response.
+  if (event.type === "runtime.notice.updated" && event.sequence === 0) return false
   return !LIVE_PROJECTION_EVENT_TYPES.has(event.type)
 }
 

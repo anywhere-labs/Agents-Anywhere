@@ -349,9 +349,17 @@ function mergeNotices(current: Notice[], incoming: Notice[]): Notice[] {
   const byId = new Map(current.map((notice) => [notice.noticeId, notice]))
   for (const notice of incoming) {
     const existing = byId.get(notice.noticeId)
-    if (!existing || existing.updatedSeq <= notice.updatedSeq) byId.set(notice.noticeId, notice)
+    // V3 live notices arrive in stream order without a durable sequence. Equal
+    // revisions may carry successive states, including reopening after a failed response.
+    if (existing) {
+      const older = existing.updatedSeq !== undefined && notice.updatedSeq !== undefined
+        ? notice.updatedSeq < existing.updatedSeq
+        : (notice.revision ?? 1) < (existing.revision ?? 1)
+      if (older) continue
+    }
+    byId.set(notice.noticeId, notice)
   }
-  return Array.from(byId.values()).sort((a, b) => a.updatedSeq - b.updatedSeq || a.noticeId.localeCompare(b.noticeId))
+  return Array.from(byId.values()).sort((a, b) => (a.updatedSeq ?? 0) - (b.updatedSeq ?? 0) || a.noticeId.localeCompare(b.noticeId))
 }
 
 // Event envelopes are unchanged across protocol versions; 1.2 only adds event types.
@@ -407,5 +415,5 @@ export function isTimelineItem(value: unknown): value is TimelineItem {
 function isNotice(value: unknown): value is Notice {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false
   const notice = value as Partial<Notice>
-  return typeof notice.noticeId === "string" && typeof notice.updatedSeq === "number"
+  return typeof notice.noticeId === "string" && typeof notice.status === "string" && (notice.updatedSeq === undefined || typeof notice.updatedSeq === "number")
 }

@@ -78,6 +78,19 @@ test("reconnect discards late results from every previous runtime read", async t
   assert.equal(current.recoveryGeneration, 1)
 })
 
+test("an unsequenced approval closes on a decision from another client", async t => {
+  const f = await fixture(t)
+  await f.subscribe()
+  const approval = { noticeId: "approval", type: "interaction", revision: 1 }
+  for (const status of ["open", "responding", "open", "responding", "resolved"]) {
+    f.sockets[0].receive("runtime.notice.updated", { notice: { ...approval, status } }, 0)
+    await f.flush()
+    const state = f.controller.getSnapshot().state
+    assert.equal(state.notices.find(n => n.noticeId === approval.noticeId)?.status, status)
+    assert.equal(state.eventCursor, "seq:10")
+  }
+})
+
 test("failed notice reads retain cached notices and replay events across their read boundary", async t => {
   const f = await fixture(t)
   const recovery = deferred(), read = deferred()

@@ -734,7 +734,8 @@ export type Notice = {
   metadata: Record<string, unknown>;
   expiresAt?: string | null;
   revision: number;
-  updatedSeq: number;
+  /** Only durable notices have a session sequence. */
+  updatedSeq?: number;
   createdAt: string;
   updatedAt: string;
   resolvedAt?: string | null;

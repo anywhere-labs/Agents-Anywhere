@@ -43,7 +43,7 @@ export function InteractionCard({
   const noticeTitle = useNoticeTitle()
   const tCommon = useTranslations("common")
   const resolving = resolvingNoticeId === notice.noticeId
-  const disabled = resolvingNoticeId !== null || notice.status === "response_accepted" || notice.status === "resolving"
+  const disabled = resolvingNoticeId !== null || notice.status === "responding" || notice.status === "response_accepted" || notice.status === "resolving"
   const Icon = notice.severity === "error" ? CircleAlert : ShieldCheck
   const inputRequest = React.useMemo(() => readInputRequestForm(notice), [notice])
   const [inputDrafts, setInputDrafts] = React.useState<InputRequestDrafts>(() => (
