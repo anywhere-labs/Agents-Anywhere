@@ -111,10 +111,7 @@ struct SessionChatView: View, Equatable {
                         }
                         SessionGoalPanel(chat:model)
                         SessionMessageQueuePanel(chat: model)
-                        composerDock(geometry: geometry)
-                            .traceChatLayout("composer-dock")
-                            .frame(height: model.planReviewTarget == nil ? nil : 0)
-                            .clipped()
+                        composerDockView(geometry: geometry)
                             .allowsHitTesting(model.planReviewTarget == nil)
                             .accessibilityHidden(model.planReviewTarget != nil)
                             .onChange(of: model.planReviewTarget?.id, initial: true) { _, target in
@@ -237,6 +234,17 @@ struct SessionChatView: View, Equatable {
     }
 
     /// Body 内联这一长串参数会让 Swift 类型检查超时（实测），拆方法。
+    /// clipped 只在 planReview 压平 dock 时使用：常驻会把指令面板浮层
+    /// （offset 到 dock 上方、超出 dock bounds）整块裁掉。
+    @ViewBuilder private func composerDockView(geometry: GeometryProxy) -> some View {
+        if model.planReviewTarget == nil {
+            composerDock(geometry: geometry).traceChatLayout("composer-dock")
+        } else {
+            composerDock(geometry: geometry).traceChatLayout("composer-dock")
+                .frame(height: 0).clipped()
+        }
+    }
+
     private func composerDock(geometry: GeometryProxy) -> ChatComposerDock {
         ChatComposerDock(draft: session.composer, settings: model.settings,
             // 上游同款：随内容增高（本屏 ~2 行封顶），超上限内部滚动。
