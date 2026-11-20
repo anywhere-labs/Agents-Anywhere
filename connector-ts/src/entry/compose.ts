@@ -329,6 +329,7 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
           clock,
           workspace,
           ...(terminals !== null ? { terminals } : {}),
+          agentWorkspaceAllowed: async cwd => isAbsolute(cwd) && await policy.allows(cwd),
           facts: sessionFacts,
           newId: ids.newId,
           commands: sessionId => sessionCommands.get(sessionId),

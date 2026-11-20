@@ -41,6 +41,14 @@ def _bearer(scope: Scope) -> str | None:
 async def _check_targets(app: Any, principal: AgentPrincipal, match: AgentRouteMatch) -> None:
     """The session or device a path names must be the account's and inside the delegation's scope."""
 
+    route_id = match.route.id if match.route else None
+    required = {
+        "session.createAndStart": "steer", "session.runtime.messages": "steer",
+        "session.runtime.steer": "steer", "session.runtime.interrupt": "interrupt",
+        "workflow.session.close": "close",
+    }.get(route_id)
+    if required and not getattr(principal.authority, required):
+        raise CollabError(403, "agent_authority_exceeded", "the account has disabled this action")
     store = app.state.store
     device_id: str | None = None
     session_id = match.params.get("session_id")

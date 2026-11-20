@@ -22,7 +22,7 @@ export const AGENT_TOOL_ERRORS = {
     },
     {
       "code": "agent_authority_exceeded",
-      "message": "The action needs an authority this supervision does not have; a person can grant it, or use aa_escalate."
+      "message": "The requested action exceeds the authority of the supervisor session."
     },
     {
       "code": "agent_supervision_cycle",
@@ -37,12 +37,8 @@ export const AGENT_TOOL_ERRORS = {
       "message": "No such supervision."
     },
     {
-      "code": "agent_peer_not_trusted",
-      "message": "End-to-end encryption is on and the target device has not trusted this device's Agent yet; a person approves it once from a client trusted by both devices."
-    },
-    {
       "code": "agent_wake_budget_exceeded",
-      "message": "The supervision woke this session too often and was paused; a person resumes it."
+      "message": "Automatic wakes were paused after reaching the hourly limit. Use aa_status or aa_read for progress."
     },
     {
       "code": "agent_target_unknown",

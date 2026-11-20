@@ -81,14 +81,13 @@ export class GrantService implements SessionToolProvider {
   }
 
   /** Revokes the session's active grant (it closed, was archived, or collaboration was turned off). */
-  public async revokeFor(sessionId: string): Promise<AgentGrant | null> {
+  public async revokeFor(sessionId: string): Promise<void> {
     const active = await this.deps.store.collab.activeGrantOf(sessionId)
-    if (active === null) return null
+    if (active === null) return
     const at = this.deps.clock.nowIso()
     const revoked = revokeGrant(active, at)
     await this.deps.store.collab.putGrant(revoked, { grantId: revoked.grantId, supervisorSessionId: sessionId, state: 'revoked', at }, at)
     this.deps.onOutbox?.()
-    return revoked
   }
 
   /** Settings changed: grants of instances that are no longer on are revoked at once. */

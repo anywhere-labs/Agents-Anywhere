@@ -34,7 +34,12 @@
     },
     "deviceSettingsApply": {
       "settings": {
-        "confirmQuitOnShutdown": true
+        "confirmQuitOnShutdown": true,
+        "agentCollaboration": {
+          "enabled": true,
+          "crossDevice": false,
+          "instances": {}
+        }
       }
     },
     "runtimeApplyStop": {

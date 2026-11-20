@@ -178,7 +178,7 @@ export const AGENT_TOOLS = {
     {
       "name": "aa_status",
       "verb": "status",
-      "description": "Status of another session: running or idle, open approvals, queue length, plan and goal state, clock.",
+      "description": "Read the child status, timeline position, open notices, plan and goal state.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -200,7 +200,7 @@ export const AGENT_TOOLS = {
     {
       "name": "aa_read",
       "verb": "read",
-      "description": "Read what another session did since a position: a compact digest by default, or the items themselves.",
+      "description": "Read child timeline items after a sequence cursor. Set detail for longer text excerpts.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -236,7 +236,7 @@ export const AGENT_TOOLS = {
     {
       "name": "aa_wait",
       "verb": "wait",
-      "description": "Wait up to 50 seconds for another session's next turn end, failure, approval or plan. Returns still_running on timeout; for longer work rely on supervision wake-ups instead of repeated waits.",
+      "description": "Wait up to 50 seconds for a child to settle or end its current turn. Returns the current status and a settled flag.",
       "inputSchema": {
         "type": "object",
         "properties": {

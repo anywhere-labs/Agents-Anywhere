@@ -135,6 +135,7 @@ export interface DeviceTunnelApiDeps {
   /** The platform the workspace runs on; default this process's. */
   readonly platform?: NodeJS.Platform
   /** Reads of a session's Agent session (`runtime-workflows/sessions/{id}/configuration`, `tree`). */
+  readonly agentWorkspaceAllowed?: (cwd: string) => Promise<boolean>
   readonly agent?: AgentSessionReads
   /** `GET sessions/{id}/blobs/{blobRef}`; absent: every blob is 404. */
   readonly blobs?: SessionBlobReader
@@ -840,6 +841,9 @@ export class DeviceTunnelApi implements TunnelApi {
     const runtimeType = text(body.runtime) ?? 'codex'
     const cwd = text(body.cwd)
     if (cwd === null) throw invalid('cwd is required')
+    if (caller.agent != null && !await this.deps.agentWorkspaceAllowed?.(cwd)) {
+      throw new TunnelHttpError(403, 'agent_scope_denied', 'Choose an absolute directory within the target device workspace roots.')
+    }
     const clientMessageId = call.command?.commandId ?? text(body.clientMessageId) ?? this.newId('create_')
     const previous = await this.deps.store.commands.get(clientMessageId)
     // Preserve ids from older receipts. New parallel attempts must hash the same command payload.

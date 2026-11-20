@@ -5,11 +5,11 @@
   "extras": [
     {
       "path": "errors.json",
-      "sha256": "9f446820b943761636e3bc27be640295b17f2fe2b05b93de8f63cf7ce4a05279"
+      "sha256": "d46d1ebfe938d4e83829d55323798c54a1e149ac50a0b130cca2283f5bfa524d"
     },
     {
       "path": "tools.json",
-      "sha256": "a877947f9324c20432b634f45d517a5f712a7b731fe9992b2caa734d0dc73bf1"
+      "sha256": "e8cc0c1a6d561bd98ae633511ce255670f50e7fcb9e45f7dcd0c57bdeab7f4cc"
     }
   ]
 }

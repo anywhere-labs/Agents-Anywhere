@@ -285,6 +285,7 @@ export class RuntimeBindings {
     const binding = this.bindings.get(sessionId)
     if (binding === undefined) return false
     this.bindings.delete(sessionId)
+    await this.kernel.deps.tools?.revokeFor(sessionId)
     await binding.close()
     return true
   }

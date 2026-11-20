@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto'
 
+import { ownerGeneration } from '../../domain/conversation/index.js'
+
 import {
   type AgentAction,
   type AgentGrant,
@@ -81,18 +83,15 @@ export class ToolService {
     try {
       const grant = await this.deps.grants.bySecret(secret)
       if (grant === null) throw new CollabError('agent_grant_revoked', 'The collaboration grant of this session is no longer valid; reopen the session to get a new one.')
-      const supervisor = await this.deps.store.sessions.get(grant.supervisor.sessionId)
-      if (supervisor === null || supervisor.archived) {
-        await this.deps.grants.revokeFor(grant.supervisor.sessionId)
-        throw new CollabError('agent_grant_revoked', 'The supervisor session was closed.')
+      const run = async (current: AgentGrant | null) => {
+        if (current === null) throw new CollabError('agent_grant_revoked', 'The supervisor grant is no longer active.')
+        const level = await this.deps.facts.permissionLevel(current.supervisor.sessionId)
+        return this.dispatch({ ...current, authority: capByPermission(current.authority, level) }, tool, args)
       }
-      const level = await this.deps.facts.permissionLevel(grant.supervisor.sessionId)
-      const live: AgentGrant = { ...grant, authority: capByPermission(grant.authority, level) }
-      const run = () => this.dispatch(live, tool, args)
-      if (!['aa_spawn', 'aa_steer', 'aa_send', 'aa_interrupt', 'aa_close'].includes(tool)) return { ok: true, value: await run() }
-      const key = live.supervisor.sessionId
+      if (!['aa_spawn', 'aa_steer', 'aa_send', 'aa_interrupt', 'aa_close'].includes(tool)) return { ok: true, value: await run(grant) }
+      const key = grant.supervisor.sessionId
       const previous = this.writes.get(key)
-      const write = previous ? previous.catch(() => undefined).then(run) : run()
+      const write = previous ? previous.catch(() => undefined).then(async () => run(await this.deps.grants.bySecret(secret))) : run(grant)
       this.writes.set(key, write)
       try {
         return { ok: true, value: await write }
@@ -302,11 +301,16 @@ export class ToolService {
   private async close(grant: AgentGrant, args: Args): Promise<Record<string, unknown>> {
     const { view, authority } = await this.target(grant, args, 'close')
     return this.act({ ...grant, authority }, 'close', view.address, args, async actionId => {
-      await this.send(view.address.deviceId, grant, {
+      const generation = ownerGeneration(view)
+      if (generation === null) throw new GatewayError('agent_session_not_open', 'The child has no active runtime session.')
+      const response = await this.send(view.address.deviceId, grant, {
         method: 'POST',
         path: `runtime-workflows/sessions/${encodeURIComponent(view.address.sessionId)}/close`,
-        body: { commandId: actionId },
+        body: { ownerGeneration: generation, closeOperationId: actionId },
       })
+      if (record(record(response.body).result ?? response.body).closed !== true) {
+        throw new GatewayError('command_outcome_unknown', 'The runtime did not confirm release of the child session.')
+      }
       await this.deps.store.collab.closeChild(view.address.sessionId)
       await this.deps.supervisions.endFor(grant.supervisor.sessionId, view.address.sessionId)
       return { sessionId: view.address.sessionId, closed: true }

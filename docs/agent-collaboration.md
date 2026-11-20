@@ -2,7 +2,7 @@
 
 在普通模式下，Connector 会在新建或恢复 Codex、Claude Code、Pi 和直连 DSH 的 ACP 会话时自动挂载名为 `aa` 的 stdio MCP。MCP 随 Connector 分发，无需单独安装或修改 Agent 的全局配置。本机派活默认开启，端到端加密部署下停用此 MCP。
 
-例如，让 Codex 在另一台电脑上给 Pi 派活时，先用 `aa_targets` 找到目标设备的 `deviceId` 和 Pi 的 `runtimeId`，再调用 `aa_spawn`，传入这两个 ID、目标设备上已登记项目的绝对工作目录 `cwd` 和任务 `prompt`。返回的 `sessionId` 用于后续操作。
+例如，让 Codex 在另一台电脑上给 Pi 派活时，先用 `aa_targets` 找到目标设备的 `deviceId` 和 Pi 的 `runtimeId`，再调用 `aa_spawn`，传入这两个 ID、目标设备上已登记项目的绝对工作目录 `cwd` 和任务 `prompt`。工作目录须在目标 Connector 允许访问的范围内。返回的 `sessionId` 用于后续操作。
 
 | MCP 工具 | 用途 |
 | --- | --- |

@@ -228,6 +228,7 @@ class CollabService:
             grant_id=row["grantId"],
             delegation_id=row["delegationId"],
             devices=scope_devices(row["scope"]),
+            authority=settings.instance(row["supervisorRuntimeId"]).authority,
         )
 
     # -- outbox of the supervisor's device ---------------------------------------------------

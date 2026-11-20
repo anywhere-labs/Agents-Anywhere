@@ -6,7 +6,7 @@
 
 ### 升级须知
 
-- Server 需要执行 `v2_67` 数据库迁移，用于保存 Agent 跨设备授权和父子会话关系。
+- Server 需要执行 `v2_67` 数据库迁移，用于保存 Agent 跨设备授权和父子会话关系。（[congwa#2](https://github.com/congwa/Agents-Anywhere/pull/2)）
 
 - 不用 Compose、手动部署 MeshCall Router 的环境，升级 Server 后要重新执行一次 Router 的 `init-auth`，否则 v3 设备和移动端 PoC 无法建立加密连接；Compose 部署每次启动会自动重新生成，不用处理。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 使用旧加密链路配对过的客户端升级后需要重新扫描一次设备邀请；新配对保存在客户端上，重启后会自动重新领票。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
@@ -30,7 +30,7 @@
 
 ### 会话创建与消息交付
 
-- 普通模式下，主 Agent 启动时自动获得协作工具，可以给本机或同账号另一台设备上的子 Agent 派活、查看进度、修改任务，并在子会话完成或需要关注时收到消息。
+- 普通模式下，主 Agent 启动时自动获得协作工具，可以给本机或同账号另一台设备上的子 Agent 派活、查看进度、修改任务，并在子会话完成或需要关注时收到消息。（[congwa#2](https://github.com/congwa/Agents-Anywhere/pull/2)）
 - 重试创建会话时，两种连接模式都沿用原会话；普通连接并发创建只保留一条会话记录，重复请求更换首条消息附件时会提示冲突。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 加密连接恢复后，手机可以用原消息 ID 确认发送结果，设备拒绝的消息会保留错误状态；Web 和 Desktop 在启动时读完本机加密策略后才打开工作区。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 移动端 PoC 可登录自托管 Server 并连接已配对设备，在 Android 和 iOS 上新建、继续加密会话，并使用附件、设备文件和终端；思考内容与正文分别显示，流式回复结束后才标记完成。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）

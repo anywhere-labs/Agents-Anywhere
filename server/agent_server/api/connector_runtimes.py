@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from agent_server.api.client_forward import call as client_call
@@ -30,6 +31,7 @@ from agent_server.core.protocol import (
 )
 from agent_server.core.utc import utc_now
 from agent_server.deps import (
+    agent_principal,
     current_user_id,
     get_device_runtime_service,
     get_e2ee_settings,
@@ -54,14 +56,20 @@ router = APIRouter(prefix="/connectors", tags=["connector-runtimes"], dependenci
     response_model=DeviceRuntimeListResponse,
 )
 async def list_connector_runtimes(
+    request: Request,
     connector_id: str,
     service: DeviceRuntimeService = Depends(get_device_runtime_service),
     user_id: str = Depends(current_user_id),
-) -> DeviceRuntimeListResponse:
+) -> DeviceRuntimeListResponse | JSONResponse:
     try:
         runtimes = await service.list_runtimes(connector_id, user_id=user_id)
     except DeviceRuntimeError as exc:
         _raise_device_runtime_error(exc)
+    if agent_principal(request) is not None:
+        return JSONResponse({"runtimes": [
+            {"runtimeId": runtime.runtimeId, "runtimeType": runtime.runtimeType, "name": runtime.name}
+            for runtime in runtimes if runtime.active
+        ]})
     return DeviceRuntimeListResponse(
         connectorId=connector_id,
         runtimes=[public_runtime_view(runtime) for runtime in runtimes],

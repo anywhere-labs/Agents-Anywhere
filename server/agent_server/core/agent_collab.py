@@ -168,6 +168,7 @@ class AgentPrincipal:
     delegation_id: str
     #: None: every device of the account.
     devices: frozenset[str] | None
+    authority: AgentAuthority
 
     def may_reach(self, device_id: str) -> bool:
         return self.devices is None or device_id in self.devices

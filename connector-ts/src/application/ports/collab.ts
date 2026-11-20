@@ -34,6 +34,7 @@ export interface TargetView {
   readonly runtimeType: string | null
   readonly runtimeId: string | null
   readonly cwd: string | null
+  readonly externalSessionId: string | null
   readonly createdBySessionId: string | null
   readonly depth: number
 }
@@ -89,6 +90,7 @@ export interface ToolServerSpec {
 
 /** What to inject when a session's Agent session opens (new, load, resume). */
 export interface SessionToolProvider {
+  revokeFor(sessionId: string): Promise<void>
   toolServers(session: { readonly sessionId: string; readonly runtimeId: string; readonly runtimeType: string }): Promise<readonly ToolServerSpec[]>
 }
 

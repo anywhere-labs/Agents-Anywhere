@@ -41,6 +41,7 @@ export function targetView(deviceId: string, raw: unknown, at: string): TargetVi
     runtimeType: text(view.runtimeType) ?? text(view.runtime),
     runtimeId: text(view.runtimeId),
     cwd: text(view.cwd),
+    externalSessionId: text(view.externalSessionId),
     createdBySessionId: origin.kind === 'agent' ? text(origin.bySessionId) : null,
     depth: origin.kind === 'agent' ? int(origin.depth, 1) : 0,
   }
