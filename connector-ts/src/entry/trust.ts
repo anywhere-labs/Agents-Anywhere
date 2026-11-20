@@ -1,6 +1,6 @@
 import { userInfo } from 'node:os'
 import { join } from 'node:path'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 
 import type { TunnelApi } from '../application/inbound/tunnel-api.js'
 import type { DisplayEnvelope, OutboxStore } from '../application/ports/index.js'
@@ -85,17 +85,24 @@ export class DeviceTrust {
 
   public static async open(options: DeviceTrustOptions): Promise<DeviceTrust> {
     const account = `${safeUser()}@${options.deviceId}`
-    const secrets = new FileDeviceSecrets(options.dataDir, options.vault ?? platformVault(account, options.dataDir))
+    // Older hosts kept one trust store per computer. Keep it for its original binding;
+    // a different device ID needs its own identity, directory keys and client grants.
+    const legacy = new FileTrustRepository(options.dataDir)
+    const legacyState = await legacy.load()
+    const useLegacy = legacyState?.deviceId === options.deviceId
+    const dataDir = useLegacy ? options.dataDir
+      : join(options.dataDir, 'devices', createHash('sha256').update(options.deviceId).digest('hex'))
+    const secrets = new FileDeviceSecrets(dataDir, options.vault ?? platformVault(account, dataDir))
     const trust = new DeviceTrustService({
       deviceId: options.deviceId,
-      repository: new FileTrustRepository(options.dataDir),
+      repository: useLegacy ? legacy : new FileTrustRepository(dataDir),
       secrets,
       clock: { nowIso: () => new Date().toISOString(), nowMs: () => Date.now() },
       random: { bytes: length => new Uint8Array(randomBytes(length)), id: prefix => `${prefix}${randomBytes(12).toString('base64url')}` },
       sealer: nodeContentSealer,
       ...(options.confirmation !== undefined ? { confirmation: options.confirmation } : {}),
     })
-    await trust.init()
+    await trust.init(legacyState?.policy.required === true)
     const privateKey = (await secrets.identityKey()).secretKey
     return new DeviceTrust(options, trust, deviceContent(options.api, trust, privateKey))
   }

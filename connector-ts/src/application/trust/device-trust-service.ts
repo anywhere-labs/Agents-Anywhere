@@ -108,7 +108,7 @@ export class DeviceTrustService {
   }
 
   /** Load the trust list, or create it with a fresh identity and directory key on first run. */
-  async init(): Promise<DeviceTrustState> {
+  async init(requireEncryptionOnFirstUse = false): Promise<DeviceTrustState> {
     return this.#serial(async () => {
       const identity = await this.#deps.secrets.identityKey()
       const identityPub = Buffer.from(identity.publicKey).toString('base64url')
@@ -122,6 +122,7 @@ export class DeviceTrustService {
         const keyId = this.#deps.random.id('dk_')
         await this.#deps.secrets.putDirectoryKey(keyId, this.#deps.random.bytes(DIRECTORY_KEY_BYTES))
         state = newDeviceTrust(this.#deps.deviceId, identityPub, keyId)
+        if (requireEncryptionOnFirstUse) state = declareServerMode(state, 'required', this.#deps.clock.nowIso()).state
         await this.#deps.repository.save(state)
       }
       // Pairings are never persisted with their psk; drop any left over.
