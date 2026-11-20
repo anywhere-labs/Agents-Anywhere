@@ -11,6 +11,7 @@ import dev.agentsanywhere.v3poc.generated.ContentSubscribeRequest
 import dev.agentsanywhere.v3poc.generated.MobileControlClient
 import io.github.t4wefan.meshcall.CallOptions
 import io.github.t4wefan.meshcall.Mesh
+import io.github.t4wefan.meshcall.MeshCallException
 import io.github.t4wefan.meshcall.MeshOptions
 import io.github.t4wefan.meshcall.Router
 import io.github.t4wefan.meshcall.RetryPolicy
@@ -69,11 +70,15 @@ class DeviceContentTransport(
     private val lock = Mutex()
     private var current: Mesh? = null
 
-    suspend fun pair(request: ContentPairRequest): ContentPairResult =
+    suspend fun pair(request: ContentPairRequest): ContentPairResult = try {
         ContentClient(connect()).pair(
             instanceId, request.clientIdentityPub, request.clientSecret, request.label,
             request.pairingId, request.pairingSecret, request.platform,
         )
+    } catch (error: MeshCallException) {
+        if (error.reason == "pairing_expired") throw PairingInvitationExpired()
+        throw error
+    }
 
     suspend fun request(request: ContentRequest, authorization: ContentAuthorization): ContentResult =
         ContentClient(connect()).request(instanceId, request.body, request.method, request.path, authorization.options())

@@ -17,6 +17,7 @@ import dev.agentsanywhere.v3poc.R
 import dev.agentsanywhere.v3poc.model.AccountRequestFailed
 import dev.agentsanywhere.v3poc.model.DeviceGrantUnavailable
 import dev.agentsanywhere.v3poc.model.PairingInvitation
+import dev.agentsanywhere.v3poc.model.PairingInvitationExpired
 import dev.agentsanywhere.v3poc.model.DeviceIdentityMismatch
 import dev.agentsanywhere.v3poc.model.InvalidServer
 import dev.agentsanywhere.v3poc.model.PairingTargetMismatch
@@ -57,6 +58,7 @@ internal fun ConnectionScreen(app: App) {
             throw cancelled
         } catch (failure: Exception) {
             error = when {
+                failure is PairingInvitationExpired -> R.string.connection_invite_expired
                 failure is InvalidServer -> R.string.connection_invalid_server
                 failure is PairingTargetMismatch -> R.string.connection_wrong_device
                 failure is DeviceIdentityMismatch -> R.string.connection_key_changed
@@ -130,27 +132,35 @@ internal fun ConnectionScreen(app: App) {
                     } }, enabled = !busy) { Text(stringResource(R.string.connection_sign_out)) }
                 } else {
                     val device = checkNotNull(selected)
+                    var rejectedScan by remember(device.id) { mutableStateOf(false) }
                     Text(device.name)
                     PairingScanner(enabled = !busy, onScan = { link ->
+                        rejectedScan = true
+                        invitation = ""
                         try {
                             val invite = PairingInvitation.parse(link)
                             if (invite.deviceId == device.id) {
+                                rejectedScan = false
                                 invitation = link
                                 error = null
                             } else {
                                 error = R.string.connection_wrong_device
                             }
+                        } catch (_: PairingInvitationExpired) {
+                            error = R.string.connection_invite_expired
                         } catch (_: DeviceGrantUnavailable) {
                             error = R.string.connection_invalid_qr
                         }
                     }, onError = { error = it })
-                    OutlinedTextField(invitation, { invitation = it }, Modifier.fillMaxWidth(),
+                    OutlinedTextField(invitation, { invitation = it; rejectedScan = false; error = null }, Modifier.fillMaxWidth(),
                         label = { Text(stringResource(R.string.connection_invite)) }, singleLine = true, enabled = !busy)
                     Button(onClick = { scope.launch {
                         perform(R.string.connection_pair_failed) {
                             app.open(account.open(device, invitation.trim().ifEmpty { null }))
                         }
-                    } }, enabled = !busy) { Text(stringResource(R.string.connection_open)) }
+                    } }, enabled = !busy && !rejectedScan && error != R.string.connection_invite_expired) {
+                        Text(stringResource(R.string.connection_open))
+                    }
                     TextButton(onClick = { selected = null; invitation = ""; error = null }, enabled = !busy) {
                         Text(stringResource(R.string.connection_devices))
                     }

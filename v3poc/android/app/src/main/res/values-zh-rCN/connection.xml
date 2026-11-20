@@ -19,6 +19,8 @@
     <string name="connection_unauthorized">服务器拒绝了凭据，请重新登录。</string>
     <string name="connection_unavailable">无法连接服务器，请重试。</string>
     <string name="connection_pair_failed">无法打开加密工作区，请检查设备和配对链接。</string>
+    <string name="connection_invite_expired">配对链接已过期或已使用，请在电脑上生成新的二维码。</string>
+    <string name="connection_untitled_session">未命名会话</string>
     <string name="connection_encrypted_session">加密会话</string>
     <string name="connection_create">新会话</string>
     <string name="connection_no_runtimes">此设备没有可用的 Agent。</string>

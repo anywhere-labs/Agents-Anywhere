@@ -8,6 +8,8 @@ import dev.agentsanywhere.v3poc.generated.ContentPairRequest
 import java.security.KeyStore
 import java.security.MessageDigest
 import java.security.SecureRandom
+import java.time.Instant
+import java.time.format.DateTimeParseException
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -93,6 +95,7 @@ internal class ContentPairing(
     private fun transport(pinnedKey: String) = DeviceContentTransport(server, deviceId, pinnedKey, http, accessToken)
 }
 
+internal class PairingInvitationExpired : IllegalStateException()
 internal class PairingTargetMismatch : IllegalArgumentException()
 
 internal class PairedContent(val transport: DeviceContentTransport, val authorization: ContentAuthorization)
@@ -106,6 +109,7 @@ internal class PairingInvitation(
     val psk: String,
     val serverUrl: String,
     val e2eeMode: String,
+    val expiresAt: String,
 ) {
     companion object {
         fun parse(uri: String?): PairingInvitation {
@@ -117,7 +121,10 @@ internal class PairingInvitation(
                         decode(it.deviceIdentityPub).size != 32 || decode(it.psk).size != 32) {
                         throw DeviceGrantUnavailable()
                     }
+                    if (!Instant.parse(it.expiresAt).isAfter(Instant.now())) throw PairingInvitationExpired()
                 }
+            } catch (_: DateTimeParseException) {
+                throw DeviceGrantUnavailable()
             } catch (_: IllegalArgumentException) {
                 throw DeviceGrantUnavailable()
             }

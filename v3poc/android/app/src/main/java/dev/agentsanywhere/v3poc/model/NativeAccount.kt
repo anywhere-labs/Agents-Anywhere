@@ -110,8 +110,14 @@ internal class NativeAccount(private val context: Context) {
                     val id = value["id"].str ?: continue
                     val owned = openDisplay(value["displayDevice"], key, device.id, id, "device")
                     val renamed = openDisplay(value["displayUser"], key, device.id, id, "user")
+                    val renameLocked = value["displayUser"]["mode"].str == "sealed" && renamed == null
+                    val deviceLocked = value["displayDevice"]["mode"].str == "sealed" && owned == null
+                    val title = if (renameLocked) null else
+                        renamed["title"].str?.takeIf { it.isNotBlank() } ?: owned["title"].str?.takeIf { it.isNotBlank() }
+                    val fallbackTitle = if (renameLocked || deviceLocked) R.string.connection_encrypted_session
+                        else R.string.connection_untitled_session
                     sessions += Workspace.Session(
-                        id, renamed["title"].str ?: owned["title"].str ?: context.getString(R.string.connection_encrypted_session),
+                        id, title ?: context.getString(fallbackTitle),
                         value["runtimeType"].str ?: value["runtime"].str.orEmpty(), device.id,
                         owned["cwd"].str.orEmpty(), value["status"].str.orEmpty(), value["unread"].bool ?: false,
                         value["pinned"].bool ?: false, value["lastActivityAt"].str.orEmpty(),

@@ -19,6 +19,8 @@
     <string name="connection_unauthorized">The server rejected your credentials. Sign in again.</string>
     <string name="connection_unavailable">Could not connect to the server. Try again.</string>
     <string name="connection_pair_failed">Could not open the encrypted workspace. Check the device and pairing link.</string>
+    <string name="connection_invite_expired">This pairing link has expired or was already used. Generate a new QR code on your computer.</string>
+    <string name="connection_untitled_session">Untitled session</string>
     <string name="connection_encrypted_session">Encrypted session</string>
     <string name="connection_create">New session</string>
     <string name="connection_no_runtimes">No available runtimes on this device.</string>
