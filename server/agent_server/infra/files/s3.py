@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Any
+from xml.etree import ElementTree
 
 from agent_server.infra.files.base import FileOpenUrl, FileStorage
 
@@ -101,19 +103,41 @@ class S3FileStorage(FileStorage):
             for item in objects:
                 await self._client.delete_object(self._bucket, item.key)
 
-    async def delete_session_except(self, session_id: str, keep: set[str]) -> None:
-        if not keep:
-            await self.delete_session(session_id)
-            return
+    async def delete_session_before(self, session_id: str, keep: set[str], cutoff: datetime) -> None:
         self._validate_session_id(session_id)
         prefix = self._key(session_id, "")
-        # One page per call (see ``delete_session``): stop once a page holds only kept files.
-        while objects := await self._client.list_objects(self._bucket, prefix=prefix):
-            doomed = [item.key for item in objects if item.key[len(prefix):].split(".", 1)[0] not in keep]
-            if not doomed:
-                return
-            for key in doomed:
+        # The SDK's list_objects returns only the first page. Kept objects can fill a whole page.
+        url = self._client.build_unassigned_url(self._bucket)
+        params = {"list-type": "2", "prefix": prefix}
+        protected = set(keep)
+        while True:
+            response = await self._client.http_client.get(url, params=params)
+            response.raise_for_status()
+            page = ElementTree.fromstring(response.content)
+            for item in page.findall("{*}Contents"):
+                key = item.findtext("{*}Key")
+                modified = item.findtext("{*}LastModified")
+                if not key or not key.startswith(prefix) or not modified:
+                    raise ValueError("Invalid S3 object listing")
+                # S3 timestamps have second precision: retain the entire cut-over second.
+                file_id = self._stored_file_id(key[len(prefix):])
+                if file_id in protected or datetime.fromisoformat(modified) >= cutoff.replace(microsecond=0):
+                    continue
+                if file_id.startswith("file_"):
+                    try:
+                        metadata = await self.metadata(session_id, file_id)
+                    except KeyError:
+                        metadata = {}
+                    if metadata.get("storageGeneration") == 3:
+                        protected.add(file_id)
+                        continue
                 await self._client.delete_object(self._bucket, key)
+            if page.findtext("{*}IsTruncated") != "true":
+                return
+            token = page.findtext("{*}NextContinuationToken")
+            if not token or token == params.get("continuation-token"):
+                raise ValueError("S3 listing did not advance")
+            params["continuation-token"] = token
 
     async def metadata(self, session_id: str, file_id: str) -> dict[str, Any]:
         try:

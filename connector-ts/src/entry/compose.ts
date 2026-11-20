@@ -284,7 +284,7 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
           })
         }
         const inbox = new CommandInbox(store, clock, conversation, { ...control, ...(preview?.commands ?? {}), ...(options.commands ?? {}) }, prepared)
-        const readers = new DeviceReaders(store, clock.nowIso, facts, history, prepared)
+        const readers = new DeviceReaders(store, clock.nowIso, facts, history, prepared, pending => conversation.reconcileGoal(pending))
         const watch = { store, feed, now: clock.nowIso }
         const workspace = workspaceMethods(files, shell, terminals ?? undefined)
         // Terminal readers of `Client/subscribe` and the prepared-download upload behind `POST fs/read`.

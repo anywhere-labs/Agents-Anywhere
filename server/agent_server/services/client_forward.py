@@ -484,6 +484,10 @@ class ClientForwarder:
                     "device settled another command id expected={} got={}", receipt["commandId"], head.command.commandId
                 )
             outcome = head.command.outcome
+            if (receipt["kind"] == "session.goal.execute" and outcome == "accepted"
+                    and isinstance(body, dict) and body.get("outcome") == "unknown"):
+                # The device received the command but can only confirm its native effect on a later status read.
+                outcome = "unknown"
             error = head.command.e.model_dump(mode="json") if head.command.e is not None else None
         elif head.status >= 500:
             # The device failed without saying whether the command ran: unknown until ``Commands/status`` knows.

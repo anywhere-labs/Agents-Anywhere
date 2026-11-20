@@ -1,4 +1,4 @@
-import type { ConversationStore } from '../application/ports/index.js'
+import type { CommandRecord, ConversationStore, ReadMode } from '../application/ports/index.js'
 import { PAGE_BUDGET, SNAPSHOT_LIMIT, eventCursor, queue as queueRules, runtimeStateWire, toProtocolItem, type Interaction, type Session } from '../domain/conversation/index.js'
 import { GOAL_ACTIONS, goalWire, unobservedGoalState } from '../domain/goals/index.js'
 import { initialPlanning, planningCapabilities, planningWire, type PlanDocument } from '../domain/planning/index.js'
@@ -18,9 +18,9 @@ export interface SessionRead {
   sessionId: string
 }
 
-/** A page of history by `orderSeq`, bounded by count and bytes. */
+/** History by `orderSeq` or changes by `updatedSeq`, bounded by count and bytes. */
 export interface TimelineReadRequest extends SessionRead {
-  mode: 'latest' | 'before' | 'after'
+  mode: ReadMode
   cursor?: number | null
   limit?: number
   byteBudget?: number
@@ -125,6 +125,7 @@ export class DeviceReaders {
     private readonly facts: RuntimeFacts = NO_FACTS,
     private readonly history: HistoryBackfill | null = null,
     private readonly workflows: WorkflowReads | null = null,
+    private readonly reconcileGoal?: (pending: CommandRecord) => Promise<Record<string, unknown>>,
   ) {}
 
   private async session(sessionId: string): Promise<Session> {
@@ -164,7 +165,7 @@ export class DeviceReaders {
     }
   }
 
-  /** Paged history (`GET .../timeline`) by `orderSeq`; paging back past what is stored projects older native history. */
+  /** Backward history reads project older native records on demand. Changes only read the update clock. */
   public async read(request: TimelineReadRequest): Promise<TimelinePage> {
     await this.session(request.sessionId)
     const limit = request.limit ?? SNAPSHOT_LIMIT
@@ -172,10 +173,11 @@ export class DeviceReaders {
     const readPage = () => this.store.timeline.read(request.sessionId, request.mode, cursor, limit, request.byteBudget ?? PAGE_BUDGET)
     if (request.mode === 'latest') await this.history?.ensureLatest(request.sessionId)
     let page = await readPage()
-    if (request.mode !== 'after' && !page.hasMore && page.items.length < limit && this.history !== null) {
+    const historyPage = request.mode === 'latest' || request.mode === 'before'
+    if (historyPage && !page.hasMore && page.items.length < limit && this.history !== null) {
       if (await this.history.ensureBefore(request.sessionId, request.mode === 'before' ? cursor : null, limit)) page = await readPage()
     }
-    const hasMore = page.hasMore || (request.mode !== 'after' && this.history !== null && (await this.history.hasOlder(request.sessionId)))
+    const hasMore = page.hasMore || (historyPage && this.history !== null && (await this.history.hasOlder(request.sessionId)))
     return {
       items: page.items.map(item => toProtocolItem(item) as unknown as Record<string, unknown>),
       headSeq: page.headSeq,
@@ -316,15 +318,19 @@ export class DeviceReaders {
     return wire(await this.workflows.creationView(request.createOperationId))
   }
 
-  /** `Commands/status`: read-only receipt lookup; never executes anything. */
+  /** `Commands/status`: refresh an uncertain Goal receipt from the native snapshot without repeating its mutation. */
   public async commandStatus(request: ReadRequest<'command.status'>): Promise<ReadResponse<'command.status'>> {
-    const record = await this.store.commands.get(request.commandId)
+    let record = await this.store.commands.get(request.commandId)
+    if (record?.outcome === 'unknown' && record.method === 'session.goal' && this.reconcileGoal !== undefined) {
+      await this.reconcileGoal(record)
+      record = await this.store.commands.get(request.commandId)
+    }
     if (record === null) return { commandId: request.commandId, known: false, outcome: null }
     return {
       commandId: record.commandId,
       known: true,
       outcome: record.outcome,
-      r: record.result,
+      r: record.outcome === 'unknown' ? null : record.result,
       e: record.error === null ? null : { code: record.error.code, ...(record.error.message !== undefined ? { message: record.error.message } : {}), ...(record.error.retryable !== undefined ? { retryable: record.error.retryable } : {}) },
     }
   }

@@ -1,6 +1,6 @@
 import { checkRequest as checkGoalRequest, goalWire, initialGoalState, observe as observeGoal, type GoalObservation, type GoalRequest, type GoalState } from '../../domain/goals/index.js'
 import { UseCaseError } from '../errors.js'
-import type { CommandReceipt, ContractStatusOf } from '../ports/index.js'
+import type { CommandReceipt, CommandRecord, ContractStatusOf } from '../ports/index.js'
 import type { RuntimeBindings } from '../session/bindings.js'
 import type { SessionKernel } from '../session/kernel.js'
 import { withResult } from '../session/receipts.js'
@@ -25,6 +25,12 @@ export class GoalService {
       }
       state ??= initialGoalState({ sessionId, runtime: session.runtimeType, runtimeId: session.runtimeId, sourceEpoch: kernel.deps.ids.newId('ep_') })
       checkGoalRequest(state, request)
+      if (receipt != null) {
+        await kernel.deps.store.commands.settle({
+          ...receipt, outcome: 'unknown', error: null, updatedAt: receipt.createdAt,
+          result: { operationId: request.operationId, action: request.action, objective: request.objective, goalId: state.goal?.id },
+        })
+      }
       let observed: GoalObservation | null
       switch (request.action) {
         case 'set':
@@ -41,11 +47,55 @@ export class GoalService {
           observed = await port.clear()
           break
       }
+      const resultOf = (saved: GoalState, applied: boolean) => goalResult(request.operationId, saved, session.takeover, applied)
       if (observed === null) {
-        return { operationId: request.operationId, outcome: 'unknown', ok: false, state: goalWire(state, session.takeover) }
+        return resultOf(state, false)
       }
-      const resultOf = (saved: GoalState) => ({ operationId: request.operationId, outcome: 'applied', ok: true, state: goalWire(saved, session.takeover) })
-      return resultOf(await this.onGoalUpdated(sessionId, observed, saved => withResult(receipt, resultOf(saved))))
+      const saved = await this.onGoalUpdated(sessionId, observed, next => withResult(receipt, resultOf(next, true)))
+      return resultOf(saved, true)
+    })
+  }
+
+  /** Reconcile a write that may already have run. Polling and replay can only read the native goal. */
+  public async reconcile(pending: CommandRecord): Promise<Record<string, unknown>> {
+    const sessionId = pending.sessionId
+    if (sessionId === null || pending.method !== 'session.goal') throw new Error('Expected a session goal receipt')
+    return this.kernel.serial(sessionId, async () => {
+      const store = this.kernel.deps.store
+      const latest = await store.commands.get(pending.commandId)
+      if (latest?.outcome === 'accepted' && latest.result !== null) return latest.result
+      if (latest?.outcome === 'rejected') throw new UseCaseError(latest.error?.code ?? 'goal_rejected', latest.error?.message ?? 'Goal operation rejected')
+      const session = await this.kernel.requireSession(sessionId)
+      const port = (await this.bindings.binding(sessionId)).session.goal
+      const snapshot = await port?.get()
+      const state = snapshot == null ? await store.goals.load(sessionId) : await this.onGoalUpdated(sessionId, snapshot)
+      const intent = pending.result
+      const operationId = String(intent?.operationId ?? pending.commandId)
+      if (state === null) return { operationId, outcome: 'unknown', ok: false }
+      const sameGoal = state.goal !== null && state.goal.id === intent?.goalId
+      let applied = false
+      if (snapshot != null) {
+        switch (intent?.action) {
+          case 'set':
+          case 'edit':
+            applied = snapshot.goal != null && snapshot.goal.objective === intent.objective
+            break
+          case 'pause':
+            applied = sameGoal && snapshot.goal?.status === 'paused'
+            break
+          case 'resume':
+            applied = sameGoal && snapshot.goal?.status === 'active'
+            break
+          case 'clear':
+            applied = snapshot.empty && state.goal === null && state.lastOutcome?.id === intent.goalId
+            break
+        }
+      }
+      const result = goalResult(operationId, state, session.takeover, applied)
+      if (applied) {
+        await store.commands.settle({ ...pending, outcome: 'accepted', result, updatedAt: this.kernel.deps.clock.nowIso() })
+      }
+      return result
     })
   }
 
@@ -83,4 +133,8 @@ export class GoalService {
   private emitGoal(sessionId: string, state: GoalState, takeover: boolean): void {
     this.kernel.emitSessionStatus(sessionId, { event: 'goal.state.updated', revision: state.revision, state: goalWire(state, takeover) as unknown as ContractStatusOf<'goal.state.updated'>['state'] })
   }
+}
+
+function goalResult(operationId: string, state: GoalState, takeover: boolean, applied: boolean) {
+  return { operationId, outcome: applied ? 'applied' : 'unknown', ok: applied, state: goalWire(state, takeover) }
 }

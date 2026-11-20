@@ -167,19 +167,18 @@ export function SessionView() {
         reason: "session-view.export-remote",
       })
       const notices: Notice[] = snapshot.notices
-      let afterSeq = 0
-      let nextSeq = 0
-      let serverTime: string | null = snapshot.serverTime
-
+      let page = await dashboardApi.getLatestSessionTimeline(token, session.id, 500)
+      let before: number | undefined
       while (true) {
-        const page = await dashboardApi.getSessionTimeline(token, session.id, afterSeq, 500)
+        if (page.deviceOffline) throw new Error(t("timelineExportFailed"))
         allItems.push(...page.items)
-        serverTime = page.serverTime
-        nextSeq = page.nextSeq
         if (!page.hasMore) break
-        const lastItem = page.items.at(-1)
-        if (!lastItem) break
-        afterSeq = lastItem.updatedSeq
+        const oldest = page.items[0]?.orderSeq
+        if (oldest == null || oldest <= 0 || (before !== undefined && oldest >= before)) {
+          throw new Error(t("timelineExportFailed"))
+        }
+        before = oldest
+        page = await dashboardApi.getSessionTimelineBefore(token, session.id, before, 500)
       }
 
       downloadTimelineJson(
@@ -188,9 +187,9 @@ export function SessionView() {
           session: snapshot.session as SessionViewData,
           items: sortTimelineItems(allItems),
           notices,
-          nextSeq,
+          nextSeq: page.nextSeq,
           hasMore: false,
-          serverTime,
+          serverTime: page.serverTime,
           exportedAt: new Date().toISOString(),
         },
         `timeline-remote-${session.id.slice(0, 8)}.json`,

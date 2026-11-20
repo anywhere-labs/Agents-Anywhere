@@ -57,18 +57,19 @@ export function errorCode(error: unknown): { code: string; message: string; retr
  * `aa.device.v1.Commands/*` (06-protocols.md §2.4): durable receipts by `commandId`. A replay with the same input
  * digest returns the recorded ack without running anything; a different digest is a conflict. The ack is
  * `accepted` only after the use case's effect and the receipt are on disk. The device never re-executes a
- * command on its own; `Commands/status` only reads receipts.
+ * command on its own. Status reads can reconcile an unknown Goal from its native snapshot.
  *
  * Commands whose effect is a local write (sending and creating messages, queue operations, planning and goal
  * state) commit the receipt in that write's transaction (`CommandReceipt`), so a crash between the two cannot
  * make a retry run the command a second time. Effects outside the store (a Runtime call: interrupt, select,
- * steer, answering a notice, a planning or goal action) cannot share a transaction; a crash after such a call
+ * steer, answering a notice, a planning action) cannot share a transaction; a crash after such a call
  * and before its write leaves the retry to run it again, and those use cases rely on the Runtime's or the
- * natural key's idempotency (`responseId`, `clientMessageId`).
+ * natural key's idempotency (`responseId`, `clientMessageId`). Goal writes record an unknown receipt before
+ * the native call; retries can only reconcile it against a snapshot.
  */
 export class CommandInbox {
   private readonly handlers = new Map<string, Entry>()
-  private readonly running = new Map<string, Promise<CommandAck>>()
+  private readonly running = new Map<string, { method: string; inputDigest: string; work: Promise<CommandAck> }>()
 
   public constructor(
     private readonly store: ConversationStore,
@@ -197,9 +198,12 @@ export class CommandInbox {
     const inputDigest = call.inputDigest ?? `sha256:${createHash('sha256').update(JSON.stringify(call.p ?? {})).digest('hex')}`
     // Concurrent duplicates (MeshCall retries, a second worker) share one execution.
     const inFlight = this.running.get(call.commandId)
-    if (inFlight !== undefined) return inFlight
+    if (inFlight !== undefined) {
+      if (inFlight.method === method && inFlight.inputDigest === inputDigest) return inFlight.work
+      return { outcome: 'rejected', e: { code: 'command_conflict', message: 'This commandId was already used with different input.' } }
+    }
     const work = this.execute(method, run, call, inputDigest, actor)
-    this.running.set(call.commandId, work)
+    this.running.set(call.commandId, { method, inputDigest, work })
     try {
       return await work
     } finally {
@@ -210,8 +214,11 @@ export class CommandInbox {
   private async execute(method: string, run: CommandRun, call: CommandCall, inputDigest: string, actor: string): Promise<CommandAck> {
     const recorded = await this.store.commands.get(call.commandId)
     if (recorded !== null) {
-      if (recorded.inputDigest !== null && recorded.inputDigest !== inputDigest) {
+      if (recorded.method !== method || (recorded.inputDigest !== null && recorded.inputDigest !== inputDigest)) {
         return { outcome: 'rejected', e: { code: 'command_conflict', message: 'This commandId was already used with different input.' } }
+      }
+      if (recorded.outcome === 'unknown' && method === 'session.goal') {
+        return { outcome: 'accepted', r: await this.service.reconcileGoal(recorded) }
       }
       return ackOf(recorded)
     }
@@ -223,6 +230,8 @@ export class CommandInbox {
     try {
       // The run checks the payload first: a payload that does not fit the contract is a rejected command.
       const result = (await run(payload, { commandId: call.commandId, inputDigest: call.inputDigest ?? null, actor, receipt })) as Record<string, unknown>
+      // A Goal that lacks native confirmation keeps its durable unknown receipt for read-only reconciliation.
+      if (method === 'session.goal' && result.outcome === 'unknown') return { outcome: 'accepted', r: result }
       record = { commandId: call.commandId, method, sessionId, inputDigest, outcome: 'accepted', result, error: null, createdAt, updatedAt: this.clock.nowIso() }
     } catch (error) {
       const coded = errorCode(error)

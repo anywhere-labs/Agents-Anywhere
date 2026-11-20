@@ -1,35 +1,34 @@
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-import json
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select
 
-from agent_server.infra.db import connectors, session_shares, sessions
+from agent_server.infra.db import (
+    connectors,
+    instance_settings,
+    session_shares,
+    sessions,
+)
 
 
 class AttachmentRepositoryMixin:
     @asynccontextmanager
     async def attachment_write_fence(
-        self, session_id: str, *, user_id: str
+        self, session_id: str, *, user_id: str | None = None
     ) -> AsyncIterator[None]:
-        # A device deletion waits for an in-flight upload, then removes it.
-        # Uploads that arrive after deletion cannot leave orphaned blobs.
+        # Uploads and trusted share copies hold a shared lock until storage has published the file.
+        query = select(sessions.c.id).where(sessions.c.id == session_id)
+        if user_id is not None:
+            query = query.join(connectors, connectors.c.id == sessions.c.connector_id).where(
+                connectors.c.user_id == user_id, connectors.c.revoked == 0,
+            )
         async with self._engine.begin() as conn:
-            row = (
-                await conn.execute(
-                    select(sessions.c.id)
-                    .join(connectors, connectors.c.id == sessions.c.connector_id)
-                    .where(
-                        sessions.c.id == session_id,
-                        connectors.c.user_id == user_id,
-                        connectors.c.revoked == 0,
-                    )
-                    .with_for_update(read=True, of=sessions)
-                )
-            ).first()
+            row = (await conn.execute(query.with_for_update(read=True, of=sessions))).first()
             if row is None:
                 raise KeyError(session_id)
             yield
@@ -74,19 +73,27 @@ class AttachmentRepositoryMixin:
     async def delete_uploaded_file(self, *, session_id: str, file_id: str) -> None:
         await self.attachments.delete_file(session_id=session_id, file_id=file_id)
 
-    async def attachment_purge_plan(self) -> list[tuple[str, set[str]]]:
-        """Every session with the file ids its shares still expose (v2_60's attachment purge)."""
-
+    async def attachment_purge_plan(self, key: str) -> tuple[datetime, list[str]] | None:
         async with self._engine.connect() as conn:
-            session_ids = [str(row.id) for row in await conn.execute(select(sessions.c.id))]
-            shares = (
-                await conn.execute(select(session_shares.c.session_id, session_shares.c.allowed_file_ids_json))
-            ).all()
-        keep: dict[str, set[str]] = {}
-        for row in shares:
-            try:
-                ids = json.loads(row.allowed_file_ids_json or "[]")
-            except ValueError:
-                ids = []
-            keep.setdefault(str(row.session_id), set()).update(str(item) for item in ids if isinstance(item, str))
-        return [(session_id, keep.get(session_id, set())) for session_id in session_ids]
+            cutoff = await conn.scalar(select(instance_settings.c.updated_at).where(
+                instance_settings.c.key == key, instance_settings.c.value == "pending",
+            ))
+            if cutoff is None:
+                return None
+            ids = (await conn.scalars(select(sessions.c.id))).all()
+        return datetime.fromisoformat(cutoff), list(ids)
+
+    @asynccontextmanager
+    async def attachment_purge_fence(self, session_id: str) -> AsyncIterator[set[str] | None]:
+        async with self._engine.begin() as conn:
+            session = await conn.scalar(select(sessions.c.id).where(sessions.c.id == session_id).with_for_update())
+            if session is None:
+                yield None
+                return
+            shares = await conn.scalars(select(session_shares.c.allowed_file_ids_json).where(
+                session_shares.c.session_id == session_id,
+            ))
+            keep: set[str] = set()
+            for encoded in shares:
+                keep.update(json.loads(encoded or "[]"))
+            yield keep

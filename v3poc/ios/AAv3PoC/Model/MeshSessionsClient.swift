@@ -224,21 +224,23 @@ final class MeshSessionsClient: SessionsClient {
         })
     }
 
+    private static let terminalStatuses: Set<String> = ["done", "failed", "cancelled", "interrupted"]
+
     private func messages(_ items: [JSON]) -> [JSON] {
         var turnID: String?
         return items.compactMap { item in
             guard let id = item["id"]?.string, let sequence = item["orderSeq"],
                   let role = item["role"]?.string else { return nil }
             let user = role == "user"
-            let thinking = role == "reasoning"
-            guard user || thinking || role == "assistant" else { return nil }
+            guard user || role == "assistant" else { return nil }
             let content = item["content"]
+            let thinking = content?["isThinking"]?.bool == true
             guard let text = content?["text"]?.string ?? content?["message"]?.string, !text.isEmpty else { return nil }
             if user { turnID = id }
             var result: [String: JSON] = [
                 "id": .string(id), "seq": sequence, "role": user ? "user" : "assistant",
                 "created_at": item["createdAt"] ?? "",
-                "done": .bool(item["status"]?.string != "streaming"),
+                "done": .bool(Self.terminalStatuses.contains(item["status"]?.string ?? "")),
                 "parts": [["type": thinking ? "thinking" : "text", "text": .string(text)]],
             ]
             if user {

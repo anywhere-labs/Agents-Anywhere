@@ -37,6 +37,9 @@ dev = [
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+# The SDK warns even with explicit idempotent=False/read_only=False on the ticket issuer.
+# xdist reconstructs this warning from its rendered string, which MeshCallWarning cannot accept.
+filterwarnings = ['ignore:^W002 aa\.server\.v1\.MobileControl\.issue_content_tunnel:meshcall.MeshCallWarning']
 
 [tool.uv.sources]
 # MeshCall main ce14d60 (tokens with instance_ids, renew/revoke close codes); no release carries it yet.

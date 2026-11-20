@@ -12,7 +12,7 @@
 - Server 需要执行 `v2_65`、`v2_66` 数据库迁移：加密模式的命令记录并入操作记录表，并删除一张不再使用的渠道表，已有会话和设置不受影响。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - Server 需要执行 `v2_62` 数据库迁移，删除记录终端工作目录的表，终端的工作目录改由设备自己记录。（[#739](https://github.com/anywhere-labs/Agents-Anywhere/pull/739)、[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 端口预览需要 Server 执行 `v2_61` 数据库迁移（只新增预览表），并配置单独注册的预览域名 `AGENT_SERVER_PREVIEW_DOMAIN`（不能是 AA 站点的子域名）和至少 32 个字符、只含字母和数字的随机 `AGENT_SERVER_PREVIEW_INTERNAL_TOKEN`（可用 `openssl rand -hex 32` 生成，它不再出现在请求路径和访问日志里）；预览域名要有通配符 DNS 记录和通配符证书（需要 DNS-01 验证，在网关前终止 TLS）。自托管 Compose 默认带上 frps 和 preview-auth，网关同时承载预览域名，填好这两项即开启；没有配置时端口预览在各端隐藏，其他功能不受影响。加密模式下预览流量不在端到端加密范围内，可用 `AGENT_SERVER_E2EE_PREVIEW=deny` 关闭。（[#734](https://github.com/anywhere-labs/Agents-Anywhere/pull/734)、[#735](https://github.com/anywhere-labs/Agents-Anywhere/pull/735)、[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
-- Server 需要执行 `v2_60` 数据库迁移，迁移会删除 Server 上保存的会话内容（对话记录、计划、目标和排队消息）且不能降级，升级前请备份数据库：会话列表、标题、归档、置顶和分享都会保留，v3 设备连上后会从电脑上的原始记录重新生成内容；以前上传的附件在 Server 启动后于后台删除，分享里用到的文件保留；升级前已读的会话保持已读，未读的保持未读，直到设备升级到 v3 后随新的回合更新。（[#733](https://github.com/anywhere-labs/Agents-Anywhere/pull/733)）
+- Server 需要执行 `v2_60` 数据库迁移，迁移会删除 Server 上保存的会话内容（对话记录、计划、目标和排队消息）且不能降级，升级前请备份数据库：会话列表、标题、归档、置顶和分享都会保留，v3 设备连上后会从电脑上的原始记录重新生成内容；以前上传的附件在 Server 启动后于后台删除，分享里用到的文件和升级后新上传的附件保留；升级前已读的会话保持已读，未读的保持未读，直到设备升级到 v3 后随新的回合更新。（[#733](https://github.com/anywhere-labs/Agents-Anywhere/pull/733)、[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - Server 不再使用 `AGENT_SERVER_TIMELINE_SINGLE_INSTANCE`，可以从部署配置里删除；保留也不会影响启动。（[#741](https://github.com/anywhere-labs/Agents-Anywhere/pull/741)）
 - 升级 Server 后，还在用旧版 Agents Anywhere（2.x 的 Connector、Desktop 或 DSH 插件）的设备只保留会话列表、在线状态和改名、置顶、归档：打开会话、发消息、规划、目标、排队、上传附件、创建分享，以及终端、文件浏览、Shell 和 Runtime 管理都会提示「请在设备上升级 Agents Anywhere」，这些设备推送的会话内容不再保存。（[#731](https://github.com/anywhere-labs/Agents-Anywhere/pull/731)、[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - Server 需要执行 `v2_59` 数据库迁移，新增登录记录表：此后退出登录、修改密码或停用账号，对应的登录令牌几秒内在所有 Server 实例上失效（修改密码只保留当前这次登录）；升级前签发的令牌在到期前继续可用，账号停用后立即失效。（[#728](https://github.com/anywhere-labs/Agents-Anywhere/pull/728)）
@@ -28,7 +28,7 @@
 
 ### 会话创建与消息交付
 
-- 移动端 PoC 可登录自托管 Server 并连接已配对设备，在 Android 和 iOS 上新建、继续加密会话，并使用附件、设备文件和终端。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
+- 移动端 PoC 可登录自托管 Server 并连接已配对设备，在 Android 和 iOS 上新建、继续加密会话，并使用附件、设备文件和终端；并发重试新建会话时会回到同一个会话，思考内容与正文分别显示，流式回复结束后才标记完成。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 修复 Pi 会话刷新或重连后重复显示旧回复的问题，已出现的重复回复会在读取会话时清理，共用历史目录的 Pi 实例也会保留原会话。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 修复 Web、Desktop、Android 和 iOS 无法完成加密配对的问题，并恢复加密会话的实时消息更新。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - Web 和 Desktop 新建会话时会选用设备允许访问的默认工作目录，主目录受限时可从允许的工作目录加载 Agent 配置。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
@@ -52,7 +52,7 @@
 
 ### Codex 与 Claude
 
-- 使用支持 Goal 状态同步的 codex-acp 时，Codex 目标可以在不同设备间查看、暂停、恢复和清除。计划审阅的实时更新也不再触发 Server 报错。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
+- 使用支持 Goal 状态同步的 codex-acp 时，Codex 目标可以在不同设备间查看、暂停、恢复和清除。目标操作超时后，重试会从原生目标确认结果；计划审阅的实时更新也不再触发 Server 报错。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 连接 v3 Connector 时，选择项目后即可加载 Codex 和 Claude Code 的模型列表，首次新建会话也能在发送前选择模型。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 连接 v3 Connector、装有 Codex App 的电脑上，Codex 会话的斜杠命令菜单可以用 `/open-in-codex-app` 在 Codex App 中打开这个会话，用 `/quit-codex-app` 退出占用会话的 Codex App 让 AA 接手：退出前会列出要结束的进程并请你确认，可以选择没有按时退出时强制结束，Web、Desktop、Android 和 iOS 都可以操作。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 连接 v3 Connector 时，在 AA 新建的 Codex 线程默认立即出现在 Codex App 侧边栏（需要 codex-acp 支持），可以在 Codex 实例配置里关闭。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
@@ -91,6 +91,7 @@
 
 ### Web 与 Desktop 界面
 
+- 修复从设备导出较长会话时反复读取同一页、无法完成导出的问题。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - Claude 退出规划模式时，会话里只显示计划审阅面板，不再同时弹出一张列着原生选项的审批卡片；审批卡片的选项较长时会换行显示，标题不再被挤成竖排。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 连接 v3 Connector 的设备上，工具的超长输出和图片只保存在设备上时，可以在 Web 和 Desktop 点「展开完整输出」「加载图片」或「下载」从设备读取完整内容；加密模式下这些内容和附件图片也能正常加载。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 多个窗口或设备同时打开同一个会话时，关掉其中一个不再让其他窗口读取会话失败。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）

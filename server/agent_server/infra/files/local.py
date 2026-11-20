@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import shutil
+from datetime import datetime
 from pathlib import Path
 from typing import Any, BinaryIO
 from uuid import uuid4
@@ -60,12 +61,9 @@ class LocalFileStorage(FileStorage):
     async def exists(self, session_id: str, file_id: str) -> bool:
         return await asyncio.to_thread(self._exists, session_id, file_id)
 
-    async def delete_session_except(self, session_id: str, keep: set[str]) -> None:
+    async def delete_session_before(self, session_id: str, keep: set[str], cutoff: datetime) -> None:
         self._validate_session_id(session_id)
-        if not keep:
-            await self.delete_session(session_id)
-            return
-        await asyncio.to_thread(self._delete_session_except, session_id, keep)
+        await asyncio.to_thread(self._delete_session_before, session_id, keep, cutoff)
 
     async def metadata(self, session_id: str, file_id: str) -> dict[str, Any]:
         return await asyncio.to_thread(self._metadata, session_id, file_id)
@@ -205,19 +203,26 @@ class LocalFileStorage(FileStorage):
             session_dir / f"{file_id}.json"
         ).is_file()
 
-    def _delete_session_except(self, session_id: str, keep: set[str]) -> None:
+    def _delete_session_before(self, session_id: str, keep: set[str], cutoff: datetime) -> None:
         session_dir = self._root / session_id
         if not session_dir.is_dir() or session_dir.is_symlink():
             return
-        for entry in session_dir.iterdir():
-            # ``<fileId>.bin``, ``<fileId>.json``, ``<fileId>.thumb-*.webp``; a leading dot
-            # marks an interrupted write.
-            if entry.name.split(".", 1)[0] in keep:
+        # Read sidecars before unlinking any: all objects of a v3 write are protected even with clock skew.
+        protected = set(keep)
+        for sidecar in session_dir.glob("file_*.json"):
+            if sidecar.is_symlink():
                 continue
             try:
-                if entry.is_dir() and not entry.is_symlink():
-                    shutil.rmtree(entry)
-                else:
+                metadata = json.loads(sidecar.read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                continue
+            if metadata.get("storageGeneration") == 3:
+                protected.add(sidecar.stem)
+        for entry in session_dir.iterdir():
+            if self._stored_file_id(entry.name) in protected:
+                continue
+            try:
+                if entry.lstat().st_mtime < cutoff.timestamp() and (entry.is_symlink() or entry.is_file()):
                     entry.unlink()
             except FileNotFoundError:
                 pass

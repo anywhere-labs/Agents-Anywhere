@@ -9,7 +9,7 @@
 // ported from Agents-Anywhere v2 server/agent_server/api/session_goals.py @4c8012369 (execute_goal)
 // ported from Agents-Anywhere v2 server/agent_server/api/device_session_reads.py @4c8012369 (device_timeline, device_events)
 
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 
 import type { AgentSessionReads } from '../application/inbound/agent-session.js'
 import { CREATE_AND_START_METHOD, type CommandInbox } from '../application/inbound/commands.js'
@@ -570,14 +570,15 @@ export class DeviceTunnelApi implements TunnelApi {
     const mode = route.query.get('mode') ?? 'latest'
     if (mode !== 'latest' && mode !== 'changes' && mode !== 'history') throw invalid('mode must be latest, changes or history')
     const limit = int(route.query.get('limit'), 100, 1, 500)
-    let read: { mode: 'before' | 'after' | 'latest'; cursor: number | null }
+    let read: { mode: 'before' | 'changes' | 'latest'; cursor: number | null }
     if (mode === 'history') {
       if (route.query.get('beforeOrderSeq') === null) throw invalid('beforeOrderSeq is required for history mode')
       read = { mode: 'before', cursor: int(route.query.get('beforeOrderSeq'), 1, 1, Number.MAX_SAFE_INTEGER) }
-    } else if (mode === 'changes') read = { mode: 'after', cursor: int(route.query.get('afterSeq'), 0, 0, Number.MAX_SAFE_INTEGER) }
+    } else if (mode === 'changes') read = { mode: 'changes', cursor: int(route.query.get('afterSeq'), 0, 0, Number.MAX_SAFE_INTEGER) }
     else read = { mode: 'latest', cursor: null }
     const page = await this.deps.readers.read({ sessionId, mode: read.mode, cursor: read.cursor, limit })
-    return { status: 200, body: { sessionId, items: page.items, nextSeq: page.headSeq, hasMore: page.hasMore, serverTime: this.now(), historySource: 'live', deviceOffline: false } }
+    const nextSeq = read.mode === 'changes' && page.hasMore ? page.items.at(-1)?.updatedSeq ?? read.cursor : page.headSeq
+    return { status: 200, body: { sessionId, items: page.items, nextSeq, hasMore: page.hasMore, serverTime: this.now(), historySource: 'live', deviceOffline: false } }
   }
 
   private async events(sessionId: string, route: Route): Promise<TunnelApiResponse> {
@@ -812,7 +813,9 @@ export class DeviceTunnelApi implements TunnelApi {
     if (cwd === null) throw invalid('cwd is required')
     const clientMessageId = call.command?.commandId ?? text(body.clientMessageId) ?? this.newId('create_')
     const previous = await this.deps.store.commands.get(clientMessageId)
-    const sessionId = call.sessionId ?? (typeof previous?.sessionId === 'string' ? previous.sessionId : `sess_${randomBytes(16).toString('hex')}`)
+    // Preserve ids from older receipts. New parallel attempts must hash the same command payload.
+    const sessionId = call.sessionId ?? previous?.sessionId
+      ?? `sess_${createHash('sha256').update(JSON.stringify([this.deps.deviceId, clientMessageId])).digest('hex').slice(0, 32)}`
     const payload = {
       sessionId,
       runtimeId: text(body.runtimeId) ?? runtimeType,
@@ -835,7 +838,7 @@ export class DeviceTunnelApi implements TunnelApi {
       if (!(error instanceof CommandRejected)) throw error
       throw new TunnelHttpError(statusOf(error.code), error.code, error.message)
     }
-    const session = await this.requireSession(sessionId)
+    const session = await this.requireSession(text(result.sessionId) ?? sessionId)
     return { status: 200, body: { session: sessionView(this.deps.deviceId, session, text(body.title)), connectorResult: result, attachments } }
   }
 

@@ -116,7 +116,7 @@ export interface TimelineChange {
   at: string
 }
 
-export type ReadMode = 'latest' | 'before' | 'after'
+export type ReadMode = 'latest' | 'before' | 'after' | 'changes'
 
 export interface TimelinePage {
   items: TimelineItem[]

@@ -16,6 +16,8 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
+private val terminalStatuses = setOf("done", "failed", "cancelled", "interrupted")
+
 internal class MeshSessionsClient(
     private val device: Workspace.Device,
     private val sessionTitles: Map<String, String>,
@@ -207,17 +209,18 @@ internal class MeshSessionsClient(
             val id = item["id"].str ?: return@mapNotNull null
             val seq = item["orderSeq"] ?: return@mapNotNull null
             val role = item["role"].str
-            if (role != "user" && role != "assistant" && role != "reasoning") return@mapNotNull null
+            if (role != "user" && role != "assistant") return@mapNotNull null
             val text = item["content"]["text"].str ?: item["content"]["message"].str ?: return@mapNotNull null
             if (text.isEmpty()) return@mapNotNull null
+            val thinking = item["content"]["isThinking"].bool == true
             if (role == "user") turnId = id
             buildJsonObject {
                 put("id", id)
                 put("seq", seq)
                 put("role", if (role == "user") "user" else "assistant")
                 put("created_at", item["createdAt"].str.orEmpty())
-                put("done", item["status"].str != "streaming")
-                put("parts", JsonArray(listOf(jsObj("type" to if (role == "reasoning") "thinking" else "text", "text" to text))))
+                put("done", item["status"].str in terminalStatuses)
+                put("parts", JsonArray(listOf(jsObj("type" to if (thinking) "thinking" else "text", "text" to text))))
                 if (role == "user") {
                     item["source"]["clientMessageId"].str?.let { put("client_msg_id", JsonPrimitive(it)) }
                     if (item["status"].str == "failed") {

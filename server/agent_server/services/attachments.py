@@ -12,6 +12,7 @@ from agent_server.core.auth import create_signed_token
 from agent_server.core.models import UploadedAttachment
 from agent_server.core.utc import utc_now
 from agent_server.infra.files import FileStorage
+from agent_server.infra.files.base import InvalidStorageSession
 from agent_server.services.thumbnails import is_supported_media_type
 
 LOCAL_FILE_TOKEN_KIND = "local_file"
@@ -260,14 +261,15 @@ class AttachmentService:
 
         if expected_sha256 and hashlib.sha256(data).hexdigest() != expected_sha256:
             raise ValueError(f"{file_id} does not match its sha256")
-        return await self._persist_file_blob(
-            session_id=session_id,
-            data=data,
-            name=name,
-            media_type=media_type,
-            origin="share",
-            file_id=file_id,
-        )
+        async with self._store.attachment_write_fence(session_id):
+            return await self._persist_file_blob(
+                session_id=session_id,
+                data=data,
+                name=name,
+                media_type=media_type,
+                origin="share",
+                file_id=file_id,
+            )
 
     async def purge_v2_files(self) -> int:
         """Delete the attachments v2 stored, once, after v2_60 (D8); share files stay.
@@ -276,16 +278,19 @@ class AttachmentService:
         start, and deleting twice is harmless. Returns how many sessions were swept.
         """
 
-        if await self._store.get_setting(V2_ATTACHMENT_PURGE_KEY) != "pending":
+        plan = await self._store.attachment_purge_plan(V2_ATTACHMENT_PURGE_KEY)
+        if plan is None:
             return 0
-        plan = await self._store.attachment_purge_plan()
-        for session_id, keep in plan:
-            try:
-                await self._files.delete_session_except(session_id, keep)
-            except ValueError:
-                continue
+        cutoff, session_ids = plan
+        for session_id in session_ids:
+            async with self._store.attachment_purge_fence(session_id) as keep:
+                if keep is not None:
+                    try:
+                        await self._files.delete_session_before(session_id, keep, cutoff)
+                    except InvalidStorageSession:
+                        continue
         await self._store.set_setting(V2_ATTACHMENT_PURGE_KEY, "done")
-        return len(plan)
+        return len(session_ids)
 
     async def delete_file(self, *, session_id: str, file_id: str) -> None:
         self._validate_file_id(file_id)
@@ -369,6 +374,7 @@ class AttachmentService:
             "sha256": sha256,
             "mediaType": media_type or "",
             "origin": origin,
+            "storageGeneration": 3,
             "createdAt": utc_now(),
         }
 

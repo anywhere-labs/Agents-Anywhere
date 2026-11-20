@@ -591,15 +591,18 @@ export function openSqliteStore(options: OpenStoreOptions): SyncStore {
       const count = Math.max(1, Math.min(limit || STATUS_DEFAULT_LIMIT, PAGE_LIMIT_MAX))
       const budget = byteBudget > 0 ? byteBudget : PAGE_BUDGET
       let rows: Row[]
-      if (mode === 'after') {
+      const forward = mode === 'after' || mode === 'changes'
+      if (mode === 'changes') {
+        rows = all('SELECT payload_json FROM timeline_items WHERE session_id = ? AND updated_seq > ? ORDER BY updated_seq LIMIT ?', sessionId, cursor ?? 0, count + 1)
+      } else if (mode === 'after') {
         rows = all('SELECT payload_json FROM timeline_items WHERE session_id = ? AND order_seq > ? ORDER BY order_seq, item_id LIMIT ?', sessionId, cursor ?? -1, count + 1)
       } else {
         const upper = mode === 'before' && cursor !== null ? cursor : Number.MAX_SAFE_INTEGER
         rows = all('SELECT payload_json FROM timeline_items WHERE session_id = ? AND order_seq < ? ORDER BY order_seq DESC, item_id DESC LIMIT ?', sessionId, mode === 'latest' ? Number.MAX_SAFE_INTEGER : upper, count + 1).reverse()
       }
       const moreByCount = rows.length > count
-      const window = moreByCount ? (mode === 'after' ? rows.slice(0, count) : rows.slice(rows.length - count)) : rows
-      const fitted = fitPage(window.map(itemFromRow), budget, mode !== 'after')
+      const window = moreByCount ? (forward ? rows.slice(0, count) : rows.slice(rows.length - count)) : rows
+      const fitted = fitPage(window.map(itemFromRow), budget, !forward)
       const items = fitted.items
       return {
         items,

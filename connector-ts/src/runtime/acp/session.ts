@@ -610,7 +610,17 @@ export class AcpRuntimeSession implements RuntimeSession {
       return parseGoalObservation(goal ?? null)
     }
     const observed = async (action: string, extra: JsonRecord = {}) => {
-      const result = await request(action, extra)
+      let result: JsonRecord
+      try {
+        result = await request(action, extra)
+      } catch (error) {
+        if (error instanceof JsonRpcError) {
+          const refusal = runtimeError(error)
+          throw Object.assign(new Error(refusal.message), { code: refusal.code })
+        }
+        throw error
+      }
+      // The mutation already answered. Failure to fetch a legacy snapshot cannot turn it into a refusal.
       return snapshots === undefined ? legacyRead() : parseGoalObservation(result.goal, snapshots.actions, true)
     }
     return {

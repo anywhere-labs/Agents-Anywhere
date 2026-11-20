@@ -7,7 +7,7 @@ import { Recovery } from './conversation/recovery.js'
 import { SessionControls } from './conversation/controls.js'
 import { GoalService } from './goals/goal-service.js'
 import { PlanningService, type PlanningRequest } from './planning/planning-service.js'
-import type { Capability, CommandReceipt, ConversationStore, JsonObject, RuntimeEvent, RuntimeSession, SessionCommit } from './ports/index.js'
+import type { Capability, CommandReceipt, CommandRecord, ConversationStore, JsonObject, RuntimeEvent, RuntimeSession, SessionCommit } from './ports/index.js'
 import type { LiveFact } from './session/bindings.js'
 import { QueueService, type ClientQueueOp } from './queue/queue-service.js'
 import { RuntimeBindings, type PreparedHandOver, type SessionBinding, type SessionEventSink } from './session/bindings.js'
@@ -192,6 +192,10 @@ export class ConversationService implements SessionEventSink {
 
   public goal(sessionId: string, request: GoalRequest, receipt?: CommandReceipt | null): Promise<Record<string, unknown>> {
     return this.goals.goal(sessionId, request, receipt)
+  }
+
+  public reconcileGoal(pending: CommandRecord): Promise<Record<string, unknown>> {
+    return this.goals.reconcile(pending)
   }
 
   // ---------------------------------------------------------------- runtime events

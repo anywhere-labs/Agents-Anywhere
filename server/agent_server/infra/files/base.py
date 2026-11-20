@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, BinaryIO
 
@@ -23,6 +24,10 @@ class UploadTooLarge(ValueError):
 
 class UploadEmpty(ValueError):
     """Raised when a streamed upload holds no bytes."""
+
+
+class InvalidStorageSession(ValueError):
+    """The session id cannot be used as a storage directory."""
 
 
 class FileStorage(ABC):
@@ -82,14 +87,16 @@ class FileStorage(ABC):
     async def delete_session(self, session_id: str) -> None:
         """Remove all blobs and metadata for one session. Safe to retry."""
 
-    async def delete_session_except(self, session_id: str, keep: set[str]) -> None:
-        """Remove one session's files except the file ids in ``keep``. Safe to retry.
+    @abstractmethod
+    async def delete_session_before(self, session_id: str, keep: set[str], cutoff: datetime) -> None:
+        """Sweep unshared objects last modified strictly before the migration marker."""
 
-        Backends that cannot list a session's files keep everything when ``keep`` is not empty.
-        """
-
-        if not keep:
-            await self.delete_session(session_id)
+    @staticmethod
+    def _stored_file_id(name: str) -> str:
+        # Blob and sidecar names append one suffix to the opaque file id. Thumbnails append two.
+        if name.endswith(".webp") and ".thumb-" in name:
+            return name.rsplit(".thumb-", 1)[0]
+        return name.rsplit(".", 1)[0]
 
     @staticmethod
     def _validate_session_id(session_id: str) -> None:
@@ -98,7 +105,7 @@ class FileStorage(ABC):
             or session_id in {".", ".."}
             or any(char in session_id for char in ("/", "\\", "\0"))
         ):
-            raise ValueError("invalid file storage session id")
+            raise InvalidStorageSession("invalid file storage session id")
 
     @abstractmethod
     async def exists(self, session_id: str, file_id: str) -> bool:
