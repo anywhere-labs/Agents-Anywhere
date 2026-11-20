@@ -36,6 +36,7 @@ private data class SavedLogin(
     val credentials: NativeLogin,
     val device: String? = null,
     val pairedDevices: List<Workspace.Device> = emptyList(),
+    val pendingInvitation: String? = null,
 )
 
 internal class AccountRequestFailed(val status: Int) : Exception()
@@ -75,6 +76,67 @@ internal class NativeAccount(private val context: Context) {
         }
         val credentials = AAJson.decodeFromJsonElement(NativeLogin.serializer(), tokens)
         save(SavedLogin(server.toString(), credentials))
+    }
+
+    suspend fun connectFromCode(raw: String, waiting: () -> Unit): Workspace.Device? {
+        val current = lock.withLock { login }
+        if (raw.startsWith("aa-pair://")) {
+            val invite = PairingInvitation.parse(raw)
+            if (current == null || parseServer(invite.serverUrl).toString() != current.server) throw PairingTargetMismatch()
+            lock.withLock { save(checkNotNull(login).copy(pendingInvitation = raw)) }
+            return finishPairing()
+        }
+        val code = MobileConnectionCode.parse(raw)
+        val server = parseServer(code.webUrl)
+        if (current != null && (current.server != server.toString() || current.credentials.userId != code.userId)) {
+            throw PairingTargetMismatch()
+        }
+        val proof = if (code.encryptedPairing != null) MobileScanProof() else null
+        val statusBody = jsObj("loginToken" to code.loginToken)
+        val fields = statusBody + jsObj("deviceName" to android.os.Build.MODEL, "userId" to code.userId)
+        var status = call(server, "auth/mobile-login/request",
+            JsonObject(if (proof == null) fields else fields + jsObj("scanChallenge" to proof.challenge)))
+        waiting()
+        while (status["status"].str in setOf("pending_web_confirm", "pending_scan")) {
+            if (!Instant.parse(code.expiresAt).isAfter(Instant.now())) throw PairingInvitationExpired()
+            kotlinx.coroutines.delay(1000)
+            status = call(server, "auth/mobile-login/status", statusBody)
+        }
+        when (status["status"].str) {
+            "approved" -> Unit
+            "rejected" -> throw MobileConnectionRejected()
+            else -> throw PairingInvitationExpired()
+        }
+        val exchange = call(server, "auth/mobile-login/exchange",
+            jsObj("loginToken" to code.loginToken, "userId" to code.userId, "scanVerifier" to proof?.verifier))
+        val auth = AAJson.decodeFromJsonElement(NativeLogin.serializer(), exchange["auth"] ?: throw AccountRequestFailed(502))
+        if (auth.userId != code.userId) throw PairingTargetMismatch()
+        val invitation = code.openInvitation(exchange["pairingKey"].str)
+        lock.withLock {
+            save((login ?: SavedLogin(server.toString(), auth)).copy(credentials = auth, pendingInvitation = invitation))
+        }
+        return if (invitation == null) null else finishPairing()
+    }
+
+    suspend fun hasPendingInvitation() = saved().pendingInvitation != null
+
+    suspend fun finishPairing(): Workspace.Device {
+        val current = saved()
+        val raw = checkNotNull(current.pendingInvitation)
+        val invite = PairingInvitation.parse(raw)
+        if (parseServer(invite.serverUrl).toString() != current.server) throw PairingTargetMismatch()
+        val device = devices().first.firstOrNull { it.id == invite.deviceId } ?: throw PairingTargetMismatch()
+        val pairing = pairing(current, device, raw)
+        try {
+            pairing.connect()
+            lock.withLock {
+                val value = checkNotNull(login)
+                save(value.copy(pendingInvitation = null, pairedDevices = value.pairedDevices.filterNot { it.id == device.id } + device))
+            }
+        } finally {
+            withContext(NonCancellable) { pairing.close() }
+        }
+        return device
     }
 
     suspend fun devices(): Pair<List<Workspace.Device>, String?> {

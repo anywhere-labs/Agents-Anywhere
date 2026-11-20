@@ -291,8 +291,8 @@ export class AuthApi {
     return derivePasswordVerifier(password, salt);
   }
 
-  createMobileLoginQr(token: string): Promise<MobileLoginQrCreateResponse> {
-    return this.client.post<MobileLoginQrCreateResponse>("/auth/mobile-login/qr", {}, { token });
+  createMobileLoginQr(token: string, encrypted = false): Promise<MobileLoginQrCreateResponse> {
+    return this.client.post<MobileLoginQrCreateResponse>(encrypted ? "/auth/mobile-login/qr?encrypted=true" : "/auth/mobile-login/qr", {}, { token });
   }
 
   mobileLoginStatus(token: string, loginToken: string): Promise<MobileLoginStatusResponse> {

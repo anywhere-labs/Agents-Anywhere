@@ -17,7 +17,7 @@ import dev.agentsanywhere.v3poc.R
 import dev.agentsanywhere.v3poc.model.AccountRequestFailed
 import dev.agentsanywhere.v3poc.model.ClientNoLongerAuthorized
 import dev.agentsanywhere.v3poc.model.DeviceGrantUnavailable
-import dev.agentsanywhere.v3poc.model.PairingInvitation
+import dev.agentsanywhere.v3poc.model.MobileConnectionRejected
 import dev.agentsanywhere.v3poc.model.PairingInvitationExpired
 import dev.agentsanywhere.v3poc.model.DeviceIdentityMismatch
 import dev.agentsanywhere.v3poc.model.InvalidServer
@@ -34,7 +34,11 @@ internal fun ConnectionScreen(app: App) {
     var server by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var showPaste by remember { mutableStateOf(false) }
     var invitation by remember { mutableStateOf("") }
+    var notice by remember { mutableStateOf<String?>(null) }
+    var pending by remember { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
     var busy by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<Int?>(null) }
     var deniedDeviceId by remember { mutableStateOf(app.revokedDevice?.id) }
@@ -63,6 +67,8 @@ internal fun ConnectionScreen(app: App) {
             if (failure is ClientNoLongerAuthorized) deniedDeviceId = selected?.id
             error = when {
                 failure is ClientNoLongerAuthorized -> R.string.connection_no_longer_authorized
+                failure is MobileConnectionRejected -> R.string.connection_rejected
+                failure is DeviceGrantUnavailable -> R.string.connection_invalid_qr
                 failure is PairingInvitationExpired -> R.string.connection_invite_expired
                 failure is InvalidServer -> R.string.connection_invalid_server
                 failure is PairingTargetMismatch -> R.string.connection_wrong_device
@@ -75,13 +81,42 @@ internal fun ConnectionScreen(app: App) {
         }
     }
 
+    fun scan(raw: String) {
+        if (busy) return
+        scope.launch {
+            notice = null
+            var connected = false
+            try {
+                perform(R.string.connection_link_failed) {
+                    val device = account.connectFromCode(raw.trim()) { notice = context.getString(R.string.connection_waiting) }
+                    connected = true
+                    signedIn = true
+                    notice = if (device == null) context.getString(R.string.connection_signed_in)
+                        else context.getString(R.string.connection_paired_to, device.name)
+                    deniedDeviceId = null
+                    selected = device
+                    showPaste = false
+                    invitation = ""
+                    refresh(false)
+                }
+            } finally {
+                if (!connected) notice = null
+                signedIn = account.restore()
+                pending = signedIn && account.hasPendingInvitation()
+            }
+        }
+    }
+
     LaunchedEffect(Unit) {
         perform(R.string.connection_unavailable) {
             signedIn = account.restore()
             val reopen = app.resumeWorkspace
             app.resumeWorkspace = false
             app.revokedDevice = null
-            if (signedIn) refresh(reopen)
+            if (signedIn) {
+                pending = account.hasPendingInvitation()
+                refresh(reopen && !pending)
+            }
         }
     }
 
@@ -94,10 +129,31 @@ internal fun ConnectionScreen(app: App) {
                 Text(stringResource(
                     when {
                         !signedIn -> R.string.connection_sign_in
-                        selected != null -> R.string.connection_pair
                         else -> R.string.connection_devices
                     },
                 ), style = MaterialTheme.typography.headlineSmall)
+                notice?.let { Text(it, style = MaterialTheme.typography.titleMedium) }
+                PairingScanner(enabled = !busy, onScan = ::scan, onError = { error = it })
+                TextButton(onClick = { showPaste = !showPaste }, enabled = !busy) { Text(stringResource(R.string.connection_paste_code)) }
+                if (showPaste) {
+                    OutlinedTextField(invitation, { invitation = it }, Modifier.fillMaxWidth(),
+                        label = { Text(stringResource(R.string.connection_invite)) }, singleLine = true, enabled = !busy)
+                    Button(onClick = { scan(invitation) }, enabled = !busy && invitation.isNotBlank()) {
+                        Text(stringResource(R.string.connection_connect))
+                    }
+                }
+                if (pending) {
+                    TextButton(onClick = { scope.launch {
+                        perform(R.string.connection_link_failed) {
+                            val device = account.finishPairing()
+                            selected = device
+                            pending = false
+                            deniedDeviceId = null
+                            notice = context.getString(R.string.connection_paired_to, device.name)
+                            refresh(false)
+                        }
+                    } }, enabled = !busy) { Text(stringResource(R.string.connection_retry_pairing)) }
+                }
                 if (!signedIn) {
                     OutlinedTextField(server, { server = it }, Modifier.fillMaxWidth(),
                         label = { Text(stringResource(R.string.connection_server)) }, singleLine = true,
@@ -138,7 +194,6 @@ internal fun ConnectionScreen(app: App) {
                     } }, enabled = !busy) { Text(stringResource(R.string.connection_sign_out)) }
                 } else {
                     val device = checkNotNull(selected)
-                    var rejectedScan by remember(device.id) { mutableStateOf(false) }
                     var hasGrant by remember(device.id) { mutableStateOf(false) }
                     val denied = deniedDeviceId == device.id
                     var confirmation by remember(device.id) { mutableStateOf<Int?>(null) }
@@ -151,34 +206,10 @@ internal fun ConnectionScreen(app: App) {
                         }
                     }
                     Text(device.name)
-                    PairingScanner(enabled = !busy, onScan = { link ->
-                        rejectedScan = true
-                        invitation = ""
-                        try {
-                            val invite = PairingInvitation.parse(link)
-                            if (invite.deviceId == device.id) {
-                                rejectedScan = false
-                                invitation = link
-                                error = null
-                            } else {
-                                error = R.string.connection_wrong_device
-                            }
-                        } catch (_: PairingInvitationExpired) {
-                            error = R.string.connection_invite_expired
-                        } catch (_: DeviceGrantUnavailable) {
-                            error = R.string.connection_invalid_qr
-                        }
-                    }, onError = { error = it })
-                    OutlinedTextField(invitation, { invitation = it; rejectedScan = false; error = null }, Modifier.fillMaxWidth(),
-                        label = { Text(stringResource(R.string.connection_invite)) }, singleLine = true, enabled = !busy)
                     Button(onClick = { scope.launch {
-                        perform(R.string.connection_pair_failed) {
-                            app.open(account.open(device, invitation.trim().ifEmpty { null }))
-                        }
-                    } }, enabled = !busy && !rejectedScan && ((hasGrant && !denied) || invitation.isNotBlank()) && error != R.string.connection_invite_expired) {
-                        Text(stringResource(R.string.connection_open))
-                    }
-                    TextButton(onClick = { selected = null; invitation = ""; error = null }, enabled = !busy) {
+                        perform(R.string.connection_pair_failed) { app.open(account.open(device, null)) }
+                    } }, enabled = !busy && hasGrant && !denied) { Text(stringResource(R.string.connection_open)) }
+                    TextButton(onClick = { selected = null; invitation = ""; error = null; notice = null }, enabled = !busy) {
                         Text(stringResource(R.string.connection_devices))
                     }
                     if (hasGrant && !denied) {

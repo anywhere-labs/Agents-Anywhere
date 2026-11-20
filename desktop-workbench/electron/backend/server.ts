@@ -99,6 +99,11 @@ export class BackendServer {
   private async route(method: string, url: URL, body: Record<string, unknown>): Promise<unknown> {
     const path = url.pathname;
     if (method === "GET") {
+      if (path === "/client-pairing/status") {
+        const id = url.searchParams.get("pairingId");
+        if (!id) throw new Error("Missing pairingId");
+        return this.state.clientPairingStatus(id);
+      }
       if (path === "/client-grants") return this.state.getClientGrants();
       if (path === "/state") return this.state.getConnectorState();
       if (path === "/config") return this.state.getPublicConfig();

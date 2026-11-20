@@ -6,10 +6,11 @@
 
 ### 升级须知
 
+- 加密扫码连接需一起升级 Server、Desktop 和 Android PoC。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 不用 Compose、手动部署 MeshCall Router 的环境，升级 Server 后要重新执行一次 Router 的 `init-auth`，否则 v3 设备和移动端 PoC 无法建立加密连接；Compose 部署每次启动会自动重新生成，不用处理。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 使用旧加密链路配对过的客户端升级后需要重新扫描一次设备邀请；新配对保存在客户端上，重启后会自动重新领票。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - Server 需要执行 `v2_64` 数据库迁移：操作记录里保存的消息原文、排队文本和计划反馈会被清除，只保留结果状态；之后用同一个操作重试时只返回是否成功，不再返回设备当时的完整结果。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
-- Server 需要执行 `v2_65`、`v2_66` 数据库迁移：加密模式的命令记录并入操作记录表，并删除一张不再使用的渠道表，已有会话和设置不受影响。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
+- Server 需要执行 `v2_65` 至 `v2_67` 数据库迁移：加密模式的命令记录并入操作记录表，删除闲置渠道表，并将加密扫码授权绑定到获准的手机。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - Server 需要执行 `v2_62` 数据库迁移，删除记录终端工作目录的表，终端的工作目录改由设备自己记录。（[#739](https://github.com/anywhere-labs/Agents-Anywhere/pull/739)、[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 端口预览需要 Server 执行 `v2_61` 数据库迁移（只新增预览表），并配置单独注册的预览域名 `AGENT_SERVER_PREVIEW_DOMAIN`（不能是 AA 站点的子域名）和至少 32 个字符、只含字母和数字的随机 `AGENT_SERVER_PREVIEW_INTERNAL_TOKEN`（可用 `openssl rand -hex 32` 生成，它不再出现在请求路径和访问日志里）；预览域名要有通配符 DNS 记录和通配符证书（需要 DNS-01 验证，在网关前终止 TLS）。自托管 Compose 默认带上 frps 和 preview-auth，网关同时承载预览域名，填好这两项即开启；没有配置时端口预览在各端隐藏，其他功能不受影响。加密模式下预览流量不在端到端加密范围内，可用 `AGENT_SERVER_E2EE_PREVIEW=deny` 关闭。（[#734](https://github.com/anywhere-labs/Agents-Anywhere/pull/734)、[#735](https://github.com/anywhere-labs/Agents-Anywhere/pull/735)、[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - Server 需要执行 `v2_60` 数据库迁移，迁移会删除 Server 上保存的会话内容（对话记录、计划、目标和排队消息）且不能降级，升级前请备份数据库：会话列表、标题、归档、置顶和分享都会保留，v3 设备连上后会从电脑上的原始记录重新生成内容；以前上传的附件在 Server 启动后于后台删除，分享里用到的文件和升级后新上传的附件保留；升级前已读的会话保持已读，未读的保持未读，直到设备升级到 v3 后随新的回合更新。（[#733](https://github.com/anywhere-labs/Agents-Anywhere/pull/733)、[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
@@ -30,7 +31,7 @@
 
 - 重试创建会话时，两种连接模式都沿用原会话；普通连接并发创建只保留一条会话记录，重复请求更换首条消息附件时会提示冲突。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 加密连接恢复后，手机可以用原消息 ID 确认发送结果，设备拒绝的消息会保留错误状态；Web 和 Desktop 在启动时读完本机加密策略后才打开工作区。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
-- 移动端 PoC 可登录自托管 Server 并连接已配对设备，Android 可扫码或粘贴 Desktop 的配对链接，链接失效时会提示重新出码，解密后没有标题的会话显示为「未命名会话」，Android 和 iOS 均可新建、继续加密会话，并使用附件、设备文件和终端；思考内容与正文分别显示，流式回复结束后才标记完成。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
+- 移动端 PoC 可登录自托管 Server 并连接已配对设备，Android 可在登录页或设备列表扫码连接 Desktop，链接失效时会提示重新出码，解密后没有标题的会话显示为「未命名会话」，Android 和 iOS 均可新建、继续加密会话，并使用附件、设备文件和终端；思考内容与正文分别显示，流式回复结束后才标记完成。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 修复 Pi 会话刷新或重连后重复显示旧回复的问题，已出现的重复回复会在读取会话时清理，共用历史目录的 Pi 实例也会保留原会话。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 修复 Web、Desktop、Android 和 iOS 无法完成加密配对的问题，并恢复加密会话的实时消息更新。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - Web 和 Desktop 新建会话时会选用设备允许访问的默认工作目录，主目录受限时可从允许的工作目录加载 Agent 配置。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
@@ -86,7 +87,7 @@
 - 连接 v3 Connector 的设备上，可以看到可用的 Agent 类型，启用、停用 Agent 实例并修改配置、切换模型渠道和修改设备设置；设备离线时的修改会在设备上线后自动生效，不会被之前的旧修改覆盖。Agent 配置和模型密钥不再随操作记录保存在 Server 上。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 管理员用量统计里，连接 v3 Connector 的设备的回合数、回合失败率与耗时、审批次数与等待时间、Agent 报错和设备系统分布不再一直为 0；加密模式下消息数和会话数也由设备汇报（只有计数，不含内容）。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 吊销设备凭据、删除设备或删除账号后，连接 v3 Connector 的设备会立即断开并显示离线，不再继续接收操作。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
-- 加密模式下可以在 Desktop 的「设置 → 安全连接」里显示一次性配对二维码；反复打开弹窗或运行命令行时显示同一个有效码，弹窗按分秒显示剩余时间，到期后二维码变暗，点击即可刷新；手机 App 扫码并核对设备指纹即可配对，也可以在 Desktop「已授权客户端」中单独撤销某个客户端；同一台电脑重新绑定为另一台设备后，二维码也会对应当前设备；命令行也可以运行 `anywhere-cli pair-client` 显示二维码和链接；已配对的客户端批准新客户端时，要在工作设备上确认（命令行询问或 Desktop 弹窗），超时或无人回答视为拒绝。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
+- Desktop 沿用「手机连接」扫码入口，加密模式显示盾牌标识；确认手机后，两端分别显示配对结果，二维码按分秒倒计时，到期变暗后点击即可刷新。仍可在「安全连接」撤销授权，或用 `anywhere-cli pair-client` 出码；从已配对客户端批准新客户端时，仍需工作设备确认。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 设备配对码和配对时下发的连接凭据不再写入数据库，只在 Redis 里以哈希和加密形式保存到配对过期，凭据被领取一次后立即删除。（[#723](https://github.com/anywhere-labs/Agents-Anywhere/pull/723)）
 - 连接 v3 Connector 的设备上，会话内容改为打开时从设备读取、有人在看时由设备实时推送，Server 不再保存；设备离线时仍能看到会话标题和状态，并提示设备离线、历史暂不可用，设备没有及时响应时提示超时而不是离线；设备重新连上后，打开着的会话会自动补齐断线期间的内容；发出的附件被设备取走后由设备保存，之后查看时从设备读取；分享改由设备导出，整段会话（含较早的历史）和选中的回复都能分享，发出的附件随分享保存，内容过大时提示改为只分享部分回复，设备离线时提示「设备上线后才能创建分享」；计划和目标同样由设备保存和修改，设备离线时只显示是否在规划、目标是否进行中，不能查看或修改。（[#696](https://github.com/anywhere-labs/Agents-Anywhere/pull/696)、[#702](https://github.com/anywhere-labs/Agents-Anywhere/pull/702)、[#707](https://github.com/anywhere-labs/Agents-Anywhere/pull/707)、[#730](https://github.com/anywhere-labs/Agents-Anywhere/pull/730)、[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 准备 Pi 时会复用本机 Node 22.19 及以上版本（包括 Node 24），不再强制下载；需要下载时，官方源连不上会自动改用 npmmirror，Python 安装源选了镜像的设备会优先使用 npmmirror；Windows 上多个进程同时准备不再报 `Resource deadlock avoided`，而是排队等待；数据目录通过 Junction 挂到其他盘时，不再误报「Node 安装包路径无效」；Node 下载失败时会提示检查网络。（[#657](https://github.com/anywhere-labs/Agents-Anywhere/pull/657)）

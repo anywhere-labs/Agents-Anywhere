@@ -54,6 +54,8 @@ export {
   publishClientPairing,
   publishHandover,
   requestClientPairing,
+  requestClientPairingStatus,
+  requestMobilePairing,
   type ClientPairingInvitation,
   type ClientTrustControl,
   type ControlEvent,

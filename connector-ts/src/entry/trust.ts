@@ -128,7 +128,7 @@ export class DeviceTrust {
    * A client pairing invitation (§7.1): `startPairing` with the mode the Server declared in `LinkWelcome`. Only in
    * encrypted mode (the Server's or this device's own policy); before the first welcome it waits for one.
    */
-  public async invite(waitMs = WELCOME_WAIT_MS): Promise<ClientPairingInvitation> {
+  public async invite(waitMs = WELCOME_WAIT_MS, mobileLogin = false): Promise<ClientPairingInvitation> {
     if (this.closed) throw failure('connector_not_running', 'the Connector is not running')
     let timer: NodeJS.Timeout | undefined
     const welcomed = await Promise.race([
@@ -143,7 +143,7 @@ export class DeviceTrust {
     if (this.mode !== 'required') throw failure('e2ee_off', 'this Server does not use end-to-end encryption (AGENT_SERVER_E2EE=required), so clients need no pairing')
     const serverUrl = this.options.serverUrl ?? ''
     if (serverUrl === '') throw failure('connector_not_running', 'the Connector has no Server configured')
-    const invitation = await this.trust.startPairing(serverUrl, this.serverMode)
+    const invitation = await this.trust.startPairing(serverUrl, this.serverMode, mobileLogin)
     this.options.log('info', `client pairing ${invitation.payload.pairingId} (expires ${invitation.payload.expiresAt})`)
     return {
       uri: invitation.uri,

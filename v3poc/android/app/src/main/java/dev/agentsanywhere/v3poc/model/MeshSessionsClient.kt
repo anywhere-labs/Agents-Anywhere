@@ -16,6 +16,8 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
+internal class DeviceRequestRejected(val code: String?, message: String) : Exception(message)
+
 private val terminalStatuses = setOf("done", "failed", "cancelled", "interrupted")
 
 internal class MeshSessionsClient(
@@ -62,7 +64,10 @@ internal class MeshSessionsClient(
                 put("sealedAttachmentKeys", JsonArray(attachments.map { it.key }))
             }
         }
-        request(id, "POST", "runtime/messages", payload)
+        val receipt = request(id, "POST", "runtime/messages", payload)["result"]
+        if (receipt["clientMessageId"].str != clientMsgId || receipt["delivery"].str !in setOf("accepted", "queued", "duplicate")) {
+            throw SessionsClientException("Missing device receipt")
+        }
         return clientMsgId
     }
 
@@ -145,7 +150,8 @@ internal class MeshSessionsClient(
         val result = pair.transport.request(ContentRequest(body, method, path), pair.authorization)
         val payload = result.body as? JsonObject ?: jsObj()
         if (result.status !in 200L..299L || payload["ok"].bool == false) {
-            throw SessionsClientException(payload["detail"]["message"].str ?: payload["message"].str ?: "HTTP ${result.status}")
+            throw DeviceRequestRejected(payload["detail"]["code"].str ?: payload["code"].str,
+                payload["detail"]["message"].str ?: payload["message"].str ?: "HTTP ${result.status}")
         }
         return payload
     }
@@ -161,6 +167,7 @@ internal class MeshSessionsClient(
             "type" to "snapshot",
             "session" to jsObj(
                 "id" to id, "title" to title,
+                "takeover" to session["takeover"].bool, "archived" to session["archived"].bool,
                 "agent" to session["runtimeType"].str.orEmpty(),
                 "device" to jsObj("id" to device.id, "name" to device.name),
                 "cwd" to session["cwd"].str.orEmpty(), "created_at" to time, "updated_at" to time,

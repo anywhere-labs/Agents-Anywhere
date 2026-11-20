@@ -177,6 +177,7 @@ export type StoredSession = {
 export type MobileLoginStatus = "pending_scan" | "pending_web_confirm" | "approved" | "rejected" | "expired" | "consumed";
 
 export type MobileLoginQrCreateResponse = {
+  pairingKey?: string | null;
   userId: string;
   loginToken: string;
   expiresAt: string;

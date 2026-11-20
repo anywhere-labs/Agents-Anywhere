@@ -888,6 +888,11 @@
       "nameAdjustedRetry": "该名称刚刚被使用，已生成可用名称，请确认后再次提交。"
     },
     "mobileConnections": {
+      "encrypted": "端到端加密",
+      "connectorRequired": "请启动连接到当前服务器的本机 Connector，并确认服务器和 Connector 均支持加密手机连接。",
+      "waitingEncrypted": "等待手机完成加密配对…",
+      "encryptedComplete": "这部手机已与本机完成加密配对。",
+      "remaining": "剩余 {time}",
       "accountUnavailable": "当前账号不可用，请重新登录后再试。",
       "completeDescription": "手机端已完成登录，现在可以关闭这个流程。",
       "completeTitle": "手机连接完成",
@@ -900,6 +905,7 @@
       "downloadPrompt": "请前往网站下载 Agents Anywhere 手机端。装好后回到这里继续，我们会用二维码把手机和这台电脑连接起来。",
       "downloadUrlHint": "也可以手动打开 {url}",
       "openDownloadPage": "前往下载页",
+      "pendingEncryptedDevice": "{device} 请求登录你的账号并访问这台电脑上的加密会话",
       "pendingConfirmationDevice": "{device} 想要登录你的账号",
       "pendingConfirmationHint": "请确认这是你的设备",
       "errorTitle": "无法继续连接",
@@ -2890,26 +2896,6 @@
       "loadError": "无法加载已授权客户端。请检查本机 Connector 后刷新。",
       "revokeError": "未能确认撤销结果，请刷新列表后重试。",
       "revoked": "已撤销授权。"
-    },
-    "mobilePairing": {
-      "show": "显示配对二维码",
-      "title": "将手机与这台电脑配对",
-      "instructions": "在手机 App 中打开这台设备，在「端到端加密」下点「配对」。扫码后，核对两端的设备指纹再确认。",
-      "fingerprint": "设备指纹",
-      "countdown": "仅可使用一次，剩余 {time}",
-      "copyLink": "复制配对链接",
-      "copied": "已复制配对链接。",
-      "copyFailed": "复制配对链接失败。",
-      "loading": "正在生成配对二维码…",
-      "expired": "此二维码已过期。",
-      "refresh": "刷新二维码",
-      "retry": "重新生成",
-      "close": "关闭",
-      "connector_not_running": "请先启动这台电脑上的 Connector。",
-      "connector_offline": "Connector 尚未连上服务器，请在连接恢复后重试。",
-      "e2ee_off": "这台设备未启用端到端加密。",
-      "pairing_limit": "已有三个有效的配对邀请。请使用已有二维码，或等其中一个过期后再试。",
-      "not_available": "无法生成配对二维码，请确认本机 Connector 正在运行且支持加密配对。"
     },
     "settings": {
       "title": "安全连接",

@@ -325,6 +325,7 @@ class UserRepositoryMixin(EmailAccountRepositoryMixin):
         token: str,
         user_id: str,
         device_name: str | None = None,
+        scan_challenge: str | None = None,
     ) -> dict[str, Any] | None:
         normalized = (user_id or "").strip().lower()
         token_hash = _mobile_login_token_hash(token)
@@ -332,7 +333,7 @@ class UserRepositoryMixin(EmailAccountRepositoryMixin):
         async with self._engine.begin() as conn:
             row = (
                 await conn.execute(
-                    select(mobile_login_tokens_t).where(
+                    select(mobile_login_tokens_t).with_for_update().where(
                         mobile_login_tokens_t.c.token_hash == token_hash,
                         mobile_login_tokens_t.c.user_id == normalized,
                     )
@@ -340,12 +341,15 @@ class UserRepositoryMixin(EmailAccountRepositoryMixin):
             ).mappings().first()
             if row is None or row["consumed_at"] is not None or row["expires_at"] < now:
                 return None
-            if row["rejected_at"] is not None:
+            if row["requested_at"] and row["scan_challenge"] != scan_challenge:
+                return None
+            if row["requested_at"] or row["rejected_at"] is not None:
                 return dict(row)
             await conn.execute(
                 update(mobile_login_tokens_t)
                 .where(mobile_login_tokens_t.c.token_hash == token_hash)
                 .values(
+                    scan_challenge=scan_challenge,
                     device_name=(device_name or "").strip()[:80] or None,
                     requested_at=row["requested_at"] or now,
                 )
@@ -370,12 +374,12 @@ class UserRepositoryMixin(EmailAccountRepositoryMixin):
         async with self._engine.begin() as conn:
             row = (
                 await conn.execute(
-                    select(mobile_login_tokens_t).where(mobile_login_tokens_t.c.token_hash == token_hash)
+                    select(mobile_login_tokens_t).with_for_update().where(mobile_login_tokens_t.c.token_hash == token_hash)
                 )
             ).mappings().first()
             if row is None or row["consumed_at"] is not None or row["expires_at"] < now:
                 return None
-            if row["requested_at"] is None:
+            if row["requested_at"] is None or row["approved_at"] or row["rejected_at"]:
                 return dict(row)
             values = {"approved_at": now, "rejected_at": None} if approved else {"approved_at": None, "rejected_at": now}
             await conn.execute(
@@ -386,14 +390,14 @@ class UserRepositoryMixin(EmailAccountRepositoryMixin):
         return await self.mobile_login_token_status(token=token)
 
 
-    async def consume_mobile_login_token(self, *, token: str, user_id: str) -> bool:
+    async def consume_mobile_login_token(self, *, token: str, user_id: str, scan_challenge: str | None = None) -> bool:
         normalized = (user_id or "").strip().lower()
         token_hash = _mobile_login_token_hash(token)
         now = utc_now()
         async with self._engine.begin() as conn:
             row = (
                 await conn.execute(
-                    select(mobile_login_tokens_t).where(
+                    select(mobile_login_tokens_t).with_for_update().where(
                         mobile_login_tokens_t.c.token_hash == token_hash,
                         mobile_login_tokens_t.c.user_id == normalized,
                     )
@@ -403,6 +407,7 @@ class UserRepositoryMixin(EmailAccountRepositoryMixin):
                 row is None
                 or row["consumed_at"] is not None
                 or row["expires_at"] < now
+                or row["scan_challenge"] != scan_challenge
                 or row["approved_at"] is None
                 or row["rejected_at"] is not None
             ):

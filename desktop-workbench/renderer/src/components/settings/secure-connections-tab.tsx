@@ -9,7 +9,6 @@ import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 
 import { AuthorizedClientList } from "@/components/e2ee/authorized-client-list"
-import { MobilePairingCode } from "@/components/e2ee/mobile-pairing-code"
 import { useDeviceName } from "@/components/e2ee/secure-pairing-dialog"
 import { SettingsSection } from "@/components/settings/settings-section"
 import {
@@ -69,7 +68,6 @@ export function SecureConnectionsTab() {
         description={view.policy.required || serverRequires ? t("statusRequired") : t("statusOptional")}
         action={
           <>
-            <MobilePairingCode />
             <Button variant="outline" onClick={() => requestSecurePairing()}>
               <ShieldCheck data-icon="inline-start" aria-hidden />
               {t("pairDevice")}

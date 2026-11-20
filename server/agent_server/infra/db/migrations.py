@@ -21,8 +21,8 @@ from sqlalchemy.pool import NullPool
 from agent_server.infra.db.engine import resolve_db_url
 
 BASELINE_V2_REVISION = "v2_0"
-CURRENT_SCHEMA_REVISION = "v2_66"
-CURRENT_SCHEMA_VERSION = "2.66"
+CURRENT_SCHEMA_REVISION = "v2_67"
+CURRENT_SCHEMA_VERSION = "2.67"
 POSTGRES_MIGRATION_LOCK_ID = 0x414147454E545332
 DEFAULT_MIGRATION_LOCK_TIMEOUT_SECONDS = 120.0
 
@@ -249,7 +249,10 @@ def _classify_sync(connection) -> UnversionedDatabase:
         if "origin" in _column_names(inspector, "device_commands"):
             if e2ee_commands or "previews" not in tables or "connector_terminal_roots" in tables:
                 return UnversionedDatabase("unknown")
-            return UnversionedDatabase("v2", "v2_65" if device_gates else "v2_66")
+            if device_gates:
+                return UnversionedDatabase("v2", "v2_65")
+            has_challenge = "scan_challenge" in _column_names(inspector, "mobile_login_tokens")
+            return UnversionedDatabase("v2", "v2_67" if has_challenge else "v2_66")
         if not device_gates:
             return UnversionedDatabase("unknown")
         if "previews" not in tables:

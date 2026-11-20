@@ -228,10 +228,22 @@ class SessionController(
         }
     }
 
+    internal val sendRestriction: Int? get() {
+        if (workspaceClient == null) return null
+        return when {
+            selectedId == null -> R.string.connection_choose_session
+            contentConnected == false -> R.string.connection_device_offline
+            contentConnected != true -> R.string.connection_loading_session
+            session["archived"].bool == true -> R.string.connection_archived
+            session["takeover"].bool != true -> R.string.connection_readonly
+            else -> null
+        }
+    }
+
     fun send(text: String, accepted: () -> Unit = {}) {
         val id = selectedId ?: return
         val content = text.trim()
-        if (content.isEmpty() || sending || uploading) return
+        if (content.isEmpty() || sending || uploading || sendRestriction != null) return
         val files = staged[id].orEmpty()
         val pending = pendingSend?.takeIf { it.session == id && it.text == content && it.attachments == files }
             ?: PendingSend(id, content, files, UUID.randomUUID().toString()).also { pendingSend = it }
@@ -246,6 +258,15 @@ class SessionController(
                 if (id == selectedId) accepted()
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
+            } catch (failure: DeviceRequestRejected) {
+                val message = when (failure.code) {
+                    "session_read_only" -> R.string.connection_readonly
+                    "session_archived", "session_deleted", "session_missing" -> R.string.connection_archived
+                    "runtime_unavailable" -> R.string.connection_agent_unavailable
+                    "session_busy" -> R.string.connection_busy
+                    else -> R.string.connection_message_rejected
+                }
+                showToast(context.getString(message))
             } catch (_: Exception) {
                 showToast(context.getString(R.string.connection_send_failed))
             } finally {

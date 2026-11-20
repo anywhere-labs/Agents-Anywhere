@@ -278,6 +278,7 @@ mobile_login_tokens = Table(
     Column("token_hash", Text, primary_key=True),
     Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
     Column("device_name", Text),
+    Column("scan_challenge", Text),
     Column("expires_at", Text, nullable=False),
     Column("created_at", Text, nullable=False),
     Column("requested_at", Text),

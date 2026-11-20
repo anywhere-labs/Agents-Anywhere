@@ -888,6 +888,11 @@
       "nameAdjustedRetry": "That name was just taken. A new name is ready; confirm it and submit again."
     },
     "mobileConnections": {
+      "encrypted": "End-to-end encrypted",
+      "connectorRequired": "Start the local Connector for this server and check that both the server and Connector support encrypted phone connections.",
+      "waitingEncrypted": "Waiting for this phone to finish encrypted pairing…",
+      "encryptedComplete": "The phone has paired with this computer.",
+      "remaining": "Expires in {time}",
       "accountUnavailable": "Your account is unavailable. Sign in again and retry.",
       "completeDescription": "The mobile app is signed in. You can close this flow now.",
       "completeTitle": "Phone connected",
@@ -900,6 +905,7 @@
       "downloadPrompt": "Download the Agents Anywhere mobile app from our website. Once it is installed, come back here and we will connect your phone to this computer with a QR code.",
       "downloadUrlHint": "Or open {url} manually",
       "openDownloadPage": "Open download page",
+      "pendingEncryptedDevice": "{device} wants to sign in and access encrypted sessions on this computer",
       "pendingConfirmationDevice": "{device} wants to sign in to your account",
       "pendingConfirmationHint": "Confirm this is your device",
       "errorTitle": "Unable to continue",
@@ -2890,26 +2896,6 @@
       "loadError": "Could not load authorized clients. Check the local Connector and refresh.",
       "revokeError": "Could not confirm revocation. Refresh the list and try again.",
       "revoked": "Access revoked."
-    },
-    "mobilePairing": {
-      "show": "Show pairing QR code",
-      "title": "Pair a phone with this computer",
-      "instructions": "On your phone, open this device in Agents Anywhere and select Pair under End-to-end encryption. Scan the code and compare the fingerprints before confirming.",
-      "fingerprint": "Device fingerprint",
-      "countdown": "One use · Expires in {time}",
-      "copyLink": "Copy pairing link",
-      "copied": "Pairing link copied.",
-      "copyFailed": "Couldn’t copy the pairing link.",
-      "loading": "Creating pairing code…",
-      "expired": "This code has expired.",
-      "refresh": "Refresh QR code",
-      "retry": "Generate new code",
-      "close": "Close",
-      "connector_not_running": "Start the Connector on this computer to create a pairing code.",
-      "connector_offline": "The Connector is offline. Reconnect it and try again.",
-      "e2ee_off": "This device has end-to-end encryption turned off.",
-      "pairing_limit": "Three invitations are already open. Use an existing code or wait for one to expire.",
-      "not_available": "Couldn’t get a pairing code. Check that the local Connector is running and supports encrypted pairing."
     },
     "settings": {
       "title": "Secure connections",

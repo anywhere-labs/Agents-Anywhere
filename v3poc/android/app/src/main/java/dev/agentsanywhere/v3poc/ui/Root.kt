@@ -51,7 +51,10 @@ fun Root(app: App, ui: UiState) {
             })
         }
         val first = DebugLaunch.session ?: controller.sessions.firstOrNull { it.state == "running" }?.id ?: controller.sessions.firstOrNull()?.id
-        first?.let { controller.select(it) }
+        if (controller.selectedId == null) {
+            if (app.online != null && DebugLaunch.session == null) ui.drawerOpen = true
+            else first?.let { controller.select(it) }
+        }
         var elapsed = 0.0
         for ((id, at) in DebugLaunch.switches) {
             delay(((at - elapsed).coerceAtLeast(0.0) * 1000).toLong())

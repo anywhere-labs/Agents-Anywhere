@@ -27,7 +27,7 @@ export type LocalOwnershipState = {
   recovery?: LocalOwnershipRecovery
   external?: LocalExternalConnector
 }
-import type { AuthorizedClients, ClientGrantSelection, ClientPairingResult } from "../../../../shared/client-pairing"
+import type { AuthorizedClients, ClientGrantSelection, ClientPairingResult, ClientPairingStatus } from "../../../../shared/client-pairing"
 import type { DesktopUpdateState } from "../../../../shared/desktop-updates"
 export type { DesktopUpdateState } from "../../../../shared/desktop-updates"
 
@@ -231,6 +231,7 @@ export type DesktopWorkbenchBridge = {
     updateLocalBindingName: (input: { name: string }) => Promise<DesktopLocalBinding>
   }
   connector?: {
+    clientPairingStatus: (id: string) => Promise<ClientPairingStatus>
     listClientGrants: () => Promise<AuthorizedClients>
     revokeClientGrant: (target: ClientGrantSelection) => Promise<AuthorizedClients>
     startClientPairing: () => Promise<ClientPairingResult>

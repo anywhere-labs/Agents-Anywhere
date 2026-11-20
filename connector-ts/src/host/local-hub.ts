@@ -38,7 +38,7 @@ export const ROLE_PERMISSIONS: Readonly<Record<LocalRole, { register: readonly s
   'dsh-bridge': { register: [DSH_BRIDGE_SERVICE], call: [`${DSH_SYNC_SERVICE}/*`, ...['write', 'read', 'tail'].map(method => `${LOGS_SERVICE}/${method}`)] },
   // A newer Connector on this machine asking this one to hand over (04-connector.md §9.1): that method only.
   handover: { register: [], call: [`${CONTROL_SERVICE}/requestHandover`] },
-  'client-admin': { register: [], call: [`${CONTROL_SERVICE}/listClientGrants`, `${CONTROL_SERVICE}/revokeClientGrant`] },
+  'client-admin': { register: [], call: [`${CONTROL_SERVICE}/startMobilePairing`, `${CONTROL_SERVICE}/clientPairingStatus`, `${CONTROL_SERVICE}/listClientGrants`, `${CONTROL_SERVICE}/revokeClientGrant`] },
   // `anywhere-cli pair-client` while another host owns the machine: a pairing invitation and nothing else (no
   // confirmations, no direct grants, no lifecycle).
   'client-pairing': { register: [], call: [`${CONTROL_SERVICE}/startClientPairing`] },

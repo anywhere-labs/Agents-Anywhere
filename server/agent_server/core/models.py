@@ -665,6 +665,7 @@ class OAuthMetadataResponse(BaseModel):
 
 
 class MobileLoginQrCreateResponse(BaseModel):
+    pairingKey: str | None = None
     userId: str
     loginToken: str
     expiresAt: str
@@ -672,6 +673,7 @@ class MobileLoginQrCreateResponse(BaseModel):
 
 
 class MobileLoginRequestRequest(BaseModel):
+    scanChallenge: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{43}$")
     userId: str
     loginToken: str
     deviceName: str | None = None
@@ -697,6 +699,7 @@ class MobileLoginConfirmRequest(BaseModel):
 
 
 class MobileLoginExchangeRequest(BaseModel):
+    scanVerifier: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{43}$")
     userId: str
     loginToken: str
 
@@ -706,6 +709,7 @@ class MobileLoginRefreshRequest(BaseModel):
 
 
 class MobileLoginExchangeResponse(BaseModel):
+    pairingKey: str | None = None
     auth: AuthResponse
     refreshToken: str
     expiresAt: str

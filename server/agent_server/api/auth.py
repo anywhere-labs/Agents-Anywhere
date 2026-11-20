@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import os
 import re
 import secrets
@@ -14,6 +17,7 @@ from agent_server.core.auth import (
     create_signed_token,
     create_user_access_token,
     hash_password_verifier,
+    server_secret,
     verify_signed_token,
 )
 from agent_server.core.models import (
@@ -470,6 +474,7 @@ async def change_password(
 
 @router.post("/auth/mobile-login/qr", response_model=MobileLoginQrCreateResponse)
 async def create_mobile_login_qr(
+    encrypted: bool = False,
     user: UserView = Depends(current_user),
     db: Store = Depends(get_store),
 ) -> MobileLoginQrCreateResponse:
@@ -481,6 +486,7 @@ async def create_mobile_login_qr(
             "sub": user.userId,
             "aud": "agents-anywhere-mobile",
             "nonce": secrets.token_urlsafe(12),
+            "encrypted": encrypted,
         },
         MOBILE_LOGIN_EXPIRES_IN,
     )
@@ -490,6 +496,7 @@ async def create_mobile_login_qr(
         expires_at=expires_at,
     )
     return MobileLoginQrCreateResponse(
+        pairingKey=_mobile_pairing_key(login_token) if encrypted else None,
         userId=user.userId,
         loginToken=login_token,
         expiresAt=expires_at,
@@ -506,7 +513,11 @@ async def exchange_mobile_login(
     token_payload = verify_signed_token(MOBILE_LOGIN_TOKEN_KIND, payload.loginToken)
     if token_payload is None or token_payload.get("sub") != payload.userId:
         raise HTTPException(status_code=401, detail="invalid or expired mobile login token")
-    if not await db.consume_mobile_login_token(token=payload.loginToken, user_id=payload.userId):
+    encrypted = token_payload.get("encrypted") is True
+    if encrypted != bool(payload.scanVerifier):
+        raise HTTPException(status_code=401, detail="invalid mobile login proof")
+    challenge = _base64url(hashlib.sha256(payload.scanVerifier.encode("ascii")).digest()) if payload.scanVerifier else None
+    if not await db.consume_mobile_login_token(token=payload.loginToken, user_id=payload.userId, scan_challenge=challenge):
         raise HTTPException(status_code=401, detail="invalid or expired mobile login token")
     try:
         user = await db.get_user(payload.userId)
@@ -527,6 +538,7 @@ async def exchange_mobile_login(
         MOBILE_REFRESH_EXPIRES_IN,
     )
     return MobileLoginExchangeResponse(
+        pairingKey=_mobile_pairing_key(payload.loginToken) if encrypted else None,
         auth=_auth_payload(user, tokens),
         refreshToken=refresh_token,
         expiresAt=_iso_from_epoch(int(time.time()) + MOBILE_REFRESH_EXPIRES_IN),
@@ -570,10 +582,13 @@ async def request_mobile_login(
     token_payload = verify_signed_token(MOBILE_LOGIN_TOKEN_KIND, payload.loginToken)
     if token_payload is None or token_payload.get("sub") != payload.userId:
         raise HTTPException(status_code=401, detail="invalid or expired mobile login token")
+    if bool(payload.scanChallenge) != (token_payload.get("encrypted") is True):
+        raise HTTPException(status_code=400, detail="incompatible mobile login request")
     row = await db.request_mobile_login_token(
         token=payload.loginToken,
         user_id=payload.userId,
         device_name=payload.deviceName,
+        scan_challenge=payload.scanChallenge,
     )
     if row is None:
         raise HTTPException(status_code=401, detail="invalid or expired mobile login token")
@@ -702,6 +717,14 @@ def _iso_from_epoch(value: int) -> str:
     from datetime import UTC, datetime
 
     return datetime.fromtimestamp(value, UTC).isoformat().replace("+00:00", "Z")
+
+
+def _base64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def _mobile_pairing_key(token: str) -> str:
+    return _base64url(hmac.digest(server_secret(), b"mobile-login/pairing-key/v1\0" + token.encode("ascii"), "sha256"))
 
 
 def _mobile_login_status_response(row: dict[str, object]) -> MobileLoginStatusResponse:

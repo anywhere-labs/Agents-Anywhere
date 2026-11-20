@@ -57,3 +57,7 @@ POST /auth/logout        (Authorization: Bearer <accessToken>)
 ## WebSocket 与下载
 
 WebSocket 和下载链接不要在 URL 里带访问令牌，用 `POST /ws-ticket` 换一次性票据，详见 [Realtime API](./realtime.md)。票据只能在登录有效时换取。
+
+## Desktop 加密扫码连接
+
+沿用 mobile-login 的 request、confirm、exchange 流程。创建二维码时可选 `encrypted=true` 查询参数，创建响应和成功交换的响应含 `pairingKey`（32 字节 base64url）。Desktop 用 AES-256-GCM 将本机的一次性配对邀请密封在二维码的 `encryptedPairing` 字段，编码为 base64url(12 字节随机 IV + 密文及 tag)，AAD 为 UTF-8 loginToken。配对邀请不上传 Server。手机向 request 提交 `scanChallenge`（base64url(SHA-256(ASCII(scanVerifier)))），exchange 提交随机的 `scanVerifier`（32 字节 base64url）。首次扫码锁定 challenge；只有获确认的手机可以交换。加密模式下，PC 还要核对本次邀请已在 Connector 被兑换，再显示连接完成。

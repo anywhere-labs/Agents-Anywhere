@@ -5,8 +5,8 @@
     <string name="connection_email">邮箱</string>
     <string name="connection_password">密码</string>
     <string name="connection_devices">设备</string>
-    <string name="connection_pair">配对设备</string>
-    <string name="connection_invite">从 Connector 获取的配对链接</string>
+    <string name="connection_pair">设备连接</string>
+    <string name="connection_invite">二维码内容或配对链接</string>
     <string name="connection_scan">扫描配对二维码</string>
     <string name="connection_camera_permission">请允许使用摄像头扫码，或粘贴配对链接。</string>
     <string name="connection_camera_unavailable">摄像头暂时不可用，请粘贴配对链接或重试。</string>
@@ -59,4 +59,18 @@
     <string name="connection_forget_failed">无法清除本机配对。</string>
     <string name="connection_no_longer_authorized">这台电脑已不再授权此手机，请重新扫码配对。</string>
     <string name="connection_forget_revoked_detail">清除这部手机为这台电脑保存的配对记录？</string>
+    <string name="connection_waiting">等待电脑确认连接…</string>
+    <string name="connection_paired_to">已与%1$s建立端到端加密连接。</string>
+    <string name="connection_signed_in">已成功登录。</string>
+    <string name="connection_rejected">电脑已拒绝本次连接。</string>
+    <string name="connection_link_failed">未完成连接，请检查电脑后重试。</string>
+    <string name="connection_paste_code">粘贴二维码内容或配对链接</string>
+    <string name="connection_connect">连接</string>
+    <string name="connection_retry_pairing">重试加密配对</string>
+    <string name="connection_choose_session">请选择或新建会话后发送消息。</string>
+    <string name="connection_loading_session">正在读取会话权限…</string>
+    <string name="connection_archived">会话已归档或已不可用。</string>
+    <string name="connection_readonly">此会话为只读。请选择可写会话或新建会话。</string>
+    <string name="connection_busy">会话正在处理消息，请稍后重试。</string>
+    <string name="connection_message_rejected">电脑已拒绝这条消息，草稿已保留。</string>
 </resources>

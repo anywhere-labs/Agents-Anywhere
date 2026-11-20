@@ -121,6 +121,8 @@ export async function startHostProcess(options: HostProcessOptions): Promise<Hos
   }
   const clientTrust: ClientTrustControl = {
     startClientPairing: async () => (await running()).invite(),
+    startMobilePairing: async () => (await running()).invite(undefined, true),
+    clientPairingStatus: async id => (await running()).trust.pairingStatus(id),
     listClientGrants: async () => (await running()).trust.trustList(),
     revokeClientGrant: async ({ deviceId, clientId, grantedAt }) => {
       const { trust } = await running()

@@ -86,6 +86,8 @@ export class DeviceTrustService {
   #state: DeviceTrustState | null = null
   #queue: Promise<unknown> = Promise.resolve()
   /** Pairing psks live only in memory: a restart voids every open QR code. */
+  #mobilePairingId: string | null = null
+  readonly #redeemedPairings = new Set<string>()
   readonly #psks = new Map<string, Uint8Array>()
   readonly #listeners = new Set<(event: TrustEvent) => void>()
 
@@ -144,13 +146,16 @@ export class DeviceTrustService {
     await this.#apply((state) => ({ state: setApprovalWithoutConfirmation(state, enabled), events: [] }))
   }
 
-  async startPairing(serverUrl: string, serverMode: E2eeMode): Promise<PairingInvitation> {
+  async startPairing(serverUrl: string, serverMode: E2eeMode, mobileLogin = false): Promise<PairingInvitation> {
     return this.#serial(async () => {
       const nowMs = this.#deps.clock.nowMs()
-      let pairing = this.state.pairings.find(item => item.state === 'open' && item.expiresAtMs > nowMs)
+      if (mobileLogin && this.#mobilePairingId) await this.#commit(cancelPairing(this.state, this.#mobilePairingId))
+      let pairing = mobileLogin ? undefined : this.state.pairings.find(item =>
+        item.pairingId !== this.#mobilePairingId && item.state === 'open' && item.expiresAtMs > nowMs)
       if (!pairing) {
         const id = this.#deps.random.id('pair_')
         const state = await this.#commit(startPairing(this.state, id, nowMs))
+        if (mobileLogin) this.#mobilePairingId = id
         pairing = state.pairings.find(item => item.pairingId === id)!
       }
       const payload = {
@@ -165,6 +170,12 @@ export class DeviceTrustService {
       }
       return { payload, uri: `aa-pair://${Buffer.from(JSON.stringify(payload)).toString('base64url')}` }
     })
+  }
+
+  pairingStatus(pairingId: string): 'paired' | 'pending' | 'invalid' {
+    if (this.#redeemedPairings.has(pairingId)) return 'paired'
+    return this.state.pairings.some(p => p.pairingId === pairingId && p.state === 'open' && p.expiresAtMs > this.#deps.clock.nowMs())
+      ? 'pending' : 'invalid'
   }
 
   async cancelPairing(pairingId: string): Promise<void> {
@@ -195,7 +206,9 @@ export class DeviceTrustService {
       if (existing && matchesCredential(existing.meshCredentialDigest)) {
         // A lost reply can be retried after redemption. A fresh invitation shown to the same client is single-use too.
         const open = current.pairings.find(pairing => pairing.pairingId === pairingId && pairing.expiresAtMs > this.#deps.clock.nowMs())
-        if (open && matches(this.pairingPsk(pairingId))) return cancelPairing(current, pairingId)
+        if (open && matches(this.pairingPsk(pairingId))) {
+          return { state: cancelPairing(current, pairingId).state, events: [{ type: 'PairingRedeemed', pairingId }] }
+        }
         return { state: current, events: [] }
       }
       if (!matches(this.pairingPsk(pairingId))) throw new TrustError('pairing_expired', 'invalid pairing invitation')
@@ -332,6 +345,10 @@ export class DeviceTrustService {
       }
     }
     for (const event of events) {
+      if (event.type === 'PairingRedeemed') {
+        this.#redeemedPairings.add(event.pairingId)
+        if (this.#redeemedPairings.size > 64) this.#redeemedPairings.delete(this.#redeemedPairings.values().next().value!)
+      }
       if (event.type === 'PairingStarted') this.#psks.set(event.pairingId, this.#deps.random.bytes(PSK_BYTES))
       for (const listener of this.#listeners) listener(event)
     }

@@ -68,6 +68,7 @@ export interface DeviceTrustState {
 
 export type TrustEvent =
   | { readonly type: 'PairingStarted'; readonly pairingId: string; readonly expiresAtMs: number }
+  | { readonly type: 'PairingRedeemed'; readonly pairingId: string }
   | { readonly type: 'PairingExpired'; readonly pairingId: string }
   | { readonly type: 'ClientPaired'; readonly grant: ClientGrant }
   | { readonly type: 'ClientRevoked'; readonly clientId: string }
@@ -191,7 +192,8 @@ export function completePairing(
     ...state,
     pairings: state.pairings.filter((pairing) => pairing.pairingId !== pairingId),
   }
-  return addGrant(consumed, client, 'qr', nowIso)
+  const granted = addGrant(consumed, client, 'qr', nowIso)
+  return { state: granted.state, events: [...granted.events, { type: 'PairingRedeemed', pairingId }] }
 }
 
 /** Desktop on the same machine writes the grant through the local control interface; no QR code needed. */

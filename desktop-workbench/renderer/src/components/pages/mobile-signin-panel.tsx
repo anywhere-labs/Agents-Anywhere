@@ -14,6 +14,7 @@ import {
 } from "lucide-react"
 import { useLocale, useTranslations } from "next-intl"
 import { getDesktopServerConnection } from "@/features/desktop/server-connection"
+import { getDesktopWorkbenchBridge } from "@/features/desktop/bridge"
 import QRCode from "qrcode"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -69,10 +70,20 @@ function resolveMobileWebUrl(): string {
   return origin.replace(/\/$/, "")
 }
 
-function mobileLoginQrPayload(qr: MobileLoginQrCreateResponse) {
+async function sealInvitation(uri: string, keyText: string, loginToken: string) {
+  const raw = Uint8Array.from(atob(keyText.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0))
+  const key = await crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt"])
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const sealed = await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: new TextEncoder().encode(loginToken) },
+    key, new TextEncoder().encode(uri))
+  return btoa(String.fromCharCode(...iv, ...new Uint8Array(sealed))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
+}
+
+function mobileLoginQrPayload(qr: MobileLoginQrCreateResponse, encryptedPairing?: string) {
   return {
     type: "agents-anywhere.mobile-login",
-    version: 1,
+    version: encryptedPairing ? 2 : 1,
+    ...(encryptedPairing ? { encryptedPairing } : {}),
     webUrl: resolveMobileWebUrl(),
     userId: qr.userId,
     loginToken: qr.loginToken,
@@ -119,6 +130,12 @@ export function MobileConnectionContent({ token, userId, onComplete, onCancel, o
   const [qrLogin, setQrLogin] = React.useState<MobileLoginQrCreateResponse | null>(null)
   const [qrStatus, setQrStatus] = React.useState<MobileLoginStatusResponse | null>(null)
   const [qrImage, setQrImage] = React.useState<string | null>(null)
+  const [invitation, setInvitation] = React.useState<{ id: string; expiresAt: number } | null>(null)
+  const pairingId = invitation?.id
+  const [paired, setPaired] = React.useState(false)
+  const [invalid, setInvalid] = React.useState(false)
+  const [now, setNow] = React.useState(Date.now)
+  const connector = getDesktopWorkbenchBridge()?.connector
   const generation = React.useRef(0)
   const operationPending = React.useRef(false)
 
@@ -127,6 +144,9 @@ export function MobileConnectionContent({ token, userId, onComplete, onCancel, o
     setQrLogin(null)
     setQrStatus(null)
     setQrImage(null)
+    setInvitation(null)
+    setPaired(false)
+    setInvalid(false)
   }, [])
 
   const reset = React.useCallback(() => {
@@ -154,15 +174,33 @@ export function MobileConnectionContent({ token, userId, onComplete, onCancel, o
     clearQr()
 
     try {
-      const qr = await authApi.createMobileLoginQr(token)
+      const serverRequiresEncryption = (await authApi.config()).e2ee?.mode === "required"
+      const origin = new URL(resolveMobileWebUrl()).origin
+      // A local device can still require encryption after the server relaxes its policy.
+      const local = serverRequiresEncryption ? undefined : await connector?.getState().catch(() => undefined)
+      const localMatches = local?.running && local.serverUrl && new URL(local.serverUrl).origin === origin
+      const invite = serverRequiresEncryption || localMatches ? await connector?.startClientPairing() : undefined
+      if ((serverRequiresEncryption && !invite?.ok) || (invite && !invite.ok && invite.code !== "e2ee_off")) {
+        throw new Error(t("connectorRequired"))
+      }
+      const encrypted = invite?.ok === true
+      if (invite?.ok) {
+        const data = JSON.parse(atob(invite.uri.slice("aa-pair://".length).replace(/-/g, "+").replace(/_/g, "/")))
+        if (new URL(data.serverUrl).origin !== origin) throw new Error(t("connectorRequired"))
+      }
+      const qr = await authApi.createMobileLoginQr(token, encrypted)
+      if (encrypted && !qr.pairingKey) throw new Error(t("connectorRequired"))
+      const sealed = invite?.ok && qr.pairingKey ? await sealInvitation(invite.uri, qr.pairingKey, qr.loginToken) : undefined
       if (current !== generation.current) return
-      const image = await QRCode.toDataURL(JSON.stringify(mobileLoginQrPayload(qr)), {
+      const image = await QRCode.toDataURL(JSON.stringify(mobileLoginQrPayload(qr, sealed)), {
         errorCorrectionLevel: "M",
-        margin: 1,
-        width: 260,
+        margin: 4,
+        scale: 5,
         color: { dark: "#111111", light: "#ffffff" },
       })
       if (current !== generation.current) return
+      setNow(Date.now())
+      setInvitation(invite?.ok ? { id: invite.pairingId, expiresAt: Date.parse(invite.expiresAt) } : null)
       setQrLogin(qr)
       setQrImage(image)
       setStage("scan")
@@ -173,7 +211,7 @@ export function MobileConnectionContent({ token, userId, onComplete, onCancel, o
     } finally {
       operationPending.current = false
     }
-  }, [clearQr, t, token])
+  }, [clearQr, connector, t, token])
 
   const confirmQrLogin = React.useCallback(async (approved: boolean) => {
     if (!qrLogin || operationPending.current) return
@@ -197,12 +235,38 @@ export function MobileConnectionContent({ token, userId, onComplete, onCancel, o
     }
   }, [qrLogin, t, token])
 
-  const status = qrStatus?.status
+  const consumed = qrStatus?.status === "consumed"
+  const elapsed = qrLogin && now >= Date.parse(qrLogin.expiresAt)
+  const grantExpired = consumed && invitation && !paired && now >= invitation.expiresAt
+  const status = invalid || grantExpired || (elapsed && !consumed) ? "expired" : qrStatus?.status
+  const finished = consumed && (!pairingId || paired || invalid || Boolean(grantExpired))
+  React.useEffect(() => {
+    if (!qrLogin || finished) return
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [qrLogin, finished])
+
+  React.useEffect(() => {
+    if (!pairingId || !connector) return
+    let closed = false
+    let timer: ReturnType<typeof setTimeout>
+    async function check() {
+      try {
+        const result = await connector!.clientPairingStatus(pairingId!)
+        if (closed) return
+        if (result.status === "paired") { setPaired(true); return }
+        if (result.status === "invalid") { setInvalid(true); return }
+      } catch { /* Recheck after a temporary Connector outage. */ }
+      if (!closed) timer = setTimeout(check, POLL_INTERVAL_MS)
+    }
+    void check()
+    return () => { closed = true; clearTimeout(timer) }
+  }, [pairingId, connector])
   const deviceName = qrStatus?.deviceName?.trim() || null
   const shouldPoll = Boolean(
     qrLogin
       && stage === "scan"
-      && (!status || status === "pending_scan" || status === "pending_web_confirm" || status === "approved"),
+      && !invalid && (!qrStatus || ["pending_scan", "pending_web_confirm", "approved"].includes(qrStatus.status)),
   )
 
   React.useEffect(() => {
@@ -267,7 +331,7 @@ export function MobileConnectionContent({ token, userId, onComplete, onCancel, o
     title = t("pendingConfirmationTitle")
     description = deviceName ? null : t("pendingConfirmationDescription")
     // Icon first, then the device sentence: this is the security check.
-    body = <DevicePrompt device={deviceName} />
+    body = <DevicePrompt device={deviceName} encrypted={Boolean(pairingId)} />
     actions = <>
       <Button type="button" variant="outline" onClick={() => void confirmQrLogin(false)}>{t("rejectConnection")}</Button>
       <Button type="button" onClick={() => void confirmQrLogin(true)}>
@@ -275,14 +339,14 @@ export function MobileConnectionContent({ token, userId, onComplete, onCancel, o
         {t("confirmConnection")}
       </Button>
     </>
-  } else if (status === "approved") {
+  } else if (status === "approved" || (status === "consumed" && pairingId && !paired)) {
     title = t("finishingTitle")
-    description = t("finishingDescription")
+    description = t(consumed && pairingId ? "waitingEncrypted" : "finishingDescription")
     body = <BusyBody />
     actions = <Button type="button" variant="outline" onClick={handleExit}>{tCommon("close")}</Button>
   } else if (status === "consumed") {
     title = t("completeTitle")
-    description = t("completeDescription")
+    description = t(pairingId ? "encryptedComplete" : "completeDescription")
     body = deviceName ? <DeviceRow name={deviceName} /> : <StateGlyph icon={CheckCircle2} tone="success" />
     actions = <Button type="button" onClick={onComplete}>
       <CheckCircle2 data-icon="inline-start" />
@@ -292,19 +356,29 @@ export function MobileConnectionContent({ token, userId, onComplete, onCancel, o
     const failed = !qrLogin
     title = failed ? t("generateFailedTitle") : status === "rejected" ? t("rejectedTitle") : t("expiredTitle")
     description = failed ? t("generateFailedDescription") : status === "rejected" ? t("rejectedDescription") : t("expiredDescription")
-    body = <StateGlyph
+    body = status === "expired" && qrImage ? (
+      <button type="button" onClick={() => void generateQr()}
+        className="relative mx-auto overflow-hidden rounded-2xl focus-visible:ring-2 focus-visible:ring-ring">
+        <img src={qrImage} alt="" className="size-64 blur-sm brightness-[.25]" />
+        <span className="absolute inset-0 flex items-center justify-center gap-2 font-medium text-white">
+          <RefreshCw className="size-5" />{t("generateNew")}
+        </span>
+      </button>
+    ) : <StateGlyph
       icon={failed ? QrCode : status === "rejected" ? XCircle : Clock}
       tone={status === "rejected" ? "destructive" : "default"}
     />
     actions = <>
       <Button type="button" variant="outline" onClick={returnToInstall}>{tCommon("back")}</Button>
-      <Button type="button" onClick={() => void generateQr()}>
+      {!(status === "expired" && qrImage) && <Button type="button" onClick={() => void generateQr()}>
         <RefreshCw data-icon="inline-start" />
         {t("generateNew")}
-      </Button>
+      </Button>}
     </>
   } else {
-    body = <QrPanel image={qrImage} expiresAt={qrLogin?.expiresAt ?? ""} />
+    const remaining = Math.max(0, Math.ceil((Date.parse(qrLogin.expiresAt) - now) / 1000))
+    body = <><QrPanel image={qrImage} expiresAt={qrLogin.expiresAt} />
+      <p role="timer" className="text-center text-sm tabular-nums">{t("remaining", { time: `${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, "0")}` })}</p></>
     actions = <Button type="button" variant="outline" onClick={returnToInstall}>{tCommon("back")}</Button>
   }
 
@@ -313,6 +387,7 @@ export function MobileConnectionContent({ token, userId, onComplete, onCancel, o
       <header className="flex flex-col gap-3">
         <StepIndicator current={currentStep} total={TOTAL_STEPS} label={t("stepProgress", { current: currentStep, total: TOTAL_STEPS })} />
         <div className="flex flex-col gap-2">
+          {pairingId && <span className="inline-flex items-center gap-1 text-sm"><ShieldCheck size={16} />{t("encrypted")}</span>}
           <h2 className="text-balance text-2xl font-medium leading-tight tracking-[-0.025em]">{title}</h2>
           {description ? <p className="text-pretty text-sm leading-6 text-muted-foreground">{description}</p> : null}
         </div>
@@ -378,9 +453,9 @@ function QrPanel({ image, expiresAt }: { image: string | null; expiresAt: string
         <img
           src={image}
           alt={t("qrAlt")}
-          className="size-[236px]"
-          width={236}
-          height={236}
+          className="size-64 max-w-full [image-rendering:pixelated]"
+          width={256}
+          height={256}
         />
       </div>
       <div className="flex flex-col items-center gap-1 text-center">
@@ -394,7 +469,7 @@ function QrPanel({ image, expiresAt }: { image: string | null; expiresAt: string
   )
 }
 
-function DevicePrompt({ device }: { device: string | null }) {
+function DevicePrompt({ device, encrypted }: { device: string | null; encrypted: boolean }) {
   const t = useTranslations("dashboard.mobileConnections")
   return (
     <div className="flex flex-col items-center gap-4 text-center">
@@ -403,7 +478,7 @@ function DevicePrompt({ device }: { device: string | null }) {
       </div>
       {device ? (
         <div className="flex flex-col gap-1">
-          <p className="text-balance text-base font-medium">{t("pendingConfirmationDevice", { device })}</p>
+          <p className="text-balance text-base font-medium">{t(encrypted ? "pendingEncryptedDevice" : "pendingConfirmationDevice", { device })}</p>
           <p className="text-sm text-muted-foreground">{t("pendingConfirmationHint")}</p>
         </div>
       ) : null}

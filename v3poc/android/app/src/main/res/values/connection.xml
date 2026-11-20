@@ -5,8 +5,8 @@
     <string name="connection_email">Email</string>
     <string name="connection_password">Password</string>
     <string name="connection_devices">Devices</string>
-    <string name="connection_pair">Pair device</string>
-    <string name="connection_invite">Pairing link from your Connector</string>
+    <string name="connection_pair">Device connections</string>
+    <string name="connection_invite">QR code contents or pairing link</string>
     <string name="connection_scan">Scan pairing QR code</string>
     <string name="connection_camera_permission">Allow camera access to scan, or paste the pairing link.</string>
     <string name="connection_camera_unavailable">Camera unavailable. Paste the pairing link or try again.</string>
@@ -59,4 +59,18 @@
     <string name="connection_forget_failed">Could not remove the local pairing.</string>
     <string name="connection_no_longer_authorized">This computer no longer authorizes this phone. Scan a new pairing code to reconnect.</string>
     <string name="connection_forget_revoked_detail">Remove the saved pairing record for this computer from this phone?</string>
+    <string name="connection_waiting">Waiting for confirmation on the computer…</string>
+    <string name="connection_paired_to">Connected to %1$s with end-to-end encryption.</string>
+    <string name="connection_signed_in">Signed in successfully.</string>
+    <string name="connection_rejected">The computer declined the connection.</string>
+    <string name="connection_link_failed">Could not finish connecting. Check the computer and try again.</string>
+    <string name="connection_paste_code">Paste code or pairing link</string>
+    <string name="connection_connect">Connect</string>
+    <string name="connection_retry_pairing">Retry encrypted pairing</string>
+    <string name="connection_choose_session">Select a session or create one to send a message.</string>
+    <string name="connection_loading_session">Loading session permissions…</string>
+    <string name="connection_archived">This session is archived or no longer available.</string>
+    <string name="connection_readonly">This session is read-only. Choose a writable session or create one.</string>
+    <string name="connection_busy">This session is busy. Wait for the current turn to finish.</string>
+    <string name="connection_message_rejected">The computer declined the message. Your draft is saved.</string>
 </resources>

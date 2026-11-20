@@ -82,6 +82,8 @@ export interface LocalClientGrant {
 export interface ClientTrustControl {
   /** A pairing invitation of the running Connector (`DeviceTrustService.startPairing` with the Server's mode). */
   startClientPairing(): Promise<ClientPairingInvitation>
+  startMobilePairing(): Promise<ClientPairingInvitation>
+  clientPairingStatus(pairingId: string): Promise<'pending' | 'paired' | 'invalid'>
   listClientGrants(): Promise<TrustListView>
   revokeClientGrant(request: { deviceId: string; clientId: string; grantedAt: string }): Promise<TrustListView>
   /** Writes a grant without a pairing (`DeviceTrustService.grantLocally`); `host` role only. */
@@ -142,6 +144,11 @@ export function controlService(controller: ConnectorController, events: ControlE
     unary('cancelPairing', 'Cancel the pairing in progress, if any.', () => controller.cancelPairing(), { readOnly: false, destructive: false }),
     unary('requestHandover', 'A newer Connector on this machine asks this one to hand over (04-connector.md §9.1).', request => controller.requestHandover(request), { readOnly: false, destructive: false }),
     unary('startClientPairing', 'Create a pairing invitation for a client in encrypted mode (QR code link, 10 minutes, one use).', () => (extras.trust ?? notAvailable('client pairing')).startClientPairing(), { readOnly: false, destructive: false }),
+    unary('startMobilePairing', 'Create a dedicated invitation for one mobile login.', () =>
+      (extras.trust ?? notAvailable('mobile pairing')).startMobilePairing(), { readOnly: false, destructive: false }),
+    unary('clientPairingStatus', 'Read the outcome of this specific invitation.', async request => ({
+      status: await (extras.trust ?? notAvailable('client pairing')).clientPairingStatus(requiredString(request, 'pairingId')),
+    }), { readOnly: true }),
     unary('listClientGrants', 'List client grants on this computer.', () =>
       (extras.trust ?? notAvailable('client grants')).listClientGrants(), { readOnly: true }),
     unary('revokeClientGrant', 'Revoke the selected grant on this computer.', request =>
@@ -221,6 +228,19 @@ export async function requestClientPairing(owner: OwnerView, directory?: string)
     throw new Error(`the Connector running on this computer (${owner.kind}, PID ${owner.pid}) cannot create client pairings; create the pairing link in that app, or stop it and run this command again`)
   }
   return callLocalControl(rendezvous, 'startClientPairing', {})
+}
+
+function adminDescriptor(owner: OwnerView, directory: string): HandoverRendezvous {
+  return JSON.parse(readFileSync(join(directory, `${owner.instanceId}.client-admin.json`), 'utf8'))
+}
+
+export function requestMobilePairing(owner: OwnerView, directory: string): Promise<ClientPairingInvitation> {
+  return callLocalControl(adminDescriptor(owner, directory), 'startMobilePairing', {})
+}
+
+export async function requestClientPairingStatus(owner: OwnerView, directory: string, pairingId: string): Promise<{status: 'pending' | 'paired' | 'invalid'}> {
+  const descriptor = adminDescriptor(owner, directory)
+  return callLocalControl(descriptor, 'clientPairingStatus', { pairingId })
 }
 
 export async function requestClientGrants(owner: OwnerView, directory: string, revoke?: { deviceId: string; clientId: string; grantedAt: string }): Promise<TrustListView> {

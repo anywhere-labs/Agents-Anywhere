@@ -189,8 +189,12 @@ fun ConversationPage(controller: SessionController, ui: UiState, onMenu: () -> U
                     }
                 }
             }
+            val restriction = controller.sendRestriction
+            restriction?.let {
+                androidx.compose.material3.Text(stringResource(it), Modifier.padding(horizontal = 16.dp))
+            }
             Composer(
-                ui = ui, running = controller.isRunning, canSend = deviceOnline && !controller.sending && !controller.uploading,
+                ui = ui, running = controller.isRunning && restriction == null, canSend = restriction == null && deviceOnline && !controller.sending && !controller.uploading,
                 placeholder = stringResource(if (deviceOnline) R.string.connection_ask else R.string.connection_device_offline),
                 maximumEditorHeight = maxEditor,
                 onSend = {
