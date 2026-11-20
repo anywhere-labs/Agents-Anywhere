@@ -23,6 +23,7 @@ from agent_server.core.models import (
     AuthPasswordSaltResponse,
     AuthRequest,
     AuthResponse,
+    AuthTotpLoginRequest,
     BindEmailRequest,
     ChangePasswordRequest,
     EmailCodeRequest,
@@ -38,6 +39,10 @@ from agent_server.core.models import (
     OAuthFinalizeRequest,
     OAuthFinalizeResponse,
     OAuthStartResponse,
+    TotpCodeRequest,
+    TotpRecoveryCodesResponse,
+    TotpSetupResponse,
+    TotpStatusResponse,
     UpdateAvatarRequest,
     UpdateProfileRequest,
     UserView,
@@ -50,6 +55,7 @@ from agent_server.infra.repositories.email_accounts import (
     normalize_email,
 )
 from agent_server.infra.repositories.facade import Store
+from agent_server.infra.secret_box import SecretBoxUnavailableError
 from agent_server.services.email_delivery import (
     EmailDeliveryError,
     get_email_settings,
@@ -65,6 +71,16 @@ from agent_server.services.oauth import (
     verify_pending_token,
 )
 from agent_server.services.setup_tokens import SetupTokenService
+from agent_server.services.totp import (
+    LOGIN_CHALLENGE_TTL_SECONDS,
+    TotpAlreadyEnabledError,
+    TotpError,
+    TotpInvalidCodeError,
+    TotpLockedError,
+    TotpNotEnabledError,
+    TotpService,
+    TotpSetupMissingError,
+)
 
 
 def _setup_token(request: Request) -> SetupTokenService:
@@ -189,7 +205,137 @@ async def auth_login(payload: AuthRequest, db: Store = Depends(get_store)) -> Au
         raise _value_error_to_http(exc) from exc
     if user is None:
         raise HTTPException(status_code=401, detail="invalid credentials")
+    if await TotpService(db).is_enabled(user.userId):
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "code": "totp_required",
+                "message": "two-step verification code required",
+                "challengeToken": TotpService.create_login_challenge(user.userId),
+                "expiresIn": LOGIN_CHALLENGE_TTL_SECONDS,
+            },
+        )
     return _auth_response(user)
+
+
+@router.post("/auth/login/totp", response_model=AuthResponse)
+async def auth_login_totp(
+    payload: AuthTotpLoginRequest, db: Store = Depends(get_store)
+) -> AuthResponse:
+    """Second step of password sign-in for accounts with two-step verification."""
+    user_id = TotpService.user_for_login_challenge(payload.challengeToken)
+    if user_id is None:
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "totp_challenge_expired", "message": "sign-in expired, enter your password again"},
+        )
+    try:
+        user = await db.get_user(user_id)
+    except (KeyError, ValueError):
+        user = None
+    if user is None or user.disabled:
+        raise HTTPException(status_code=401, detail="invalid credentials")
+    try:
+        await TotpService(db).verify(user_id, payload.code)
+    except TotpError as exc:
+        raise _totp_http_error(exc) from exc
+    return _auth_response(user)
+
+
+@router.get("/auth/totp", response_model=TotpStatusResponse)
+async def totp_status(
+    user: UserView = Depends(current_user), db: Store = Depends(get_store)
+) -> TotpStatusResponse:
+    status = await TotpService(db).status(user.userId)
+    return TotpStatusResponse(
+        enabled=status.enabled,
+        pendingSetup=status.pending_setup,
+        recoveryCodesRemaining=status.recovery_codes_remaining,
+        serverTime=utc_now(),
+    )
+
+
+@router.post("/auth/totp/setup", response_model=TotpSetupResponse)
+async def totp_begin_setup(
+    user: UserView = Depends(current_user), db: Store = Depends(get_store)
+) -> TotpSetupResponse:
+    try:
+        setup = await TotpService(db, issuer=_totp_issuer()).begin_setup(
+            user.userId, account=user.email or user.userId
+        )
+    except SecretBoxUnavailableError as exc:
+        raise HTTPException(
+            status_code=409, detail={"code": exc.code, "message": str(exc)}
+        ) from exc
+    except TotpError as exc:
+        raise _totp_http_error(exc) from exc
+    return TotpSetupResponse(secret=setup.secret, otpauthUri=setup.otpauth_uri, serverTime=utc_now())
+
+
+@router.delete("/auth/totp/setup", status_code=204)
+async def totp_cancel_setup(
+    user: UserView = Depends(current_user), db: Store = Depends(get_store)
+) -> None:
+    await TotpService(db).cancel_setup(user.userId)
+
+
+@router.post("/auth/totp/enable", response_model=TotpRecoveryCodesResponse)
+async def totp_enable(
+    payload: TotpCodeRequest,
+    user: UserView = Depends(current_user),
+    db: Store = Depends(get_store),
+) -> TotpRecoveryCodesResponse:
+    try:
+        codes = await TotpService(db).confirm_setup(user.userId, payload.code)
+    except SecretBoxUnavailableError as exc:
+        raise HTTPException(
+            status_code=409, detail={"code": exc.code, "message": str(exc)}
+        ) from exc
+    except TotpError as exc:
+        raise _totp_http_error(exc) from exc
+    return TotpRecoveryCodesResponse(recoveryCodes=codes, serverTime=utc_now())
+
+
+@router.post("/auth/totp/disable", status_code=204)
+async def totp_disable(
+    payload: TotpCodeRequest,
+    user: UserView = Depends(current_user),
+    db: Store = Depends(get_store),
+) -> None:
+    try:
+        await TotpService(db).disable(user.userId, payload.code)
+    except TotpError as exc:
+        raise _totp_http_error(exc) from exc
+
+
+@router.post("/auth/totp/recovery-codes", response_model=TotpRecoveryCodesResponse)
+async def totp_regenerate_recovery_codes(
+    payload: TotpCodeRequest,
+    user: UserView = Depends(current_user),
+    db: Store = Depends(get_store),
+) -> TotpRecoveryCodesResponse:
+    try:
+        codes = await TotpService(db).regenerate_recovery_codes(user.userId, payload.code)
+    except TotpError as exc:
+        raise _totp_http_error(exc) from exc
+    return TotpRecoveryCodesResponse(recoveryCodes=codes, serverTime=utc_now())
+
+
+def _totp_issuer() -> str:
+    return os.environ.get("AGENT_SERVER_TOTP_ISSUER", "").strip() or "Agents Anywhere"
+
+
+def _totp_http_error(exc: TotpError) -> HTTPException:
+    detail = {"code": exc.code, "message": str(exc)}
+    if isinstance(exc, TotpLockedError):
+        return HTTPException(
+            status_code=429, detail=detail, headers={"Retry-After": str(exc.retry_after)}
+        )
+    if isinstance(exc, TotpInvalidCodeError):
+        return HTTPException(status_code=401, detail=detail)
+    if isinstance(exc, (TotpAlreadyEnabledError, TotpNotEnabledError, TotpSetupMissingError)):
+        return HTTPException(status_code=409, detail=detail)
+    return HTTPException(status_code=400, detail=detail)
 
 
 @router.post("/auth/email-code", response_model=EmailCodeResponse)

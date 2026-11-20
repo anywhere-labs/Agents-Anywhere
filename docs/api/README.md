@@ -8,6 +8,7 @@ All Server HTTP, SSE, and WebSocket API documentation should live under this dir
 
 ## Documents
 
+- [两步验证（TOTP）](two-step-verification.md)：密码登录的验证码步骤、开启与关闭、恢复码和管理员重置。
 - [运行中排队消息](session-message-queue.md)：会话运行中继续发送、Server 排队与派发、打断并发送、队列管理接口。
 - [统一目标模式](goals.md)：Codex、Claude Code 的目标栏、操作回执、原生续跑和数据库恢复。
 

@@ -30,6 +30,7 @@ from agent_server.services.email_delivery import (
 )
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
+from agent_server.services.totp import TotpService
 from agent_server.services.user_deletion import UserDeletionPending, delete_user_account
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
@@ -139,6 +140,17 @@ async def update_user(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return updated or await _safe_get_user(db, target)
+
+
+@router.delete("/users/{user_id}/totp", status_code=204)
+async def reset_user_totp(user_id: str, db: Store = Depends(get_store)) -> None:
+    """Turn off two-step verification for a user who lost their authenticator."""
+    target = (user_id or "").strip().lower()
+    try:
+        await db.get_user(target)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="user not found") from None
+    await TotpService(db).reset(target)
 
 
 @router.delete("/users/{user_id}", status_code=204)

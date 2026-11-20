@@ -283,6 +283,7 @@ def test_v2_0_database_upgrades_through_current_revision(fresh_database_url) -> 
         ("v2_53", "v2_54"),
         ("v2_54", "v2_55"),
         ("v2_55", "v2_56"),
+        ("v2_56", "v2_57"),
     ],
 )
 def test_every_adjacent_schema_upgrade(tmp_path,
@@ -1023,8 +1024,8 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(tmp_path,
     )
 
 
-def test_current_schema_version_is_v2_56() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_56"
+def test_current_schema_version_is_v2_57() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_57"
     assert CURRENT_SCHEMA_VERSION == "2.56"
 
 
@@ -2673,5 +2674,30 @@ def test_v2_56_adds_session_message_queue(fresh_database_url) -> None:
         inspector = inspect(engine)
         assert not inspector.has_table("session_queued_messages")
         assert not inspector.has_table("session_queue_state")
+    finally:
+        engine.dispose()
+
+
+def test_v2_57_adds_totp_tables(fresh_database_url) -> None:
+    url = fresh_database_url
+    upgrade_database(db_url=url, revision="v2_57")
+    engine = create_engine(_sync_url(url))
+    try:
+        inspector = inspect(engine)
+        assert inspector.has_table("user_totp")
+        assert inspector.has_table("user_totp_recovery_codes")
+        with engine.begin() as connection:
+            connection.execute(text("DROP TABLE alembic_version"))
+    finally:
+        engine.dispose()
+    assert asyncio.run(classify_database(url)) == UnversionedDatabase("v2", "v2_57")
+
+    command.stamp(_alembic_config(url), "v2_57")
+    command.downgrade(_alembic_config(url), "v2_56")
+    engine = create_engine(_sync_url(url))
+    try:
+        inspector = inspect(engine)
+        assert not inspector.has_table("user_totp")
+        assert not inspector.has_table("user_totp_recovery_codes")
     finally:
         engine.dispose()

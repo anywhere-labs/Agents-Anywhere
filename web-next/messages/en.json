@@ -1398,7 +1398,10 @@
       "generic": "Something went wrong.",
       "oauth": "OAuth sign-in failed.",
       "loginFailed": "Sign in failed.",
-      "registerFailed": "Registration failed."
+      "registerFailed": "Registration failed.",
+      "totpInvalid": "That code is not valid.",
+      "totpLocked": "Too many wrong codes. Try again in 5 minutes.",
+      "totpExpired": "Sign-in expired. Enter your password again."
     },
     "bootstrap": {
       "description": "Fresh install. The account you create here becomes the instance admin.",
@@ -1552,6 +1555,17 @@
       "cancel": "Cancel",
       "opening": "Continuing to Tokens Anywhere…",
       "invalid": "This sign-in link is invalid. Return to Tokens Anywhere and try again."
+    },
+    "totp": {
+      "title": "Two-step verification",
+      "description": "Open your authenticator app and enter the 6-digit code.",
+      "recoveryDescription": "Enter one of the recovery codes you saved when you turned on two-step verification. Each code works once.",
+      "codeLabel": "Code",
+      "recoveryLabel": "Recovery code",
+      "verify": "Verify",
+      "useRecovery": "Don't have your phone? Use a recovery code",
+      "useAuthenticator": "Use an authenticator code",
+      "back": "Back to sign in"
     }
   },
   "pages": {
@@ -1962,7 +1976,42 @@
       },
       "modelConfigsTitle": "Model gateways",
       "modelsGroup": "Models",
-      "channelSwitchTitle": "Gateway switching"
+      "channelSwitchTitle": "Gateway switching",
+      "twoFactor": {
+        "title": "Two-step verification",
+        "on": "On",
+        "off": "Off",
+        "description": "Password sign-in also asks for a 6-digit code from an authenticator app such as Google Authenticator, Microsoft Authenticator or 1Password.",
+        "enabledDescription": "Password sign-in asks for a code. {count} recovery codes left.",
+        "enable": "Turn on",
+        "disable": "Turn off",
+        "regenerate": "New recovery codes",
+        "setupTitle": "Turn on two-step verification",
+        "setupDescription": "Scan the QR code with your authenticator app, or enter the key by hand, then enter the 6-digit code it shows.",
+        "qrAlt": "Two-step verification QR code",
+        "manualKey": "Can't scan? Enter this key",
+        "codeLabel": "Code",
+        "codeDescription": "The code changes every 30 seconds.",
+        "confirm": "Turn on",
+        "cancel": "Cancel",
+        "done": "I saved them",
+        "recoveryTitle": "Save your recovery codes",
+        "recoveryDescription": "If you lose your phone, sign in with a recovery code. Each code works once. They are shown only now, so keep them somewhere safe.",
+        "disableTitle": "Turn off two-step verification",
+        "disableDescription": "Enter a current code or a recovery code. Afterwards your password alone signs you in.",
+        "regenerateTitle": "New recovery codes",
+        "regenerateDescription": "Enter a current code or a recovery code. Your old recovery codes stop working.",
+        "codeOrRecoveryLabel": "Code or recovery code",
+        "copy": "Copy all",
+        "copied": "Recovery codes copied.",
+        "copyFailed": "Copy failed. Write them down instead.",
+        "enabledToast": "Two-step verification is on.",
+        "disabledToast": "Two-step verification is off.",
+        "invalidCode": "That code is not valid.",
+        "locked": "Too many wrong codes. Try again in 5 minutes.",
+        "secretUnconfigured": "The server has no AGENT_SERVER_SECRET of at least 32 characters, so two-step verification can't be turned on. Contact your administrator.",
+        "failed": "Something went wrong."
+      }
     },
     "team": {
       "title": "Team",
@@ -2034,7 +2083,10 @@
       "previousPage": "Previous",
       "nextPage": "Next",
       "pageOf": "{page} / {pages}",
-      "pageRange": "{from}-{to} of {total}"
+      "pageRange": "{from}-{to} of {total}",
+      "resetTotp": "Reset two-step verification",
+      "resetTotpConfirm": "Turn off two-step verification for {user}? They can sign in with only their password until they turn it on again.",
+      "resetTotpDone": "Two-step verification reset."
     },
     "opsDashboard": {
       "title": "Dashboard",
