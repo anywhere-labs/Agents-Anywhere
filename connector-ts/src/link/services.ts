@@ -9,7 +9,7 @@ import { SHARE_DEFAULT_BUDGET, outboxStream, scrubForE2ee, shareChunks, watchSes
 import { defineService, type MethodDef } from '../mesh/index.js'
 import type { AttachHub } from './attach.js'
 import type { LocalBlob } from './blobs.js'
-import { CONTROL_PRINCIPAL, CONTROL_SERVICES } from './content.js'
+import { allowsDeviceControl, DEVICE_CONTROL } from './tunnel-authorization.js'
 import { CLIENT_CALL_REQUEST, CLIENT_SERVICE, CLIENT_SUBSCRIBE_REQUEST, DEFAULT_CLIENT_LIMITS, clientCall, clientRoute, clientSubscribe, type ClientLimits } from './client-call.js'
 import type { BlobTransfer, TransferUpload } from './device-files.js'
 import { TerminalWatchers, type WorkspaceServiceDeps } from './workspace.js'
@@ -70,7 +70,6 @@ function sessionId(request: Record<string, unknown>): string {
 export interface DeviceServicesDeps {
   /** The current connection generation; calls carrying another are refused. */
   readonly connectionId: () => string | null
-  readonly encryptedControl?: () => boolean
   readonly attach: AttachHub
   readonly outbox: OutboxStreamOptions & { readonly store?: OutboxStore }
   readonly watch: WatchDeps
@@ -158,8 +157,8 @@ export class DeviceServices {
   }
 
   private gate(context: RpcContext, claimed?: unknown): void {
-    if (this.deps.encryptedControl?.() && CONTROL_SERVICES.has(context.service) &&
-        (context.tunnel?.sealed !== true || context.tunnel.principal !== CONTROL_PRINCIPAL)) {
+    if (this.encrypted && (context.tunnel?.sealed !== DEVICE_CONTROL.require_e2e ||
+        context.tunnel.principal !== DEVICE_CONTROL.principal || !allowsDeviceControl(context.service, context.method))) {
       throw new MeshCallError('permission_denied', 'Device management requires an encrypted control tunnel')
     }
     const current = this.deps.connectionId()
@@ -385,7 +384,8 @@ export class DeviceServices {
         skipped.push(name)
         continue
       }
-      const methods = factory().filter(def => wanted.includes(def.name))
+      const methods = factory().filter(def => wanted.includes(def.name) &&
+        (!this.encrypted || allowsDeviceControl(name, def.name)))
       if (methods.length === 0) {
         skipped.push(name)
         continue

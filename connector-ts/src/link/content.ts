@@ -8,8 +8,6 @@ import { defineService } from '../mesh/index.js'
 
 export const CONTENT_SERVICE = 'aa.device.v1.Content'
 export const CONTENT_PRINCIPAL_PREFIX = 'aa-content-client/'
-export const CONTROL_PRINCIPAL = 'aa-server-control'
-export const CONTROL_SERVICES: ReadonlySet<string> = new Set(['aa.device.v1.Link', 'aa.device.v1.Commands'])
 const MAX_QUEUED_BYTES = 16 * 1024 * 1024
 const MAX_QUEUED_EVENTS = 1024
 const secret = z.string().regex(/^[A-Za-z0-9_-]{43}$/u)

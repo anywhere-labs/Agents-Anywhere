@@ -21,7 +21,8 @@ import { AttachHub, type AttachEnd } from './attach.js'
 import { RouterBridge } from './bridge.js'
 import { HttpError } from './http.js'
 import { MESH_MAX_FRAME_BYTES, meshGrant, type ControlPlane, type MeshGrant } from './control-plane.js'
-import { CONTENT_PRINCIPAL_PREFIX, CONTENT_SERVICE, CONTROL_PRINCIPAL, CONTROL_SERVICES, type DeviceContent } from './content.js'
+import { CONTENT_PRINCIPAL_PREFIX, CONTENT_SERVICE, type DeviceContent } from './content.js'
+import { acceptsDeviceControl, DEVICE_CONTROL } from './tunnel-authorization.js'
 import type { Egress } from './egress.js'
 import { DEFAULT_REGISTRATION, DeviceServices, type DeviceServicesDeps, type E2eeMode, type Registration } from './services.js'
 
@@ -73,7 +74,7 @@ export interface DeviceLinkOptions {
   readonly inbox: CommandInbox
   readonly outboxSignal: OutboxSignal
   /** Everything the services need besides the generation check and the attach hub, which the link owns. */
-  readonly services: Omit<DeviceServicesDeps, 'connectionId' | 'encryptedControl' | 'attach' | 'inbox' | 'onCommand'>
+  readonly services: Omit<DeviceServicesDeps, 'connectionId' | 'attach' | 'inbox' | 'onCommand'>
   readonly egress: () => Egress
   /** Per-mode registration; pass the generated `REGISTERED_SERVICES` of `e2ee-registration.ts` once it is in. */
   readonly registration?: Readonly<Record<E2eeMode, Registration>>
@@ -167,8 +168,6 @@ export class DeviceLink {
       // Commits wake the outbox stream through the ChangeFeed; polling is only the fallback.
       outbox: { pollMs: OUTBOX_FALLBACK_POLL_MS, ...options.services.outbox },
       connectionId: () => this.generation,
-      encryptedControl: () => this.mode === 'required' && options.content !== undefined &&
-        this.grant?.services?.includes(CONTENT_SERVICE) === true,
       attach: this.attach,
       inbox: options.inbox,
       onCommand: () => options.outboxSignal.poke(),
@@ -390,28 +389,28 @@ export class DeviceLink {
             maxFrameSize: current.maxFrameBytes ?? MESH_MAX_FRAME_BYTES,
             logger: linkRpcLogger(this.log),
           })
-          if (mountsContent && content) {
-            const management = built.services.filter((_, index) => CONTROL_SERVICES.has(built.names[index] ?? ''))
-            const other = built.services.filter((_, index) => !CONTROL_SERVICES.has(built.names[index] ?? ''))
-            if (other.length > 0) {
-              mesh.mount(...other, { instanceId: current.instanceId, accessLog: false, logger: linkRpcLogger(this.log) })
+          if (this.mode === 'required') {
+            if (!content) throw new Error('Device management requires an encryption key')
+            if (built.services.length > 0) {
+              mesh.mount(...built.services, {
+                instanceId: current.instanceId,
+                accessLog: false,
+                logger: linkRpcLogger(this.log),
+                acceptTunnels: acceptsDeviceControl,
+                requireE2E: DEVICE_CONTROL.require_e2e,
+                e2ePrivateKey: content.privateKey,
+              })
             }
-            mesh.mount(...management, {
-              instanceId: current.instanceId,
-              accessLog: false,
-              logger: linkRpcLogger(this.log),
-              acceptTunnels: offer => offer.principal === CONTROL_PRINCIPAL,
-              requireE2E: true,
-              e2ePrivateKey: content.privateKey,
-            })
-            mesh.mount(content.service, {
-              instanceId: current.instanceId,
-              accessLog: false,
-              logger: linkRpcLogger(this.log),
-              acceptTunnels: offer => offer.principal.startsWith(CONTENT_PRINCIPAL_PREFIX),
-              requireE2E: true,
-              e2ePrivateKey: content.privateKey,
-            })
+            if (mountsContent) {
+              mesh.mount(content.service, {
+                instanceId: current.instanceId,
+                accessLog: false,
+                logger: linkRpcLogger(this.log),
+                acceptTunnels: offer => offer.principal.startsWith(CONTENT_PRINCIPAL_PREFIX),
+                requireE2E: true,
+                e2ePrivateKey: content.privateKey,
+              })
+            }
           } else {
             mesh.mount(...built.services, { instanceId: current.instanceId, accessLog: false, logger: linkRpcLogger(this.log) })
           }

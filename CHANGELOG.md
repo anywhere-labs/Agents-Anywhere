@@ -30,6 +30,7 @@
 ### 会话创建与消息交付
 
 - 重试创建会话时，两种连接模式都沿用原会话；普通连接并发创建只保留一条会话记录，重复请求更换首条消息附件时会提示冲突。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
+- 强制加密模式下，缺少加密密钥的设备保持离线，手机和 Server 的管理票分别只能执行各自获准的操作。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 加密连接恢复后，手机可以用原消息 ID 确认发送结果，设备拒绝的消息会保留错误状态；Web 和 Desktop 在启动时读完本机加密策略后才打开工作区。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 移动端 PoC 可登录自托管 Server 并连接已配对设备，Android 可在登录页或设备列表扫码连接 Desktop，链接失效时会提示重新出码，解密后没有标题的会话显示为「未命名会话」，Android 和 iOS 均可新建、继续加密会话，并使用附件、设备文件和终端；思考内容与正文分别显示，流式回复结束后才标记完成。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）
 - 修复 Pi 会话刷新或重连后重复显示旧回复的问题，已出现的重复回复会在读取会话时清理，共用历史目录的 Pi 实例也会保留原会话。（[#770](https://github.com/anywhere-labs/Agents-Anywhere/pull/770)）

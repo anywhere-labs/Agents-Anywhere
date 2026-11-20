@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { generateE2EKey, type E2EKeyPair } from 'meshcall'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { CommandInbox } from '../../src/application/inbound/index.js'
@@ -120,7 +121,7 @@ describe.skipIf(binary === null)('DeviceLink against a real Router', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
-  function startLink(timing: Record<string, number> = {}, bridge: 'auto' | 'always' | 'never' = 'auto'): void {
+  function startLink(timing: Record<string, number> = {}, bridge: 'auto' | 'always' | 'never' = 'auto', key?: E2EKeyPair): void {
     const feed = new MemoryChangeFeed()
     service = new ConversationService({ store, feed, live: { emit: () => undefined }, runtimes, clock, ids: { newId: (prefix: string) => `${prefix}${Math.random().toString(36).slice(2)}` } })
     const inbox = new CommandInbox(store, clock, service)
@@ -129,6 +130,7 @@ describe.skipIf(binary === null)('DeviceLink against a real Router', () => {
     const handshake = new ControlPlane({ serverUrl: server.url, credential: () => stored, egress: () => egressValue, connectorVersion: '3.0.0-test', os: 'darwin' })
     link = new DeviceLink({
       deviceId: server.deviceId,
+      ...(key ? { content: { ...key, service: {} } } : {}),
       host: 'cli',
       handshake,
       store,
@@ -218,21 +220,29 @@ describe.skipIf(binary === null)('DeviceLink against a real Router', () => {
     await until(() => link.connectionId !== second && link.state === 'online', 15_000, 'online after restart')
   }, 40_000)
 
-  it('registers only Link and the content-free commands in encrypted mode', async () => {
-    await makeSession()
+  it('accepts encrypted management independently of Content registration', async () => {
     server.e2eeMode = 'required'
-    startLink()
-    await until(() => link.state === 'online', 10_000, 'online')
-    expect(link.e2eeMode).toBe('required')
-    expect(await server.call('aa.device.v1.Commands', 'status', { commandId: 'none' })).toMatchObject({ known: false })
-    // Content methods are not on the Router at all, so the Server has nothing to send plaintext to.
-    await expect(server.call('aa.device.v1.Sessions', 'creationGet', { createOperationId: 'op_1' })).rejects.toBeTruthy()
-    await expect(server.call('aa.device.v1.Commands', 'sessionCreationBegin', { commandId: 'c', deadline: new Date().toISOString(), p: {} })).rejects.toBeTruthy()
-    // Only the plaintext-safe events ride on attach.
+    server.registerContent = false
+    startLink({}, 'auto', await generateE2EKey())
+    await until(() => link.state === 'online', 10_000, 'encrypted attach')
+    const holder = server.held!
+    const options = { instance: server.deviceId, metadata: { 'aa-connection-id': holder.connectionId } }
+    const command = { commandId: 'none' }
+    await expect(holder.worker.unary('aa.device.v1.Commands', 'status', command, options)).resolves.toMatchObject({ known: false })
+    await expect(server.call('aa.device.v1.Commands', 'status', command)).rejects.toMatchObject({ code: 'permission_denied' })
+    await expect(holder.worker.unary('aa.device.v1.Content', 'request', {}, options)).rejects.toMatchObject({ code: 'permission_denied' })
     link.attach.emit('runtime.notice.updated', { sessionId: 'sess_1', notice: { noticeId: 'n1', sessionId: 'sess_1', title: 'secret', type: 'interaction' } })
     link.attach.emit('port.listening', { deviceId: 'dev_1', ports: [{ port: 5173 }] })
-    await until(() => (server.held?.events.length ?? 0) > 0, 5000, 'event')
-    expect(server.held?.events.map(event => event.m)).toEqual(['port.listening'])
+    await until(() => holder.events.length > 0, 5000, 'event')
+    expect(holder.events.map(event => event.m)).toEqual(['port.listening'])
+  }, 20_000)
+
+  it('keeps management offline when encryption is required and the device has no key', async () => {
+    server.e2eeMode = 'required'
+    startLink()
+    await until(() => link.e2eeMode === 'required' && link.connectionId !== null, 10_000, 'required hello')
+    await expect(server.call('aa.device.v1.Commands', 'status', { commandId: 'none' })).rejects.toBeTruthy()
+    expect(states).not.toContain('online')
   }, 20_000)
 
   it('stops with credential_rejected when the Server refuses the device credential', async () => {

@@ -11,7 +11,9 @@ import { join } from 'node:path'
 
 import { Mesh, Router, RouterCredentials, type RpcStream } from 'meshcall'
 
-export const DEVICE_SERVICES = ['aa.device.v1.Link', 'aa.device.v1.Sessions', 'aa.device.v1.Store', 'aa.device.v1.Commands', 'aa.device.v1.Client', 'aa.device.v1.Secure']
+import { DEVICE_CONTROL } from '../../src/link/tunnel-authorization.js'
+
+export const DEVICE_SERVICES = ['aa.device.v1.Link', 'aa.device.v1.Sessions', 'aa.device.v1.Store', 'aa.device.v1.Commands', 'aa.device.v1.Client', 'aa.device.v1.Content']
 
 export function routerBinary(): string | null {
   const candidates = [process.env.MESHCALL_ROUTER_BINARY, '/tmp/aa-mc/bin/meshcall-router'].filter((value): value is string => typeof value === 'string' && value !== '')
@@ -62,7 +64,7 @@ export class RouterProcess {
   public constructor(private readonly binary: string, private readonly extraArgs: readonly string[] = []) {
     const salt = randomBytes(16)
     const key = pbkdf2Sync(this.password, salt, 600_000, 32, 'sha256')
-    const call = [...DEVICE_SERVICES.map(name => `${name}/*`), ...['issue_token', 'revoke_token', 'renew_token', 'list_tokens', 'whoami'].map(m => `meshcall.router.v1.AuthService/${m}`), 'meshcall.router.v1.Registry/*']
+    const call = [...DEVICE_SERVICES.map(name => `${name}/*`), ...['issue_token', 'revoke_token', 'renew_token', 'list_tokens', 'whoami'].map(m => `meshcall.router.v1.AuthService/${m}`), 'meshcall.router.v1.Registry/*', 'meshcall.router.v1.TunnelService/open']
     writeFileSync(join(this.dir, 'auth.json'), JSON.stringify({ users: [{ username: 'aa-server', password_hash: `pbkdf2-sha256$600000$${salt.toString('hex')}$${key.toString('hex')}`, roles: ['client', 'server'], register: DEVICE_SERVICES, call }] }))
   }
 
@@ -147,6 +149,7 @@ export class FakeServer {
   public credential: string
   public connectionId: string | null = null
   private tokenId: string | null = null
+  private publicKey: string | null = null
   private generation = 0
   public held: Held | null = null
   public readonly outbox: OutboxSeen[] = []
@@ -156,6 +159,7 @@ export class FakeServer {
   public pendingCommands: Record<string, unknown>[] = []
   public seqFloors: Record<string, number> = {}
   public e2eeMode: 'off' | 'required' = 'off'
+  public registerContent = true
   public tokenTtlSeconds = 900
   /** The Server revokes the previous token on every hello (kicks a half-dead link); off only to measure without it. */
   public revokeOnHello = true
@@ -220,8 +224,11 @@ export class FakeServer {
 
   private async hello(body: Record<string, unknown>): Promise<Record<string, unknown>> {
     this.hellos++
+    this.publicKey = typeof body.meshE2eeKey === 'string' ? body.meshE2eeKey : null
     if (body.deviceId !== this.deviceId) throw new Error('device mismatch')
-    const services = this.e2eeMode === 'required' ? ['aa.device.v1.Link', 'aa.device.v1.Commands', 'aa.device.v1.Secure'] : DEVICE_SERVICES.filter(name => name !== 'aa.device.v1.Secure')
+    const services = this.e2eeMode === 'required'
+      ? [...Object.keys(DEVICE_CONTROL.scopes), ...(this.registerContent ? ['aa.device.v1.Content'] : [])]
+      : DEVICE_SERVICES.filter(name => name !== 'aa.device.v1.Content')
     const worker = this.worker()
     try {
       const issued = await worker.auth.issueToken(services.map(service => ({ service, register: true, instance_ids: [this.deviceId] })), this.tokenTtlSeconds)
@@ -268,7 +275,23 @@ export class FakeServer {
   private async ready(connectionId: string): Promise<{ status: number; code: string } | null> {
     if (connectionId !== this.connectionId) return { status: 409, code: 'connection_replaced' }
     await this.drop()
-    const worker = this.worker()
+    let worker = this.worker()
+    if (this.e2eeMode === 'required') {
+      const issuer = worker
+      try {
+        if (!this.publicKey) return { status: 409, code: 'encrypted_link_required' }
+        const ticket = await issuer.tunnels.open({
+          instance: this.deviceId,
+          principal: DEVICE_CONTROL.principal,
+          scopes: Object.entries(DEVICE_CONTROL.scopes).map(([service, methods]) => ({ service, methods })),
+          maxConnections: DEVICE_CONTROL.max_connections,
+          e2eKey: this.publicKey,
+        })
+        worker = new Mesh(new Router(this.router.url), { tunnel: ticket.credential, e2eKey: this.publicKey })
+      } finally {
+        await issuer.close()
+      }
+    }
     const held: Held = { connectionId, worker, attach: null, outbox: null, heartbeats: 0, events: [] }
     const options = { instance: this.deviceId, metadata: { 'aa-connection-id': connectionId } }
     const attach = worker.serverStream<Record<string, unknown>, Record<string, unknown>>('aa.device.v1.Link', 'attach', { connectionId }, options)
