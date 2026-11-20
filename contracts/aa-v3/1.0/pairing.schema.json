@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agents-anywhere.dev/contracts/aa-v3/1.0/pairing.schema.json",
+  "title": "AA v3 Encrypted Device Pairing and Client Trust Contract",
+  "description": "Out-of-band QR pairing payload (Noise_IKpsk2_25519_AESGCM_SHA256), local client trust records, lock-badge trust tiers (green vs grey), and error codes.",
+  "$defs": {
+    "Base64Url32": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{43}$",
+      "description": "32 raw bytes encoded with unpadded base64url (X25519 public key or 32-byte PSK)."
+    },
+    "Instant": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "PairingPayload": {
+      "type": "object",
+      "description": "JSON encoded in base64url inside aa-pair://v1/<base64url(json)>, generated and shown ONLY on the work device (QR code or one-time copyable token). Never sent through the Server.",
+      "required": ["v", "instance_id", "device_pub", "pairing_id", "psk", "expires_at"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "const": 1 },
+        "instance_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "device_pub": { "$ref": "#/$defs/Base64Url32" },
+        "pairing_id": { "type": "string", "minLength": 8, "maxLength": 128 },
+        "psk": { "$ref": "#/$defs/Base64Url32" },
+        "expires_at": { "$ref": "#/$defs/Instant" }
+      }
+    },
+    "TrustTier": {
+      "type": "string",
+      "enum": ["verified_app", "web_browser"],
+      "description": "verified_app (iOS / Android / Desktop) renders a green lock; web_browser renders a grey lock explaining that web JS is served by the server and only resists passive leaks, not a malicious server replacing JS."
+    },
+    "LockBadge": {
+      "type": "string",
+      "enum": ["green", "grey"],
+      "description": "UI lock badge derived from TrustTier: verified_app -> green, web_browser -> grey."
+    },
+    "ClientDeviceTrustRecord": {
+      "type": "object",
+      "description": "Persisted locally on the client BEFORE opening the first pairing tunnel (Keychain / Android Keystore / Desktop keychain / Web IndexedDB). Server mode_hint can never clear or relax require_e2ee.",
+      "required": ["device_id", "device_pub", "require_e2ee", "trust_tier", "paired_at"],
+      "additionalProperties": false,
+      "properties": {
+        "device_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "device_pub": { "$ref": "#/$defs/Base64Url32" },
+        "require_e2ee": { "const": true },
+        "trust_tier": { "$ref": "#/$defs/TrustTier" },
+        "paired_at": { "$ref": "#/$defs/Instant" },
+        "device_name_hint": { "type": "string", "maxLength": 128 }
+      }
+    },
+    "PairedClientEntry": {
+      "type": "object",
+      "description": "Device-side entry in the work machine's local authorized-clients list.",
+      "required": ["client_pub", "label", "platform", "paired_at"],
+      "additionalProperties": false,
+      "properties": {
+        "client_pub": { "$ref": "#/$defs/Base64Url32" },
+        "label": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "platform": { "type": "string", "enum": ["ios", "android", "desktop", "web", "cli"] },
+        "paired_at": { "$ref": "#/$defs/Instant" },
+        "last_seen_at": { "$ref": "#/$defs/Instant" }
+      }
+    },
+    "PairingErrorCode": {
+      "type": "string",
+      "enum": [
+        "invalid_pairing_uri",
+        "pairing_expired",
+        "pairing_used",
+        "e2e_handshake_failed",
+        "device_pub_mismatch",
+        "e2e_required_locally",
+        "e2e_not_paired",
+        "tunnel_revoked",
+        "device_offline"
+      ]
+    }
+  }
+}
