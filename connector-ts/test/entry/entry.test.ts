@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { RuntimeHandle, RuntimeProvider } from '../../src/application/ports/index.js'
 import { codexStableSessionId } from '../../src/domain/identity/index.js'
 import { runCli, runDesktopHost, runRpc, startHostProcess, type DesktopHostMessage } from '../../src/entry/index.js'
+import type { TrustListView } from '../../src/application/ports/trust.js'
 import { noVault } from '../../src/keystore/index.js'
 import { joinChunks } from '../../src/sync/index.js'
 import { FakeRuntimeSession, PushQueue } from '../support/fake-runtime-session.js'
@@ -168,6 +169,8 @@ describe.skipIf(binary === null)('entry: rpc, CLI and the composition root', () 
         await expect(peer.unary('aa.local.v2.Control', 'getState', {})).rejects.toThrow()
         await expect(peer.unary('aa.local.v2.Control', 'grantLocalClient', { clientIdentityPub: Buffer.alloc(32, 7).toString('base64url') })).rejects.toThrow()
         await expect(peer.unary('aa.local.v2.Control', 'answerConfirmation', { confirmationId: 'conf_x', approved: true })).rejects.toThrow()
+        await expect(peer.unary('aa.local.v2.Control', 'listClientGrants', {})).rejects.toThrow()
+        await expect(peer.unary('aa.local.v2.Control', 'revokeClientGrant', {})).rejects.toThrow()
         expect(await peer.unary('aa.local.v2.Control', 'startClientPairing', {})).toMatchObject({ deviceId: credential.deviceId })
       } finally {
         await peer.close()
@@ -175,6 +178,25 @@ describe.skipIf(binary === null)('entry: rpc, CLI and the composition root', () 
       // The host key also reaches the trust controls (Desktop): an unknown confirmation is not accepted.
       const host = new Mesh(new Router({ unixPath: rendezvous.endpoint.unixPath }), { token: desktop.descriptor.key, retry: false })
       try {
+        const adminFile = join(home, '.agents-anywhere', 'router', `${ownerInstanceId(home)}.client-admin.json`)
+        const adminKey = JSON.parse(readFileSync(adminFile, 'utf8')).key as string
+        const admin = new Mesh(new Router({ unixPath: rendezvous.endpoint.unixPath }), { token: adminKey, retry: false })
+        try {
+          const service = 'aa.local.v2.Control'
+          const identity = { clientIdentityPub: Buffer.alloc(32, 8).toString('base64url'), label: 'Phone' }
+          await expect(admin.unary(service, 'grantLocalClient', identity)).rejects.toThrow()
+          await host.unary(service, 'grantLocalClient', identity)
+          const before = await admin.unary<object, TrustListView>(service, 'listClientGrants', {})
+          const { clientId, grantedAt } = before.grants.find(grant => grant.label === 'Phone')!
+          const target = { deviceId: before.deviceId, clientId, grantedAt }
+          await expect(admin.unary(service, 'revokeClientGrant', { ...target, deviceId: 'stale' })).rejects.toThrow()
+          await expect(admin.unary(service, 'revokeClientGrant', { ...target, grantedAt: 'stale' })).rejects.toThrow()
+          const after = await admin.unary<object, TrustListView>(service, 'revokeClientGrant', target)
+          expect(after.grants.find(grant => grant.clientId === clientId)?.revokedAt).toEqual(expect.any(String))
+          expect(after.directoryKeyEpoch).toBe(before.directoryKeyEpoch + 1)
+        } finally {
+          await admin.close()
+        }
         expect(await host.unary('aa.local.v2.Control', 'answerConfirmation', { confirmationId: 'conf_unknown', approved: true })).toEqual({ accepted: false })
       } finally {
         await host.close()

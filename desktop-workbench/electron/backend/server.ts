@@ -99,6 +99,7 @@ export class BackendServer {
   private async route(method: string, url: URL, body: Record<string, unknown>): Promise<unknown> {
     const path = url.pathname;
     if (method === "GET") {
+      if (path === "/client-grants") return this.state.getClientGrants();
       if (path === "/state") return this.state.getConnectorState();
       if (path === "/config") return this.state.getPublicConfig();
       if (path === "/settings") return this.state.getSettings();
@@ -116,6 +117,13 @@ export class BackendServer {
       if (path === "/config") return this.state.saveConfig(body as never);
       if (path === "/settings") return this.state.saveSettings(body as never);
       if (path === "/onboarding/complete") return this.state.completeOnboarding(body);
+      if (path === "/client-grants/revoke") {
+        const { deviceId, clientId, grantedAt } = body;
+        if (typeof deviceId !== "string" || typeof clientId !== "string" || typeof grantedAt !== "string") {
+          throw new Error("Invalid grant selection");
+        }
+        return this.state.getClientGrants({ deviceId, clientId, grantedAt });
+      }
       if (path === "/client-pairing") return this.state.startClientPairing();
       if (path === "/start") return this.state.startConnector();
       if (path === "/stop") return this.state.stopConnector();

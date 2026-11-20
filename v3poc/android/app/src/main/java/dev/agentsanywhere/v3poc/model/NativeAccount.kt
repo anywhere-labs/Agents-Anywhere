@@ -31,7 +31,12 @@ internal data class NativeLogin(
 )
 
 @Serializable
-private data class SavedLogin(val server: String, val credentials: NativeLogin, val device: String? = null)
+private data class SavedLogin(
+    val server: String,
+    val credentials: NativeLogin,
+    val device: String? = null,
+    val pairedDevices: List<Workspace.Device> = emptyList(),
+)
 
 internal class AccountRequestFailed(val status: Int) : Exception()
 internal class InvalidServer : IllegalArgumentException()
@@ -81,10 +86,22 @@ internal class NativeAccount(private val context: Context) {
         return devices to current.device
     }
 
+    suspend fun cachedPairedDevices(): List<Workspace.Device> {
+        val current = saved()
+        val devices = current.pairedDevices.toMutableList()
+        current.device?.takeIf { id -> devices.none { it.id == id } }?.let { devices += Workspace.Device(it, it, "offline", "") }
+        return devices.map { it.copy(presence = "offline") }
+    }
+
+    private fun pairing(current: SavedLogin, device: Workspace.Device, invitation: String? = null) =
+        ContentPairing(context, parseServer(current.server), current.credentials.userId, device.id, invitation, http, ::accessToken)
+
+    suspend fun hasGrant(device: Workspace.Device): Boolean = pairing(saved(), device).hasGrant()
+
     suspend fun open(device: Workspace.Device, invitation: String?): OnlineWorkspace {
         val current = saved()
         val account = current.credentials
-        val pairing = ContentPairing(context, parseServer(current.server), account.userId, device.id, invitation, http, ::accessToken)
+        val pairing = pairing(current, device, invitation)
         try {
             val peer = pairing.connect()
             val keyResult = peer.transport.request(ContentRequest(null, "GET", "/e2ee/v1/directory-key"), peer.authorization)
@@ -127,7 +144,10 @@ internal class NativeAccount(private val context: Context) {
                 if (next != null && next == cursor) throw AccountRequestFailed(502)
                 cursor = next.takeIf { page["hasMore"].bool == true }
             } while (cursor != null)
-            lock.withLock { save(checkNotNull(login).copy(device = device.id)) }
+            lock.withLock {
+                val value = checkNotNull(login)
+                save(value.copy(device = device.id, pairedDevices = value.pairedDevices.filterNot { it.id == device.id } + device))
+            }
             val email = account.email.orEmpty()
             val workspace = Workspace(Workspace.Account(account.displayName.ifBlank { email }, email), listOf(device), projects, sessions)
             return OnlineWorkspace(workspace, MeshSessionsClient(device, sessions.associate { it.id to it.title }, runtimes, ::stageAttachment, mapOf(
@@ -135,20 +155,38 @@ internal class NativeAccount(private val context: Context) {
                 "permission" to context.getString(R.string.connection_permission),
             ), { code ->
                 context.getString(if (code == "runtime_unavailable") R.string.connection_agent_unavailable else R.string.connection_delivery_failed)
-            }, pairing::connect), pairing::close)
+            }, pairing::connect), pairing::close) { pairing.awaitRevocation(peer) }
         } catch (failure: Exception) {
             withContext(NonCancellable) { pairing.close() }
             throw failure
         }
     }
 
+    suspend fun revokePairing(device: Workspace.Device) {
+        val pairing = pairing(saved(), device)
+        try {
+            val peer = pairing.connect()
+            val id = peer.authorization.clientId
+            val result = peer.transport.request(
+                ContentRequest(jsObj("clientId" to id), "POST", "/e2ee/v1/trust/revoke"), peer.authorization,
+            )
+            check(result.status == 200L && result.body["deviceId"].str == device.id &&
+                result.body["grants"].arr.orEmpty().any { it["clientId"].str == id && !it["revokedAt"].str.isNullOrBlank() })
+            forgetPairing(device)
+        } finally {
+            withContext(NonCancellable) { pairing.close() }
+        }
+    }
+
     suspend fun forgetPairing(device: Workspace.Device) {
         val current = saved()
-        ContentPairing(context, parseServer(current.server), current.credentials.userId, device.id, null, http, ::accessToken)
-            .forget()
+        pairing(current, device).forget()
         lock.withLock {
             val value = login
-            if (value != null && value.device == device.id) save(value.copy(device = null))
+            if (value != null) save(value.copy(
+                device = value.device?.takeUnless { it == device.id },
+                pairedDevices = value.pairedDevices.filterNot { it.id == device.id },
+            ))
         }
     }
 
@@ -231,7 +269,12 @@ internal class NativeAccount(private val context: Context) {
     }
 }
 
-internal class OnlineWorkspace(val workspace: Workspace, val client: SessionsClient, val close: suspend () -> Unit)
+internal class OnlineWorkspace(
+    val workspace: Workspace,
+    val client: SessionsClient,
+    val close: suspend () -> Unit,
+    val awaitRevocation: suspend () -> Unit,
+)
 
 private fun openDisplay(value: kotlinx.serialization.json.JsonElement?, grant: kotlinx.serialization.json.JsonElement?,
                         device: String, session: String, slot: String): JsonObject? = runCatching {

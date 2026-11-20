@@ -1,6 +1,6 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import type { ClientPairingResult } from "../../shared/client-pairing";
+import type { AuthorizedClients, ClientGrantSelection, ClientPairingResult } from "../../shared/client-pairing";
 import { EventEmitter } from "node:events";
 import { ConnectorLogStore } from "../log-store";
 import { ConnectorSupervisor } from "../connector-supervisor";
@@ -254,9 +254,17 @@ export class BackendState {
     return this.connector.saveConfig(patch ?? {});
   }
 
-  async startClientPairing(): Promise<ClientPairingResult> {
+  private async clientPairingEntry() {
     const entry = path.join(path.dirname(this.init.connectorEntry), "client-pairing.js");
-    const pairing = await import(pathToFileURL(entry).href);
+    return import(pathToFileURL(entry).href);
+  }
+
+  async getClientGrants(target?: ClientGrantSelection): Promise<AuthorizedClients> {
+    return (await this.clientPairingEntry()).getClientGrants(this.init.homePath, target);
+  }
+
+  async startClientPairing(): Promise<ClientPairingResult> {
+    const pairing = await this.clientPairingEntry();
     return pairing.startClientPairing(this.init.homePath);
   }
 

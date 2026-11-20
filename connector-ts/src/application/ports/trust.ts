@@ -1,9 +1,24 @@
-import type { DeviceTrustState } from '../../domain/trust/index.js'
+import type { ClientGrant, DeviceTrustState } from '../../domain/trust/index.js'
 
 /**
  * Ports of the Trust use cases (docs/v3/11-e2ee-noise.md §2). Implemented by `keystore/` (secrets, trust list) and
  * `channel/` (sealing); `entry/` wires them.
  */
+
+export interface TrustListView {
+  readonly deviceId: string
+  readonly grants: readonly {
+    readonly clientId: string
+    readonly label: string
+    readonly platform: ClientGrant['platform']
+    readonly identityPubFingerprint: string
+    readonly grantedAt: string
+    readonly grantedBy: ClientGrant['grantedBy']
+    readonly revokedAt: string | null
+  }[]
+  readonly directoryKeyId: string
+  readonly directoryKeyEpoch: number
+}
 
 /** Persists the trust list. Not secret (public keys and names) but must not be editable by anything but the device. */
 export interface TrustRepository {

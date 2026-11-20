@@ -2880,6 +2880,17 @@
       "errorGeneric": "配对失败，请在设备上重新生成配对链接后重试。",
       "unsupported": "这个浏览器无法建立端到端加密连接。请使用新版 Chrome、Edge、Firefox、Safari，或使用 Desktop。"
     },
+    "authorizedClients": {
+      "title": "已授权客户端",
+      "refresh": "刷新",
+      "empty": "这台电脑还没有已授权的客户端。",
+      "revoke": "撤销授权",
+      "confirm": "撤销「{client}」的授权？",
+      "detail": "这个客户端需要重新配对才能再次访问这台电脑。",
+      "loadError": "无法加载已授权客户端。请检查本机 Connector 后刷新。",
+      "revokeError": "未能确认撤销结果，请刷新列表后重试。",
+      "revoked": "已撤销授权。"
+    },
     "mobilePairing": {
       "show": "显示配对二维码",
       "title": "将手机与这台电脑配对",

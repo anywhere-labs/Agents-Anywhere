@@ -4,6 +4,9 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import dev.agentsanywhere.v3poc.generated.ContentSubscribeRequest
+import dev.agentsanywhere.v3poc.generated.ContentRequest
+import io.github.t4wefan.meshcall.MeshCallException
 import dev.agentsanywhere.v3poc.generated.ContentPairRequest
 import java.security.KeyStore
 import java.security.MessageDigest
@@ -14,6 +17,8 @@ import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
@@ -39,6 +44,8 @@ internal class ContentPairing(
     private val storage = PrivateContentStorage(context, listOf(server.toString(), accountId, deviceId).joinToString("\u0000"), ContentPairingRecord.serializer())
     private var active: PairedContent? = null
 
+    suspend fun hasGrant(): Boolean = withContext(Dispatchers.IO) { storage.read()?.clientId != null }
+
     suspend fun connect(): PairedContent = lock.withLock {
         try {
             active ?: prepare().also { active = it }
@@ -51,13 +58,40 @@ internal class ContentPairing(
     private suspend fun prepare(): PairedContent {
         val saved = withContext(Dispatchers.IO) { storage.read() }
         saved?.clientId?.takeIf { invitation.isNullOrBlank() }?.let { clientId ->
-            return PairedContent(transport(saved.connectorKey), ContentAuthorization(clientId, saved.secret))
+            return PairedContent(transport(saved.connectorKey), ContentAuthorization(clientId, saved.secret), saved.connectorKey)
         }
 
         val invite = PairingInvitation.parse(invitation)
         if (invite.deviceId != deviceId || invite.serverUrl.toHttpUrl() != server) throw PairingTargetMismatch()
         if (saved != null && saved.connectorKey != invite.deviceIdentityPub) throw DeviceIdentityMismatch()
-        val record = saved ?: withContext(Dispatchers.IO) {
+        val transport = transport(invite.deviceIdentityPub)
+        try {
+            val existing = if (saved?.clientId != null) {
+                // A fresh invitation must not reactivate credentials previously rejected by the computer.
+                try {
+                    val proof = transport.request(ContentRequest(null, "GET", "/e2ee/v1/directory-key"),
+                        ContentAuthorization(saved.clientId, saved.secret))
+                    check(proof.status == 200L)
+                    saved
+                } catch (_: ClientNoLongerAuthorized) {
+                    null
+                }
+            } else saved
+            val record = existing ?: newRecord(invite.deviceIdentityPub)
+            val result = transport.pair(ContentPairRequest(
+                clientIdentityPub = record.identity, clientSecret = record.secret, label = "Android",
+                pairingId = invite.pairingId, pairingSecret = invite.psk, platform = "android",
+            ))
+            withContext(Dispatchers.IO) { storage.write(record.copy(clientId = result.clientId)) }
+            return PairedContent(transport, ContentAuthorization(result.clientId, record.secret), record.connectorKey)
+        } catch (failure: Exception) {
+            withContext(NonCancellable) { transport.invalidate() }
+            throw failure
+        }
+    }
+
+    private suspend fun newRecord(pinnedKey: String): ContentPairingRecord =
+        withContext(Dispatchers.IO) {
             val random = SecureRandom()
             val privateKey = ByteArray(32)
             val publicKey = ByteArray(32)
@@ -65,19 +99,28 @@ internal class ContentPairing(
             X25519.generatePublicKey(privateKey, 0, publicKey, 0)
             privateKey.fill(0)
             val secret = ByteArray(32).also(random::nextBytes)
-            ContentPairingRecord(invite.deviceIdentityPub, encode(publicKey), encode(secret)).also(storage::write)
+            ContentPairingRecord(pinnedKey, encode(publicKey), encode(secret)).also(storage::write)
         }
-        val transport = transport(record.connectorKey)
-        try {
-            val result = transport.pair(ContentPairRequest(
-                clientIdentityPub = record.identity, clientSecret = record.secret, label = "Android",
-                pairingId = invite.pairingId, pairingSecret = invite.psk, platform = "android",
-            ))
-            withContext(Dispatchers.IO) { storage.write(record.copy(clientId = result.clientId)) }
-            return PairedContent(transport, ContentAuthorization(result.clientId, record.secret))
-        } catch (failure: Exception) {
-            withContext(NonCancellable) { transport.invalidate() }
-            throw failure
+
+    /** The trust stream ends with e2ee_not_paired when this client's grant is revoked. */
+    suspend fun awaitRevocation(peer: PairedContent) {
+        var retryMs = 1000L
+        while (true) {
+            val monitor = transport(peer.connectorKey)
+            try {
+                monitor.subscribe(ContentSubscribeRequest(stream = "trust"), peer.authorization)
+                    .collect { retryMs = 1000L }
+            } catch (failure: MeshCallException) {
+                if (failure.reason == "e2ee_not_paired") return
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // A lost connection cannot establish that authorization was revoked.
+            } finally {
+                withContext(NonCancellable) { monitor.invalidate() }
+            }
+            delay(retryMs)
+            retryMs = (retryMs * 2).coerceAtMost(30_000L)
         }
     }
 
@@ -98,7 +141,7 @@ internal class ContentPairing(
 internal class PairingInvitationExpired : IllegalStateException()
 internal class PairingTargetMismatch : IllegalArgumentException()
 
-internal class PairedContent(val transport: DeviceContentTransport, val authorization: ContentAuthorization)
+internal class PairedContent(val transport: DeviceContentTransport, val authorization: ContentAuthorization, val connectorKey: String)
 
 @Serializable
 internal class PairingInvitation(

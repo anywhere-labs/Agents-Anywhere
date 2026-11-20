@@ -2880,6 +2880,17 @@
       "errorGeneric": "Pairing failed. Create a new pairing link on the device and try again.",
       "unsupported": "This browser cannot create end-to-end encrypted connections. Use a current version of Chrome, Edge, Firefox or Safari, or the Desktop app."
     },
+    "authorizedClients": {
+      "title": "Authorized clients",
+      "refresh": "Refresh",
+      "empty": "No clients are authorized on this computer.",
+      "revoke": "Revoke access",
+      "confirm": "Revoke access for {client}?",
+      "detail": "This client will need to pair again to access this computer.",
+      "loadError": "Could not load authorized clients. Check the local Connector and refresh.",
+      "revokeError": "Could not confirm revocation. Refresh the list and try again.",
+      "revoked": "Access revoked."
+    },
     "mobilePairing": {
       "show": "Show pairing QR code",
       "title": "Pair a phone with this computer",

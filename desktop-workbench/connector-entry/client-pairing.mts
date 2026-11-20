@@ -1,6 +1,6 @@
 // Use the same restricted local role as anywhere-cli pair-client, including when CLI or DSH owns the device.
-import { ownerAlive, readRuntimeState, requestClientPairing, routerDirectory, runtimeRecordPath } from '../../connector-ts/src/host/index.js'
-import type { ClientPairingResult } from '../shared/client-pairing.js'
+import { ownerAlive, readRuntimeState, requestClientGrants, requestClientPairing, routerDirectory, runtimeRecordPath } from '../../connector-ts/src/host/index.js'
+import type { AuthorizedClients, ClientGrantSelection, ClientPairingResult } from '../shared/client-pairing.js'
 
 export async function startClientPairing(home: string): Promise<ClientPairingResult> {
   const owner = (await readRuntimeState(runtimeRecordPath(home))).runtime
@@ -21,5 +21,18 @@ export async function startClientPairing(home: string): Promise<ClientPairingRes
       default:
         return { ok: false, code: 'not_available' }
     }
+  }
+}
+
+export async function getClientGrants(home: string, target?: ClientGrantSelection): Promise<AuthorizedClients> {
+  const owner = (await readRuntimeState(runtimeRecordPath(home))).runtime
+  if (!owner || !(await ownerAlive(owner))) throw new Error('connector_not_running')
+  const view = await requestClientGrants(
+    { ...owner, connectorVersion: owner.connectorVersion ?? null }, routerDirectory(home), target,
+  )
+  return {
+    deviceId: view.deviceId,
+    clients: view.grants.filter(grant => !grant.revokedAt).map(({ clientId, label, identityPubFingerprint, grantedAt }) =>
+      ({ clientId, label, identityPubFingerprint, grantedAt })),
   }
 }

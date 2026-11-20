@@ -119,6 +119,7 @@ Python 首次成功写入时迁移旧 `.agentsanywhere/machine.json`、`.agentsa
 部署开启端到端加密（`AGENT_SERVER_E2EE=required`）时，客户端要先和设备配对（`contracts/e2ee/1.0`）。配对码只能在工作机本机生成，本机确认也在工作机上完成。
 
 - `Control/startClientPairing()`：用 Server 在 `LinkWelcome` 里声明的 `e2eeMode` 生成一次性配对邀请，返回 `{uri, deviceId, pairingId, expiresAt, fingerprint}`。`uri` 是 `aa-pair://` 链接（二维码内容），10 分钟内有效、只能用一次。同一设备重复或并发调用返回相同的有效邀请和原到期时间；已使用、已取消或已过期时才生成新码。可能的错误：`connector_not_running`、`connector_offline`、`e2ee_off`（Server 没有开启加密模式）、`pairing_limit`、`not_available`。
+- `Control/listClientGrants()` 返回本机设备的信任列表（与 E2EE 的 `TrustListResponse` 相同）。`Control/revokeClientGrant({deviceId, clientId, grantedAt})` 仅撤销列表中选定的授权，设备或授权已变更时拒绝操作；成功返回更新后的列表。Desktop 用独立的 `client-admin` 本机角色调用这两个方法，凭据位于权限为 `0600` 的 `<runtime.instanceId>.client-admin.json`。
 - `Control/grantLocalClient({clientIdentityPub, label, platform})`：同一台电脑上的宿主直接授权一个客户端，不经过配对码。只有 `host` 角色可以调用。
 - `Control/confirmations()`：server stream，推送需要工作机前的人确认的请求（已配对客户端批准新客户端），待处理的先推。
 - `Control/answerConfirmation({confirmationId, approved})`：应答确认请求。只有 `approved: true` 算同意；超时（120 秒）、没有宿主订阅、出错，都按拒绝处理。

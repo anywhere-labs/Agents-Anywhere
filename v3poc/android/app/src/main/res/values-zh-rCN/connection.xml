@@ -45,10 +45,18 @@
     <string name="connection_model">模型</string>
     <string name="connection_permission">权限</string>
     <string name="connection_key_changed">设备密钥已变更，请在电脑上核对。</string>
-    <string name="connection_forget_pairing">忘记本机配对</string>
-    <string name="connection_forget_pairing_detail">请使用电脑端生成的新链接重新配对。</string>
+    <string name="connection_forget_pairing">仅忘记本机配对</string>
+    <string name="connection_forget_pairing_detail">这会清除手机保存的配对凭据。电脑上的授权仍需在电脑上撤销。</string>
     <string name="connection_agent_unavailable">Agent 无法启动，请在电脑上检查。</string>
     <string name="connection_delivery_failed">消息发送失败。</string>
     <string name="connection_ask">询问 Agents</string>
     <string name="connection_device_offline">设备离线，暂时不能发送。</string>
+    <string name="connection_revoke">解除配对</string>
+    <string name="connection_revoke_detail">在电脑上撤销这部手机的授权？再次连接需要重新扫码配对。</string>
+    <string name="connection_revoke_failed">未能确认电脑已撤销授权。请重试，或仅忘记本机配对。</string>
+    <string name="connection_revoked">这部手机的授权已撤销。</string>
+    <string name="connection_forgotten">已清除本机配对。</string>
+    <string name="connection_forget_failed">无法清除本机配对。</string>
+    <string name="connection_no_longer_authorized">这台电脑已不再授权此手机，请重新扫码配对。</string>
+    <string name="connection_forget_revoked_detail">清除这部手机为这台电脑保存的配对记录？</string>
 </resources>

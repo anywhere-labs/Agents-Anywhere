@@ -38,6 +38,8 @@ class DeviceTunnelGrant(
     val maxFrameBytes: Int,
 )
 
+internal class ClientNoLongerAuthorized : IllegalStateException()
+
 class ContentAuthorization(val clientId: String, val credential: String) {
     internal fun options() = CallOptions.DEFAULT.withMetadata(
         mapOf("aa-content-client" to clientId, "aa-content-credential" to credential),
@@ -80,8 +82,12 @@ class DeviceContentTransport(
         throw error
     }
 
-    suspend fun request(request: ContentRequest, authorization: ContentAuthorization): ContentResult =
+    suspend fun request(request: ContentRequest, authorization: ContentAuthorization): ContentResult = try {
         ContentClient(connect()).request(instanceId, request.body, request.method, request.path, authorization.options())
+    } catch (error: MeshCallException) {
+        if (error.reason == "e2ee_not_paired") throw ClientNoLongerAuthorized()
+        throw error
+    }
 
     fun subscribe(request: ContentSubscribeRequest, authorization: ContentAuthorization): Flow<ContentEvent> = flow {
         emitAll(ContentClient(connect()).subscribe(

@@ -16,6 +16,7 @@ import {
   handoverRequester,
   logsService,
   publishClientPairing,
+  publishClientAdmin,
   publishHandover,
   routerDirectory,
   runtimeRecordPath,
@@ -120,6 +121,13 @@ export async function startHostProcess(options: HostProcessOptions): Promise<Hos
   }
   const clientTrust: ClientTrustControl = {
     startClientPairing: async () => (await running()).invite(),
+    listClientGrants: async () => (await running()).trust.trustList(),
+    revokeClientGrant: async ({ deviceId, clientId, grantedAt }) => {
+      const { trust } = await running()
+      if (trust.state.deviceId !== deviceId) throw new Error('The selected device has changed')
+      await trust.revokeClient(clientId, grantedAt)
+      return trust.trustList()
+    },
     grantLocalClient: async request => (await running()).grantLocal(request),
   }
   // Every approval is confirmed here unless a test supplies its own confirmation.
@@ -150,7 +158,9 @@ export async function startHostProcess(options: HostProcessOptions): Promise<Hos
   await hub.mount(controlService(controller, events, { trust: clientTrust, confirmations }), logsService(logs))
   const unpublishHandover = publishHandover(lease.instanceId, CONNECTOR_VERSION, hub.descriptor('handover'), routerDir)
   const unpublishPairing = publishClientPairing(lease.instanceId, CONNECTOR_VERSION, hub.descriptor('client-pairing'), routerDir)
+  const unpublishAdmin = publishClientAdmin(lease.instanceId, CONNECTOR_VERSION, hub.descriptor('client-admin'), routerDir)
   const unpublish = (): void => {
+    unpublishAdmin()
     unpublishHandover()
     unpublishPairing()
   }

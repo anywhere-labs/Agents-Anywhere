@@ -7,6 +7,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.key
 import dev.agentsanywhere.v3poc.ui.ConnectionScreen
@@ -31,6 +32,15 @@ class MainActivity : ComponentActivity() {
                 ConnectionScreen(app)
             } else {
                 key(controller) {
+                    LaunchedEffect(controller) {
+                        val connection = app.online ?: return@LaunchedEffect
+                        connection.awaitRevocation()
+                        if (app.online === connection) {
+                            app.revokedDevice = connection.workspace.devices.single()
+                            app.resumeWorkspace = false
+                            app.closeWorkspace(signOut = false)
+                        }
+                    }
                     DisposableEffect(controller) {
                         controller.bridge.attach(this@MainActivity)
                         onDispose { controller.bridge.attach(null) }

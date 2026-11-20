@@ -9,6 +9,7 @@ import { join } from 'node:path'
 import { InvalidArgumentError, Mesh, MeshCallError, Router, type RpcContext } from 'meshcall'
 
 import { defineService, type MethodDef } from '../mesh/index.js'
+import type { TrustListView } from '../application/ports/trust.js'
 import type { ConnectorSettings } from './config.js'
 import type { ConfirmationEvent, LocalConfirmations } from './confirmations.js'
 import type { ConnectorController, ConnectorState, PairingStatus } from './controller.js'
@@ -81,6 +82,8 @@ export interface LocalClientGrant {
 export interface ClientTrustControl {
   /** A pairing invitation of the running Connector (`DeviceTrustService.startPairing` with the Server's mode). */
   startClientPairing(): Promise<ClientPairingInvitation>
+  listClientGrants(): Promise<TrustListView>
+  revokeClientGrant(request: { deviceId: string; clientId: string; grantedAt: string }): Promise<TrustListView>
   /** Writes a grant without a pairing (`DeviceTrustService.grantLocally`); `host` role only. */
   grantLocalClient(request: { clientIdentityPub: string; label: string; platform: string | null }): Promise<LocalClientGrant>
 }
@@ -139,6 +142,13 @@ export function controlService(controller: ConnectorController, events: ControlE
     unary('cancelPairing', 'Cancel the pairing in progress, if any.', () => controller.cancelPairing(), { readOnly: false, destructive: false }),
     unary('requestHandover', 'A newer Connector on this machine asks this one to hand over (04-connector.md §9.1).', request => controller.requestHandover(request), { readOnly: false, destructive: false }),
     unary('startClientPairing', 'Create a pairing invitation for a client in encrypted mode (QR code link, 10 minutes, one use).', () => (extras.trust ?? notAvailable('client pairing')).startClientPairing(), { readOnly: false, destructive: false }),
+    unary('listClientGrants', 'List client grants on this computer.', () =>
+      (extras.trust ?? notAvailable('client grants')).listClientGrants(), { readOnly: true }),
+    unary('revokeClientGrant', 'Revoke the selected grant on this computer.', request =>
+      (extras.trust ?? notAvailable('client grants')).revokeClientGrant({
+        deviceId: requiredString(request, 'deviceId'), clientId: requiredString(request, 'clientId'),
+        grantedAt: requiredString(request, 'grantedAt'),
+      }), { readOnly: false, destructive: true }),
     unary('grantLocalClient', 'Authorise a client on this computer directly, without a pairing code (host only).', request => {
       const platform = request.platform
       return (extras.trust ?? notAvailable('client pairing')).grantLocalClient({
@@ -187,7 +197,14 @@ export function clientPairingPath(leaseInstanceId: string, directory = routerDir
 
 /** The `client-pairing` role key, for `anywhere-cli pair-client` while another host owns the machine. */
 export function publishClientPairing(leaseInstanceId: string, connectorVersion: string, descriptor: LocalDescriptor, directory?: string): () => void {
-  const path = clientPairingPath(leaseInstanceId, directory)
+  return publishLocalDescriptor(clientPairingPath(leaseInstanceId, directory), connectorVersion, descriptor)
+}
+
+export function publishClientAdmin(leaseInstanceId: string, connectorVersion: string, descriptor: LocalDescriptor, directory: string): () => void {
+  return publishLocalDescriptor(join(directory, `${leaseInstanceId}.client-admin.json`), connectorVersion, descriptor)
+}
+
+function publishLocalDescriptor(path: string, connectorVersion: string, descriptor: LocalDescriptor): () => void {
   writePrivateJson(path, { version: 1, connectorVersion, pid: descriptor.pid, endpoint: descriptor.endpoint, key: descriptor.key } satisfies HandoverRendezvous)
   return () => rmSync(path, { force: true })
 }
@@ -203,10 +220,20 @@ export async function requestClientPairing(owner: OwnerView, directory?: string)
   } catch {
     throw new Error(`the Connector running on this computer (${owner.kind}, PID ${owner.pid}) cannot create client pairings; create the pairing link in that app, or stop it and run this command again`)
   }
+  return callLocalControl(rendezvous, 'startClientPairing', {})
+}
+
+export async function requestClientGrants(owner: OwnerView, directory: string, revoke?: { deviceId: string; clientId: string; grantedAt: string }): Promise<TrustListView> {
+  const path = join(directory, `${owner.instanceId}.client-admin.json`)
+  const descriptor: HandoverRendezvous = JSON.parse(readFileSync(path, 'utf8'))
+  return callLocalControl(descriptor, revoke ? 'revokeClientGrant' : 'listClientGrants', revoke ?? {})
+}
+
+async function callLocalControl<T>(rendezvous: HandoverRendezvous, method: string, input: Record<string, unknown>): Promise<T> {
   const router = new Router('unixPath' in rendezvous.endpoint ? { unixPath: rendezvous.endpoint.unixPath } : { pipe: rendezvous.endpoint.pipe })
   const mesh = new Mesh(router, { token: rendezvous.key, reconnect: { enabled: false }, retry: false })
   try {
-    return await mesh.unary<Record<string, unknown>, ClientPairingInvitation>(CONTROL_SERVICE, 'startClientPairing', {}, { timeoutMs: 30_000 })
+    return await mesh.unary<Record<string, unknown>, T>(CONTROL_SERVICE, method, input, { timeoutMs: 30_000 })
   } finally {
     await mesh.close().catch(() => undefined)
   }

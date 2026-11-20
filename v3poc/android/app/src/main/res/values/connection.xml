@@ -45,10 +45,18 @@
     <string name="connection_model">Model</string>
     <string name="connection_permission">Permissions</string>
     <string name="connection_key_changed">The device key has changed. Verify it on your computer.</string>
-    <string name="connection_forget_pairing">Forget local pairing</string>
-    <string name="connection_forget_pairing_detail">Pair again with a new link from your Connector.</string>
+    <string name="connection_forget_pairing">Forget on this phone only</string>
+    <string name="connection_forget_pairing_detail">This removes the pairing from this phone. The computer keeps its authorization until you revoke it there.</string>
     <string name="connection_agent_unavailable">Agent unavailable. Check it on your computer.</string>
     <string name="connection_delivery_failed">Message delivery failed.</string>
     <string name="connection_ask">Ask Agents</string>
     <string name="connection_device_offline">Device offline. Sending is unavailable.</string>
+    <string name="connection_revoke">Unpair this phone</string>
+    <string name="connection_revoke_detail">Revoke this phone’s access on the computer? You will need a new pairing code to reconnect.</string>
+    <string name="connection_revoke_failed">The computer did not confirm revocation. Retry or forget the pairing on this phone only.</string>
+    <string name="connection_revoked">This phone’s access has been revoked.</string>
+    <string name="connection_forgotten">Local pairing removed.</string>
+    <string name="connection_forget_failed">Could not remove the local pairing.</string>
+    <string name="connection_no_longer_authorized">This computer no longer authorizes this phone. Scan a new pairing code to reconnect.</string>
+    <string name="connection_forget_revoked_detail">Remove the saved pairing record for this computer from this phone?</string>
 </resources>

@@ -49,6 +49,8 @@ export {
   handoverPath,
   handoverRequester,
   logsService,
+  publishClientAdmin,
+  requestClientGrants,
   publishClientPairing,
   publishHandover,
   requestClientPairing,

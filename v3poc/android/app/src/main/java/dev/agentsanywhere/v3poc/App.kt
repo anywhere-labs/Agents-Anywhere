@@ -33,6 +33,7 @@ class App : Application() {
         private set
     private var started = false
     internal var resumeWorkspace = true
+    internal var revokedDevice: Workspace.Device? = null
 
     override fun onCreate() {
         super.onCreate()

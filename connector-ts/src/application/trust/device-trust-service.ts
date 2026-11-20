@@ -33,6 +33,7 @@ import type {
   TrustClock,
   TrustRandom,
   TrustRepository,
+  TrustListView,
 } from '../ports/trust.js'
 
 const DIRECTORY_KEY_BYTES = 32
@@ -58,21 +59,6 @@ export interface DirectoryKeyGrant {
   readonly keyId: string
   readonly epoch: number
   readonly key: string
-}
-
-export interface TrustListView {
-  readonly deviceId: string
-  readonly grants: readonly {
-    readonly clientId: string
-    readonly label: string
-    readonly platform: ClientGrant['platform']
-    readonly identityPubFingerprint: string
-    readonly grantedAt: string
-    readonly grantedBy: ClientGrant['grantedBy']
-    readonly revokedAt: string | null
-  }[]
-  readonly directoryKeyId: string
-  readonly directoryKeyEpoch: number
 }
 
 export interface SealedDisplay {
@@ -245,10 +231,14 @@ export class DeviceTrustService {
     return authorizeClient(state, client.clientId)
   }
 
-  async revokeClient(clientId: string): Promise<DeviceTrustState> {
+  async revokeClient(clientId: string, grantedAt?: string): Promise<DeviceTrustState> {
     const keyId = this.#deps.random.id('dk_')
-    await this.#deps.secrets.putDirectoryKey(keyId, this.#deps.random.bytes(DIRECTORY_KEY_BYTES))
-    return this.#apply((state) => revokeClient(state, clientId, this.#deps.clock.nowIso(), keyId))
+    return this.#serial(async () => {
+      if (grantedAt !== undefined && authorizeClient(this.state, clientId).grantedAt !== grantedAt) throw new TrustError('invalid_argument', 'The selected grant has changed')
+      const change = revokeClient(this.state, clientId, this.#deps.clock.nowIso(), keyId)
+      await this.#deps.secrets.putDirectoryKey(keyId, this.#deps.random.bytes(DIRECTORY_KEY_BYTES))
+      return this.#commit(change)
+    })
   }
 
   async rotateDirectoryKey(): Promise<DeviceTrustState> {

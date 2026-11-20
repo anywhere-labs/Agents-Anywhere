@@ -1,4 +1,4 @@
-import type { ClientPairingResult } from "../shared/client-pairing";
+import type { AuthorizedClients, ClientGrantSelection, ClientPairingResult } from "../shared/client-pairing";
 import { windowMaterial } from "./window-material";
 import type { OwnershipState } from "./local-runtime";
 import { contextBridge, ipcRenderer, webUtils } from "electron";
@@ -214,6 +214,9 @@ contextBridge.exposeInMainWorld("desktopWorkbench", {
       subscribe("workbench:notifications:click", callback),
   },
   connector: {
+    listClientGrants: () => api<AuthorizedClients>("/client-grants"),
+    revokeClientGrant: (target: ClientGrantSelection) =>
+      api<AuthorizedClients>("/client-grants/revoke", { method: "POST", body: JSON.stringify(target) }),
     startClientPairing: (): Promise<ClientPairingResult> => api<ClientPairingResult>("/client-pairing", { method: "POST" }),
     getState: (): Promise<ConnectorState> => api<ConnectorState>("/state"),
     getConfig: (): Promise<ConnectorPublicConfig> => api<ConnectorPublicConfig>("/config"),
