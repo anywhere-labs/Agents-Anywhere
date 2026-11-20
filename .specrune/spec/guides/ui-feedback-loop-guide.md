@@ -123,6 +123,12 @@
     点击坐标映射失真常落错元素，只读不点）；无图像输入能力时 OCR
     （swift Vision 脚本）+ ASCII 降采样渲染可判读结构轮廓。瞬态视觉
     bug 的最快观测器仍是真机用户。
+    **2026-11-20 增补**：`simctl io screenshot` 必须带 `--display=N`
+    （Xcode 27 有 2 个 display，不指定直接报 "Invalid argument"——不是
+    截图能力坏了）；点击可用 `idb ui tap x y`，坐标取
+    `idb ui describe-all` 的 `AXFrame` 中心，**同源才不失真**（上面
+    "只读不点"的限制来自截图 OCR 反推坐标那条路径，不是 idb 本身）。
+    命令见 ios/duo-layout.md "模拟器 UI 验证"节。
 
 15. **自绘手势/跟手动画之前，先找系统已有的交互**。2026-10-25 指令面板
     跟手拖动抖动连败 5 轮（transformEffect/offset/材质遮罩/手势竞争全试）

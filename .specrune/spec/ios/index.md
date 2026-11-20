@@ -41,6 +41,11 @@
 - **iOS UI 改动必须在模拟器/真机实跑一次才算验证**：2026-11-16 的 SpecRune 看板
   有 6 个运行时 bug（空白、rail 消失、解码崩、列表不全）通过了编译和三轮独立
   代码评审，全部靠实跑才发现。编译通过 ≠ 能看。
+- 给 composer / dock 或其祖先加 `.clipped()` / `.frame(height:)` 前先读
+  duo-layout.md 的"浮层不豁免祖先裁剪"：指令面板是 offset 到 dock bounds 外的
+  浮层，常驻裁剪会让它整块消失，而数据、`isVisible`、AX 树全都正常
+  （2026-11-20 上游 #490 事故，issue #795）。浮层是否真画出来只能截图确认，
+  命令见 duo-layout.md"模拟器 UI 验证"节。
 - 改输入行（加/挪按钮）先读 duo-layout.md 的"ComposerLayout 多按钮
   排布契约"——声明顺序即视觉顺序，宽度公式自动适配。
 - 给 struct 加属性后调用点报 "argument 'X' must precede argument 'Y'"：

@@ -237,6 +237,32 @@ vc.updateArrangement(.split)                    // UISplitArrangement.split 静�
 `UIHostingController.sizingOptions` 赋值不能在 `[a, b]` 数组循环里做——
 数组把类型擦成 `UIViewController`，编译报"no member"，必须逐个写。
 
+## 模拟器 UI 验证：截图 / 读树 / 点击（2026-11-20）
+
+不开 Xcode GUI 也能闭环验证交互式 UI。三件套：
+
+```bash
+U=138A5F69-4F9D-4FE2-A215-E1DAB226A92F   # iPhone Duo
+
+# 1) 截图——必须带 --display，否则报 "Invalid argument"
+xcrun simctl io $U screenshot --display=3 --type=png /tmp/shot.png
+#   --display=3 = LCD-1 (primary-1) 2007×2853   Duo 展开内屏
+#   --display=1 = LCD (primary)     1398×2034   外屏
+
+# 2) 读无障碍树——拿 AXFrame / AXUniqueId（逻辑点坐标）
+idb ui describe-all --udid $U    # 输出数 MB，按 AXUniqueId 过滤
+
+# 3) 点击——坐标取 describe-all 的 frame 中心
+idb ui tap 767 601 --udid $U
+```
+
+- `idb` 在 `~/.local/bin/idb`，首次调用会自动拉起 companion。
+- **坐标同源才不失真**：从 `describe-all` 的 `AXFrame` 取坐标再 `tap` 命中可靠
+  （`chat.composer.commands` 实测 frame `{745,579,44,44}` → tap `767,601`）。
+  不要从截图 OCR 反推坐标——guides 铁律 14 记的"映射失真"是那条路径。
+- **看不见的 view 仍在 AX 树里**：被父级裁剪的浮层，`isVisible`、尺寸、AX
+  元素全部正常。判断"到底画没画出来"只能靠截图，不能靠 describe-all。
+
 ## 真机构建/部署工作流（2026-10-25）
 
 ```bash
@@ -295,6 +321,13 @@ xcrun devicectl device process launch --device <UDID> com.dae.sr1023
   无指令的 runtime 下收起键会落在发送旁（已知边缘，暂不修）。
 - ChatComposerDock 的指令面板是**浮层**（overlay + dockHeight 偏移），
   不占布局流；新增弹出类 UI 照此模式（见 guides 铁律 16）。
+- **浮层不豁免祖先裁剪**：`.offset(y: -dockHeight)` 把面板整块画在 dock
+  bounds（实测 66pt）之外，任何祖先的 `.clipped()` / `.frame(height: 0)`
+  都会裁掉它——数据、`isVisible`、AX 树全正常，只是看不见。给
+  `composerDock` 或其祖先加裁剪前，先确认内部有没有浮层。2026-11-20
+  上游 #490 为计划确认加的**常驻** `.clipped()` 就这样让 ⌘ 面板整块消失
+  （issue #795，上游 origin/main 仍在）；同类历史：双屏 hosting 缺
+  `[.intrinsicContentSize]` 也表现为"指令面板被裁"。
 
 ## Composer 输入框：回归上游，放弃单行/手动跟随方案（2026-10-28）
 
