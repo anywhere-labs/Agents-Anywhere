@@ -8,7 +8,7 @@
 
 - 运行中排队消息需要 Server 执行 `v2_56` 数据库迁移（只新增两张表，不改写已有数据）；排队在 Web、Desktop、Android 和 iOS 上可用，旧版客户端的行为不变。（[#658](https://github.com/anywhere-labs/Agents-Anywhere/pull/658)、[#659](https://github.com/anywhere-labs/Agents-Anywhere/pull/659)）
 
-- 两步验证需要 Server 执行 `v2_57` 数据库迁移（只新增两张表），并且 `AGENT_SERVER_SECRET` 至少 32 个字符，否则无法开启。开启后用密码登录的旧版 Web、Desktop 和 iOS 客户端会提示需要验证码而无法完成登录，请一起升级；Android 和 Desktop 通过网页确认登录，不受影响。
+- 两步验证需要 Server 执行 `v2_57` 数据库迁移（只新增两张表），并且 `AGENT_SERVER_SECRET` 至少 32 个字符，否则无法开启。开启后用密码登录的旧版 Web、Desktop 和 iOS 客户端会提示需要验证码而无法完成登录，请一起升级；Android 和 Desktop 通过网页确认登录，不受影响。（[#797](https://github.com/anywhere-labs/Agents-Anywhere/pull/797)）
 
 ### 会话创建与消息交付
 
@@ -28,7 +28,7 @@
 
 ### Web 与 Desktop 界面
 
-- 「设置 → 账号」新增「两步验证」：用 Google Authenticator、Microsoft Authenticator、1Password 等身份验证器 App 扫码开启，开启时生成 10 个一次性恢复码；之后用密码登录还要输入 App 中的 6 位验证码或一个恢复码，连续输错 5 次锁定 5 分钟。关闭两步验证或重新生成恢复码都需要当前验证码；丢失手机的用户可由管理员重置。
+- 「设置 → 账号」新增「两步验证」：用 Google Authenticator、Microsoft Authenticator、1Password 等身份验证器 App 扫码开启，开启时生成 10 个一次性恢复码；之后用密码登录还要输入 App 中的 6 位验证码或一个恢复码，连续输错 5 次锁定 5 分钟。关闭两步验证或重新生成恢复码都需要当前验证码；丢失手机的用户可由管理员重置。（[#797](https://github.com/anywhere-labs/Agents-Anywhere/pull/797)）
 
 ### Android
 
