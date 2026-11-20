@@ -1,0 +1,39 @@
+{
+  "device_control": {
+    "max_connections": 1,
+    "principal": "aa-server-control",
+    "principal_format": "literal",
+    "require_e2e": true,
+    "scopes": {
+      "aa.device.v1.Commands": [
+        "status",
+        "runtimeApply",
+        "deviceSettingsApply",
+        "channelSwitch",
+        "previewOpen",
+        "previewClose"
+      ],
+      "aa.device.v1.Link": [
+        "attach",
+        "outbox",
+        "ackOutbox"
+      ]
+    },
+    "target": "current_device_connection",
+    "ttl_seconds": null
+  },
+  "mobile_control": {
+    "max_connections": 1,
+    "principal": "aa-mobile-control/",
+    "principal_format": "prefix+json[user_id,family_id,public_router_url]",
+    "require_e2e": true,
+    "scopes": {
+      "aa.server.v1.MobileControl": [
+        "issue_content_tunnel",
+        "read_directory"
+      ]
+    },
+    "target": "mobile_server_instance",
+    "ttl_seconds": 300
+  }
+}

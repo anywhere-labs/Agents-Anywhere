@@ -140,6 +140,13 @@ function generateExtra(name, version, file, table) {
     `/** Generated from contracts/${name}/${version}/${file}. Do not edit; run \`yarn contracts:generate\`. */`,
     "",
   ]
+  if (file === "tunnel-authorization.json") {
+    return ["tunnel-authorization.ts", [
+      ...banner,
+      `export const TUNNEL_AUTHORIZATION = ${JSON.stringify(table, null, 2)} as const`,
+      "",
+    ].join("\n")]
+  }
   if (file === "e2ee-registration.json") {
     return [
       "e2ee-registration.ts",

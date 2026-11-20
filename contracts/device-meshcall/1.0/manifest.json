@@ -725,6 +725,10 @@
       "sha256": "2c57a8482aae9176b241b5f9f0e8262d2bf950058ad0d79bd3280e964512ae6b"
     },
     {
+      "path": "tunnel-authorization.json",
+      "sha256": "19ab71dc5fd3fbde5536678d8816d3dae435ad9b3061f9f7019b272a1e4b046a"
+    },
+    {
       "path": "mesh-errors.json",
       "sha256": "5bb8ebbf8523543774df089202b382b0e12dfa0f7273c28d47d140cd337b9b5d"
     },

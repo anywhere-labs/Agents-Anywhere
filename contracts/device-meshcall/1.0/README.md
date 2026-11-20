@@ -15,8 +15,20 @@ v3 中 Server 与 Connector 之间的契约，取代 v2 的 `/api/v2/connector/w
   - `client-routes.json`：客户端路由表（见 [Client 服务](#client-服务普通模式)）。
   - `client-errors.json`：转发路由的错误到 HTTP 状态的映射。
   - `mesh-errors.json`：MeshCall 错误分类。
+  - [`tunnel-authorization.json`](tunnel-authorization.json)：两条管理隧道共用的授权契约，手写来源为 `core/tunnel_authorization.py`。
   - `e2ee-registration.json`：每种加密模式下注册的服务与方法。
 - **Connector 类型**：`cd connector-ts && yarn contracts:generate` 把 schema 编成 `src/generated/**`，并把 `payloads.json`、`client-routes.json`、`client-errors.json` 生成为 `payloads.ts`（方法到请求、响应类型的映射 `CommandPayloads`、`ReadPayloads`、`EventPayloads`、`OutboxPayloads`）、`client-routes.ts`、`client-errors.ts`。
+
+## 管理隧道授权
+
+| 策略 | 接收方 | 身份绑定 | 权限范围 |
+| --- | --- | --- | --- |
+| `mobile_control` | Server 的移动管理实例 | 已登录用户、登录会话族、公共 Router 地址 | 读取目录、申请设备内容票 |
+| `device_control` | 当前连接代次的 Connector | Server 管理身份和 Connector 公钥 | 设备心跳、出站箱与契约允许的管理命令 |
+
+Server 按策略给指定实例签发单连接加密票。Server 和 Connector 在接受隧道时核对调用身份、公钥和申请的方法范围，在处理 RPC 时检查加密状态及具体方法。手机票有效期为 300 秒；设备管理票的 `ttl_seconds: null` 表示采用锁定版本的 MeshCall SDK 默认值。登录撤销和设备换代分别由登录会话和设备连接管理代码处理。
+
+调整权限时，在 `server/agent_server/core/tunnel_authorization.py` 修改相应策略，再运行 Server 的 `scripts.export_v3_contracts` 和 Connector 的 `contracts:generate`。生成器会核对 RPC 存在、设备方法在强制加密模式下可注册，以及内容服务与管理权限的边界。注册新业务方法后，须显式加入授权策略才能通过管理票调用。
 
 ## 服务
 

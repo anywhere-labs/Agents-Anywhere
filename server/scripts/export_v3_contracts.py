@@ -20,17 +20,18 @@ import argparse
 import hashlib
 import json
 import sys
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from pydantic import BaseModel, create_model
+
 from agent_server.core import client_routes as cr
-from agent_server.core import device_content, e2ee, preview
+from agent_server.core import device_content, e2ee, preview, tunnel_authorization
 from agent_server.core import device_meshcall as dl
 from agent_server.core import protocol as p11
 from agent_server.core import protocol_v1_2 as p12
 from agent_server.core.runtime_workflows import WorkflowState
-from pydantic import BaseModel, create_model
 
 JSON_SCHEMA_DRAFT = "https://json-schema.org/draft/2020-12/schema"
 
@@ -445,6 +446,32 @@ def render_mobile_control_contract() -> dict[str, Any]:
     )
 
 
+def render_tunnel_authorization() -> dict[str, Any]:
+    contracts = (render_mobile_control_contract(), render_mesh_contract())
+    declared = {
+        service["name"]: {method["name"] for method in service["methods"]}
+        for contract in contracts for service in contract["services"]
+    }
+    registered = dl.registered_services("required")
+    policies = {
+        "mobile_control": tunnel_authorization.MOBILE_CONTROL,
+        "device_control": tunnel_authorization.DEVICE_CONTROL,
+    }
+    for name, policy in policies.items():
+        if not policy.scopes:
+            raise ValueError(f"{name}: missing management tunnel scopes")
+        for service, methods in policy.scopes.items():
+            if not methods or not set(methods) <= declared.get(service, set()):
+                raise ValueError(f"{name}: invalid RPC scope for {service}")
+            if name == "mobile_control" and service != device_content.MOBILE_CONTROL_SERVICE:
+                raise ValueError(f"{name}: invalid mobile management service {service}")
+            if name == "device_control" and (
+                service == device_content.CONTENT_SERVICE or not set(methods) <= set(registered.get(service, ()))
+            ):
+                raise ValueError(f"{name}: invalid encrypted management scope for {service}")
+    return {name: asdict(policy) for name, policy in policies.items()}
+
+
 def render_mesh_errors() -> dict[str, Any]:
     return {
         "rules": [rule.model_dump() for rule in dl.MESH_ERROR_RULES],
@@ -601,6 +628,7 @@ def render(contract: Contract) -> dict[str, bytes]:
         for rel, value in (
             ("device.meshcall.json", render_mesh_contract()),
             ("mobile-control.meshcall.json", render_mobile_control_contract()),
+            ("tunnel-authorization.json", render_tunnel_authorization()),
             ("mesh-errors.json", render_mesh_errors()),
             ("e2ee-registration.json", render_e2ee_registration()),
             ("payloads.json", render_payloads()),
