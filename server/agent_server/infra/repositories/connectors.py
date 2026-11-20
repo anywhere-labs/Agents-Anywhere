@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from agent_server.infra.repositories.store_support import *
 from agent_server.infra.db.engine import read_connection
+from agent_server.infra.repositories.collab import end_collab_for_device, end_collab_for_sessions
 
 
 class ConnectorRepositoryMixin:
@@ -307,6 +308,9 @@ class ConnectorRepositoryMixin:
                     select(sessions_t.c.id).where(sessions_t.c.connector_id == connector_id)
                 )).scalars()
             )
+            # Supervision edges of the device and its sessions end; its delegations are revoked.
+            await end_collab_for_device(conn, connector_id)
+            await end_collab_for_sessions(conn, session_ids)
             # Session children (timeline, shares, active runs) cascade. Sessions
             # must go before projects because project references use RESTRICT.
             await conn.execute(

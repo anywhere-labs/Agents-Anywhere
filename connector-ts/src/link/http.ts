@@ -51,7 +51,7 @@ export class HttpError extends Error {
 }
 
 export interface JsonRequest {
-  readonly method: 'GET' | 'POST'
+  readonly method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   readonly url: URL
   readonly headers?: Readonly<Record<string, string>>
   readonly body?: unknown

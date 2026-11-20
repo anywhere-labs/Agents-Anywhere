@@ -113,6 +113,7 @@ export function codexDialect(options: CodexDialectOptions = {}): AcpDialect {
       ]
     },
     identity: codexIdentity,
+    agentTools: true,
     openParams: ref => (options.openRoute?.(ref) === 'plain' ? {} : { _meta: { codexIpc: { mode: 'auto' } } }),
     promptParams: delivery => ({ _meta: { codexIpc: { clientMessageId: delivery.clientMessageId } } }),
     steer: 'extension',

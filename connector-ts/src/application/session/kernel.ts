@@ -1,7 +1,7 @@
 import type { Interaction, Session, TimelineDraft } from '../../domain/conversation/index.js'
 import type { NoticeIn } from '../../generated/device-meshcall/v1_0/runtime-notice-updated-event.js'
 import { UseCaseError } from '../errors.js'
-import type { ChangeFeed, Clock, ConversationStore, IdSource, LiveEvents, PromptAttachment, RuntimeHandles, RuntimeStatusPayload, SessionCapabilities, SessionCommit, UsageEventName, UsageSink } from '../ports/index.js'
+import type { ChangeFeed, Clock, ConversationStore, IdSource, LiveEvents, PromptAttachment, RuntimeHandles, RuntimeStatusPayload, SessionCapabilities, SessionCommit, SessionToolProvider, UsageEventName, UsageSink } from '../ports/index.js'
 import { capabilitySet } from '../runtimes/capabilities.js'
 
 export interface ConversationDeps {
@@ -19,6 +19,8 @@ export interface ConversationDeps {
   readonly history?: { ensureLatest(sessionId: string): Promise<void> }
   /** Platform activity counters for the Server's usage statistics. */
   readonly usage?: UsageSink
+  /** Tool servers to inject when a session's Agent session opens (agent collaboration). */
+  readonly tools?: SessionToolProvider
 }
 
 type SessionRef = Pick<Session, 'sessionId' | 'runtimeType' | 'runtimeId'>

@@ -63,7 +63,7 @@ assert.ok(host && typeof host === 'object' && 'apply' in host && typeof host.app
 
 const clientSource = await readFile(new URL(clientEntry.default, root), 'utf8')
 await checkClient(clientSource, manifest.name)
-for (const file of ['anywhere-cli.js', 'worker-entry.js', 'dependencies.json', 'assets/electron-node.mjs', 'assets/sdk-bridge.mjs']) {
+for (const file of ['anywhere-cli.js', 'agent-tools.js', 'worker-entry.js', 'dependencies.json', 'assets/electron-node.mjs', 'assets/sdk-bridge.mjs']) {
   await access(new URL(`lib/bundled-connector/${file}`, root))
 }
 await assert.rejects(access(new URL('lib/bundled-connector/pyproject.toml', root)), 'The Python Connector is no longer shipped')

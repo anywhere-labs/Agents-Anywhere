@@ -135,6 +135,8 @@ export class TimelineProjector {
         if (event.locations !== undefined) content.locations = event.locations.map(location => ({ ...location }))
         if (event.content !== undefined) content.content = event.content.map(block => ({ ...block }) as JsonValue)
         shapeTool(content, toolKind)
+        const collab = collabToolOf(content.title, content.input)
+        if (collab !== null) content.collabTool = collab
         const status = event.status === undefined ? (previous?.status ?? 'pending') : toolStatus(event.status)
         return this.put({
           id: event.itemId,
@@ -215,4 +217,18 @@ function shapeTool(content: Record<string, JsonValue>, toolKind: string): void {
   const terminal = blocks.find((block): block is Extract<ToolContent, { type: 'terminal' }> => block.type === 'terminal')
   if (terminal?.output !== undefined && content.output === undefined) content.output = terminal.output
   if (terminal?.exitCode !== undefined && terminal.exitCode !== null) content.exitCode = terminal.exitCode
+}
+
+/**
+ * A collaboration tool call, by the tool title each Runtime gives it (Claude and DSH `mcp__aa__aa_spawn`, Codex
+ * `mcp.aa.aa_spawn`, Pi `aa: aa_spawn`): `{server, tool, sessionId?}`, so clients need not parse titles.
+ */
+export function collabToolOf(title: JsonValue | undefined, input: JsonValue | undefined): JsonObject | null {
+  if (typeof title !== 'string') return null
+  const match = /^(?:mcp__aa__|mcp\.aa\.|aa: )(aa_[a-z_]+)\b/u.exec(title.trim())
+  if (match === null) return null
+  const args = input !== null && typeof input === 'object' && !Array.isArray(input) ? input : {}
+  const sessionId = typeof args.sessionId === 'string' ? args.sessionId : null
+  const deviceId = typeof args.deviceId === 'string' ? args.deviceId : null
+  return { server: 'aa', tool: match[1] as string, ...(sessionId !== null ? { sessionId } : {}), ...(deviceId !== null ? { deviceId } : {}) }
 }

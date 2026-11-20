@@ -1,8 +1,46 @@
 {
   "$defs": {
+    "AgentCaller": {
+      "description": "The supervisor session a delegated request acts for (``ClientCaller.agent``).",
+      "properties": {
+        "deviceId": {
+          "minLength": 1,
+          "title": "Deviceid",
+          "type": "string"
+        },
+        "grantId": {
+          "minLength": 1,
+          "title": "Grantid",
+          "type": "string"
+        },
+        "sessionId": {
+          "minLength": 1,
+          "title": "Sessionid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "deviceId",
+        "sessionId",
+        "grantId"
+      ],
+      "title": "AgentCaller",
+      "type": "object"
+    },
     "ClientCaller": {
       "description": "Who sent the request, as the Server authenticated it.",
       "properties": {
+        "agent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentCaller"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "clientId": {
           "anyOf": [
             {

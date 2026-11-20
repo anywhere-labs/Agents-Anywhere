@@ -28,7 +28,17 @@ export function statusOf(code: string): number {
       return 422
     case 'path_not_allowed':
     case 'permission_denied':
+    case 'agent_route_denied':
+    case 'agent_authority_exceeded':
+    case 'agent_scope_denied':
+    case 'agent_grant_revoked':
       return 403
+    case 'agent_target_unknown':
+    case 'agent_supervision_not_found':
+      return 404
+    case 'agent_supervision_exists':
+    case 'agent_supervision_cycle':
+      return 409
     case 'precondition_failed':
     case 'if_match_failed':
       return 412

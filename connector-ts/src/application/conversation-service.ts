@@ -14,6 +14,7 @@ import { RuntimeBindings, type PreparedHandOver, type SessionBinding, type Sessi
 import { DeliveryRecords } from './session/deliveries.js'
 import { SessionKernel, type ConversationDeps, type SessionChange } from './session/kernel.js'
 import type { CommandContext } from './session/receipts.js'
+import { TimelineProjector } from './projection.js'
 import { TurnLifecycle } from './session/turns.js'
 
 export { UseCaseError } from './errors.js'
@@ -60,6 +61,33 @@ export class ConversationService implements SessionEventSink {
     this.interactions = new InteractionService(this.kernel, this.bindings, this.plans)
     this.recovery = new Recovery(this.kernel, this.deliveries, this.turns, this.queue, this.messages)
     this.agent = new AgentSessionControls(this.kernel, this.bindings)
+  }
+
+  /**
+   * A platform `system` item at the end of a session's timeline (agent collaboration: a question an Agent hands to
+   * the person). Re-adding the same `itemId` updates it in place.
+   */
+  public appendSystemItem(sessionId: string, itemId: string, content: JsonObject): Promise<void> {
+    return this.kernel.serial(sessionId, async () => {
+      await this.kernel.requireSession(sessionId)
+      const deps = this.kernel.deps
+      const at = deps.clock.nowIso()
+      const stored = await deps.store.timeline.get(sessionId, itemId)
+      const binding = this.bindings.boundSession(sessionId) === null ? null : await this.bindings.binding(sessionId).catch(() => null)
+      const projector = binding?.projector ?? new TimelineProjector('platform', null, await deps.store.timeline.latest(sessionId), () => at)
+      if (stored !== null) projector.remember(stored)
+      const draft = {
+        id: itemId,
+        type: 'system' as const,
+        status: 'done' as const,
+        role: 'system' as const,
+        content,
+        source: { runtime: 'platform', event: 'collab' },
+        createdAt: stored?.createdAt ?? at,
+        completedAt: at,
+      }
+      await this.kernel.commit(sessionId, { upserts: [projector.platform(stored !== null ? { ...draft, orderSeq: stored.orderSeq } : draft)] })
+    })
   }
 
   /** Errors swallowed by background work (event loops, dispatch); exposed for logs and tests. */

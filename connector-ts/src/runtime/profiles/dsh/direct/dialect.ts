@@ -34,6 +34,7 @@ export function dshDirectDialect(): AcpDialect {
   const counters = new WeakMap<SessionContext, { n: number }>()
   return {
     runtime: 'dsh',
+    agentTools: true,
     clientCapabilities: () => ({ fs: { readTextFile: false, writeTextFile: false }, terminal: false }),
     capabilities: info => directCapabilities(info),
     selections: DSH_SELECTIONS,

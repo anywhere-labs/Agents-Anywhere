@@ -164,6 +164,7 @@ class SessionRunService:
         user_id: str,
         forwarder: ClientForwarder,
         deliver: ForwardedCreation,
+        actor: str = "user",
     ) -> dict[str, Any]:
         """``deliver`` forwards the creation with ``Client/call``; the result is ``{session, attachments, answer}``
         with the device's ``ClientAnswer``."""
@@ -198,12 +199,30 @@ class SessionRunService:
                 raise KeyError(payload.connectorId)
         except KeyError:
             raise SessionRunNotFoundError("connector not found") from None
+        selected_project = payload.projectId
+        if selected_project is None and actor != "user" and payload.cwd:
+            try:
+                _, requested_key = _clean_workspace_path(payload.cwd, None)
+            except ValueError as exc:
+                raise SessionRunInvalidConfigError(
+                    {"code": "project_workspace_mismatch", "message": "Invalid project workspace."}
+                ) from exc
+            selected_project = next(
+                (
+                    project.id
+                    for project in await self._store.list_projects(user_id=user_id)
+                    if project.connectorId == payload.connectorId
+                    and _clean_workspace_path(project.workspacePath, None)[1] == requested_key
+                ),
+                None,
+            )
         project_id, project_cwd = await self._validate_project_binding(
-            payload.projectId,
+            selected_project,
             connector_id=payload.connectorId,
             cwd=payload.cwd,
             user_id=user_id,
         )
+        payload.projectId = project_id
         payload.cwd = project_cwd
         runtime_id = _request_runtime_id(payload)
         if self._prepare_model_channel is not None:
@@ -211,7 +230,7 @@ class SessionRunService:
             payload.runtimeId = runtime_id
         async with self._admitted(payload.connectorId, runtime_id, user_id=user_id):
             return await self._create_and_start_forwarded(
-                payload, user_id=user_id, runtime_id=runtime_id, project_id=project_id, forwarder=forwarder, deliver=deliver
+                payload, user_id=user_id, runtime_id=runtime_id, project_id=project_id, forwarder=forwarder, deliver=deliver, actor=actor
             )
 
     async def _create_and_start_forwarded(
@@ -223,6 +242,7 @@ class SessionRunService:
         project_id: str | None,
         forwarder: ClientForwarder,
         deliver: ForwardedCreation,
+        actor: str,
     ) -> dict[str, Any]:
         """create-and-start through ``Client/call``: the Server keeps the directory row, the staged attachments and
         the session id (``ClientServerFacts.sessionId``); the device creates the session and runs its first turn.
@@ -248,7 +268,7 @@ class SessionRunService:
             ]
         reservation = await forwarder.reserve_creation(
             user_id=user_id, device_id=payload.connectorId, command_id=command_id,
-            digest=client_input_digest(FORWARDED_CREATION_ROUTE, body),
+            digest=client_input_digest(FORWARDED_CREATION_ROUTE, body), actor=actor,
         )
         receipt, created = reservation
         session_id = receipt["sessionId"]

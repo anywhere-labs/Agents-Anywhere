@@ -21,8 +21,8 @@ from sqlalchemy.pool import NullPool
 from agent_server.infra.db.engine import resolve_db_url
 
 BASELINE_V2_REVISION = "v2_0"
-CURRENT_SCHEMA_REVISION = "v2_66"
-CURRENT_SCHEMA_VERSION = "2.66"
+CURRENT_SCHEMA_REVISION = "v2_67"
+CURRENT_SCHEMA_VERSION = "2.67"
 POSTGRES_MIGRATION_LOCK_ID = 0x414147454E545332
 DEFAULT_MIGRATION_LOCK_TIMEOUT_SECONDS = 120.0
 
@@ -243,12 +243,15 @@ def _classify_sync(connection) -> UnversionedDatabase:
         # v2_61 adds port previews; v2_62 moves terminal roots to Redis; v2_63 registers
         # commands sent through an E2EE secure channel. v2_64 only rewrites receipt rows (no
         # layout change), so a v2_63 layout is reported as v2_63 and upgraded through it. v2_65 moves the
-        # registrations into ``device_commands`` (its ``origin`` column); v2_66 drops ``channel_device_gates``.
+        # registrations into ``device_commands`` (its ``origin`` column); v2_66 drops ``channel_device_gates``;
+        # v2_67 adds the agent collaboration tables.
         e2ee_commands = "e2ee_command_registrations" in tables
         device_gates = "channel_device_gates" in tables
         if "origin" in _column_names(inspector, "device_commands"):
             if e2ee_commands or "previews" not in tables or "connector_terminal_roots" in tables:
                 return UnversionedDatabase("unknown")
+            if "agent_delegations" in tables:
+                return UnversionedDatabase("unknown") if device_gates else UnversionedDatabase("v2", "v2_67")
             return UnversionedDatabase("v2", "v2_65" if device_gates else "v2_66")
         if not device_gates:
             return UnversionedDatabase("unknown")

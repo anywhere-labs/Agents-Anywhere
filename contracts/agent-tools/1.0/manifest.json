@@ -1,0 +1,15 @@
+{
+  "contract": "agent-tools",
+  "version": "1.0",
+  "artifacts": [],
+  "extras": [
+    {
+      "path": "errors.json",
+      "sha256": "9f446820b943761636e3bc27be640295b17f2fe2b05b93de8f63cf7ce4a05279"
+    },
+    {
+      "path": "tools.json",
+      "sha256": "a877947f9324c20432b634f45d517a5f712a7b731fe9992b2caa734d0dc73bf1"
+    }
+  ]
+}

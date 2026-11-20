@@ -125,7 +125,7 @@
       "model": "SessionSummary",
       "path": "schemas/session-summary.schema.json",
       "pydanticMode": "validation",
-      "sha256": "9a0b97c490a9a12f717f5fef4890584fa208967ac20a8babfd70ed55bef0a514",
+      "sha256": "e84a6b200e6b7c94303e03033da6c917b19a70b0d9916b22bb9c83a1331f7c95",
       "slug": "session-summary"
     },
     {
@@ -221,7 +221,7 @@
       "model": "SessionSummaryOut",
       "path": "schemas/session-summary-out.schema.json",
       "pydanticMode": "validation",
-      "sha256": "bac25eeb675e1e40652b42a7550d794bdca1a34b6b31ae1c4b0004702a261404",
+      "sha256": "727f539d84edbe388b750ab7f81e140e4f29cb28ce16ee4500d3c1705811cf40",
       "slug": "session-summary-out"
     },
     {
@@ -229,7 +229,7 @@
       "model": "SessionInventoryOut",
       "path": "schemas/session-inventory-out.schema.json",
       "pydanticMode": "validation",
-      "sha256": "e7f32f26167e9d38c9984af41d06cd348291e493f3685257575cfd7265e1d4dd",
+      "sha256": "ee09fe93b834a62b43dfba237e9c9aabd43814c3aedb9c14de995a48c3575a7f",
       "slug": "session-inventory-out"
     },
     {
@@ -653,7 +653,7 @@
       "model": "DeviceSettingsApplyCommand",
       "path": "schemas/device-settings-apply-command.schema.json",
       "pydanticMode": "validation",
-      "sha256": "cd927191f09b4c3c2476fa3859733ead1d787e9eb5e9f47c351938d4797a25cb",
+      "sha256": "df40a3d96fcc5a6dc6d48c6301b4bb5cd2ffe6df2e7e82d99c614835030dac04",
       "slug": "device-settings-apply-command"
     },
     {
@@ -682,10 +682,42 @@
     },
     {
       "direction": "bidirectional",
+      "model": "CollabSignalCommand",
+      "path": "schemas/collab-signal-command.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "6b1eeb7f7f7b0dc0db22f3d4c958bee67cfa0f03e13d21f5f1c86a3bd34b3a5f",
+      "slug": "collab-signal-command"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "CollabSignalResult",
+      "path": "schemas/collab-signal-result.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "15ef4d8fbd0e7e1ae47b9bd833d5aab6c145965e19dde77d09d2b887ba5de5ab",
+      "slug": "collab-signal-result"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "CollabSupervisionOut",
+      "path": "schemas/collab-supervision-out.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "810469f0ca6c4208711ea14f3bf58d81af74ec944a161ed7a0c18d776203c3d2",
+      "slug": "collab-supervision-out"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "CollabGrantOut",
+      "path": "schemas/collab-grant-out.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "56d5f8625518f9b5fa3ad1f5db0e4172d0bd8d4c7149ceaecc443913decb3a62",
+      "slug": "collab-grant-out"
+    },
+    {
+      "direction": "bidirectional",
       "model": "ClientCallRequest",
       "path": "schemas/client-call-request.schema.json",
       "pydanticMode": "validation",
-      "sha256": "a2a00b74d944a2cd0e2d8122d241fd6095ea74d05522233dd4b1cc53fbff1be0",
+      "sha256": "18ff63c66d270f43b629a44d7eee8fc729dea536a9c21ee8fca18c3771ba2ee6",
       "slug": "client-call-request"
     },
     {
@@ -701,7 +733,7 @@
       "model": "ClientSubscribeRequest",
       "path": "schemas/client-subscribe-request.schema.json",
       "pydanticMode": "validation",
-      "sha256": "90c02b35827b5303f7434ff1bc28e67b727eb515d38f8134046cd95bb9b2f153",
+      "sha256": "65c40916d9cf5747a9ad44d1b3a0ba810650d99e11d87b4413bf51744980f14f",
       "slug": "client-subscribe-request"
     },
     {
@@ -718,7 +750,7 @@
   "extras": [
     {
       "path": "device.meshcall.json",
-      "sha256": "c8f4ee483d3cff4bc66e21849e47dfa74f4ba16dcd7381559cefb4760167ef11"
+      "sha256": "63abf129d3bbe398f9c3c5e4f1da27bf1e6cf55eb67707317dafae542520cf4d"
     },
     {
       "path": "mobile-control.meshcall.json",
@@ -730,15 +762,15 @@
     },
     {
       "path": "e2ee-registration.json",
-      "sha256": "3fd5b2bb3540bb337df89f3b6baa003c525db9ba9ba4819b95ee1a23fb36cc73"
+      "sha256": "fe37bc8a7eb020665b5c29ded11396311b247f22ee9b26194698008eeaa8b940"
     },
     {
       "path": "payloads.json",
-      "sha256": "9b57cb781c10122c604c39d6825deab994e0ad41a4a7c63e09d51b6dd78cdc67"
+      "sha256": "e0553935b11a9dfebdce3dc80f5585bf3ecef9c11bde10354e19e5f1e6d39b34"
     },
     {
       "path": "client-routes.json",
-      "sha256": "61cc8e144a149e4be4c6a9fd267b72dd0e2369963bebb95806d1da110f56656b"
+      "sha256": "b148229d5aedb37a11da269ed75155d9bb4183dea2c6cc17622057bb32e51b96"
     },
     {
       "path": "client-errors.json",

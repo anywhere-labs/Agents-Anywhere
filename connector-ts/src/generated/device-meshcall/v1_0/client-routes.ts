@@ -4,6 +4,7 @@
 /** The client API routes a device serves, alone or with the Server (`core/client_routes.py`). */
 export const CLIENT_ROUTES = [
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -20,6 +21,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": true,
     "commandId": "clientMessageId",
     "decorate": [
       "session"
@@ -38,6 +40,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": true
   },
   {
+    "agent": true,
     "commandId": null,
     "decorate": [],
     "e2ee": "plain",
@@ -54,6 +57,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "plain",
@@ -70,6 +74,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [
       "session",
@@ -90,6 +95,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": true,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -106,6 +112,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -122,6 +129,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "plain",
@@ -138,6 +146,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "plain",
@@ -154,6 +163,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": true,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -170,6 +180,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -186,6 +197,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -202,6 +214,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [
       "channelCatalog"
@@ -220,6 +233,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -236,6 +250,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -252,6 +267,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -268,6 +284,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -284,6 +301,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -300,6 +318,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -316,6 +335,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -332,6 +352,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -348,6 +369,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": true,
     "commandId": "clientMessageId",
     "decorate": [],
     "e2ee": "channel",
@@ -364,6 +386,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": true
   },
   {
+    "agent": true,
     "commandId": "clientMessageId",
     "decorate": [],
     "e2ee": "channel",
@@ -380,6 +403,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": true
   },
   {
+    "agent": true,
     "commandId": "commandId",
     "decorate": [],
     "e2ee": "channel",
@@ -396,6 +420,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": "responseId",
     "decorate": [],
     "e2ee": "channel",
@@ -412,6 +437,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": true
   },
   {
+    "agent": false,
     "commandId": "commandId",
     "decorate": [],
     "e2ee": "channel",
@@ -428,6 +454,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": "operationId",
     "decorate": [],
     "e2ee": "channel",
@@ -444,6 +471,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": true
   },
   {
+    "agent": false,
     "commandId": "commandId",
     "decorate": [],
     "e2ee": "channel",
@@ -460,6 +488,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": "operationId",
     "decorate": [],
     "e2ee": "channel",
@@ -476,6 +505,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": true
   },
   {
+    "agent": false,
     "commandId": "operationId",
     "decorate": [],
     "e2ee": "channel",
@@ -492,6 +522,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": true
   },
   {
+    "agent": false,
     "commandId": "commandId",
     "decorate": [],
     "e2ee": "channel",
@@ -508,6 +539,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": "commandId",
     "decorate": [],
     "e2ee": "channel",
@@ -524,6 +556,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": "commandId",
     "decorate": [],
     "e2ee": "channel",
@@ -540,6 +573,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": "commandId",
     "decorate": [],
     "e2ee": "channel",
@@ -556,6 +590,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": "commandId",
     "decorate": [],
     "e2ee": "channel",
@@ -572,6 +607,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": "commandId",
     "decorate": [],
     "e2ee": "channel",
@@ -588,6 +624,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": "commandId",
     "decorate": [],
     "e2ee": "channel",
@@ -604,6 +641,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -620,6 +658,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -636,6 +675,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -652,6 +692,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -668,6 +709,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -684,6 +726,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -700,6 +743,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -716,6 +760,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -732,6 +777,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -748,6 +794,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -764,6 +811,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -780,6 +828,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -796,6 +845,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -812,6 +862,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -828,6 +879,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -844,6 +896,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -860,6 +913,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -876,6 +930,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -892,6 +947,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -908,6 +964,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -924,6 +981,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -940,6 +998,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -956,6 +1015,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -972,6 +1032,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -988,6 +1049,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -1004,6 +1066,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -1020,6 +1083,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -1036,6 +1100,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -1052,6 +1117,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -1068,6 +1134,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -1084,6 +1151,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -1100,6 +1168,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -1116,6 +1185,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -1132,6 +1202,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -1148,6 +1219,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -1164,6 +1236,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -1180,6 +1253,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -1196,6 +1270,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -1212,6 +1287,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -1228,6 +1304,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -1244,6 +1321,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -1260,6 +1338,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [
       "channelCatalog"
@@ -1278,6 +1357,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "plain",
@@ -1294,6 +1374,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "plain",
@@ -1310,6 +1391,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -1326,6 +1408,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -1342,6 +1425,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -1358,6 +1442,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -1374,6 +1459,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -1390,6 +1476,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -1406,6 +1493,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": "commandId",
     "decorate": [],
     "e2ee": "channel",
@@ -1422,6 +1510,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": true,
     "commandId": "commandId",
     "decorate": [],
     "e2ee": "channel",
@@ -1438,6 +1527,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": null,
     "decorate": [],
     "e2ee": "channel",
@@ -1454,6 +1544,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": false
   },
   {
+    "agent": false,
     "commandId": "operationId",
     "decorate": [],
     "e2ee": "channel",
@@ -1470,6 +1561,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": true
   },
   {
+    "agent": false,
     "commandId": "operationId",
     "decorate": [],
     "e2ee": "channel",
@@ -1486,6 +1578,7 @@ export const CLIENT_ROUTES = [
     "writesCommandId": true
   },
   {
+    "agent": false,
     "commandId": "operationId",
     "decorate": [],
     "e2ee": "channel",

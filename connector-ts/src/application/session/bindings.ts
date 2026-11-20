@@ -315,8 +315,15 @@ export class RuntimeBindings {
     const session = await this.kernel.requireSession(sessionId)
     const offered = this.prepared.get(sessionId)
     this.prepared.delete(sessionId)
-    // A prepared session is adopted as it is: no second `session/new`, no cold start on the first message.
-    const adopted = offered !== undefined && session.externalSessionId === null ? await offered.adopt(sessionId).catch(async error => {
+    // Collaboration tools go in with every open (new, load, resume), so the Agent always has the current grant.
+    const toolServers = deps.tools === undefined ? [] : await deps.tools.toolServers({ sessionId, runtimeId: session.runtimeId, runtimeType: session.runtimeType }).catch(error => {
+      this.kernel.reportError(sessionId, error)
+      return []
+    })
+    const openOptions = { sessionId, replay: 'none' as const, ...(toolServers.length > 0 ? { toolServers } : {}) }
+    // A prepared session is adopted as it is: no second `session/new`, no cold start on the first message. It was
+    // opened without the collaboration tools, so it is not adopted when the session gets them.
+    const adopted = offered !== undefined && session.externalSessionId === null && toolServers.length === 0 ? await offered.adopt(sessionId).catch(async error => {
       await offered.discard().catch(() => undefined)
       throw error
     }) : null
@@ -334,7 +341,7 @@ export class RuntimeBindings {
         await deps.history.ensureLatest(sessionId).catch(error => this.kernel.reportError(sessionId, error))
       }
       runtimeSession = session.externalSessionId !== null
-        ? await handle.open({ kind: 'existing', ref: { nativeSessionId: session.externalSessionId, ...(session.cwd ? { cwd: session.cwd } : {}) } }, { sessionId, replay: 'none' })
+        ? await handle.open({ kind: 'existing', ref: { nativeSessionId: session.externalSessionId, ...(session.cwd ? { cwd: session.cwd } : {}) } }, openOptions)
         : await handle.open({
           kind: 'new',
           spec: {
@@ -342,7 +349,7 @@ export class RuntimeBindings {
             ...(spec?.title ? { title: spec.title } : {}),
             ...(spec?.selections !== undefined ? { selections: spec.selections } : {}),
           },
-        }, { sessionId, replay: 'none' })
+        }, openOptions)
       if (session.externalSessionId === null && spec?.configuration !== undefined) await configureNew(runtimeSession, spec.configuration)
     }
     if (session.externalSessionId !== runtimeSession.nativeSessionId) {

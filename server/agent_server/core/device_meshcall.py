@@ -37,7 +37,7 @@ from pydantic import (
 
 from agent_server.core.client_routes import CLIENT_CALL_ROUTE_IDS, MAX_CHUNK_BYTES
 from agent_server.core.device_runtime import RuntimeTypeDescriptor
-from agent_server.core.device_settings import ConnectorDeviceSettings
+from agent_server.core.device_settings import DeviceSettingsPayload
 from agent_server.core.goal.models import (
     GoalRequest,
     GoalResponse,
@@ -170,6 +170,16 @@ SourceAvailability = Literal["available", "archived", "deleted", "missing", "unk
 E2eeMode = Literal["off", "required"]
 
 
+class SessionOrigin(DeviceModel):
+    """Who created a session when it was not a person: an Agent working through the collaboration tools
+    (docs/agent-collaboration.md). Only ids and the depth, never content; immutable once reported."""
+
+    kind: Literal["agent"]
+    bySessionId: NonEmpty
+    byDeviceId: str | None = None
+    depth: int = Field(ge=1, le=8)
+
+
 class SessionSummary(DeviceModel):
     """Reported fields of a session directory entry (device is the only writer)."""
 
@@ -192,6 +202,8 @@ class SessionSummary(DeviceModel):
     #: from ``create-and-start``). Not content. Used only when the Server first creates the row;
     #: sessions the device found itself omit it and a client assigns their project later.
     projectId: str | None = None
+    #: The session was created by an Agent (collaboration tools); absent for sessions a person created.
+    origin: SessionOrigin | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -346,7 +358,8 @@ class ChannelSwitchCommand(RuntimeApplyCommand):
 
 class DesiredState(DeviceModel):
     runtimes: list[RuntimeApplyCommand] = Field(default_factory=list)
-    #: The stored device settings as they are (``ConnectorDeviceSettings``; unknown keys pass through).
+    #: The stored device settings as they are (``DeviceSettingsPayload``: the device's own settings and the account's
+    #: ``agentCollaboration``; unknown keys pass through).
     deviceSettings: dict[str, Any] = Field(default_factory=dict)
     channelSwitches: list[ChannelSwitchCommand] = Field(default_factory=list)
 
@@ -620,6 +633,61 @@ class CommandResultOut(DeviceModel):
 class AttachmentConsumedOut(DeviceModel):
     fileId: NonEmpty
     sha256: NonEmpty
+
+
+SupervisionState = Literal["active", "paused", "ended"]
+
+
+class CollabSupervisionOut(DeviceModel):
+    """``collab.supervision.changed``: a supervision edge the supervisor's device created or changed. Ids and
+    state only; triggers, authority and digests stay on the device."""
+
+    supervisionId: NonEmpty
+    supervisorSessionId: NonEmpty
+    targetSessionId: NonEmpty
+    targetDeviceId: NonEmpty
+    state: SupervisionState
+    createdBy: Literal["human", "agent"]
+    at: NonEmpty
+
+
+class CollabGrantOut(DeviceModel):
+    """``collab.grant.changed``: a collaboration grant issued or revoked for a supervisor session; the Server
+    revokes the delegation tokens of a revoked grant."""
+
+    grantId: NonEmpty
+    supervisorSessionId: NonEmpty
+    state: Literal["active", "revoked"]
+    at: NonEmpty
+
+
+class CollabTargetSignal(DeviceModel):
+    """A supervised session's directory-level change, forwarded to the supervisor's device. Scheduling fields
+    only (plaintext in both modes)."""
+
+    supervisionId: NonEmpty
+    supervisorSessionId: NonEmpty
+    targetSessionId: NonEmpty
+    targetDeviceId: NonEmpty
+    status: SessionStatusValue
+    headSeq: Seq
+    resetSeq: Seq = 0
+    latestTurnEndSeq: Seq | None = None
+    planState: PlanStateValue = "none"
+    goalState: GoalStateValue = "none"
+    deviceOnline: bool = True
+    at: NonEmpty
+
+
+class CollabSignalCommand(DeviceModel):
+    """``collab.signal``: target signals for supervisions this device holds. Lossy and idempotent: a later
+    signal for the same target supersedes an earlier one."""
+
+    signals: list[CollabTargetSignal] = Field(min_length=1, max_length=100)
+
+
+class CollabSignalResult(DeviceModel):
+    accepted: int = Field(ge=0)
 
 
 #: Counter names the Server records (``usage_events`` types); it skips a name it does not know.
@@ -1123,9 +1191,10 @@ class RuntimeApplyResult(DeviceModel):
 
 
 class DeviceSettingsApplyCommand(DeviceModel):
-    """``device.settings.apply``: the whole settings object, as ``LinkWelcome.desired`` has it."""
+    """``device.settings.apply``: the whole settings object, as ``LinkWelcome.desired`` has it (the device's own
+    settings and the account's ``agentCollaboration``)."""
 
-    settings: ConnectorDeviceSettings
+    settings: DeviceSettingsPayload
 
 
 class DeviceSettingsApplyResult(DeviceModel):
@@ -1160,12 +1229,23 @@ ClientRouteId = Literal[CLIENT_CALL_ROUTE_IDS]  # type: ignore[valid-type]
 ClientHttpMethod = Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
 
 
+class AgentCaller(DeviceModel):
+    """The supervisor session a delegated request acts for (``ClientCaller.agent``)."""
+
+    deviceId: NonEmpty
+    sessionId: NonEmpty
+    grantId: NonEmpty
+
+
 class ClientCaller(DeviceModel):
     """Who sent the request, as the Server authenticated it."""
 
     userId: NonEmpty
     clientId: str | None = None
     platform: str | None = None
+    #: Set when an Agent sent the request with a delegation token (collaboration tools): the supervisor
+    #: session it acts for. The Server fills it from the token; it wins over anything in the body.
+    agent: AgentCaller | None = None
 
 
 class ClientCommand(DeviceModel):
@@ -1343,6 +1423,8 @@ DEVICE_COMMANDS: tuple[str, ...] = (
     "channel.switch",
     "preview.open",
     "preview.close",
+    # Agent collaboration: target signals for this device's supervisions.
+    "collab.signal",
 )
 
 # Commands the Server sends over MeshCall (``Commands/*``), the only ones a device registers there.
@@ -1362,6 +1444,7 @@ COMMAND_METHODS: tuple[str, ...] = (
     "channel.switch",
     "preview.open",
     "preview.close",
+    "collab.signal",
 )
 assert set(COMMAND_METHODS) <= set(DEVICE_COMMANDS)
 
@@ -1476,6 +1559,8 @@ OUTBOX_METHODS: tuple[str, ...] = (
     "command.result",
     "attachment.consumed",
     "usage.report",
+    "collab.supervision.changed",
+    "collab.grant.changed",
 )
 
 
@@ -1528,6 +1613,7 @@ COMMAND_PAYLOADS: dict[str, MethodPayloads] = {
     "channel.switch": MethodPayloads(ChannelSwitchCommand, RuntimeApplyResult),
     "preview.open": MethodPayloads(PreviewOpenCommand, PreviewOpenResult),
     "preview.close": MethodPayloads(PreviewCloseCommand, PreviewCloseResult),
+    "collab.signal": MethodPayloads(CollabSignalCommand, CollabSignalResult),
 }
 assert set(COMMAND_PAYLOADS) == set(DEVICE_COMMANDS)
 
@@ -1560,6 +1646,8 @@ OUTBOX_PAYLOADS: dict[str, type[BaseModel]] = {
     "command.result": CommandResultOut,
     "attachment.consumed": AttachmentConsumedOut,
     "usage.report": UsageReportOut,
+    "collab.supervision.changed": CollabSupervisionOut,
+    "collab.grant.changed": CollabGrantOut,
 }
 assert set(OUTBOX_PAYLOADS) == set(OUTBOX_METHODS)
 

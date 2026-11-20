@@ -138,8 +138,8 @@ describe('check:layers', () => {
       'workspace/w.ts -> ../keystore/k.js: workspace must not import keystore directly; go through application/ports',
       'mesh/m.ts -> ../application/ports/p.js: mesh is shared infrastructure and must not import application/ports',
       'channel/noise/n.ts -> ../c.js: channel/noise is shared infrastructure and must not import channel',
-      'tools/t.ts -> ../store/st.js: tools has no layer role; add it to ROLES in scripts/check-layers.mjs',
-      'host/h.ts -> ../tools/t.js: tools has no layer role; add it to ROLES in scripts/check-layers.mjs',
+      'tools/t.ts -> ../store/st.js: tools must not import store; outbound adapters are reached through application/ports',
+      'host/h.ts -> ../tools/t.js: host is an outbound adapter and must not import the inbound side (tools)',
     ]
     expect([...checkLayers(src)].sort()).toEqual([...expected].sort())
   })

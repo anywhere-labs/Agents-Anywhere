@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto'
+import { CollabWiring, type CollabOptions } from './collab.js'
 import { stat } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 
@@ -54,6 +55,8 @@ export interface ComposeOptions {
    * overrides the secrets' vault (tests use `noVault()`), the local confirmation and the device label.
    */
   readonly trust?: false | Partial<Pick<DeviceTrustOptions, 'vault' | 'confirmation'>>
+  /** Agent collaboration (docs/agent-collaboration.md); false turns it off, an object overrides the tool server launch. */
+  readonly collaboration?: false | Pick<CollabOptions, 'launch' | 'socketDir'>
   /** Workspace roots (default `AGENT_CONNECTOR_WORKSPACE_ROOTS`, else the home directory). */
   readonly workspaceRoots?: readonly string[] | 'any'
   /** Terminals need node-pty; `false` leaves them out (tests, hosts without it). */
@@ -181,6 +184,7 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
       const terminals = await openTerminals(policy, options.terminals !== false, log, previewWiring === null ? undefined : (sessionId, terminalId, text) => printed.observe(sessionId, text, terminalId))
       const shell = new ShellOps(policy)
       let trust: DeviceTrust | null = null
+      let collab: CollabWiring | null = null
       let preview: PreviewHost | null = null
       let stopTimelineUrls: (() => void) | null = null
       try {
@@ -203,6 +207,19 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
             }
           },
         })
+        collab = options.collaboration === false ? null : new CollabWiring({
+          deviceId: settings.connectorId,
+          encryptionRequired: () => (link?.e2eeMode ?? trust?.localMode()) === 'required',
+          store,
+          clock,
+          ids,
+          log,
+          onOutbox: () => outboxSignal.poke(),
+          hostsTools: async runtimeId => ((await runtimes.handle(runtimeId))?.capabilities().items ?? []).some(item => item.id === 'runtime.agent_tools.host' && item.supported),
+          localRuntimes: async () => runtimes.instances().filter(spec => spec.enabled).map(spec => ({ runtimeId: spec.runtimeId, runtimeType: spec.runtimeType, name: spec.name ?? null })),
+          ...(options.collaboration ?? {}),
+        })
+        const collaboration = collab
         const conversation = new ConversationService({
           store,
           feed,
@@ -212,6 +229,7 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
           ids,
           history,
           usage,
+          ...(collaboration !== null ? { tools: collaboration.grants } : {}),
           attachments: async (sessionId, ref) => {
             const local = await attachments.resolve(sessionId, ref)
             return { kind: 'file', path: local.path, mimeType: local.mediaType, name: local.name }
@@ -263,7 +281,11 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
         await conversation.recover()
         prepared.start()
         // Runtime Control 3.0 (runtime.apply, channel.switch, device.settings.apply); a host's own handlers win.
-        const control = runtimeControlCommands({ registry: runtimes, deviceSettings: settings => hooks.deviceSettings(settings) })
+        const applySettings = (desired: Record<string, unknown>): void => {
+          collaboration?.settings.apply(desired)
+          hooks.deviceSettings(desired)
+        }
+        const control = runtimeControlCommands({ registry: runtimes, deviceSettings: applySettings })
         if (previewWiring !== null) {
           const ownScope = browseScope(settings.connectorId)
           stopTimelineUrls = watchTimelineUrls({ feed, timeline: store.timeline, printed, log: text => log('debug', text) })
@@ -283,7 +305,10 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
             log: previewWiring.log ?? ((level, text) => log(level, `preview: ${text}`)),
           })
         }
-        const inbox = new CommandInbox(store, clock, conversation, { ...control, ...(preview?.commands ?? {}), ...(options.commands ?? {}) }, prepared)
+        const collabCommands: CommandHandlers = collaboration === null ? {} : {
+          'collab.signal': async payload => collaboration.onSignals(payload.signals as unknown as Record<string, unknown>[]),
+        }
+        const inbox = new CommandInbox(store, clock, conversation, { ...control, ...collabCommands, ...(preview?.commands ?? {}), ...(options.commands ?? {}) }, prepared)
         const readers = new DeviceReaders(store, clock.nowIso, facts, history, prepared, pending => conversation.reconcileGoal(pending))
         const watch = { store, feed, now: clock.nowIso }
         const workspace = workspaceMethods(files, shell, terminals ?? undefined)
@@ -334,6 +359,15 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
           track?.trust?.(trust)
         }
         const deviceTrust = trust
+        if (collaboration !== null) {
+          collaboration.attach({
+            conversation,
+            api: tunnel,
+            handshake,
+            egress,
+          })
+          await collaboration.start()
+        }
         if (options.dshHosts) {
           // Started before the link: a host's native sessions reach the local store while the device is offline.
           const hosts = new DshHosts({
@@ -385,7 +419,8 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
           onWelcome: async welcome => {
             await deviceTrust?.declareServerMode(welcome.e2eeMode)
             const settingsFromServer = welcome.desired?.deviceSettings
-            if (settingsFromServer !== undefined && settingsFromServer !== null) hooks.deviceSettings(settingsFromServer)
+            if (settingsFromServer !== undefined && settingsFromServer !== null) applySettings(settingsFromServer)
+            else collaboration?.settings.apply({})
             await applyDesiredRuntimes(runtimes, welcome.desired, log)
           },
           onState: state => {
@@ -408,6 +443,7 @@ export function connectorRuntime(options: ComposeOptions, track?: { store(store:
         await dshHosts?.stop().catch(() => undefined)
         if (trust !== null) track?.trust?.(null)
         await trust?.close().catch(() => undefined)
+        await collab?.close().catch(() => undefined)
         await preparations?.close().catch(() => undefined)
         await service?.close().catch(() => undefined)
         await usage.close().catch(() => undefined)

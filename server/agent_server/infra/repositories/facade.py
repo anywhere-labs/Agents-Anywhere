@@ -10,6 +10,7 @@ from agent_server.infra.repositories.attachments import AttachmentRepositoryMixi
 from agent_server.infra.repositories.channel_reconciliation import (
     ChannelReconciliationRepositoryMixin,
 )
+from agent_server.infra.repositories.collab import CollabRepositoryMixin
 from agent_server.infra.repositories.connectors import ConnectorRepositoryMixin
 from agent_server.infra.repositories.device_link import DeviceLinkRepositoryMixin
 from agent_server.infra.repositories.device_runtimes import DeviceRuntimeRepositoryMixin
@@ -44,6 +45,7 @@ from agent_server.infra.repositories.tokens_links import TokensLinkRepositoryMix
 
 class Store(
     TokenFamilyRepositoryMixin,
+    CollabRepositoryMixin,
     PreviewRepositoryMixin,
     DeviceLinkRepositoryMixin,
     E2eeRepositoryMixin,

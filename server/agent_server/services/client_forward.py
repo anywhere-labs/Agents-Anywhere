@@ -32,6 +32,7 @@ from typing import Any
 from loguru import logger
 from pydantic import BaseModel, ValidationError
 
+from agent_server.core.agent_collab import agent_actor
 from agent_server.core.client_routes import (
     CLIENT_ERROR_RULES,
     CLIENT_MESH_CASES,
@@ -121,6 +122,14 @@ def client_input_digest(route_id: str, body: Any) -> str:
     """The receipt digest of a forwarded command: the route and the body the device gets."""
 
     return input_digest(route_id, body if isinstance(body, dict) else {"body": body})
+
+
+def caller_actor(caller: ClientCaller) -> str:
+    """The receipt's ``actor``: ``user``, or the supervisor session an Agent acts for."""
+
+    if caller.agent is None:
+        return "user"
+    return agent_actor(caller.agent.deviceId, caller.agent.sessionId)
 
 
 def generated_command_id() -> str:
@@ -262,16 +271,16 @@ class ClientForwarder:
     # -- Client/call ------------------------------------------------------------------
 
     async def reserve_creation(
-        self, *, user_id: str, device_id: str, command_id: str, digest: str,
+        self, *, user_id: str, device_id: str, command_id: str, digest: str, actor: str = "user",
     ) -> tuple[dict[str, Any], bool]:
         """Claim the id before allocating a directory row or staging any uploads."""
         route = ROUTES_BY_ID["session.createAndStart"]
         receipt, created = await self._commands.register(
             origin="client", user_id=user_id, device_id=device_id, command_id=command_id,
-            kind=route.id, input_digest=digest, session_id=f"sess_{uuid.uuid4().hex}",
+            kind=route.id, input_digest=digest, session_id=f"sess_{uuid.uuid4().hex}", actor=actor,
         )
         if not created:
-            receipt = await self._replayable(receipt, route=route, device_id=device_id, digest=digest)
+            receipt = await self._replayable(receipt, route=route, device_id=device_id, digest=digest, actor=actor)
         return receipt, created
 
     async def call(
@@ -392,9 +401,10 @@ class ClientForwarder:
                 kind=route.id,
                 input_digest=digest,
                 session_id=session_id,
+                actor=caller_actor(caller),
             )
             if not created:
-                receipt = await self._replayable(receipt, route=route, device_id=device_id, digest=digest)
+                receipt = await self._replayable(receipt, route=route, device_id=device_id, digest=digest, actor=caller_actor(caller))
                 replayed = True
 
         connection_id = await self._hub.current_connection(device_id)
@@ -579,12 +589,13 @@ class ClientForwarder:
         )
 
     async def _replayable(
-        self, receipt: dict[str, Any], *, route: ClientRoute, device_id: str, digest: str
+        self, receipt: dict[str, Any], *, route: ClientRoute, device_id: str, digest: str, actor: str
     ) -> dict[str, Any]:
         """A repeated command id: the receipt to forward again with, or the error the replay answers."""
 
         if (
             receipt.get("origin") != "client"
+            or receipt.get("actor", "user") != actor
             or receipt["kind"] != route.id
             or receipt["deviceId"] != device_id
             or (receipt["inputDigest"] and receipt["inputDigest"] != digest)

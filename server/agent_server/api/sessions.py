@@ -43,6 +43,7 @@ from agent_server.api.server_push_websocket import (
     run_server_push_until_disconnect,
 )
 from agent_server.api.v2_compat import V3_SESSION_ONLY
+from agent_server.core.agent_collab import MAX_ORIGIN_DEPTH
 from agent_server.core.device_meshcall import (
     AttachmentRef,
     ClientServerFacts,
@@ -91,6 +92,7 @@ from agent_server.core.protocol_v1_2 import (
 )
 from agent_server.core.utc import utc_now
 from agent_server.deps import (
+    agent_principal,
     current_user_id,
     get_catalog_service,
     get_connector_presence,
@@ -113,7 +115,7 @@ from agent_server.infra.session_watch import SessionWatchHub
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.infra.ws_tickets import ClientWsTicketManager
 from agent_server.services.catalogs import CatalogService
-from agent_server.services.client_forward import ClientForwardError
+from agent_server.services.client_forward import ClientForwardError, caller_actor
 from agent_server.services.connector_presence import (
     with_effective_session_connector_status,
     with_effective_session_connector_statuses,
@@ -328,18 +330,24 @@ async def _forward_create_and_start(
     user_id: str,
     run_service: SessionRunService,
     manager: ConnectorPresenceRegistry,
+    origin: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any] | None, Response | None]:
     """create-and-start through ``Client/call``: ``(result, None)`` when the device started the session,
-    ``(None, response)`` with the device's own error otherwise."""
+    ``(None, response)`` with the device's own error otherwise. ``origin``: the Agent that creates it
+    (``SessionOrigin``), recorded on the directory row before the device gets the creation."""
 
     forwarder = request.app.state.client_forwarder
 
     async def deliver(
         session: SessionView, attachments: list[dict[str, Any]], creation: tuple[dict[str, Any], bool],
     ) -> Any:
+        if origin is not None:
+            await request.app.state.store.set_session_origin(session.id, origin)
         body = payload.model_dump(mode="json", exclude_none=True)
         # Inline attachments are staged on the Server; the device gets their records in ``server``.
         body.pop("attachments", None)
+        if origin is not None:
+            body["originDepth"] = origin["depth"]
         refs = [AttachmentRef.model_validate(item) for item in attachments]
         facts = ClientServerFacts(sessionId=session.id, takeover=True, **({"attachments": refs} if refs else {}))
         return await forwarder.call(
@@ -357,7 +365,9 @@ async def _forward_create_and_start(
         )
 
     try:
-        created = await run_service.create_and_start_session(payload, user_id=user_id, forwarder=forwarder, deliver=deliver)
+        created = await run_service.create_and_start_session(
+            payload, user_id=user_id, forwarder=forwarder, deliver=deliver, actor=caller_actor(caller_of(request, user_id))
+        )
     except SessionRunError as exc:
         _raise_session_run_error(exc)
     except ClientForwardError as exc:
@@ -366,11 +376,43 @@ async def _forward_create_and_start(
     if not answer.ok:
         return None, to_response(answer)
     body = dict(answer.body) if isinstance(answer.body, dict) else {}
-    session = await with_effective_session_connector_status(manager, created["session"])
+    session = created["session"]
+    if origin is not None:
+        # Read again: the origin was recorded after the row was created.
+        session = await request.app.state.store.get_session(session.id)
+    session = await with_effective_session_connector_status(manager, session)
     body["session"] = session
     body.setdefault("connectorResult", {})
     body.setdefault("attachments", created["attachments"])
     return body, None
+
+
+async def _agent_origin(request: Request, db: Store, connector_id: str) -> dict[str, Any] | None:
+    """The ``SessionOrigin`` of a session a delegated Agent creates, or None for a person.
+
+    The device must be inside the delegation's scope (403 ``agent_scope_denied``) and the new session at most
+    ``MAX_ORIGIN_DEPTH`` Agent-created sessions deep (403 ``agent_depth_exceeded``).
+    """
+
+    principal = agent_principal(request)
+    if principal is None:
+        return None
+    if not principal.may_reach(connector_id):
+        raise HTTPException(
+            403, {"code": "agent_scope_denied", "message": "the device is outside this delegation's scope"}
+        )
+    depth = await db.session_origin_depth(principal.supervisor_session_id) + 1
+    if depth > MAX_ORIGIN_DEPTH:
+        raise HTTPException(
+            403,
+            {"code": "agent_depth_exceeded", "message": f"sessions created by Agents nest at most {MAX_ORIGIN_DEPTH} deep"},
+        )
+    return {
+        "kind": "agent",
+        "bySessionId": principal.supervisor_session_id,
+        "byDeviceId": principal.device_id,
+        "depth": depth,
+    }
 
 
 @router.post("/create-and-start")
@@ -389,8 +431,9 @@ async def create_and_start_session(
     # Starting a conversation on a v2 Connector would keep it on the Server (D4, D8). Adding a
     # directory entry for an existing session (``POST /sessions``) stays allowed.
     await owned_device(request, user_id=user_id, connector_id=payload.connectorId)
+    origin = await _agent_origin(request, db, payload.connectorId)
     forwarded, refused = await _forward_create_and_start(
-        request, payload, user_id=user_id, run_service=run_service, manager=manager
+        request, payload, user_id=user_id, run_service=run_service, manager=manager, origin=origin
     )
     if refused is not None:
         return refused  # type: ignore[return-value]

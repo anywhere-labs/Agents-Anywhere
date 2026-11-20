@@ -30,7 +30,7 @@ import type {
 import { piNativeSessionId } from '../../../domain/identity/index.js'
 import type { AcpDialect } from '../../acp/dialect.js'
 import { RuntimeFailure } from '../../acp/errors.js'
-import { AcpRuntimeHandle, WORKSPACE_PREPARATION_CAPABILITIES, catalogsFromConfig, processConnection, type AcpConnection } from '../../acp/handle.js'
+import { AGENT_TOOLS_HOST, AcpRuntimeHandle, WORKSPACE_PREPARATION_CAPABILITIES, catalogsFromConfig, processConnection, type AcpConnection } from '../../acp/handle.js'
 import { prepareFailure, preparedSession } from '../../acp/prepared.js'
 import { EventQueue } from '../../acp/queue.js'
 import { runtimeError } from '../../acp/session.js'
@@ -128,7 +128,7 @@ export class PiRuntimeHandle implements RuntimeHandle {
   }
 
   capabilities(): RuntimeCapabilities {
-    return { revision: this.revision, items: [...this.capabilityItems, ...WORKSPACE_PREPARATION_CAPABILITIES] }
+    return { revision: this.revision, items: [...this.capabilityItems.filter(item => item.id !== AGENT_TOOLS_HOST.id), ...WORKSPACE_PREPARATION_CAPABILITIES, AGENT_TOOLS_HOST] }
   }
 
   async catalogs(): Promise<Catalogs> {
@@ -167,8 +167,8 @@ export class PiRuntimeHandle implements RuntimeHandle {
     if (this.stopped) throw new RuntimeFailure({ code: 'runtime_stopped', message: 'Pi 实例已停止。' })
     await this.ready
     const session = target.kind === 'new'
-      ? await PiRuntimeSession.open(this.host(), options.sessionId, { kind: 'new', spec: target.spec })
-      : await PiRuntimeSession.open(this.host(), options.sessionId, { kind: 'existing', source: await this.index.find(target.ref), replay: options.replay })
+      ? await PiRuntimeSession.open(this.host(), options.sessionId, { kind: 'new', spec: target.spec }, options.toolServers)
+      : await PiRuntimeSession.open(this.host(), options.sessionId, { kind: 'existing', source: await this.index.find(target.ref), replay: options.replay }, options.toolServers)
     this.sessions.add(session)
     return session
   }

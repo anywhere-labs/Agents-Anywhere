@@ -4825,28 +4825,101 @@
             "qualname": "CommandCall[DeviceSettingsApplyCommand]",
             "schema": {
               "$defs": {
-                "ConnectorDeviceSettings": {
+                "AgentAuthority": {
+                  "additionalProperties": false,
+                  "description": "What a supervisor may do to a session on a person's behalf; steering and closing by default.",
                   "properties": {
-                    "confirmQuitOnShutdown": {
-                      "default": false,
-                      "title": "Confirmquitonshutdown",
+                    "close": {
+                      "default": true,
+                      "title": "Close",
+                      "type": "boolean"
+                    },
+                    "interrupt": {
+                      "default": true,
+                      "title": "Interrupt",
+                      "type": "boolean"
+                    },
+                    "steer": {
+                      "default": true,
+                      "title": "Steer",
                       "type": "boolean"
                     }
                   },
-                  "title": "ConnectorDeviceSettings",
+                  "title": "AgentAuthority",
+                  "type": "object"
+                },
+                "AgentCollaborationInstance": {
+                  "additionalProperties": false,
+                  "description": "One runtime instance's switches (keyed by its ``runtimeId``).",
+                  "properties": {
+                    "authority": {
+                      "$ref": "#/$defs/AgentAuthority"
+                    },
+                    "crossDevice": {
+                      "default": false,
+                      "title": "Crossdevice",
+                      "type": "boolean"
+                    },
+                    "enabled": {
+                      "default": true,
+                      "title": "Enabled",
+                      "type": "boolean"
+                    }
+                  },
+                  "title": "AgentCollaborationInstance",
+                  "type": "object"
+                },
+                "AgentCollaborationSettings": {
+                  "additionalProperties": false,
+                  "description": "``GET/PUT /api/v2/agent-collaboration/settings``; also the device settings key ``agentCollaboration``.\n\nAn instance is on only when the account and the instance are enabled; it may reach other devices only when\nboth ``crossDevice`` flags are on as well.",
+                  "properties": {
+                    "crossDevice": {
+                      "default": false,
+                      "title": "Crossdevice",
+                      "type": "boolean"
+                    },
+                    "enabled": {
+                      "default": true,
+                      "title": "Enabled",
+                      "type": "boolean"
+                    },
+                    "instances": {
+                      "additionalProperties": {
+                        "$ref": "#/$defs/AgentCollaborationInstance"
+                      },
+                      "title": "Instances",
+                      "type": "object"
+                    }
+                  },
+                  "title": "AgentCollaborationSettings",
                   "type": "object"
                 },
                 "DeviceSettingsApplyCommand": {
-                  "description": "``device.settings.apply``: the whole settings object, as ``LinkWelcome.desired`` has it.",
+                  "description": "``device.settings.apply``: the whole settings object, as ``LinkWelcome.desired`` has it (the device's own\nsettings and the account's ``agentCollaboration``).",
                   "properties": {
                     "settings": {
-                      "$ref": "#/$defs/ConnectorDeviceSettings"
+                      "$ref": "#/$defs/DeviceSettingsPayload"
                     }
                   },
                   "required": [
                     "settings"
                   ],
                   "title": "DeviceSettingsApplyCommand",
+                  "type": "object"
+                },
+                "DeviceSettingsPayload": {
+                  "description": "What a device gets (``device.settings.apply``, ``LinkWelcome.desired.deviceSettings``): its own settings and\nthe account's agent collaboration settings, which every device of the account shares.",
+                  "properties": {
+                    "agentCollaboration": {
+                      "$ref": "#/$defs/AgentCollaborationSettings"
+                    },
+                    "confirmQuitOnShutdown": {
+                      "default": false,
+                      "title": "Confirmquitonshutdown",
+                      "type": "boolean"
+                    }
+                  },
+                  "title": "DeviceSettingsPayload",
                   "type": "object"
                 }
               },
@@ -5815,6 +5888,284 @@
           "annotations": {
             "destructive": false,
             "idempotent": true,
+            "read_only": false
+          },
+          "balance": {
+            "key": null,
+            "kind": "round_robin"
+          },
+          "deprecated": null,
+          "description": "Command collab.signal. accepted only after the device committed it; idempotency_key = commandId.",
+          "duplex_reason": null,
+          "input_item": null,
+          "name": "collabSignal",
+          "output_item": null,
+          "parameters": [
+            "commandId",
+            "deadline",
+            "inputDigest",
+            "p"
+          ],
+          "request": {
+            "module": "agent_server.core.device_meshcall",
+            "qualname": "CommandCall[CollabSignalCommand]",
+            "schema": {
+              "$defs": {
+                "CollabSignalCommand": {
+                  "description": "``collab.signal``: target signals for supervisions this device holds. Lossy and idempotent: a later\nsignal for the same target supersedes an earlier one.",
+                  "properties": {
+                    "signals": {
+                      "items": {
+                        "$ref": "#/$defs/CollabTargetSignal"
+                      },
+                      "maxItems": 100,
+                      "minItems": 1,
+                      "title": "Signals",
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "signals"
+                  ],
+                  "title": "CollabSignalCommand",
+                  "type": "object"
+                },
+                "CollabTargetSignal": {
+                  "description": "A supervised session's directory-level change, forwarded to the supervisor's device. Scheduling fields\nonly (plaintext in both modes).",
+                  "properties": {
+                    "at": {
+                      "minLength": 1,
+                      "title": "At",
+                      "type": "string"
+                    },
+                    "deviceOnline": {
+                      "default": true,
+                      "title": "Deviceonline",
+                      "type": "boolean"
+                    },
+                    "goalState": {
+                      "default": "none",
+                      "enum": [
+                        "none",
+                        "active",
+                        "paused",
+                        "completed"
+                      ],
+                      "title": "Goalstate",
+                      "type": "string"
+                    },
+                    "headSeq": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "title": "Headseq",
+                      "type": "integer"
+                    },
+                    "latestTurnEndSeq": {
+                      "anyOf": [
+                        {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "title": "Latestturnendseq"
+                    },
+                    "planState": {
+                      "default": "none",
+                      "enum": [
+                        "none",
+                        "planning",
+                        "awaiting_review"
+                      ],
+                      "title": "Planstate",
+                      "type": "string"
+                    },
+                    "resetSeq": {
+                      "default": 0,
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "title": "Resetseq",
+                      "type": "integer"
+                    },
+                    "status": {
+                      "enum": [
+                        "idle",
+                        "pending",
+                        "running",
+                        "waiting",
+                        "waiting_approval",
+                        "blocked",
+                        "stopping",
+                        "error",
+                        "unknown"
+                      ],
+                      "title": "Status",
+                      "type": "string"
+                    },
+                    "supervisionId": {
+                      "minLength": 1,
+                      "title": "Supervisionid",
+                      "type": "string"
+                    },
+                    "supervisorSessionId": {
+                      "minLength": 1,
+                      "title": "Supervisorsessionid",
+                      "type": "string"
+                    },
+                    "targetDeviceId": {
+                      "minLength": 1,
+                      "title": "Targetdeviceid",
+                      "type": "string"
+                    },
+                    "targetSessionId": {
+                      "minLength": 1,
+                      "title": "Targetsessionid",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "supervisionId",
+                    "supervisorSessionId",
+                    "targetSessionId",
+                    "targetDeviceId",
+                    "status",
+                    "headSeq",
+                    "at"
+                  ],
+                  "title": "CollabTargetSignal",
+                  "type": "object"
+                }
+              },
+              "description": "CommandCall of collab.signal: p is CollabSignalCommand.",
+              "properties": {
+                "commandId": {
+                  "description": "equals clientMessageId/operationId when the client supplied one",
+                  "minLength": 1,
+                  "title": "Commandid",
+                  "type": "string"
+                },
+                "deadline": {
+                  "title": "Deadline",
+                  "type": "string"
+                },
+                "inputDigest": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Client-computed digest of the plaintext input; the Server only compares it",
+                  "title": "Inputdigest"
+                },
+                "p": {
+                  "$ref": "#/$defs/CollabSignalCommand"
+                }
+              },
+              "required": [
+                "commandId",
+                "deadline",
+                "p"
+              ],
+              "type": "object"
+            }
+          },
+          "response": {
+            "module": "agent_server.core.device_meshcall",
+            "qualname": "CommandAck[CollabSignalResult]",
+            "schema": {
+              "$defs": {
+                "CollabSignalResult": {
+                  "properties": {
+                    "accepted": {
+                      "minimum": 0,
+                      "title": "Accepted",
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "accepted"
+                  ],
+                  "title": "CollabSignalResult",
+                  "type": "object"
+                },
+                "LinkError": {
+                  "properties": {
+                    "code": {
+                      "minLength": 1,
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "message": {
+                      "default": "",
+                      "title": "Message",
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "default": false,
+                      "title": "Retryable",
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "code"
+                  ],
+                  "title": "LinkError",
+                  "type": "object"
+                }
+              },
+              "description": "CommandAck of collab.signal: r is CollabSignalResult.",
+              "properties": {
+                "e": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/LinkError"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "outcome": {
+                  "enum": [
+                    "accepted",
+                    "rejected"
+                  ],
+                  "title": "Outcome",
+                  "type": "string"
+                },
+                "r": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/CollabSignalResult"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                }
+              },
+              "required": [
+                "outcome"
+              ],
+              "type": "object"
+            }
+          },
+          "stream": "unary"
+        },
+        {
+          "annotations": {
+            "destructive": false,
+            "idempotent": true,
             "read_only": true
           },
           "balance": {
@@ -6489,6 +6840,33 @@
             "qualname": "ClientCallRequest",
             "schema": {
               "$defs": {
+                "AgentCaller": {
+                  "description": "The supervisor session a delegated request acts for (``ClientCaller.agent``).",
+                  "properties": {
+                    "deviceId": {
+                      "minLength": 1,
+                      "title": "Deviceid",
+                      "type": "string"
+                    },
+                    "grantId": {
+                      "minLength": 1,
+                      "title": "Grantid",
+                      "type": "string"
+                    },
+                    "sessionId": {
+                      "minLength": 1,
+                      "title": "Sessionid",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "deviceId",
+                    "sessionId",
+                    "grantId"
+                  ],
+                  "title": "AgentCaller",
+                  "type": "object"
+                },
                 "AttachmentRef": {
                   "description": "An attachment the Server holds (staged upload): the device fetches it by ``fileId``.",
                   "properties": {
@@ -6540,6 +6918,17 @@
                 "ClientCaller": {
                   "description": "Who sent the request, as the Server authenticated it.",
                   "properties": {
+                    "agent": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/AgentCaller"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null
+                    },
                     "clientId": {
                       "anyOf": [
                         {
@@ -7003,9 +7392,47 @@
             "qualname": "ClientSubscribeRequest",
             "schema": {
               "$defs": {
+                "AgentCaller": {
+                  "description": "The supervisor session a delegated request acts for (``ClientCaller.agent``).",
+                  "properties": {
+                    "deviceId": {
+                      "minLength": 1,
+                      "title": "Deviceid",
+                      "type": "string"
+                    },
+                    "grantId": {
+                      "minLength": 1,
+                      "title": "Grantid",
+                      "type": "string"
+                    },
+                    "sessionId": {
+                      "minLength": 1,
+                      "title": "Sessionid",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "deviceId",
+                    "sessionId",
+                    "grantId"
+                  ],
+                  "title": "AgentCaller",
+                  "type": "object"
+                },
                 "ClientCaller": {
                   "description": "Who sent the request, as the Server authenticated it.",
                   "properties": {
+                    "agent": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/AgentCaller"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null
+                    },
                     "clientId": {
                       "anyOf": [
                         {

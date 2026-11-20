@@ -1,4 +1,4 @@
-import { ConversationError, admitMessage, queue as queueRules, type QueueAttachment, type QueueMode } from '../../domain/conversation/index.js'
+import { ConversationError, admitMessage, queue as queueRules, type QueueAttachment, type QueueMode, type SessionOrigin } from '../../domain/conversation/index.js'
 import { UseCaseError } from '../errors.js'
 import type { GoalService } from '../goals/goal-service.js'
 import type { PlanningService } from '../planning/planning-service.js'
@@ -25,6 +25,8 @@ export interface CreateSessionCommand {
   cwd: string
   /** The Server project, when a client creates the session through a secure channel. */
   projectId?: string | null
+  /** An Agent creates this session (collaboration tools). */
+  origin?: SessionOrigin | null
   title?: string | null
   selections?: Record<string, string | null>
   clientMessageId: string
@@ -81,6 +83,7 @@ export class MessageService {
         externalSessionId: null,
         cwd: command.cwd,
         projectId: command.projectId ?? null,
+        origin: command.origin ?? null,
         nativeTitle: command.title ?? null,
         status: 'pending',
         sourceAvailability: 'available',

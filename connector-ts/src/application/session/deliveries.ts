@@ -63,7 +63,11 @@ export class DeliveryRecords {
   public async writeUserMessage(sessionId: string, clientMessageId: string, text: string, userItemId: string | null, attachments: readonly AttachmentInfo[] = []): Promise<void> {
     const existing = await this.kernel.deps.store.timeline.findByClientMessageId(sessionId, clientMessageId)
     if (existing !== null && existing.role === 'user' && existing.status !== 'failed') {
-      if (attachments.length > 0 && !hasAttachments(existing.content)) await this.attach(sessionId, existing, attachmentsJson(attachments), [])
+      const author = existing.content.author === undefined ? await this.kernel.deps.store.collab?.author(sessionId, clientMessageId).catch(() => null) ?? null : null
+      const missingAttachments = attachments.length > 0 && !hasAttachments(existing.content)
+      if (missingAttachments || author !== null) {
+        await this.attach(sessionId, existing, missingAttachments ? attachmentsJson(attachments) : [], [], author === null ? undefined : (author as unknown as JsonValue))
+      }
       return
     }
     await this.putUserMessage(sessionId, userItemId ?? platformUserItemId(sessionId, clientMessageId), clientMessageId, text, 'done',
@@ -71,7 +75,7 @@ export class DeliveryRecords {
   }
 
   /** Commits `item` with `attachments` in its content (and the deletes), keeping its position. */
-  private async attach(sessionId: string, item: TimelineItem, attachments: JsonValue[], deletes: string[]): Promise<void> {
+  private async attach(sessionId: string, item: TimelineItem, attachments: JsonValue[], deletes: string[], author?: JsonValue): Promise<void> {
     const deps = this.kernel.deps
     const draft: TimelineDraft = {
       id: item.id,
@@ -79,7 +83,7 @@ export class DeliveryRecords {
       status: item.status,
       role: item.role,
       orderSeq: item.orderSeq,
-      content: { ...item.content, attachments },
+      content: { ...item.content, ...(attachments.length > 0 ? { attachments } : {}), ...(author !== undefined ? { author } : {}) },
       source: item.source,
       createdAt: item.createdAt,
       ...(item.completedAt !== undefined ? { completedAt: item.completedAt } : {}),
@@ -93,12 +97,14 @@ export class DeliveryRecords {
     const deps = this.kernel.deps
     const binding = this.bindings.get(sessionId)
     const at = deps.clock.nowIso()
+    // A message an Agent or a supervision wake sent carries its author (protocol 1.2 `MessageAuthor`).
+    const author = await deps.store.collab?.author(sessionId, clientMessageId).catch(() => null) ?? null
     const draft: Omit<TimelineDraft, 'orderSeq'> = {
       id,
       type: 'message',
       status,
       role: 'user',
-      content: { kind: 'markdown', format: 'markdown', text, isThinking: false, clientMessageId, ...(extra as Record<string, never>) },
+      content: { kind: 'markdown', format: 'markdown', text, isThinking: false, clientMessageId, ...(extra as Record<string, never>), ...(author !== null ? { author: author as unknown as never } : {}) },
       source: { runtime: binding === undefined ? 'platform' : 'platform', clientMessageId },
       createdAt: at,
       completedAt: at,
@@ -128,10 +134,11 @@ export class DeliveryRecords {
     if (itemId === platformId) return
     const copy = await deps.store.timeline.get(sessionId, platformId)
     if (copy === null || copy.status === 'failed') return
-    // The platform copy named the attachments; an echo that does not keeps them.
-    const echo = hasAttachments(copy.content) ? await deps.store.timeline.get(sessionId, itemId) : null
-    if (echo !== null && !hasAttachments(echo.content)) {
-      await this.attach(sessionId, echo, copy.content.attachments as JsonValue[], [platformId])
+    // The platform copy named the attachments (and the author); an echo that does not keeps them.
+    const authored = copy.content.author !== undefined
+    const echo = hasAttachments(copy.content) || authored ? await deps.store.timeline.get(sessionId, itemId) : null
+    if (echo !== null && ((hasAttachments(copy.content) && !hasAttachments(echo.content)) || (authored && echo.content.author === undefined))) {
+      await this.attach(sessionId, echo, hasAttachments(echo.content) ? echo.content.attachments as JsonValue[] : (copy.content.attachments as JsonValue[] | undefined) ?? [], [platformId], authored ? copy.content.author : undefined)
       return
     }
     const commit = await deps.store.timeline.apply(sessionId, { upserts: [], deletes: [platformId], at: deps.clock.nowIso() })

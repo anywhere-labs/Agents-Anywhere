@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -141,9 +142,11 @@ class DeviceCommandService:
         input_digest: str | None,
         session_id: str | None = None,
         payload: dict[str, Any] | None = None,
+        actor: str = "user",
     ) -> tuple[dict[str, Any], bool]:
         """Record a ``pending`` receipt; returns ``(receipt, created)``. An existing receipt is returned as is
-        (for ``sealed``, possibly another user's: the caller compares ``userId``)."""
+        (for ``sealed``, possibly another user's: the caller compares ``userId``). ``actor``: ``user``, or
+        ``agent:<deviceId>/<sessionId>`` for a command an Agent sent with a delegation token."""
 
         return await self._store.record_device_command(
             user_id=user_id,
@@ -154,6 +157,7 @@ class DeviceCommandService:
             input_digest=input_digest,
             payload=payload,
             origin=origin,
+            actor=actor,
         )
 
     async def wait_for_creation(self, receipt: dict[str, Any], timeout: float) -> dict[str, Any] | None:
@@ -263,6 +267,46 @@ class DeviceCommandService:
         if not created:
             return await self._replay(receipt, kind=kind, device_id=device_id, digest=digest)
         return await self._deliver(receipt, payload, timeout=timeout)
+
+    async def send_lossy(
+        self, *, device_id: str, kind: str, payload: dict[str, Any], timeout: float | None = None
+    ) -> dict[str, Any]:
+        """Deliver ``kind`` once without a receipt (lossy signals such as ``collab.signal``): nothing is recorded,
+        nothing is retried. Returns the device's result; raises ``DeviceCommandError`` subclasses."""
+
+        _check_payload(kind, payload)
+        mesh, hub = self._require_link()
+        connection_id = await hub.current_connection(device_id)
+        if connection_id is None:
+            raise DeviceCommandOffline()
+        timeout = timeout or mesh.settings.command_timeout_seconds
+        command_id = f"lossy_{uuid.uuid4().hex}"
+        try:
+            ack = await mesh.unary(
+                device_id,
+                command_route(kind),
+                CommandCall(
+                    commandId=command_id,
+                    deadline=(datetime.now(UTC) + timedelta(seconds=timeout)).isoformat(),
+                    inputDigest=input_digest(kind, payload),
+                    p=payload,
+                ),
+                CommandAck,
+                connection_id=connection_id,
+                timeout=timeout,
+                idempotency_key=command_id,
+            )
+        except DeviceCallError as exc:
+            if exc.not_delivered:
+                raise DeviceCommandOffline() from exc
+            if exc.outcome_unknown:
+                raise DeviceCommandOutcomeUnknown(None, exc.message or "command outcome unknown") from exc
+            code = str(exc.details.get("aaCode") or exc.code)
+            raise DeviceCommandRejected(code, exc.message or code, None) from exc
+        if ack.outcome != "accepted":
+            code = ack.e.code if ack.e is not None else "command_rejected"
+            raise DeviceCommandRejected(code, (ack.e.message if ack.e is not None else None) or code, None)
+        return ack.r if isinstance(ack.r, dict) else {}
 
     async def _deliver(
         self, receipt: dict[str, Any], payload: dict[str, Any], *, timeout: float | None

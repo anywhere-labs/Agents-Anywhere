@@ -99,6 +99,11 @@ export interface AcpDialect {
   identity?(context: SessionContext): ItemIdentity
   /** Extra params for session/new (`_meta`, etc.). */
   newSessionParams?(spec: NewSessionSpec): JsonRecord
+  /**
+   * The Runtime takes injected tool servers (`mcpServers`) and they work (measured, docs/agent-collaboration.md
+   * §12): it may host the collaboration tools and declares `runtime.agent_tools.host`.
+   */
+  readonly agentTools?: boolean
   /** Extra params for session/load / session/resume (Codex's `codexIpc.mode: auto`). */
   openParams?(ref: NativeSessionRef): JsonRecord
   /** Extra params for session/prompt (Codex's `codexIpc.clientMessageId`). */

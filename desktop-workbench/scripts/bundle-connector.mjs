@@ -45,6 +45,7 @@ await esbuild.build({
   entryPoints: {
     // Desktop's own entry: connector-ts's desktop-host plus the port preview wiring.
     "desktop-main": join(PROJECT_ROOT, "connector-entry", "desktop-main.mts"),
+    "agent-tools": join(CONNECTOR_ROOT, "src", "entry", "agent-tools.ts"),
     "worker-entry": join(CONNECTOR_ROOT, "src", "store", "worker-entry.ts"),
   },
   outdir: OUTPUT_DIR,

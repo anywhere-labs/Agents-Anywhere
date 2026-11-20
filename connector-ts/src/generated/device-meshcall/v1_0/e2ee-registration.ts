@@ -22,7 +22,8 @@ export const REGISTERED_SERVICES = {
       "deviceSettingsApply",
       "channelSwitch",
       "previewOpen",
-      "previewClose"
+      "previewClose",
+      "collabSignal"
     ],
     "aa.device.v1.Link": [
       "attach",

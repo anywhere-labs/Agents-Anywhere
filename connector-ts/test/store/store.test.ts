@@ -247,7 +247,7 @@ describe('blob lifecycle', () => {
     const item = (await store.timeline.apply('sess_1', { upserts: [tool('t1', 'q'.repeat(STRING_MAX + 1), 'done')], at: now() })).changed[0]!
     await store.close()
     const raw = new DatabaseSync(join(dir, 'store.sqlite'))
-    raw.exec("DROP TABLE blob_refs; UPDATE meta SET value = '4' WHERE key = 'schema_version'")
+    raw.exec("ALTER TABLE sessions DROP COLUMN origin_json; DROP TABLE blob_refs; UPDATE meta SET value = '4' WHERE key = 'schema_version'")
     raw.close()
     sync = openSqliteStore({ dataDir: dir, durability: 'normal', now })
     store = inProcessStore(sync)
@@ -376,7 +376,7 @@ describe('data upgrades', () => {
     await createSession()
     await store.close()
     const raw = new DatabaseSync(join(dir, 'store.sqlite'))
-    raw.exec("ALTER TABLE sessions DROP COLUMN project_id; ALTER TABLE deliveries DROP COLUMN pending_json; UPDATE meta SET value = '1' WHERE key = 'schema_version'")
+    raw.exec("ALTER TABLE sessions DROP COLUMN origin_json; ALTER TABLE sessions DROP COLUMN project_id; ALTER TABLE deliveries DROP COLUMN pending_json; UPDATE meta SET value = '1' WHERE key = 'schema_version'")
     raw.close()
     sync = openSqliteStore({ dataDir: dir, now })
     store = inProcessStore(sync)

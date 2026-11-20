@@ -1028,9 +1028,9 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(tmp_path,
     )
 
 
-def test_current_schema_version_is_v2_66() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_66"
-    assert CURRENT_SCHEMA_VERSION == "2.66"
+def test_current_schema_version_is_v2_67() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_67"
+    assert CURRENT_SCHEMA_VERSION == "2.67"
 
 
 def test_v2_57_starts_the_seq_ceiling_above_v2_sequences(fresh_database_url) -> None:

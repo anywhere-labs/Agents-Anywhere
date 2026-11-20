@@ -103,6 +103,7 @@ export function claudeDialect(): AcpDialect {
       ]
     },
     identity: claudeIdentity,
+    agentTools: true,
     steer: 'extension',
     selections: {
       modelSelectionId: claudeModelSelectionId,

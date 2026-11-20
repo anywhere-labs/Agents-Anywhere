@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url'
 
 const ALL_TARGETS = ['darwin-arm64', 'darwin-x64', 'linux-arm64', 'linux-x64', 'win32-arm64', 'win32-x64']
 /** What the plugin runs: the CLI entry, the store worker it starts, and the files Runtime profiles read. */
-const SHIPPED = ['anywhere-cli.js', 'worker-entry.js', 'assets', 'dependencies.json', 'package.json']
+const SHIPPED = ['anywhere-cli.js', 'agent-tools.js', 'worker-entry.js', 'assets', 'dependencies.json', 'package.json']
 
 const connector = fileURLToPath(new URL('../../connector-ts/', import.meta.url))
 const target = fileURLToPath(new URL('../lib/bundled-connector/', import.meta.url))

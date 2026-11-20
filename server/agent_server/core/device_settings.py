@@ -9,7 +9,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
+
+from agent_server.core.agent_collab import (
+    DEVICE_SETTINGS_KEY,
+    AgentCollaborationSettings,
+    collaboration_settings_from_stored,
+)
 
 # v2 Connector RPC method (the v2 WebSocket only).
 DEVICE_SETTINGS_APPLY_METHOD = "connector.deviceSettings.apply"
@@ -20,6 +26,13 @@ DEVICE_SETTINGS_COMMAND = "device.settings.apply"
 
 class ConnectorDeviceSettings(BaseModel):
     confirmQuitOnShutdown: bool = False
+
+
+class DeviceSettingsPayload(ConnectorDeviceSettings):
+    """What a device gets (``device.settings.apply``, ``LinkWelcome.desired.deviceSettings``): its own settings and
+    the account's agent collaboration settings, which every device of the account shares."""
+
+    agentCollaboration: AgentCollaborationSettings = Field(default_factory=AgentCollaborationSettings)
 
 
 class ConnectorDeviceSettingsPatch(BaseModel):
@@ -56,6 +69,19 @@ def apply_device_settings_patch(
     return current.model_copy(update=changes)
 
 
+def device_settings_payload(
+    settings: ConnectorDeviceSettings, collaboration: AgentCollaborationSettings | dict[str, Any] | None
+) -> DeviceSettingsPayload:
+    """The device's settings with the account's collaboration settings under ``agentCollaboration``."""
+
+    if not isinstance(collaboration, AgentCollaborationSettings):
+        collaboration = collaboration_settings_from_stored(collaboration)
+    return DeviceSettingsPayload(**settings.model_dump(), **{DEVICE_SETTINGS_KEY: collaboration})
+
+
 def device_settings_command_payload(settings: ConnectorDeviceSettings) -> dict[str, Any]:
-    """``device.settings.apply`` payload: the whole settings object, as ``LinkWelcome.desired`` has it."""
-    return {"settings": settings.model_dump()}
+    """``device.settings.apply`` payload: the whole settings object, as ``LinkWelcome.desired`` has it (a plain
+    ``ConnectorDeviceSettings`` gets the default, all-off ``agentCollaboration``)."""
+    if not isinstance(settings, DeviceSettingsPayload):
+        settings = device_settings_payload(settings, None)
+    return {"settings": settings.model_dump(mode="json")}

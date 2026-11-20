@@ -42,7 +42,8 @@
         "deviceSettingsApply",
         "channelSwitch",
         "previewOpen",
-        "previewClose"
+        "previewClose",
+        "collabSignal"
       ],
       "aa.device.v1.Link": [
         "attach",
@@ -85,6 +86,8 @@
     "session.inventory",
     "command.result",
     "attachment.consumed",
-    "usage.report"
+    "usage.report",
+    "collab.supervision.changed",
+    "collab.grant.changed"
   ]
 }

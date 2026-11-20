@@ -24,6 +24,7 @@ const checkOnly = process.argv.includes("--check")
 
 /** @type {ReadonlyArray<readonly [name: string, version: string]>} */
 const CONTRACTS = [
+  ["agent-tools", "1.0"],
   ["device-meshcall", "1.0"],
   ["dsh-bridge", "3.0"],
   ["e2ee", "1.0"],
@@ -155,6 +156,20 @@ function generateExtra(name, version, file, table) {
     ]
   }
   if (file === "payloads.json") return ["payloads.ts", [...banner, ...payloadTypes(name, version, table)].join("\n")]
+  if (name === "agent-tools" && file === "tools.json") {
+    return [
+      "tools.ts",
+      [
+        ...banner,
+        "/** The collaboration tools the injected `aa` tool server lists (MCP `tools/list`). */",
+        `export const AGENT_TOOLS = ${JSON.stringify(table, null, 2)} as const`,
+        "",
+      ].join("\n"),
+    ]
+  }
+  if (name === "agent-tools" && file === "errors.json") {
+    return ["errors.ts", [...banner, `export const AGENT_TOOL_ERRORS = ${JSON.stringify(table, null, 2)} as const`, ""].join("\n")]
+  }
   if (file === "client-routes.json") {
     return [
       "client-routes.ts",

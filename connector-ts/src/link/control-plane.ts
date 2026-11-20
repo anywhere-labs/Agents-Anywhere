@@ -138,6 +138,18 @@ export class ControlPlane {
     return welcome
   }
 
+  /** A delegation token for an Agent of this device acting for one of its sessions (agent collaboration). */
+  public async agentDelegation(body: { readonly grantId: string; readonly supervisorSessionId: string; readonly scope?: { readonly devices: 'account' | readonly string[] } }, signal?: AbortSignal): Promise<{ delegationId: string; token: string; expiresAt: string }> {
+    const response = await this.authorized<{ delegationId: string; token: string; expiresAt: string }>('api/v3/device/agent-delegations', body, signal)
+    if (typeof response?.token !== 'string') throw new HttpError(502, 'bad_response', 'agent delegation returned no token', response)
+    return response
+  }
+
+  /** The Server's base URL, for the client API calls of a delegated Agent. */
+  public get serverUrl(): URL {
+    return this.base
+  }
+
   public async ready(connectionId: string, signal?: AbortSignal): Promise<void> {
     await this.authorized('api/v3/device/ready', { connectionId }, signal)
   }

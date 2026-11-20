@@ -217,6 +217,14 @@
             "runtime": "claude",
             "scope": "runtime",
             "sessionId": null
+          },
+          {
+            "capabilityId": "runtime.agent_tools.host",
+            "supported": true,
+            "available": true,
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
           }
         ]
       },
@@ -395,6 +403,14 @@
             "parameters": {
               "workflowVersion": "1.2"
             },
+            "runtime": "claude",
+            "scope": "runtime",
+            "sessionId": null
+          },
+          {
+            "capabilityId": "runtime.agent_tools.host",
+            "supported": true,
+            "available": true,
             "runtime": "claude",
             "scope": "runtime",
             "sessionId": null
