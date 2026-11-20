@@ -143,10 +143,8 @@ export class DeviceTrust {
     if (this.mode !== 'required') throw failure('e2ee_off', 'this Server does not use end-to-end encryption (AGENT_SERVER_E2EE=required), so clients need no pairing')
     const serverUrl = this.options.serverUrl ?? ''
     if (serverUrl === '') throw failure('connector_not_running', 'the Connector has no Server configured')
-    // Forget the psks of pairings that ran out before counting the open ones.
-    await this.trust.expirePairings()
     const invitation = await this.trust.startPairing(serverUrl, this.serverMode)
-    this.options.log('info', `client pairing ${invitation.payload.pairingId} opened (expires ${invitation.payload.expiresAt})`)
+    this.options.log('info', `client pairing ${invitation.payload.pairingId} (expires ${invitation.payload.expiresAt})`)
     return {
       uri: invitation.uri,
       deviceId: invitation.payload.deviceId,

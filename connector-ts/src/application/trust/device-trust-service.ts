@@ -159,37 +159,34 @@ export class DeviceTrustService {
   }
 
   async startPairing(serverUrl: string, serverMode: E2eeMode): Promise<PairingInvitation> {
-    const pairingId = this.#deps.random.id('pair_')
-    const psk = this.#deps.random.bytes(PSK_BYTES)
-    const nowMs = this.#deps.clock.nowMs()
-    const state = await this.#apply((current) => startPairing(current, pairingId, nowMs))
-    this.#psks.set(pairingId, psk)
-    const pairing = state.pairings.find((candidate) => candidate.pairingId === pairingId)!
-    const payload = {
-      v: 1 as const,
-      deviceId: state.deviceId,
-      deviceIdentityPub: state.identityPub,
-      pairingId,
-      psk: Buffer.from(psk).toString('base64url'),
-      serverUrl,
-      e2eeMode: effectiveMode(state, serverMode),
-      expiresAt: new Date(pairing.expiresAtMs).toISOString(),
-    }
-    return { payload, uri: `aa-pair://${Buffer.from(JSON.stringify(payload)).toString('base64url')}` }
+    return this.#serial(async () => {
+      const nowMs = this.#deps.clock.nowMs()
+      let pairing = this.state.pairings.find(item => item.state === 'open' && item.expiresAtMs > nowMs)
+      if (!pairing) {
+        const id = this.#deps.random.id('pair_')
+        const state = await this.#commit(startPairing(this.state, id, nowMs))
+        pairing = state.pairings.find(item => item.pairingId === id)!
+      }
+      const payload = {
+        v: 1 as const,
+        deviceId: this.state.deviceId,
+        deviceIdentityPub: this.state.identityPub,
+        pairingId: pairing.pairingId,
+        psk: Buffer.from(this.#psks.get(pairing.pairingId)!).toString('base64url'),
+        serverUrl,
+        e2eeMode: effectiveMode(this.state, serverMode),
+        expiresAt: new Date(pairing.expiresAtMs).toISOString(),
+      }
+      return { payload, uri: `aa-pair://${Buffer.from(JSON.stringify(payload)).toString('base64url')}` }
+    })
   }
 
   async cancelPairing(pairingId: string): Promise<void> {
-    this.#psks.get(pairingId)?.fill(0)
-    this.#psks.delete(pairingId)
     await this.#apply((state) => cancelPairing(state, pairingId))
   }
 
   async expirePairings(): Promise<void> {
-    const nowMs = this.#deps.clock.nowMs()
-    const state = await this.#apply((current) => expirePairings(current, nowMs))
-    for (const pairingId of [...this.#psks.keys()]) {
-      if (!state.pairings.some((pairing) => pairing.pairingId === pairingId)) this.#forgetPsk(pairingId)
-    }
+    await this.#apply((state) => expirePairings(state, this.#deps.clock.nowMs()))
   }
 
   /** The psk of an open pairing, for the XXpsk0 responder. Throws `pairing_expired`. */
@@ -207,20 +204,23 @@ export class DeviceTrustService {
     matches: (secret: Uint8Array) => boolean,
     matchesCredential: (digest: string | undefined) => boolean,
   ): Promise<void> {
-    const state = await this.#apply((current) => {
+    await this.#apply((current) => {
       const existing = current.grants.find(grant => grant.clientId === client.clientId && grant.revokedAt === null)
-      if (existing && matchesCredential(existing.meshCredentialDigest)) return { state: current, events: [] }
+      if (existing && matchesCredential(existing.meshCredentialDigest)) {
+        // A lost reply can be retried after redemption. A fresh invitation shown to the same client is single-use too.
+        const open = current.pairings.find(pairing => pairing.pairingId === pairingId && pairing.expiresAtMs > this.#deps.clock.nowMs())
+        if (open && matches(this.pairingPsk(pairingId))) return cancelPairing(current, pairingId)
+        return { state: current, events: [] }
+      }
       if (!matches(this.pairingPsk(pairingId))) throw new TrustError('pairing_expired', 'invalid pairing invitation')
       return completePairing(current, pairingId, client, this.#deps.clock.nowMs(), this.#deps.clock.nowIso())
     })
-    if (!state.pairings.some(pairing => pairing.pairingId === pairingId)) this.#forgetPsk(pairingId)
   }
 
   /** XXpsk0 finished: consume the pairing, write the grant, return the directory key the client receives. */
   async completePairing(pairingId: string, client: NewClient): Promise<{ grant: ClientGrant; directoryKey: DirectoryKeyGrant }> {
     const nowMs = this.#deps.clock.nowMs()
     const state = await this.#apply((current) => completePairing(current, pairingId, client, nowMs, this.#deps.clock.nowIso()))
-    this.#forgetPsk(pairingId)
     return { grant: authorizeClient(state, client.clientId), directoryKey: await this.directoryKeyGrant() }
   }
 
@@ -329,16 +329,23 @@ export class DeviceTrustService {
   }
 
   async #apply(change: (state: DeviceTrustState) => Change): Promise<DeviceTrustState> {
-    return this.#serial(async () => {
-      const { state, events } = change(this.state)
-      if (state !== this.#state) {
-        // Pairings are memory-only: never write them to disk.
-        await this.#deps.repository.save({ ...state, pairings: [] })
-        this.#state = state
+    return this.#serial(() => this.#commit(change(this.state)))
+  }
+
+  async #commit({ state, events }: Change): Promise<DeviceTrustState> {
+    if (state !== this.#state) {
+      // Pairings and their secrets live only in this Connector process.
+      await this.#deps.repository.save({ ...state, pairings: [] })
+      this.#state = state
+      for (const id of this.#psks.keys()) {
+        if (!state.pairings.some(pairing => pairing.pairingId === id)) this.#forgetPsk(id)
       }
-      for (const event of events) for (const listener of this.#listeners) listener(event)
-      return state
-    })
+    }
+    for (const event of events) {
+      if (event.type === 'PairingStarted') this.#psks.set(event.pairingId, this.#deps.random.bytes(PSK_BYTES))
+      for (const listener of this.#listeners) listener(event)
+    }
+    return state
   }
 
   #serial<T>(task: () => Promise<T>): Promise<T> {

@@ -214,10 +214,46 @@ describe('QR pairing (XXpsk0) and reconnect (KK)', () => {
     })
   })
 
-  it('at most 3 open pairings at a time', async () => {
+  it('shares one invitation across concurrent requests until redemption, cancellation or expiry', async () => {
     const dev = await device()
-    for (let i = 0; i < 3; i++) await dev.trust.startPairing('https://aa.example.com', 'required')
-    await expect(dev.trust.startPairing('https://aa.example.com', 'required')).rejects.toMatchObject({ code: 'pairing_limit' })
+    const show = () => dev.trust.startPairing('https://aa.example.com', 'required')
+    const invites = await Promise.all(Array.from({ length: 8 }, show))
+    expect(new Set(invites.map(invite => invite.uri)).size).toBe(1)
+    const first = invites[0]!
+    now += 60_000
+    expect(await show()).toEqual(first)
+    await pairClient(dev)
+    const second = await show()
+    expect(second.uri).not.toBe(first.uri)
+    await dev.trust.cancelPairing(second.payload.pairingId)
+    const third = await show()
+    expect(third.uri).not.toBe(second.uri)
+    now = Date.parse(third.payload.expiresAt)
+    expect((await show()).uri).not.toBe(third.uri)
+    expect(dev.trust.state.pairings).toHaveLength(1)
+  })
+
+  it('redeeming a new Mesh invitation consumes it even for an already paired client', async () => {
+    const { trust } = await device()
+    const identity = generateX25519().publicKey
+    const client = {
+      clientId: clientIdFor(identity), identityPub: Buffer.from(identity).toString('base64url'),
+      label: 'Pixel', platform: 'android' as const, meshCredentialDigest: 'saved-digest',
+    }
+    const show = () => trust.startPairing('https://aa.example.com', 'required')
+    const redeem = (payload: Pick<PairingPayload, 'pairingId' | 'psk'>) => trust.commitMeshPairing(payload.pairingId, client,
+      secret => Buffer.from(secret).toString('base64url') === payload.psk,
+      digest => digest === client.meshCredentialDigest,
+    )
+    const first = (await show()).payload
+    await redeem(first)
+    const second = (await show()).payload
+    expect(second.pairingId).not.toBe(first.pairingId)
+    await redeem(first)
+    expect((await show()).payload).toEqual(second)
+    await redeem(second)
+    expect(trust.state.pairings).toHaveLength(0)
+    expect(trust.state.grants).toHaveLength(1)
   })
 
   it('KK reconnect: new ch, pinned device public key', async () => {

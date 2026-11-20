@@ -2885,7 +2885,7 @@
       "title": "将手机与这台电脑配对",
       "instructions": "在手机 App 中打开这台设备，在「端到端加密」下点「配对」。扫码后，核对两端的设备指纹再确认。",
       "fingerprint": "设备指纹",
-      "validUntil": "仅可使用一次，{time} 到期",
+      "countdown": "仅可使用一次，剩余 {time}",
       "copyLink": "复制配对链接",
       "copied": "已复制配对链接。",
       "copyFailed": "复制配对链接失败。",

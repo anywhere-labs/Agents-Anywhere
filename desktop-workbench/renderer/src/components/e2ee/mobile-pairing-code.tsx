@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { QrCode, RefreshCw } from "lucide-react"
-import { useFormatter, useTranslations } from "next-intl"
+import { useTranslations } from "next-intl"
 import QRCode from "qrcode"
 import { toast } from "sonner"
 
@@ -20,27 +20,36 @@ type CodeState =
 
 export function MobilePairingCode() {
   const t = useTranslations("e2ee.mobilePairing")
-  const format = useFormatter()
+  const [now, setNow] = React.useState(Date.now)
   const [state, setState] = React.useState<CodeState | null>(null)
   const pairing = state?.pairing
+  const secondsLeft = pairing ? Math.max(0, Math.ceil((pairing.expiresAt - now) / 1000)) : 0
+  const countdown = [Math.floor(secondsLeft / 60), secondsLeft % 60].map(value => String(value).padStart(2, "0")).join(":")
   const request = React.useRef(0)
   const connector = getDesktopWorkbenchBridge()?.connector
 
   React.useEffect(() => () => { request.current++ }, [])
   React.useEffect(() => {
     if (state?.phase !== "ready") return
-    const checkExpiry = () => {
-      if (Date.now() >= state.pairing.expiresAt) {
+    let timer: number
+    const updateCountdown = () => {
+      window.clearTimeout(timer)
+      const currentTime = Date.now()
+      const remaining = state.pairing.expiresAt - currentTime
+      if (remaining <= 0) {
         setState(current => current === state ? { phase: "expired", pairing: state.pairing } : current)
+        return
       }
+      setNow(currentTime)
+      timer = window.setTimeout(updateCountdown, remaining % 1000 || 1000)
     }
-    const timer = window.setTimeout(checkExpiry, Math.max(0, state.pairing.expiresAt - Date.now()))
-    window.addEventListener("focus", checkExpiry)
-    document.addEventListener("visibilitychange", checkExpiry)
+    updateCountdown()
+    window.addEventListener("focus", updateCountdown)
+    document.addEventListener("visibilitychange", updateCountdown)
     return () => {
       window.clearTimeout(timer)
-      window.removeEventListener("focus", checkExpiry)
-      document.removeEventListener("visibilitychange", checkExpiry)
+      window.removeEventListener("focus", updateCountdown)
+      document.removeEventListener("visibilitychange", updateCountdown)
     }
   }, [state])
 
@@ -58,8 +67,10 @@ export function MobilePairingCode() {
       const image = await QRCode.toDataURL(result.uri, { margin: 4, scale: 6 })
       if (current !== request.current) return
       const expiresAt = Date.parse(result.expiresAt)
+      const currentTime = Date.now()
+      setNow(currentTime)
       setState({
-        phase: expiresAt > Date.now() ? "ready" : "expired",
+        phase: expiresAt > currentTime ? "ready" : "expired",
         pairing: { image, uri: result.uri, fingerprint: result.fingerprint, expiresAt },
       })
     } catch {
@@ -99,8 +110,8 @@ export function MobilePairingCode() {
               )}
             </div>
             <div>{t("fingerprint")} <span className="font-mono font-medium">{pairing.fingerprint}</span></div>
-            <p role="status" className="text-muted-foreground">
-              {state.phase === "ready" ? t("validUntil", { time: format.dateTime(pairing.expiresAt, { timeStyle: "short" }) }) : t("expired")}
+            <p role={state.phase === "ready" ? "timer" : "status"} className="text-muted-foreground tabular-nums">
+              {state.phase === "ready" ? t("countdown", { time: countdown }) : t("expired")}
             </p>
           </div>
         )}

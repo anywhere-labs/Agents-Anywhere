@@ -2885,7 +2885,7 @@
       "title": "Pair a phone with this computer",
       "instructions": "On your phone, open this device in Agents Anywhere and select Pair under End-to-end encryption. Scan the code and compare the fingerprints before confirming.",
       "fingerprint": "Device fingerprint",
-      "validUntil": "One use · Expires at {time}",
+      "countdown": "One use · Expires in {time}",
       "copyLink": "Copy pairing link",
       "copied": "Pairing link copied.",
       "copyFailed": "Couldn’t copy the pairing link.",
