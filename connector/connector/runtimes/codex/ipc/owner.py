@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import mimetypes
 import os
+import re
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
@@ -55,6 +56,14 @@ QUEUE_DRAIN_STATUSES = frozenset({"idle", "error"})
 QUEUE_RETRY_DELAYS = (2.0, 5.0, 15.0, 30.0)
 NEW_THREAD_SOURCE = "codex.thread/start"
 STATE_VERSION_NOTE = "agents-anywhere-owner"
+# The Codex App files a local thread under its chats (no project) when the
+# thread's cwd is one of the dated folders it creates under Documents/Codex;
+# group 1 is the chats root. Same pattern as the App's own check.
+PROJECTLESS_CWD_RE = re.compile(
+    r"^(.*(?:^|[\\/])Documents[\\/]+Codex)[\\/]+"
+    r"(?:\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9-]*|\d{4}-\d{2}-\d{2}[\\/]+[a-z0-9][a-z0-9-]*)[\\/]*$",
+    re.ASCII,
+)
 
 FOLLOWER_METHODS = (
     "thread-follower-start-turn",
@@ -841,6 +850,10 @@ def conversation_state_from_thread(
     )
     permissions = _current_permissions(permission_settings, cwd)
     oldest = entries[0]["key"].removeprefix("turn:") if entries else None
+    # A following window takes workspaceKind from the snapshot as is, so it must
+    # match the App's own classification: a project thread reported as
+    # projectless leaves its project in the App as soon as it is opened there.
+    projectless_root = _projectless_root(cwd) if host_id == LOCAL_HOST_ID else None
     return {
         "id": thread_id,
         "hostId": host_id,
@@ -907,8 +920,8 @@ def conversation_state_from_thread(
             {"environmentId": host_id, "cwd": cwd, "runtimeWorkspaceRoots": [cwd] if cwd else []}
         ],
         "environmentSelectionEvidence": {"source": "live", "updatedAt": now_ms / 1000},
-        "workspaceKind": "projectless",
-        "workspaceBrowserRoot": cwd,
+        "workspaceKind": "project" if projectless_root is None else "projectless",
+        "workspaceBrowserRoot": projectless_root,
         "projectlessOutputDirectory": None,
         "shellEnvironmentPolicy": None,
         "boundedCloudHistory": None,
@@ -976,6 +989,13 @@ def _turn_entity(
         "mcpAppModelContextAttachments": [],
         "hookRuns": [],
     }
+
+
+def _projectless_root(cwd: Any) -> str | None:
+    if not isinstance(cwd, str):
+        return None
+    match = PROJECTLESS_CWD_RE.match(cwd.strip())
+    return match.group(1) if match else None
 
 
 def _current_permissions(
