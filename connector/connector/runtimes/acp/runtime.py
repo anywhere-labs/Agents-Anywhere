@@ -280,7 +280,7 @@ class AcpRuntime(AgentRuntime):
         ))
         snapshot = self.app.configurations.snapshot(session_id)
         categories = {item.get("category") for item in snapshot.options}
-        for category in ("model", "permission"):
+        for category in ("model", "effort", "permission"):
             supported = category in categories
             capabilities.append(
                 RuntimeCapability(
@@ -735,10 +735,18 @@ class AcpRuntime(AgentRuntime):
     ):
         self.agent_capabilities.context(session_id, external_session_id)
         snapshot = self.app.configurations.snapshot(session_id)
-        values = {}
+        from .domain.catalogs import PREFIX, decode_selection
+
+        decoded = {}
         for category, value in selections.items():
             if value is None:
                 continue
+            if isinstance(value, str) and value.startswith(PREFIX):
+                decoded.update(decode_selection(value))
+            else:
+                decoded[category] = value
+        values = {}
+        for category, value in decoded.items():
             option = next(
                 (item for item in snapshot.options if item.get("category") == category),
                 None,
