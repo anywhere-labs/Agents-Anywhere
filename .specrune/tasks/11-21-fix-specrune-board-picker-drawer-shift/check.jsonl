@@ -1,0 +1,2 @@
+{"file":".specrune/spec/ios/duo-layout.md","reason":"验收对照：抽屉/导航栏行为与模拟器验证方法"}
+{"file":".specrune/spec/ios/index.md","reason":"验收对照：UI 改动必须模拟器实跑"}
