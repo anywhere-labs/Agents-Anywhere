@@ -79,3 +79,17 @@
 - **内屏回归未实测**：模拟器当前合盖，DeviceHub 折叠按钮操作失败。等价性论证：`SidebarDrawerNativeSplitView` 不设置 `sidebarDrawerObscuresDetail`（默认 false），原代码在内屏即 `.toolbar(.visible)`，移除隐藏与内屏行为等价。
 - **真机未复验**：DiPhone 已安装新构建，但设备锁屏无法启动（`BSErrorCodeDescription = Locked`）；需用户解锁后观察抽屉开合是否有导航栏闪现。
 - **「探测中」与「设备无项目」空态未实测**：现有设备 15 个项目且探测过快，代码路径存在但无实跑证据。
+
+## 抽屉动效重构（2026-11-21 深夜迭代，用户驱动）
+
+**toolbar 漂移根因**（60fps 逐帧实测）：关闭抽屉时系统把竖排 toolbar 短暂切成顶部水平布局再回来（约 0.13s）。已逐一排除：卡片形状切换、位移幅度（0.5 屏宽仍复现）、抽屉状态环境值、位移实现（offset 替代 GeometryEffect）、导航栏恢复时机（延迟 150ms）、`axisBehavior(.verticalPreferred)`、隐藏导航栏、不渲染 toolbar 按钮、透明按钮（系统 toolbar 不重画内容）。
+
+**最终定位**：卡片位移本身让系统在动画结束时重新解析 `toolbarVerticalBehavior`（Apple 文档确认值变化会触发内容重排过渡）。卡片不位移后逐帧验证零重排。
+
+**方案（用户确认）**：
+- 卡片固定不位移，侧栏滑出覆盖；导航栏全程不动。
+- 侧栏用 `.background(.ultraThinMaterial)` 玻璃材质（`glassEffect` 的玻璃层固定在布局位置、不跟随位移，会提前露出标题）。
+- 标题条放布局流并**单独加同步位移**（`safeAreaBar`/`safeAreaInset` 固定在安全区；父级 offset 也不会带着它走，模拟器/真机实测）。
+- 删除不再使用的 `SidebarDrawerTranslation` 与缩放/遮罩配置。
+
+**验证**：模拟器 60fps 逐帧（toolbar 零重排、标题跟随滑入/滑出）+ 真机用户验收（「都正常了」）。提交 `e5191d47`。
