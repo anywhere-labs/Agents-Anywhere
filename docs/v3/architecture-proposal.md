@@ -1,6 +1,6 @@
 # AA v3 总体架构：控制面、隧道、聚合 RPC 与 MCP
 
-状态：已定稿（待实现）。加密设备的准入与端到端加密见 [e2ee-admission-proposal.md](e2ee-admission-proposal.md)；会话数据模型和 RPC 形状沿用 `v3poc/protocol/`（照搬 Effi Cloud 的 `cloud.v1.Conversations`）。本文所说的 MeshCall 能力以 meshcall `main`（ce14d60）为准，其中隧道、E2E 隧道、可续期 Token 和 Swift / JVM SDK 都在 0.3.0 之后合入，**尚未发版**。
+状态：已定稿（待实现）。加密设备的准入与端到端加密见 [e2ee-admission-proposal.md](e2ee-admission-proposal.md)；会话数据模型和 RPC 形状沿用 `v3poc/protocol/`（照搬 Effi Cloud 的 `cloud.v1.Conversations`）。本文依赖的 MeshCall 能力（隧道、双向 E2EE `Noise_IK`/`IKpsk2`、`require_e2e_peer`、`issue_token` 自定义 `principal` 透传、可续期 Token 与 5 端 SDK）均已在 **`meshcall v0.4.0`** 正式发版。
 
 ## 1. 已确定的前提
 
@@ -192,26 +192,24 @@ MCP 的调用结果会经过控制面内存，这一点和普通设备的聚合 
 - 重启的代价：Router 一重启，连在它上面的设备和客户端都要回控制面重新领凭据。控制面的签发接口要限流，客户端和 Connector 重试要带随机退避。
 - 容量：单个 Router 能承受多少连接和流还没测，上线前要压测。Router 之间互联（peering）还在分支上，本设计不依赖它。
 
-## 8. 需要 MeshCall 上游做的（除准入设计稿第 8 节之外）
+## 8. MeshCall 上游前置（已完成，随 `v0.4.0` 发版）
 
-1. `issue_token` 支持签发方自定的 `principal`，Router 在调用上设置 `meshcall-token-principal`，服务通过 `ctx` 读到（第 3.1 节）。
-2. 发版：隧道、E2E、可续期 Token、Swift / JVM SDK 都需要进入一个正式版本，AA 才能固定依赖。
+1. `issue_token` 支持签发方自定的 `principal`，Router 在调用上设置 `meshcall-token-principal`，服务通过 `ctx` 读到（第 3.1 节）——已合入 `meshcall#79`。
+2. 正式发版：隧道、双向 E2EE、可续期 Token、5 端 SDK 均已随 `meshcall v0.4.0`（及 `meshcall-go/v0.4.0`）发布。
 
 ## 9. 和 v2 的关系
 
 v3 是架构变更（`3.0.0`）。v2 的 Timeline 存储、`/api/v2` 实时通道和 Connector 的 v2 上报路径在 v3 中都不再存在，数据迁移和停服窗口另写文档。本文不讨论 v2 兼容。
 
-## 10. 已确认的决策与后续专项
+## 10. 已确认的决策
 
-已定稿的决策（2026-11-20）：
+已全部定稿（2026-11-20～2026-11-21）：
 
-1. **控制面接口形式**：注册为 MeshCall 服务 `aa.v3.Control`，由 MeshCall 上游补齐 `issue_token` 的自定义 `principal` 透传。
+1. **控制面接口形式**：注册为 MeshCall 服务 `aa.v3.Control`，借助 `meshcall v0.4.0` 的 `meshcall-token-principal` 识别调用者身份。
 2. **普通设备的单设备操作**：统一走 MeshCall 隧道，与加密设备复用同一条客户端调用路径，控制面不承接对话流量。
 3. **聚合 `watch`（第 4.3 节）**：首版不做，先提供流式 `list_sessions` 加客户端刷新，后续按需演进。
 4. **MCP 审批工具**：保留 `answer_approval`，授权页默认不勾选。
 5. **加密设备元数据**：仅上报在线状态、Connector 版本、平台和设备名称（注册时提示用户名称对服务端可见），不上报可用 Runtime、能力和会话数。
 6. **`DeviceAdmin` 方法清单**：固定为 `ping`、`close_tunnel_sessions`、`check_update`、`rename` 四项。
-
-后续另写专项文档：
-
-- **推送通知**：加密设备的通知内容如何用客户端公钥加密后经服务端转发，单独成稿，不阻塞主架构和 MeshCall 上游开工。
+7. **控制面存储与内部广播**：采用 **PostgreSQL + Redis 单一实现**（在线态 TTL、多实例 `watch_devices` Pub/Sub、限流及推送重试统一收口在 Redis，不上独立 MQ，不做无 Redis 双轨）。
+8. **推送通知**：**加密设备一律不发正文**，仅推不含内容的通用提醒（例如新动态/待审批），打开客户端建立加密隧道后再查看详情，不做端到端密文推送与移动端推送解密扩展。
