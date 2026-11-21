@@ -26,7 +26,7 @@
 
 ### Web 与 Desktop 界面
 
-- 修复 ACP Agent 会话创建后推理强度选项不可用的问题：重新打开会话后仍可切换模型与推理强度，修改会保存并在下一轮生效。（[#775](https://github.com/anywhere-labs/Agents-Anywhere/issues/775)）
+- 修复 ACP Agent 会话创建后推理强度选项不可用的问题：重新打开会话后仍可切换模型与推理强度，修改会保存并在下一轮生效。（[#801](https://github.com/anywhere-labs/Agents-Anywhere/pull/801)）
 
 ### Android
 
