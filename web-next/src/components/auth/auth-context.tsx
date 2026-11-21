@@ -10,6 +10,7 @@ import {
 } from "@/features/auth/session"
 import type { AuthMe, OAuthFinalizePayload, StoredSession } from "@/features/auth/types"
 import { useTranslations } from "next-intl"
+import { isApiError } from "@/lib/api"
 import { authFlowHash, clearAuthFlow, rememberAuthFlow, takeAuthFlow } from "@/features/auth/continuation"
 
 export type AuthScreen =
@@ -52,6 +53,10 @@ type AuthState = {
   registrationOpen: boolean
   navigate: (screen: AuthScreen) => void
   login: (input: { email: string; password: string }) => Promise<void>
+  /** Set while password sign-in waits for a two-step verification code. */
+  totpChallenge: string | null
+  submitTotp: (code: string) => Promise<void>
+  cancelTotp: () => void
   register: (input: { email: string; displayName: string; password: string; code?: string; setupToken?: string }) => Promise<void>
   startOAuth: () => Promise<void>
   finalizeOAuth: (input: { email?: string; displayName?: string; code?: string; password?: string; setPassword?: boolean }) => Promise<void>
@@ -175,6 +180,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [oauthEnabled, setOauthEnabled] = React.useState(false)
   const [oauthProviderLabel, setOauthProviderLabel] = React.useState<string | null>(null)
   const [oauthPending, setOauthPending] = React.useState<OAuthPending | null>(null)
+  const [totpChallenge, setTotpChallenge] = React.useState<string | null>(null)
   const [emailVerificationRequired, setEmailVerificationRequired] = React.useState(false)
   const [passwordResetEnabled, setPasswordResetEnabled] = React.useState(false)
   const refreshConfig = React.useCallback(async () => {
@@ -318,6 +324,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         await finishAuth(await authApi.login(input))
       } catch (err) {
+        const challenge = totpChallengeFrom(err)
+        if (challenge) {
+          setTotpChallenge(challenge)
+          return
+        }
         setError(err instanceof Error ? err.message : t("errors.loginFailed"))
         throw err
       } finally {
@@ -326,6 +337,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     },
     [finishAuth, t],
   )
+
+  const submitTotp = React.useCallback(
+    async (code: string) => {
+      if (!totpChallenge) return
+      setLoading(true)
+      setError(null)
+      try {
+        await finishAuth(await authApi.loginTotp(totpChallenge, code))
+        setTotpChallenge(null)
+      } catch (err) {
+        if (isApiError(err) && err.code === "totp_challenge_expired") setTotpChallenge(null)
+        setError(totpErrorMessage(err, t))
+        throw err
+      } finally {
+        setLoading(false)
+      }
+    },
+    [finishAuth, t, totpChallenge],
+  )
+
+  const cancelTotp = React.useCallback(() => {
+    setTotpChallenge(null)
+    setError(null)
+  }, [])
 
   const register = React.useCallback(
     async (input: { email: string; displayName: string; password: string; code?: string; setupToken?: string }) => {
@@ -406,6 +441,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setSession(null)
     setMe(null)
     setOauthPending(null)
+    setTotpChallenge(null)
     window.location.hash = "#/signed-out"
     setScreenState("signed-out")
   }, [])
@@ -430,6 +466,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         navigate,
 
         login,
+        totpChallenge,
+        submitTotp,
+        cancelTotp,
         register,
         startOAuth,
         finalizeOAuth,
@@ -441,4 +480,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       {children}
     </AuthContext.Provider>
   )
+}
+
+function totpChallengeFrom(error: unknown): string | null {
+  if (!isApiError(error) || error.code !== "totp_required") return null
+  const payload = error.payload as { detail?: { challengeToken?: unknown } } | undefined
+  const token = payload?.detail?.challengeToken
+  return typeof token === "string" && token ? token : null
+}
+
+function totpErrorMessage(error: unknown, t: (key: string) => string): string {
+  if (isApiError(error)) {
+    if (error.code === "totp_invalid_code") return t("errors.totpInvalid")
+    if (error.code === "totp_locked") return t("errors.totpLocked")
+    if (error.code === "totp_challenge_expired") return t("errors.totpExpired")
+  }
+  return error instanceof Error ? error.message : t("errors.loginFailed")
 }

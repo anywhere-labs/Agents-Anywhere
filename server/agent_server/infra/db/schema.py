@@ -201,6 +201,32 @@ users = Table(
 )
 
 
+# Authenticator-app two-step verification. ``secret_sealed`` is encrypted with
+# the secret box. A row with ``enabled_at`` NULL is a setup that has not been
+# confirmed with a code yet and does not affect sign-in.
+user_totp = Table(
+    "user_totp",
+    metadata,
+    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
+    Column("secret_sealed", Text, nullable=False),
+    Column("enabled_at", Text),
+    Column("last_used_step", BigInteger),
+    Column("failed_attempts", Integer, nullable=False, server_default="0"),
+    Column("locked_until", BigInteger),
+    Column("created_at", Text, nullable=False),
+    Column("updated_at", Text, nullable=False),
+)
+
+user_totp_recovery_codes = Table(
+    "user_totp_recovery_codes",
+    metadata,
+    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
+    Column("code_hash", Text, primary_key=True),
+    Column("used_at", Text),
+    Column("created_at", Text, nullable=False),
+)
+
+
 email_verification_codes = Table(
     "email_verification_codes",
     metadata,

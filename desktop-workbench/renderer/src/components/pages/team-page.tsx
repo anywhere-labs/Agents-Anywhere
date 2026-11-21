@@ -11,6 +11,7 @@ import {
   Plus,
   Search,
   Shield,
+  ShieldOff,
   Trash2,
   UserRound,
   Users,
@@ -200,6 +201,21 @@ export function TeamPage() {
     }
   }
 
+  const handleResetTotp = async (user: AdminUser) => {
+    if (!session?.accessToken || rowBusyUserId) return
+    if (!window.confirm(t("resetTotpConfirm", { user: user.email ?? user.userId }))) return
+    setRowBusyUserId(user.userId)
+    setError(null)
+    try {
+      await authApi.resetUserTotp(session.accessToken, user.userId)
+      toast.success(t("resetTotpDone"))
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t("updateFailed"))
+    } finally {
+      setRowBusyUserId(null)
+    }
+  }
+
   const handleToggleRole = async (user: AdminUser) => {
     if (!session?.accessToken || rowBusyUserId) return
     const nextRole: UserRole = user.role === "admin" ? "member" : "admin"
@@ -360,6 +376,7 @@ export function TeamPage() {
                           onEdit={() => setEditingUser(user)}
                           onToggleDisabled={() => void handleToggleDisabled(user)}
                           onToggleRole={() => void handleToggleRole(user)}
+                          onResetTotp={() => void handleResetTotp(user)}
                           onDelete={() => setDeleteUser(user)}
                         />
                       </TableCell>
@@ -434,6 +451,7 @@ function UserContextMenu({
   onEdit,
   onToggleDisabled,
   onToggleRole,
+  onResetTotp,
   onDelete,
 }: {
   user: AdminUser
@@ -443,6 +461,7 @@ function UserContextMenu({
   onEdit: () => void
   onToggleDisabled: () => void
   onToggleRole: () => void
+  onResetTotp: () => void
   onDelete: () => void
 }) {
   const t = useTranslations("pages.team")
@@ -471,6 +490,10 @@ function UserContextMenu({
         <DropdownMenuItem className="gap-2.5" onSelect={onToggleRole} disabled={isYou}>
           <Shield data-icon="inline-start" />
           {user.role === "admin" ? t("demote") : t("promote")}
+        </DropdownMenuItem>
+        <DropdownMenuItem className="gap-2.5" onSelect={onResetTotp} disabled={isYou}>
+          <ShieldOff data-icon="inline-start" />
+          {t("resetTotp")}
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem className="gap-2.5 text-destructive focus:text-destructive" onSelect={onDelete} disabled={isYou}>

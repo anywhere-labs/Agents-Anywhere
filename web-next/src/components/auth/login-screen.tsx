@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Globe, User, Lock, Eye, EyeOff } from "lucide-react"
+import { Globe, User, Lock, Eye, EyeOff, ShieldCheck } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Field, FieldError, FieldGroup, FieldLabel as Label } from "@/components/ui/field"
 import { isValidEmail } from "@/features/auth/account-profile"
@@ -12,7 +12,7 @@ import { PrivacyNotice } from "./privacy-notice"
 import { useTranslations } from "next-intl"
 
 export function LoginScreen() {
-  const { navigate, login, loading, error, oauthEnabled, oauthProviderLabel, registrationOpen, passwordResetEnabled, startOAuth } = useAuth()
+  const { navigate, login, loading, error, oauthEnabled, oauthProviderLabel, registrationOpen, passwordResetEnabled, startOAuth, totpChallenge } = useAuth()
   const t = useTranslations("auth")
   const [showPassword, setShowPassword] = useState(false)
   const [email, setEmail] = useState("")
@@ -23,6 +23,8 @@ export function LoginScreen() {
     if (loading || !isValidEmail(email) || !password) return
     await login({ email, password }).catch(() => undefined)
   }
+
+  if (totpChallenge) return <TotpStep />
 
   return (
     <AuthShell>
@@ -137,6 +139,74 @@ export function LoginScreen() {
           ) : null}
 
           <PrivacyNotice message={t("login.privacyNotice")} />
+        </FieldGroup>
+      </form>
+    </AuthShell>
+  )
+}
+
+function TotpStep() {
+  const { submitTotp, cancelTotp, loading, error } = useAuth()
+  const t = useTranslations("auth")
+  const [code, setCode] = useState("")
+  const [useRecovery, setUseRecovery] = useState(false)
+  const ready = useRecovery ? code.trim().length >= 8 : /^\d{6}$/.test(code.trim())
+
+  const submit = async () => {
+    if (loading || !ready) return
+    await submitTotp(code).catch(() => setCode(""))
+  }
+
+  return (
+    <AuthShell>
+      <div className="flex flex-col items-center gap-2 text-center mb-8">
+        <h1 className="text-2xl font-bold tracking-tight">{t("totp.title")}</h1>
+        <p className="text-sm text-muted-foreground leading-relaxed">
+          {useRecovery ? t("totp.recoveryDescription") : t("totp.description")}
+        </p>
+      </div>
+      <form noValidate onSubmit={(event) => { event.preventDefault(); void submit() }}>
+        <FieldGroup>
+          <Field>
+            <Label htmlFor="login-totp">{useRecovery ? t("totp.recoveryLabel") : t("totp.codeLabel")}</Label>
+            <InputGroup className="h-11 rounded-lg">
+              <InputGroupAddon><ShieldCheck className="size-4" /></InputGroupAddon>
+              <InputGroupInput
+                id="login-totp"
+                value={code}
+                onChange={(event) => setCode(event.currentTarget.value)}
+                placeholder={useRecovery ? "xxxxx-xxxxx" : "123456"}
+                inputMode={useRecovery ? "text" : "numeric"}
+                autoComplete="one-time-code"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                maxLength={useRecovery ? 32 : 6}
+                autoFocus
+                className="code-mono tracking-widest"
+              />
+            </InputGroup>
+          </Field>
+          <Button className="h-11 w-full font-medium" disabled={loading || !ready} type="submit">
+            {loading ? t("login.signingIn") : t("totp.verify")}
+          </Button>
+          {error ? <p className="text-center text-sm text-destructive">{error}</p> : null}
+          <div className="flex flex-col items-center gap-1 text-sm">
+            <button
+              type="button"
+              className="font-medium text-foreground underline-offset-4 hover:underline"
+              onClick={() => { setUseRecovery((value) => !value); setCode("") }}
+            >
+              {useRecovery ? t("totp.useAuthenticator") : t("totp.useRecovery")}
+            </button>
+            <button
+              type="button"
+              className="text-muted-foreground underline-offset-4 hover:underline"
+              onClick={cancelTotp}
+            >
+              {t("totp.back")}
+            </button>
+          </div>
         </FieldGroup>
       </form>
     </AuthShell>

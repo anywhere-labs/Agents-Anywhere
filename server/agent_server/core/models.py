@@ -315,6 +315,33 @@ class ChangePasswordRequest(BaseModel):
     code: str | None = Field(default=None, max_length=6)
 
 
+class AuthTotpLoginRequest(BaseModel):
+    challengeToken: str = Field(min_length=1, max_length=2048)
+    code: str = Field(min_length=1, max_length=64)
+
+
+class TotpCodeRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=64)
+
+
+class TotpStatusResponse(BaseModel):
+    enabled: bool
+    pendingSetup: bool = False
+    recoveryCodesRemaining: int = 0
+    serverTime: str
+
+
+class TotpSetupResponse(BaseModel):
+    secret: str
+    otpauthUri: str
+    serverTime: str
+
+
+class TotpRecoveryCodesResponse(BaseModel):
+    recoveryCodes: list[str]
+    serverTime: str
+
+
 class UpdateAvatarRequest(BaseModel):
     avatar: str = Field(min_length=1)
 

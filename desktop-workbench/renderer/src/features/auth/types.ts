@@ -24,6 +24,32 @@ export type AuthResponse = {
   serverTime: string;
 };
 
+/** Returned in the 401 detail when the account has two-step verification. */
+export type TotpLoginChallenge = {
+  code: "totp_required";
+  message: string;
+  challengeToken: string;
+  expiresIn: number;
+};
+
+export type TotpStatus = {
+  enabled: boolean;
+  pendingSetup: boolean;
+  recoveryCodesRemaining: number;
+  serverTime: string;
+};
+
+export type TotpSetup = {
+  secret: string;
+  otpauthUri: string;
+  serverTime: string;
+};
+
+export type TotpRecoveryCodes = {
+  recoveryCodes: string[];
+  serverTime: string;
+};
+
 export type AuthMe = {
   userId: string;
   email: string | null;
