@@ -1,0 +1,238 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agents-anywhere.dev/contracts/aa-v3/1.0/control.schema.json",
+  "title": "AA v3 Control Plane and DeviceAdmin Contract",
+  "description": "Data shapes for aa.v3.Control (registered on MeshCall Router) and aa.v3.DeviceAdmin (registered on Connector).",
+  "$defs": {
+    "ID": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "Instant": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 UTC timestamp."
+    },
+    "DeviceMode": {
+      "type": "string",
+      "enum": ["normal", "encrypted"],
+      "description": "Server-side mode hint. For encrypted devices, the client's local trust store is authoritative and never downgraded by the server."
+    },
+    "DevicePlatform": {
+      "type": "string",
+      "enum": ["macos", "linux", "windows"]
+    },
+    "PresenceState": {
+      "type": "string",
+      "enum": ["online", "offline"]
+    },
+    "DeviceError": {
+      "type": "object",
+      "required": ["code", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string" }
+      }
+    },
+    "NormalDeviceSummary": {
+      "type": "object",
+      "description": "Optional runtime summary reported ONLY by normal-mode devices. Encrypted devices MUST omit this object.",
+      "additionalProperties": false,
+      "properties": {
+        "runtimes": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "active_sessions": { "type": "integer", "minimum": 0 },
+        "pending_approvals": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "DeviceRecord": {
+      "type": "object",
+      "required": ["id", "name", "platform", "connector_version", "mode_hint", "presence", "created_at", "last_seen_at"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/ID" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "platform": { "$ref": "#/$defs/DevicePlatform" },
+        "connector_version": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "mode_hint": { "$ref": "#/$defs/DeviceMode" },
+        "presence": { "$ref": "#/$defs/PresenceState" },
+        "created_at": { "$ref": "#/$defs/Instant" },
+        "last_seen_at": { "$ref": "#/$defs/Instant" },
+        "summary": { "$ref": "#/$defs/NormalDeviceSummary" }
+      }
+    },
+    "PresenceReport": {
+      "type": "object",
+      "description": "Item sent by Connector over aa.v3.Control/presence client stream.",
+      "required": ["device_id", "platform", "connector_version", "mode_hint", "sent_at"],
+      "additionalProperties": false,
+      "properties": {
+        "device_id": { "$ref": "#/$defs/ID" },
+        "platform": { "$ref": "#/$defs/DevicePlatform" },
+        "connector_version": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "mode_hint": { "$ref": "#/$defs/DeviceMode" },
+        "sent_at": { "$ref": "#/$defs/Instant" },
+        "summary": { "$ref": "#/$defs/NormalDeviceSummary" }
+      }
+    },
+    "WatchDevicesEvent": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["type", "devices"],
+          "additionalProperties": false,
+          "properties": {
+            "type": { "const": "snapshot" },
+            "devices": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/DeviceRecord" }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["type", "device"],
+          "additionalProperties": false,
+          "properties": {
+            "type": { "const": "upsert" },
+            "device": { "$ref": "#/$defs/DeviceRecord" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["type", "device_id"],
+          "additionalProperties": false,
+          "properties": {
+            "type": { "const": "remove" },
+            "device_id": { "$ref": "#/$defs/ID" }
+          }
+        }
+      ]
+    },
+    "OpenTunnelRequest": {
+      "type": "object",
+      "required": ["device_id"],
+      "additionalProperties": false,
+      "properties": {
+        "device_id": { "$ref": "#/$defs/ID" },
+        "client_id": { "$ref": "#/$defs/ID" }
+      }
+    },
+    "OpenTunnelResponse": {
+      "type": "object",
+      "required": ["router_url", "credential", "tunnel_id", "expires_at", "mode"],
+      "additionalProperties": false,
+      "properties": {
+        "router_url": { "type": "string", "format": "uri" },
+        "credential": { "type": "string", "pattern": "^mtun_" },
+        "tunnel_id": { "$ref": "#/$defs/ID" },
+        "expires_at": { "$ref": "#/$defs/Instant" },
+        "mode": { "$ref": "#/$defs/DeviceMode" }
+      }
+    },
+    "SessionSummary": {
+      "type": "object",
+      "description": "Mirrors v3poc/protocol/timeline.ts SessionSummary.",
+      "required": ["id", "title", "agent", "device_id", "cwd", "state", "unread", "pinned", "updated_at"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/ID" },
+        "title": { "type": "string" },
+        "agent": { "type": "string", "minLength": 1 },
+        "device_id": { "$ref": "#/$defs/ID" },
+        "cwd": { "type": "string" },
+        "state": { "type": "string", "enum": ["idle", "running", "error", "disconnected", "waiting"] },
+        "unread": { "type": "boolean" },
+        "pinned": { "type": "boolean" },
+        "updated_at": { "$ref": "#/$defs/Instant" }
+      }
+    },
+    "SessionListPayload": {
+      "type": "object",
+      "required": ["sessions", "projects"],
+      "additionalProperties": false,
+      "properties": {
+        "sessions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/SessionSummary" }
+        },
+        "projects": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "DeviceSessionResult": {
+      "type": "object",
+      "required": ["device_id", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "device_id": { "$ref": "#/$defs/ID" },
+        "status": {
+          "type": "string",
+          "enum": ["ok", "offline", "timeout", "error", "encrypted"]
+        },
+        "value": { "$ref": "#/$defs/SessionListPayload" },
+        "error": { "$ref": "#/$defs/DeviceError" }
+      }
+    },
+    "ListSessionsRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "device_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ID" }
+        },
+        "limit_per_device": { "type": "integer", "minimum": 1, "maximum": 500 }
+      }
+    },
+    "ListSessionsOnceResponse": {
+      "type": "object",
+      "required": ["results"],
+      "additionalProperties": false,
+      "properties": {
+        "results": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/DeviceSessionResult" }
+        }
+      }
+    },
+    "DeviceAdminPingResponse": {
+      "type": "object",
+      "required": ["ok", "server_time"],
+      "additionalProperties": false,
+      "properties": {
+        "ok": { "const": true },
+        "server_time": { "$ref": "#/$defs/Instant" }
+      }
+    },
+    "DeviceAdminCloseTunnelSessionsRequest": {
+      "type": "object",
+      "required": ["tunnel_id"],
+      "additionalProperties": false,
+      "properties": {
+        "tunnel_id": { "$ref": "#/$defs/ID" }
+      }
+    },
+    "DeviceAdminCheckUpdateRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "channel": { "type": "string" }
+      }
+    },
+    "DeviceAdminRenameRequest": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 128 }
+      }
+    }
+  }
+}

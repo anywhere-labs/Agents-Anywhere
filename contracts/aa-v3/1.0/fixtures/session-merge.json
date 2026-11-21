@@ -1,0 +1,366 @@
+{
+  "contract": "aa-v3",
+  "version": "1.0",
+  "description": "Shared cross-client test fixtures for merging normal-device control-plane fanout results and encrypted-device client-side tunnel results.",
+  "cases": [
+    {
+      "name": "mixed_normal_and_encrypted_devices_sort_by_pinned_then_updated_at_desc",
+      "initial_cache": {},
+      "local_e2ee_devices": ["dev-enc-1"],
+      "events": [
+        {
+          "source": "control_plane",
+          "result": {
+            "device_id": "dev-norm-1",
+            "status": "ok",
+            "value": {
+              "projects": ["/work/aa"],
+              "sessions": [
+                {
+                  "id": "s-norm-old",
+                  "title": "Normal older",
+                  "agent": "claude",
+                  "device_id": "dev-norm-1",
+                  "cwd": "/work/aa",
+                  "state": "idle",
+                  "unread": false,
+                  "pinned": false,
+                  "updated_at": "2026-11-20T09:00:00Z"
+                },
+                {
+                  "id": "s-norm-pinned",
+                  "title": "Pinned normal",
+                  "agent": "codex",
+                  "device_id": "dev-norm-1",
+                  "cwd": "/work/aa",
+                  "state": "running",
+                  "unread": true,
+                  "pinned": true,
+                  "updated_at": "2026-11-20T08:00:00Z"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "source": "control_plane",
+          "result": {
+            "device_id": "dev-enc-1",
+            "status": "encrypted"
+          }
+        },
+        {
+          "source": "client_tunnel",
+          "result": {
+            "device_id": "dev-enc-1",
+            "status": "ok",
+            "value": {
+              "projects": ["/secret/repo"],
+              "sessions": [
+                {
+                  "id": "s-enc-new",
+                  "title": "Encrypted newest",
+                  "agent": "claude",
+                  "device_id": "dev-enc-1",
+                  "cwd": "/secret/repo",
+                  "state": "waiting",
+                  "unread": true,
+                  "pinned": false,
+                  "updated_at": "2026-11-20T10:30:00Z"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "expected": {
+        "session_order": ["s-norm-pinned", "s-enc-new", "s-norm-old"],
+        "device_states": {
+          "dev-norm-1": { "status": "ok", "stale": false },
+          "dev-enc-1": { "status": "ok", "stale": false }
+        }
+      }
+    },
+    {
+      "name": "control_plane_encrypted_marker_arriving_late_never_wipes_client_tunnel_data",
+      "initial_cache": {},
+      "local_e2ee_devices": ["dev-enc-1"],
+      "events": [
+        {
+          "source": "client_tunnel",
+          "result": {
+            "device_id": "dev-enc-1",
+            "status": "ok",
+            "value": {
+              "projects": ["/secret/repo"],
+              "sessions": [
+                {
+                  "id": "s-enc-1",
+                  "title": "Encrypted live",
+                  "agent": "codex",
+                  "device_id": "dev-enc-1",
+                  "cwd": "/secret/repo",
+                  "state": "idle",
+                  "unread": false,
+                  "pinned": false,
+                  "updated_at": "2026-11-20T11:00:00Z"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "source": "control_plane",
+          "result": {
+            "device_id": "dev-enc-1",
+            "status": "encrypted"
+          }
+        }
+      ],
+      "expected": {
+        "session_order": ["s-enc-1"],
+        "device_states": {
+          "dev-enc-1": { "status": "ok", "stale": false }
+        }
+      }
+    },
+    {
+      "name": "same_device_ok_replaces_entire_device_slice",
+      "initial_cache": {
+        "dev-norm-1": {
+          "projects": ["/old"],
+          "sessions": [
+            {
+              "id": "s-deleted",
+              "title": "Deleted session",
+              "agent": "claude",
+              "device_id": "dev-norm-1",
+              "cwd": "/old",
+              "state": "idle",
+              "unread": false,
+              "pinned": false,
+              "updated_at": "2026-11-20T07:00:00Z"
+            }
+          ]
+        }
+      },
+      "local_e2ee_devices": [],
+      "events": [
+        {
+          "source": "control_plane",
+          "result": {
+            "device_id": "dev-norm-1",
+            "status": "ok",
+            "value": {
+              "projects": ["/new"],
+              "sessions": [
+                {
+                  "id": "s-current",
+                  "title": "Current session",
+                  "agent": "claude",
+                  "device_id": "dev-norm-1",
+                  "cwd": "/new",
+                  "state": "running",
+                  "unread": false,
+                  "pinned": false,
+                  "updated_at": "2026-11-20T12:00:00Z"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "expected": {
+        "session_order": ["s-current"],
+        "device_states": {
+          "dev-norm-1": { "status": "ok", "stale": false }
+        }
+      }
+    },
+    {
+      "name": "offline_or_timeout_preserves_cached_sessions_as_stale_without_affecting_online_devices",
+      "initial_cache": {
+        "dev-offline": {
+          "projects": ["/cached"],
+          "sessions": [
+            {
+              "id": "s-cached",
+              "title": "Cached while offline",
+              "agent": "claude",
+              "device_id": "dev-offline",
+              "cwd": "/cached",
+              "state": "idle",
+              "unread": false,
+              "pinned": false,
+              "updated_at": "2026-11-20T10:00:00Z"
+            }
+          ]
+        }
+      },
+      "local_e2ee_devices": [],
+      "events": [
+        {
+          "source": "control_plane",
+          "result": {
+            "device_id": "dev-offline",
+            "status": "offline"
+          }
+        },
+        {
+          "source": "control_plane",
+          "result": {
+            "device_id": "dev-online",
+            "status": "ok",
+            "value": {
+              "projects": ["/live"],
+              "sessions": [
+                {
+                  "id": "s-live",
+                  "title": "Online session",
+                  "agent": "codex",
+                  "device_id": "dev-online",
+                  "cwd": "/live",
+                  "state": "running",
+                  "unread": false,
+                  "pinned": false,
+                  "updated_at": "2026-11-20T09:00:00Z"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "expected": {
+        "session_order": ["s-cached", "s-live"],
+        "device_states": {
+          "dev-offline": { "status": "offline", "stale": true },
+          "dev-online": { "status": "ok", "stale": false }
+        }
+      }
+    },
+    {
+      "name": "locally_pinned_e2ee_device_rejects_plaintext_control_plane_downgrade",
+      "initial_cache": {
+        "dev-locked": {
+          "projects": ["/vault"],
+          "sessions": [
+            {
+              "id": "s-vault-cached",
+              "title": "Trusted cached",
+              "agent": "claude",
+              "device_id": "dev-locked",
+              "cwd": "/vault",
+              "state": "idle",
+              "unread": false,
+              "pinned": false,
+              "updated_at": "2026-11-20T08:00:00Z"
+            }
+          ]
+        }
+      },
+      "local_e2ee_devices": ["dev-locked"],
+      "events": [
+        {
+          "source": "control_plane",
+          "result": {
+            "device_id": "dev-locked",
+            "status": "ok",
+            "value": {
+              "projects": ["/forged"],
+              "sessions": [
+                {
+                  "id": "s-forged",
+                  "title": "Server lied mode=normal",
+                  "agent": "claude",
+                  "device_id": "dev-locked",
+                  "cwd": "/forged",
+                  "state": "idle",
+                  "unread": false,
+                  "pinned": false,
+                  "updated_at": "2026-11-20T23:00:00Z"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "expected": {
+        "session_order": ["s-vault-cached"],
+        "device_states": {
+          "dev-locked": { "status": "error", "stale": true, "error_code": "e2e_required_locally" }
+        }
+      }
+    },
+    {
+      "name": "tie_breaker_uses_device_id_then_session_id_ascending",
+      "initial_cache": {},
+      "local_e2ee_devices": [],
+      "events": [
+        {
+          "source": "control_plane",
+          "result": {
+            "device_id": "dev-b",
+            "status": "ok",
+            "value": {
+              "projects": ["/b"],
+              "sessions": [
+                {
+                  "id": "s-2",
+                  "title": "B2",
+                  "agent": "claude",
+                  "device_id": "dev-b",
+                  "cwd": "/b",
+                  "state": "idle",
+                  "unread": false,
+                  "pinned": false,
+                  "updated_at": "2026-11-20T12:00:00Z"
+                },
+                {
+                  "id": "s-1",
+                  "title": "B1",
+                  "agent": "claude",
+                  "device_id": "dev-b",
+                  "cwd": "/b",
+                  "state": "idle",
+                  "unread": false,
+                  "pinned": false,
+                  "updated_at": "2026-11-20T12:00:00Z"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "source": "control_plane",
+          "result": {
+            "device_id": "dev-a",
+            "status": "ok",
+            "value": {
+              "projects": ["/a"],
+              "sessions": [
+                {
+                  "id": "s-9",
+                  "title": "A9",
+                  "agent": "codex",
+                  "device_id": "dev-a",
+                  "cwd": "/a",
+                  "state": "idle",
+                  "unread": false,
+                  "pinned": false,
+                  "updated_at": "2026-11-20T12:00:00Z"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "expected": {
+        "session_order": ["s-9", "s-1", "s-2"],
+        "device_states": {
+          "dev-a": { "status": "ok", "stale": false },
+          "dev-b": { "status": "ok", "stale": false }
+        }
+      }
+    }
+  ]
+}
