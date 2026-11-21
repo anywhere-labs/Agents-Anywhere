@@ -60,6 +60,7 @@ jobs:
       connector: ${{ steps.paths.outputs.connector }}
       acp: ${{ steps.paths.outputs.acp }}
       server: ${{ steps.paths.outputs.server }}
+      server_v3: ${{ steps.paths.outputs.server_v3 }}
       web: ${{ steps.paths.outputs.web }}
       desktop: ${{ steps.paths.outputs.desktop }}
     steps:
@@ -76,6 +77,7 @@ jobs:
           connector=false
           acp=false
           server=false
+          server_v3=false
           web=false
           desktop=false
 
@@ -85,6 +87,7 @@ jobs:
             connector=true
             acp=true
             server=true
+            server_v3=true
             web=true
             desktop=true
           }
@@ -124,13 +127,14 @@ jobs:
                   ;;
                 connector/*) connector=true; acp=true; server=true; plugin=true ;;
                 server/*) server=true; plugin=true ;;
+                server-v3/*) server_v3=true ;;
                 web-next/*) web=true ;;
                 desktop-workbench/*) desktop=true ;;
               esac
             done < "$RUNNER_TEMP/changed-paths"
           fi
 
-          for scope in plugin connector acp server web desktop; do
+          for scope in plugin connector acp server server_v3 web desktop; do
             echo "$scope=${!scope}" >> "$GITHUB_OUTPUT"
             echo "$scope: ${!scope}"
           done
@@ -407,3 +411,56 @@ jobs:
           corepack yarn renderer:typecheck
           corepack yarn workspace agents-anywhere-desktop-renderer protocol:check
           corepack yarn test:main
+
+  server_v3:
+    name: Server v3 control plane
+    needs: changes
+    if: needs.changes.outputs.server_v3 == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: aa_control_test
+        ports:
+          - 5432:5432
+        options: >-
+          --tmpfs /var/lib/postgresql/data:rw
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      AA_CONTROL_TEST_DB_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/aa_control_test
+      AA_CONTROL_TEST_REDIS_URL: redis://localhost:6379/0
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: server-v3/pyproject.toml
+      - name: Validate AA v3 contracts
+        run: python3 contracts/aa-v3/1.0/validate.py
+      - name: Install Server v3 dependencies
+        run: uv sync --project server-v3
+      - name: Lint and test Server v3 (real PostgreSQL + Redis)
+        working-directory: server-v3
+        run: |
+          uv run --no-sync ruff check aa_control migrations tests
+          uv run --no-sync pytest -v
