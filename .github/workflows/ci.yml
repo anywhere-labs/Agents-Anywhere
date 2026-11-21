@@ -61,6 +61,7 @@ jobs:
       acp: ${{ steps.paths.outputs.acp }}
       server: ${{ steps.paths.outputs.server }}
       server_v3: ${{ steps.paths.outputs.server_v3 }}
+      connector_v3: ${{ steps.paths.outputs.connector_v3 }}
       web: ${{ steps.paths.outputs.web }}
       desktop: ${{ steps.paths.outputs.desktop }}
     steps:
@@ -78,6 +79,7 @@ jobs:
           acp=false
           server=false
           server_v3=false
+          connector_v3=false
           web=false
           desktop=false
 
@@ -88,6 +90,7 @@ jobs:
             acp=true
             server=true
             server_v3=true
+            connector_v3=true
             web=true
             desktop=true
           }
@@ -113,7 +116,7 @@ jobs:
                   ;;
                 .github/workflows/dsh-bridge.yml) plugin=true ;;
                 .github/actions/setup-yarn/action.yml)
-                  plugin=true; web=true; desktop=true ;;
+                  plugin=true; web=true; desktop=true; connector_v3=true ;;
                 .github/workflows/*|.github/actions/*|contracts/*)
                   run_everything "shared file changed: $path"
                   ;;
@@ -127,14 +130,15 @@ jobs:
                   ;;
                 connector/*) connector=true; acp=true; server=true; plugin=true ;;
                 server/*) server=true; plugin=true ;;
-                server-v3/*) server_v3=true ;;
+                server-v3/*) server_v3=true; connector_v3=true ;;
+                connector-v3/*) connector_v3=true ;;
                 web-next/*) web=true ;;
                 desktop-workbench/*) desktop=true ;;
               esac
             done < "$RUNNER_TEMP/changed-paths"
           fi
 
-          for scope in plugin connector acp server server_v3 web desktop; do
+          for scope in plugin connector acp server server_v3 connector_v3 web desktop; do
             echo "$scope=${!scope}" >> "$GITHUB_OUTPUT"
             echo "$scope: ${!scope}"
           done
@@ -464,3 +468,34 @@ jobs:
         run: |
           uv run --no-sync ruff check aa_control migrations tests
           uv run --no-sync pytest -v
+
+  connector_v3:
+    name: Connector v3 (TS + Local Router + Server v3 interop)
+    needs: changes
+    if: needs.changes.outputs.connector_v3 == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+      - name: Install Connector v3 dependencies
+        uses: ./.github/actions/setup-yarn
+        with:
+          project: connector-v3
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Set up uv and Python (for three-language Server v3 interop test)
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: server-v3/pyproject.toml
+      - name: Install Server v3 dependencies
+        run: uv sync --project server-v3
+      - name: Validate AA v3 contracts
+        run: python3 contracts/aa-v3/1.0/validate.py
+      - name: Typecheck and test Connector v3
+        working-directory: connector-v3
+        run: |
+          corepack yarn typecheck
+          corepack yarn test

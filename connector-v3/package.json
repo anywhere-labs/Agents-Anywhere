@@ -1,0 +1,30 @@
+{
+  "name": "@anywhere-labs/aa-connector-v3",
+  "version": "3.0.0-alpha.1",
+  "description": "Agents Anywhere v3 Connector (TypeScript, MeshCall v0.4.0, generic ACP host, dual-mode E2EE device gate)",
+  "private": true,
+  "packageManager": "yarn@4.6.0",
+  "type": "module",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "bin": {
+    "aa-connector": "dist/src/cli.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "yarn build && node --test dist/tests/*.test.js"
+  },
+  "dependencies": {
+    "meshcall": "^0.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "typescript": "^5.8.3"
+  }
+}
