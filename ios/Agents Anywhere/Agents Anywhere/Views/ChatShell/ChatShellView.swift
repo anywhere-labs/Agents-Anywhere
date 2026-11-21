@@ -328,6 +328,7 @@ struct ChatShellView: View {
             SpecRuneTasksView(
                 connectorId: connectorId,
                 projects: services.dashboardRepository.projects.filter { $0.connectorId == connectorId },
+                isLoadingProjects: appState.isDashboardLoading && !appState.hasLoadedConnectors,
                 api: workspaceFilesService.connectorAPI,
                 onMenu: toggleSidebar
             )

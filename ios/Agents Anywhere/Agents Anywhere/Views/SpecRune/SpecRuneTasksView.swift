@@ -15,8 +15,10 @@ import SwiftUI
 /// `accessibilityReduceMotion` 时退化为无动画。
 struct SpecRuneTasksView: View {
     let connectorId: V2ConnectorID
-    /// 该设备上的全部项目；非 SpecRune 项目会在侧栏置灰。
+    /// 该设备上的全部项目；非 SpecRune 项目会在列表里置灰。
     let projects: [V2Project]
+    /// dashboard 还在加载（此时 `projects` 为空不代表设备真的没有项目）。
+    var isLoadingProjects = false
     let api: any V2ConnectorAPIProtocol
     /// 打开 app 侧栏（Duo 内屏双栏时是切换，外屏抽屉时是展开）。
     let onMenu: () -> Void
@@ -58,25 +60,18 @@ struct SpecRuneTasksView: View {
             let board = SpecRuneBoardModel(client: SpecRuneClient(transport: transport), projects: projects)
             model = board
             await board.probeProjects()
-            await selectFirstProjectIfNeeded(board)
         }
         // dashboard 后到：项目列表变了要推给 Model，否则看板永远停在空列表。
         .onChange(of: projects) { _, newValue in
             guard let model else { return }
             model.updateProjects(newValue)
-            Task {
-                await model.probeProjects()
-                await selectFirstProjectIfNeeded(model)
-            }
+            Task { await model.probeProjects() }
         }
-    }
-
-    /// 还没有选中项目时，自动选第一个确认是 SpecRune 的项目。
-    private func selectFirstProjectIfNeeded(_ model: SpecRuneBoardModel) async {
-        guard model.selectedRepo == nil else { return }
-        guard let first = model.deviceProjects.first(where: { model.specRuneRepos[$0.workspacePath] == true })
-        else { return }
-        await model.select(repo: first.workspacePath)
+        // 选中项目从设备消失时 Model 会置 nil：导航栈里若还停在该项目的详情页，
+        // 退回项目列表，而不是落在「未选择项目」兜底文案上。
+        .onChange(of: model?.selectedRepo) { _, repo in
+            if repo == nil { taskPath.removeAll() }
+        }
     }
 
     // MARK: - 三栏
@@ -144,12 +139,11 @@ struct SpecRuneTasksView: View {
                     taskList(model, repo: repo, list: list)
                 }
             } else {
-                ContentUnavailableView("未选择项目", appSymbol: "sidebar.left",
-                                       description: Text("用上方菜单选择一个 SpecRune 项目"))
+                projectPicker(model)
             }
         }
         // 用 app 统一的页面工具栏：它负责把 rail 按钮送进 Duo 右缘竖排，
-        // 并处理抽屉形态下导航栏被卡片位移重画的问题。
+        // 并保证抽屉形态下导航栏占位不变（内容不位移）。
         // 标题固定「SpecRune」，当前项目在右侧菜单里显示——两者都写项目名会重复。
         .sheet(isPresented: $showsProjectPicker) {
             // 这里在 board(_ model:) 内部，model 已是非可选。
@@ -172,6 +166,62 @@ struct SpecRuneTasksView: View {
             ))] + (chatRail.map { chatRailButtons($0) } ?? []),
             pageTrailing: []
         ))
+    }
+
+    // MARK: - 项目选择（未选中时的首屏）
+
+    /// 还没有选中项目时的首屏：列出该设备的项目，由用户自己点选。
+    ///
+    /// 内嵌在任务列的位置（不是自动弹出的 sheet）：选中后原地换成任务列表，
+    /// 与 rail 的「项目」sheet 共用同一个 `model.select(repo:)`。
+    @ViewBuilder
+    private func projectPicker(_ model: SpecRuneBoardModel) -> some View {
+        if model.deviceProjects.isEmpty {
+            if isLoadingProjects {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ContentUnavailableView("这个设备还没有项目", appSymbol: "folder",
+                                       description: Text("先在设备上添加项目，再回来看任务"))
+            }
+        } else {
+            List {
+                Section("选择项目") {
+                    ForEach(model.deviceProjects) { project in
+                        projectPickerRow(model, project: project)
+                    }
+                }
+            }
+            .listStyle(.insetGrouped)
+        }
+    }
+
+    /// 单个项目：只有确认是 SpecRune 项目的行可点；探测中与探测失败都置灰并说明原因。
+    private func projectPickerRow(_ model: SpecRuneBoardModel, project: V2Project) -> some View {
+        let enabled = model.specRuneRepos[project.workspacePath] == true
+        let probing = model.specRuneRepos[project.workspacePath] == nil
+            && model.probeFailures[project.workspacePath] == nil
+        return Button {
+            Task { await model.select(repo: project.workspacePath) }
+        } label: {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(verbatim: project.name)
+                        .font(.body)
+                        .foregroundStyle(.primary)
+                    Text(verbatim: specRuneProjectStatusText(model, project: project))
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.secondaryText(colorScheme))
+                }
+                Spacer(minLength: 4)
+                if probing {
+                    ProgressView().controlSize(.small)
+                } else if enabled {
+                    AppSymbol("chevron.right", size: 12)
+                        .foregroundStyle(AppTheme.secondaryText(colorScheme))
+                }
+            }
+        }
+        .disabled(!enabled)
     }
 
     private func projectName(_ model: SpecRuneBoardModel, repo: String) -> String {
@@ -248,7 +298,7 @@ struct SpecRuneTasksView: View {
     }
 
     /// app 统一的页面工具栏：负责把 rail 按钮送进 Duo 右缘竖排，
-    /// 并处理抽屉形态下导航栏被卡片位移重画的问题。
+    /// 并保证抽屉形态下导航栏占位不变（内容不位移）。
     private var pageToolbar: ChatPageToolbar {
         ChatPageToolbar(
             title: "SpecRune",
@@ -300,6 +350,14 @@ struct SpecRuneTasksView: View {
 
 // MARK: - 项目选择弹层
 
+/// 项目列表行副标题（首屏 picker 与 rail sheet 共用）：
+/// 探测失败原因 / 检测中 / 已启用 / 未启用。
+private func specRuneProjectStatusText(_ model: SpecRuneBoardModel, project: V2Project) -> String {
+    if let failure = model.probeFailures[project.workspacePath] { return failure }
+    if model.specRuneRepos[project.workspacePath] == nil { return "检测中…" }
+    return model.specRuneRepos[project.workspacePath] == true ? "SpecRune 项目" : "未启用 SpecRune"
+}
+
 /// rail 按钮弹出的项目列表。读 model 的状态在 sheet 里是新鲜快照，
 /// 不受外层 AnyView 打断追踪的影响。
 private struct SpecRuneProjectPickerSheet: View {
@@ -322,7 +380,7 @@ private struct SpecRuneProjectPickerSheet: View {
                                     Text(verbatim: project.name)
                                         .font(.body)
                                         .foregroundStyle(.primary)
-                                    Text(enabled ? "SpecRune 项目" : (model.probeFailures[project.workspacePath] ?? "未启用 SpecRune"))
+                                    Text(verbatim: specRuneProjectStatusText(model, project: project))
                                         .font(.caption)
                                         .foregroundStyle(AppTheme.secondaryText(colorScheme))
                                 }

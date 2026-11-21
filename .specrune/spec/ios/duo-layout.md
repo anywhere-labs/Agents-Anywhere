@@ -430,10 +430,18 @@ struct ChatOverflowAction: Identifiable {
   （普通 iPhone 与外屏统一两 Tab），2026-11-04 用户要求外屏回归原版后
   撤销。外屏原有入口（设备/账号/设置/配对）在 `ChatSidebarView` 均有
   等价实现，删两 Tab 不丢功能。
-- **抽屉打开期间不渲染详情导航栏**（`ChatPageToolbar` 读
-  `\.sidebarDrawerObscuresDetail`）：抽屉一开就盖住详情，导航栏在卡片
-  位移中会被系统重画一次，表现为"顶部 toolbar 闪现又消失"（2026-11-05
-  真机反馈）。nativeSidebar 下该环境值恒 false，内屏不受影响。
+- **抽屉打开期间保持详情导航栏渲染**（`ChatPageToolbar` 不再读
+  `\.sidebarDrawerObscuresDetail` 隐藏导航栏）：隐藏会让 NavigationStack
+  内容区扩展，页面整体上移、抽屉收起再落回（2026-11-21 用户反馈 SpecRune
+  面板上下跳动，实测「工作流」y 92 → 11.7，约 80pt）。导航栏随卡片向右
+  位移，抽屉打开时在露出的卡片窄条内可见但不可交互（卡片
+  `allowsHitTesting(false)` + `accessibilityHidden`）。2026-11-05 曾因
+  「抽屉一开导航栏被系统重画一次（闪现又消失）」改隐藏，2026-11-21 在
+  Duo 外屏逐帧录屏验证：保持渲染后卡片位移全程导航栏可见、无闪现，
+  旧症状未复现（真机尚未复验，见下条）。nativeSidebar 下该环境值恒
+  false，内屏不受影响。
+  **规则**：不要用隐藏导航栏换取布局空间——隐藏会连带改变内容区布局，
+  让页面在抽屉开合时上下跳。
 - **不要用 `toolbarVerticalBehavior(.disabled)` 调位置**：Apple 的 Duo
   规则是外屏 toolbar 永远竖排在侧边；该开关必须当稳定选择，禁止随方向
   或视图状态切换。2026-11-05 试过"横屏禁用竖排回顶部"，系统在旋转时
