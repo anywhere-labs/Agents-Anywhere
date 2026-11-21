@@ -57,6 +57,32 @@ DSH `SessionSkillCatalog.list` 服务端只返回用户可调用技能
 （SDK 声明 "user-invocable skills"），`modelInvocable` 仅表示"同一
 技能是否也通告给模型"，是信息性标志——桥端无需再过滤。
 
+### DSH NEXT 升级会覆盖本机 connector 源（2026-11-21）
+
+DSH NEXT 桌面版自带一份 `bundled-connector`，profile 的
+`~/.dsh/profiles/desktop/desktop-next.cordis.patch.json` 里
+`connectorSourceDir` 指向它；DSH 启动时按内容 hash 复制到
+`~/.agents-anywhere/dsh-bridge-next/connector-source/<hash>/` 再用 uv 跑。
+**每次升级 DSH NEXT 都会把这个配置重置回 app 内置路径**，于是内置的
+上游过滤版生效、目录里只剩 `/compact` 和 `/plan`，技能全部消失——表现为
+"指令面板突然只剩两条"。桥端（`dsh-bridge-next`）走 profile 的 symlink
+不受影响，所以只有目录/执行两侧被砍。
+
+上游至今未采纳零过滤（`origin/main` 仍是 `filter(id == "compact" or
+"plan")`），所以这是必须本机自维护的补丁。重放方式：
+
+```bash
+~/.agents-anywhere/dsh-bridge-next/sync-connector-patch.sh   # 然后重启 DSH NEXT
+```
+
+脚本以内置版为基底（保住上游新改动，如 `PROJECTION_REVISION=3`、thought
+identity），复制到 `connector-custom/`，打三处补丁，再把配置指过去：
+`list_commands` 零过滤、`execute_command` 撤销非 compact 拒绝、
+`models.py` ack 错误点名字段。**不要**直接把 `connectorSourceDir` 指向
+仓库 `connector/`——仓库可能落后上游（2026-11-21 实测仓库
+`PROJECTION_REVISION=2` 而上游已 3），会丢上游新功能。等仓库 merge 到
+上游最新后，才可以把源切回仓库省掉副本。
+
 ## DSH 0.2.2 的 workingDirectory 注入（2026-11-13）
 
 DSH 基线升到 0.2.2-rc.1 后，`SessionSkillCatalog` 会注入
