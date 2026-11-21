@@ -9,24 +9,15 @@ import AppKit
 struct SidebarDrawerConfiguration: Sendable {
     let revealFraction: CGFloat
     let edgeActivationWidth: CGFloat
-    let sidebarClosedScale: CGFloat
-    let sidebarOverlayOpacity: CGFloat
-    let contentOverlayOpacity: CGFloat
     let sidebarHeaderEdgeEffectStyle: ScrollEdgeEffectStyle
 
     init(
         revealFraction: CGFloat = 0.75,
         edgeActivationWidth: CGFloat = 44,
-        sidebarClosedScale: CGFloat = 0.95,
-        sidebarOverlayOpacity: CGFloat = 0.5,
-        contentOverlayOpacity: CGFloat = 0.14,
         sidebarHeaderEdgeEffectStyle: ScrollEdgeEffectStyle = .soft
     ) {
         self.revealFraction = revealFraction
         self.edgeActivationWidth = edgeActivationWidth
-        self.sidebarClosedScale = sidebarClosedScale
-        self.sidebarOverlayOpacity = sidebarOverlayOpacity
-        self.contentOverlayOpacity = contentOverlayOpacity
         self.sidebarHeaderEdgeEffectStyle = sidebarHeaderEdgeEffectStyle
     }
 
@@ -221,34 +212,33 @@ private struct SidebarDrawerInteractive<
             ZStack(alignment: .leading) {
                 drawerSystemBackground
 
-                SidebarDrawerSidebar(
-                    width: revealWidth,
-                    safeAreaInsets: safeAreaInsets,
-                    edgeEffectStyle: configuration.sidebarHeaderEdgeEffectStyle,
-                    header: sidebarHeader,
-                    content: sidebarContent
-                )
-                .modifier(SidebarDrawerSidebarMotion(
-                    motion: motion,
-                    closedScale: configuration.sidebarClosedScale.clamped(to: 0 ... 1),
-                    overlayOpacity: configuration.sidebarOverlayOpacity.clamped(to: 0 ... 1)
-                ))
-                .allowsHitTesting(interaction.acceptsSidebarTouches)
-                .accessibilityHidden(!interaction.acceptsSidebarTouches)
-
+                // 卡片固定在原位：不让它随抽屉位移。Duo 外屏上卡片位移会让
+                // 系统在动画结束时重新解析 toolbar 的竖排/水平布局，竖排
+                // toolbar 会短暂切到顶部水平再回来（逐帧实测）。侧栏改为
+                // 滑出覆盖卡片，导航栏全程不移动。
                 SidebarDrawerMainCard(
                     size: screenSize,
                     isFullyClosed: interaction.acceptsContentTouches,
                     content: mainContent
                 )
-                .modifier(SidebarDrawerCardMotion(
-                    motion: motion,
-                    isFullyClosed: interaction.acceptsContentTouches,
-                    revealWidth: revealWidth,
-                    overlayOpacity: configuration.contentOverlayOpacity.clamped(to: 0 ... 1)
-                ))
                 .allowsHitTesting(interaction.acceptsContentTouches)
                 .accessibilityHidden(!interaction.acceptsContentTouches)
+
+                SidebarDrawerSidebar(
+                    width: revealWidth,
+                    safeAreaInsets: safeAreaInsets,
+                    edgeEffectStyle: configuration.sidebarHeaderEdgeEffectStyle,
+                    motion: motion,
+                    revealWidth: revealWidth,
+                    header: sidebarHeader,
+                    content: sidebarContent
+                )
+                .modifier(SidebarDrawerSidebarMotion(
+                    motion: motion,
+                    revealWidth: revealWidth
+                ))
+                .allowsHitTesting(interaction.acceptsSidebarTouches)
+                .accessibilityHidden(!interaction.acceptsSidebarTouches)
 
                 // Only the screen-space strip occupied by the visible card
                 // closes the drawer. Its untranslated hit targets are disabled.
@@ -661,22 +651,31 @@ private struct SidebarDrawerSidebar<Header: View, Content: View>: View {
     let width: CGFloat
     let safeAreaInsets: EdgeInsets
     let edgeEffectStyle: ScrollEdgeEffectStyle
+    let motion: SidebarDrawerMotion
+    let revealWidth: CGFloat
     let header: Header
     let content: Content
 
     var body: some View {
-        content
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .scrollEdgeEffectStyle(edgeEffectStyle, for: .top)
-            .safeAreaBar(edge: .top, spacing: 0) {
-                SidebarDrawerHeaderBar(
-                    safeAreaInsets: safeAreaInsets,
-                    header: header
-                )
-            }
-            .frame(width: width)
-            .frame(maxHeight: .infinity, alignment: .leading)
-            .background(drawerSystemBackground)
+        // 标题条放在布局流里（不是 safeAreaBar/safeAreaInset）：后两者固定在
+        // 安全区，不随侧栏滑出位移，抽屉打开时标题会先露出半截再被推出去。
+        VStack(spacing: 0) {
+            SidebarDrawerHeaderBar(
+                safeAreaInsets: safeAreaInsets,
+                header: header
+            )
+            // 标题条要单独跟随位移：它挂在布局流里，但真机/模拟器上父级
+            // offset 不带着它走，抽屉打开时会提前露出。
+            .offset(x: -revealWidth * (1 - motion.progress))
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .scrollEdgeEffectStyle(edgeEffectStyle, for: .top)
+        }
+        .frame(width: width)
+        .frame(maxHeight: .infinity, alignment: .leading)
+        // 侧栏玻璃材质：用 background 材质而不是 glassEffect——后者的玻璃层
+        // 固定在布局位置、不随侧栏滑出位移，标题会提前露出（2026-11-21 真机）。
+        .background(.ultraThinMaterial)
     }
 }
 
@@ -737,60 +736,13 @@ private enum SidebarDrawerCardShape {
 
 private struct SidebarDrawerSidebarMotion: ViewModifier {
     let motion: SidebarDrawerMotion
-    let closedScale: CGFloat
-    let overlayOpacity: CGFloat
-
-    func body(content: Content) -> some View {
-        let progress = motion.progress
-        content
-            .overlay {
-                drawerSystemBackground
-                    .opacity(overlayOpacity * (1 - progress))
-                    .allowsHitTesting(false)
-            }
-            .scaleEffect(closedScale + ((1 - closedScale) * progress), anchor: .leading)
-    }
-}
-
-private struct SidebarDrawerCardMotion: ViewModifier {
-    let motion: SidebarDrawerMotion
-    let isFullyClosed: Bool
     let revealWidth: CGFloat
-    let overlayOpacity: CGFloat
 
     func body(content: Content) -> some View {
-        let progress = motion.progress
-        let screenShape = SidebarDrawerCardShape.shape(isFullyClosed: isFullyClosed)
-
         content
-            .background {
-                // Shadow only the card shape. Compositing the entire conversation
-                // into an animated shadow layer repaints its text during a pan.
-                // Keep the drawn shadow constant and fade its layer: a changing
-                // radius re-blurs a full-screen shape on every frame.
-                screenShape.fill(drawerSystemBackground)
-                    .shadow(color: .black.opacity(0.28), radius: 18, x: -3, y: 0)
-                    .opacity(progress)
-                    .allowsHitTesting(false)
-            }
-            // Constant fills with layer opacity composite without redrawing.
-            .overlay {
-                screenShape
-                    .fill(.white)
-                    .opacity(overlayOpacity * progress)
-                    .allowsHitTesting(false)
-            }
-            .overlay {
-                screenShape
-                    .stroke(Color.primary.opacity(0.2), lineWidth: 1)
-                    .opacity(progress)
-                    .allowsHitTesting(false)
-            }
-            // Ordinary offset still participates in descendant coordinates:
-            // subpixel motion can round this 402-point column to 402 1/3 and
-            // change paragraph wrapping. Keep the whole translation out of
-            // layout, including every interpolated frame of the spring.
-            .modifier(SidebarDrawerTranslation(x: revealWidth * progress).ignoredByLayout())
+            // 侧栏从屏幕左侧滑出覆盖卡片；卡片本身不动，也不加遮罩/阴影，
+            // 保持卡片原有外观（导航栏与内容全程不变）。
+            .offset(x: -revealWidth * (1 - motion.progress))
     }
 }
 

@@ -430,15 +430,29 @@ struct ChatOverflowAction: Identifiable {
   （普通 iPhone 与外屏统一两 Tab），2026-11-04 用户要求外屏回归原版后
   撤销。外屏原有入口（设备/账号/设置/配对）在 `ChatSidebarView` 均有
   等价实现，删两 Tab 不丢功能。
+- **抽屉动效：卡片固定、侧栏滑出覆盖**（`SidebarDrawer`）：卡片不位移，
+  侧栏从屏幕左侧滑出盖住卡片，导航栏全程不动。原因：Duo 外屏的竖排
+  toolbar 由系统按容器状态解析（`toolbarVerticalBehavior` 默认 automatic），
+  卡片位移（GeometryEffect）会让系统在动画结束时重新解析布局，竖排
+  toolbar 短暂切到顶部水平布局再回来——2026-11-21 真机反馈"toolbar 漂移"，
+  60fps 逐帧实测 0.13s；卡片不位移后逐帧验证零重排。代价：抽屉打开时
+  卡片不再右移，观感与标准 iOS 抽屉不同（用户确认接受）。
+  侧栏用 `.background(.ultraThinMaterial)` 玻璃材质（用户要求）：抽屉打开时
+  卡片透过侧栏可见。**不要用 `.glassEffect()`**——它的玻璃层固定在布局
+  位置、不随侧栏位移，标题会提前露出（模拟器/真机实测）。
+  **规则**：外屏抽屉不要在含系统导航栏的卡片上叠加位移——位移会触发
+  toolbar 重排；要抽屉动效就移动侧栏，不要移动卡片。
+- **抽屉侧栏标题条放布局流并单独跟随位移**：`SidebarDrawerHeaderBar` 放在
+  VStack 顶部，不用 `safeAreaBar` / `safeAreaInset`——后两者固定在安全区，
+  不随侧栏滑出位移；而且父级 offset 不会带着它走（模拟器/真机实测），
+  必须再给标题条单独加与侧栏同值的 `.offset`，抽屉打开时才不会提前露出
+  （2026-11-21 用户反馈）。内屏双栏侧栏（`SidebarDrawerNativeSidebar`）仍用
+  `safeAreaBar`（不滑出，需要滚动固定）。
 - **抽屉打开期间保持详情导航栏渲染**（`ChatPageToolbar` 不再读
   `\.sidebarDrawerObscuresDetail` 隐藏导航栏）：隐藏会让 NavigationStack
   内容区扩展，页面整体上移、抽屉收起再落回（2026-11-21 用户反馈 SpecRune
-  面板上下跳动，实测「工作流」y 92 → 11.7，约 80pt）。导航栏随卡片向右
-  位移，抽屉打开时在露出的卡片窄条内可见但不可交互（卡片
-  `allowsHitTesting(false)` + `accessibilityHidden`）。2026-11-05 曾因
-  「抽屉一开导航栏被系统重画一次（闪现又消失）」改隐藏，2026-11-21 在
-  Duo 外屏逐帧录屏验证：保持渲染后卡片位移全程导航栏可见、无闪现，
-  旧症状未复现（真机尚未复验，见下条）。nativeSidebar 下该环境值恒
+  面板上下跳动，实测「工作流」y 92 → 11.7，约 80pt）。卡片固定后导航栏
+  不随卡片位移，抽屉打开时被滑出的侧栏遮住。nativeSidebar 下该环境值恒
   false，内屏不受影响。
   **规则**：不要用隐藏导航栏换取布局空间——隐藏会连带改变内容区布局，
   让页面在抽屉开合时上下跳。
