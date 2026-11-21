@@ -1,0 +1,339 @@
+from __future__ import annotations
+
+import hmac
+import secrets
+import time
+from urllib.parse import urlencode
+
+import httpx
+
+from aa_control.core.auth import (
+    create_access_token,
+    format_client_principal,
+    format_device_principal,
+    generate_opaque_token,
+    hash_password,
+    hash_secret_digest,
+    verify_access_token,
+    verify_password,
+    verify_secret_digest,
+)
+from aa_control.core.config import ControlSettings
+from aa_control.core.errors import (
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    RateLimitError,
+    UnauthenticatedError,
+    UpstreamUnavailableError,
+    ValidationError,
+)
+from aa_control.core.models import (
+    AuthConfigResponse,
+    AuthTokenResponse,
+    ClientPlatform,
+    ClientRouterTokenResponse,
+    DeviceRouterTokenResponse,
+    LoginRequest,
+    RegisterRequest,
+    UserView,
+)
+from aa_control.core.utc import utc_now_iso
+from aa_control.infra.db.repositories import ControlRepository, UserRow
+from aa_control.infra.redis_store import RedisControlStore
+from aa_control.infra.router_pool import RouterPoolPort
+
+
+def _user_view(row: UserRow) -> UserView:
+    return UserView(
+        id=row.id,
+        email=row.email,
+        display_name=row.display_name,
+        role=row.role,
+        created_at=row.created_at,
+    )
+
+
+class AuthService:
+    def __init__(
+        self,
+        *,
+        settings: ControlSettings,
+        repo: ControlRepository,
+        redis_store: RedisControlStore,
+        router_pool: RouterPoolPort,
+    ) -> None:
+        self._settings = settings
+        self._repo = repo
+        self._redis = redis_store
+        self._routers = router_pool
+
+    async def auth_config(self) -> AuthConfigResponse:
+        needs_bootstrap = (await self._repo.count_users()) == 0
+        provider = self._settings.oauth_provider
+        return AuthConfigResponse(
+            needs_bootstrap=needs_bootstrap,
+            registration_open=self._settings.registration_open,
+            oauth_enabled=provider is not None,
+            oauth_provider_label=provider.label if provider is not None else None,
+            server_time=utc_now_iso(),
+        )
+
+    async def register(self, req: RegisterRequest) -> AuthTokenResponse:
+        email = req.email.strip().lower()
+        if "@" not in email:
+            raise ValidationError("valid email is required")
+
+        user_count = await self._repo.count_users()
+        if user_count == 0:
+            if self._settings.bootstrap_setup_token:
+                if not req.setup_token or not hmac.compare_digest(
+                    req.setup_token, self._settings.bootstrap_setup_token
+                ):
+                    raise UnauthenticatedError("invalid or missing setup token")
+            role = "admin"
+        else:
+            if not self._settings.registration_open:
+                raise ForbiddenError("registration is closed")
+            role = "member"
+
+        existing = await self._repo.get_user_by_email(email)
+        if existing is not None:
+            raise ConflictError("email is already registered")
+
+        pw_hash = hash_password(req.password, iterations=self._settings.password_iterations)
+        user = await self._repo.create_user(
+            email=email,
+            password_hash=pw_hash,
+            display_name=req.display_name.strip(),
+            role=role,
+        )
+        return await self._issue_account_session(
+            user=user,
+            client_id=req.client_id,
+            client_platform=req.client_platform,
+        )
+
+    async def login(self, req: LoginRequest) -> AuthTokenResponse:
+        email = req.email.strip().lower()
+        user = await self._repo.get_user_by_email(email)
+        if user is None or not user.password_hash:
+            raise UnauthenticatedError("invalid email or password")
+        if user.disabled:
+            raise ForbiddenError("account is disabled")
+        if not verify_password(req.password, user.password_hash, iterations=self._settings.password_iterations):
+            raise UnauthenticatedError("invalid email or password")
+        return await self._issue_account_session(
+            user=user,
+            client_id=req.client_id,
+            client_platform=req.client_platform,
+        )
+
+    async def refresh(self, refresh_token: str) -> AuthTokenResponse:
+        token_hash = hash_secret_digest(refresh_token)
+        stored = await self._repo.get_refresh_token_by_hash(token_hash)
+        if stored is None or stored.revoked_at is not None or stored.expires_at < int(time.time()):
+            raise UnauthenticatedError("refresh token is invalid or expired")
+        user = await self._repo.get_user_by_id(stored.user_id)
+        if user is None or user.disabled:
+            raise UnauthenticatedError("account is unavailable")
+
+        # Rotate refresh token (revoke old before issuing new).
+        await self._repo.revoke_refresh_token(token_hash)
+        return await self._issue_account_session(
+            user=user,
+            client_id=stored.client_id,
+            client_platform="web",
+            touch_client=False,
+        )
+
+    async def logout(self, refresh_token: str) -> bool:
+        return await self._repo.revoke_refresh_token(hash_secret_digest(refresh_token))
+
+    async def authenticate_access_token(self, token: str) -> UserView:
+        payload = verify_access_token(
+            secret_key=self._settings.secret_key,
+            token=token,
+            expected_type="user",
+        )
+        if payload is None:
+            raise UnauthenticatedError("invalid or expired access token")
+        user = await self._repo.get_user_by_id(str(payload["sub"]))
+        if user is None or user.disabled:
+            raise UnauthenticatedError("account is unavailable")
+        return _user_view(user)
+
+    async def issue_client_router_tokens(
+        self,
+        *,
+        user_id: str,
+        client_id: str,
+        platform: ClientPlatform,
+    ) -> ClientRouterTokenResponse:
+        allowed = await self._redis.check_rate_limit(
+            bucket=f"client-token:{user_id}",
+            limit=self._settings.token_issue_rate_limit_per_min,
+            window_seconds=60,
+        )
+        if not allowed:
+            raise RateLimitError("router token issuance rate limit exceeded")
+
+        await self._repo.upsert_client(
+            client_id=client_id,
+            user_id=user_id,
+            platform=platform,
+            update_push_token=False,
+        )
+        principal = format_client_principal(user_id, client_id)
+        tokens = await self._routers.issue_client_tokens(
+            principal=principal,
+            ttl_seconds=self._settings.client_router_token_ttl_seconds,
+        )
+        return ClientRouterTokenResponse(principal=principal, tokens=tokens)
+
+    async def issue_device_router_tokens(
+        self,
+        *,
+        device_id: str,
+        device_secret: str,
+    ) -> DeviceRouterTokenResponse:
+        allowed = await self._redis.check_rate_limit(
+            bucket=f"device-token:{device_id}",
+            limit=self._settings.token_issue_rate_limit_per_min,
+            window_seconds=60,
+        )
+        if not allowed:
+            raise RateLimitError("device router token rate limit exceeded")
+
+        device = await self._repo.get_device(device_id)
+        secret_hash = await self._repo.get_device_secret_hash(device_id)
+        if device is None or secret_hash is None:
+            raise UnauthenticatedError("unknown or revoked device credentials")
+        if not verify_secret_digest(device_secret, secret_hash):
+            raise UnauthenticatedError("invalid device credentials")
+
+        principal = format_device_principal(device_id)
+        tokens = await self._routers.issue_device_tokens(
+            device_id=device_id,
+            principal=principal,
+            ttl_seconds=self._settings.device_router_token_ttl_seconds,
+        )
+        return DeviceRouterTokenResponse(device_id=device_id, principal=principal, tokens=tokens)
+
+    def oauth_authorize_url(self, *, state: str, redirect_uri: str) -> str:
+        provider = self._settings.oauth_provider
+        if provider is None:
+            raise NotFoundError("OAuth login provider is not configured")
+        params = urlencode(
+            {
+                "response_type": "code",
+                "client_id": provider.client_id,
+                "redirect_uri": redirect_uri,
+                "scope": provider.scopes,
+                "state": state,
+            }
+        )
+        sep = "&" if "?" in provider.authorize_url else "?"
+        return f"{provider.authorize_url}{sep}{params}"
+
+    async def oauth_complete_login(
+        self,
+        *,
+        code: str,
+        redirect_uri: str,
+        client_id: str | None = None,
+        client_platform: ClientPlatform = "web",
+        http_client: httpx.AsyncClient | None = None,
+    ) -> AuthTokenResponse:
+        provider = self._settings.oauth_provider
+        if provider is None:
+            raise NotFoundError("OAuth login provider is not configured")
+        own_client = http_client is None
+        client = http_client or httpx.AsyncClient(timeout=10.0)
+        try:
+            token_resp = await client.post(
+                provider.token_url,
+                data={
+                    "grant_type": "authorization_code",
+                    "code": code,
+                    "redirect_uri": redirect_uri,
+                    "client_id": provider.client_id,
+                    "client_secret": provider.client_secret,
+                },
+                headers={"Accept": "application/json"},
+            )
+            if token_resp.status_code >= 400:
+                raise UpstreamUnavailableError("OAuth token exchange failed")
+            access_token = token_resp.json().get("access_token")
+            if not access_token:
+                raise UpstreamUnavailableError("OAuth provider did not return an access_token")
+            user_resp = await client.get(
+                provider.userinfo_url,
+                headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"},
+            )
+            if user_resp.status_code >= 400:
+                raise UpstreamUnavailableError("OAuth userinfo fetch failed")
+            info = user_resp.json()
+        finally:
+            if own_client:
+                await client.aclose()
+
+        subject = str(info.get("sub") or info.get("id") or "").strip()
+        if not subject:
+            raise UpstreamUnavailableError("OAuth userinfo missing subject")
+        email = info.get("email")
+        display_name = str(info.get("name") or info.get("preferred_username") or "")
+        user = await self._repo.get_or_create_oauth_user(
+            provider=provider.name,
+            subject=subject,
+            email=str(email) if email else None,
+            display_name=display_name,
+            allow_create=self._settings.registration_open,
+        )
+        if user is None:
+            raise ForbiddenError("OAuth registration is closed")
+        if user.disabled:
+            raise ForbiddenError("account is disabled")
+        return await self._issue_account_session(
+            user=user,
+            client_id=client_id,
+            client_platform=client_platform,
+        )
+
+    async def _issue_account_session(
+        self,
+        *,
+        user: UserRow,
+        client_id: str | None,
+        client_platform: ClientPlatform,
+        touch_client: bool = True,
+    ) -> AuthTokenResponse:
+        resolved_client_id = client_id or f"cli_{secrets.token_hex(12)}"
+        if touch_client:
+            await self._repo.upsert_client(
+                client_id=resolved_client_id,
+                user_id=user.id,
+                platform=client_platform,
+                update_push_token=False,
+            )
+        raw_refresh = generate_opaque_token("aart_")
+        expires_at = int(time.time()) + self._settings.refresh_token_ttl_seconds
+        await self._repo.create_refresh_token(
+            user_id=user.id,
+            client_id=resolved_client_id,
+            token_hash=hash_secret_digest(raw_refresh),
+            expires_at=expires_at,
+        )
+        access_token = create_access_token(
+            secret_key=self._settings.secret_key,
+            user_id=user.id,
+            expires_in=self._settings.access_token_ttl_seconds,
+            extra={"cid": resolved_client_id},
+        )
+        return AuthTokenResponse(
+            user=_user_view(user),
+            access_token=access_token,
+            refresh_token=raw_refresh,
+            expires_in=self._settings.access_token_ttl_seconds,
+            client_id=resolved_client_id,
+        )

@@ -62,7 +62,12 @@
         "presence": { "$ref": "#/$defs/PresenceState" },
         "created_at": { "$ref": "#/$defs/Instant" },
         "last_seen_at": { "$ref": "#/$defs/Instant" },
-        "summary": { "$ref": "#/$defs/NormalDeviceSummary" }
+        "summary": { "$ref": "#/$defs/NormalDeviceSummary" },
+        "e2e_public_key_hint": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "description": "Non-authoritative server hint of device X25519 public key; clients MUST trust only the QR-pinned key."
+        }
       }
     },
     "PresenceReport": {
@@ -76,7 +81,11 @@
         "connector_version": { "type": "string", "minLength": 1, "maxLength": 64 },
         "mode_hint": { "$ref": "#/$defs/DeviceMode" },
         "sent_at": { "$ref": "#/$defs/Instant" },
-        "summary": { "$ref": "#/$defs/NormalDeviceSummary" }
+        "summary": { "$ref": "#/$defs/NormalDeviceSummary" },
+        "e2e_public_key_hint": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$"
+        }
       }
     },
     "WatchDevicesEvent": {
@@ -119,7 +128,12 @@
       "additionalProperties": false,
       "properties": {
         "device_id": { "$ref": "#/$defs/ID" },
-        "client_id": { "$ref": "#/$defs/ID" }
+        "client_id": { "$ref": "#/$defs/ID" },
+        "e2e_key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "description": "Optional client-pinned X25519 device public key for opening an encrypted tunnel."
+        }
       }
     },
     "OpenTunnelResponse": {
@@ -232,6 +246,34 @@
       "additionalProperties": false,
       "properties": {
         "name": { "type": "string", "minLength": 1, "maxLength": 128 }
+      }
+    },
+    "PushEventType": {
+      "type": "string",
+      "enum": ["approval", "activity", "error"]
+    },
+    "PushNotificationRequest": {
+      "type": "object",
+      "description": "Notification emitted by Connector to Control Plane. For encrypted devices, Control Plane MUST strip session_id, title, and body and dispatch only a generic content-free alert.",
+      "required": ["device_id", "event_type"],
+      "additionalProperties": false,
+      "properties": {
+        "device_id": { "$ref": "#/$defs/ID" },
+        "event_type": { "$ref": "#/$defs/PushEventType" },
+        "session_id": { "$ref": "#/$defs/ID" },
+        "title": { "type": "string", "maxLength": 160 },
+        "body": { "type": "string", "maxLength": 512 }
+      }
+    },
+    "RegisterClientPushRequest": {
+      "type": "object",
+      "required": ["client_id", "platform"],
+      "additionalProperties": false,
+      "properties": {
+        "client_id": { "$ref": "#/$defs/ID" },
+        "platform": { "type": "string", "enum": ["ios", "android", "desktop", "web"] },
+        "push_token": { "type": ["string", "null"], "maxLength": 512 },
+        "label": { "type": "string", "maxLength": 128 }
       }
     }
   }
