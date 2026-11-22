@@ -226,6 +226,14 @@ export const en = {
   "settings.noPinnedDevices": "No encrypted devices pinned in this browser yet.",
   "settings.resetVault": "Reset browser E2EE identity",
   "settings.resetVaultConfirm": "This generates a new browser keypair and removes all local device pins. You will need to re-pair every encrypted device.",
+  "settings.experimentalTitle": "Experimental assistant features",
+  "settings.experimentalDesc": "Off by default. These may change or disappear, and only affect the assistant in this browser.",
+  "settings.experimentalBadge": "Experimental",
+  "settings.jsExecution": "Local JavaScript tool",
+  "settings.jsExecutionDesc": "Lets the assistant run scripts for data processing, conversion and calculation. Scripts run in an isolated QuickJS sandbox with no network, page or storage access — they can only read and write files in the assistant workspace — and are stopped after 5 seconds or 32 MB. You approve every run.",
+  "settings.controlledMode": "Controlled mode",
+  "settings.controlledModeDesc": "Temporarily list this browser's assistant as an online device so your other clients can view and continue its conversations. It goes offline when you close or hide this tab.",
+  "settings.controlledModeUnavailable": "Not available yet: this browser can't host a service on the MeshCall Router until the web MeshCall library supports serving.",
 
   // Not found
   "notFound.title": "Page not found",

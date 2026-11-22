@@ -81,6 +81,24 @@ export interface RegisterDeviceResponse {
   notice: string
 }
 
+/** `POST /devices/router-token` (server-v3 `DeviceRouterTokenResponse`). */
+export interface DeviceRouterTokenResponse {
+  device_id: string
+  principal: string
+  tokens: RouterTokenEntry[]
+}
+
+/** `aa.v3.Control/presence` client-stream item (server-v3 `PresenceReport`). */
+export interface PresenceReport {
+  device_id: string
+  platform: DevicePlatform
+  connector_version: string
+  mode_hint: DeviceMode
+  sent_at: Instant
+  summary?: NormalDeviceSummary | null
+  e2e_public_key_hint?: string | null
+}
+
 // ---------------------------------------------------------------------------
 // Control Plane RPC (aa.v3.Control)
 // ---------------------------------------------------------------------------

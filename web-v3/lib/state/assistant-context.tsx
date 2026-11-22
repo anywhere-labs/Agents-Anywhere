@@ -575,6 +575,8 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
           messages: conv.messages as never,
           vfs,
           mcpServers: preferences.assistantMcpServers,
+          experimental: { jsExecution: preferences.assistantExperimental.jsExecution },
+          onWorkspaceChanged: () => void refreshVfs(),
           confirm: (call) =>
             new Promise<boolean>((resolve) => {
               setPendingToolConfirm({ ...call, resolve })
@@ -641,6 +643,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       activeConversation,
       makeSyncCtx,
       makeVfs,
+      preferences.assistantExperimental.jsExecution,
       preferences.assistantMcpServers,
       preferences.assistantModel,
       refreshVfs,

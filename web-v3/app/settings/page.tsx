@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   CloudIcon,
   ExternalLinkIcon,
+  FlaskConicalIcon,
   KeyRoundIcon,
   LockIcon,
   MonitorIcon,
@@ -41,6 +42,7 @@ import {
   updateAdminDrivePolicy,
 } from "@/lib/api/control-http"
 import type { Locale } from "@/lib/i18n"
+import { getControlledModeSupport } from "@/lib/assistant/controlled-mode"
 import { formatKeyFingerprint } from "@/lib/mesh/pairing"
 import { useWorkbench } from "@/lib/state/workbench-context"
 import type {
@@ -66,9 +68,11 @@ export default function SettingsPage() {
     deviceTrusts,
     getFreshAccessToken,
     setAssistantPrimary,
+    updatePreferences,
     removeLocalDeviceTrust,
     resetBrowserVault,
   } = useWorkbench()
+  const controlledModeSupport = getControlledModeSupport()
 
   const [oidcIssuer, setOidcIssuer] = useState<string | null>(null)
   const [driveFiles, setDriveFiles] = useState<DriveFileView[]>([])
@@ -526,7 +530,70 @@ export default function SettingsPage() {
             )}
           </section>
 
-          {/* 6. Local Browser E2EE Vault */}
+          {/* 6. Experimental assistant features (docs/v3/assistant-and-files-proposal.md §7) — all off by default */}
+          <section className="space-y-4 rounded-card bg-card p-6">
+            <div className="space-y-1">
+              <h2 className="flex items-center gap-2 text-lg font-semibold tracking-tight">
+                <FlaskConicalIcon className="size-4" />
+                {t("settings.experimentalTitle")}
+              </h2>
+              <p className="text-sm text-muted-foreground">{t("settings.experimentalDesc")}</p>
+            </div>
+
+            <div className="flex items-start justify-between gap-6 border-t border-border pt-4">
+              <div className="space-y-1">
+                <p className="flex flex-wrap items-center gap-2 text-sm font-medium text-foreground">
+                  {t("settings.jsExecution")}
+                  <Badge variant="outline">{t("settings.experimentalBadge")}</Badge>
+                </p>
+                <p className="text-sm leading-relaxed text-muted-foreground">
+                  {t("settings.jsExecutionDesc")}
+                </p>
+              </div>
+              <Switch
+                checked={preferences.assistantExperimental.jsExecution}
+                onCheckedChange={(checked) =>
+                  void updatePreferences({
+                    assistantExperimental: {
+                      ...preferences.assistantExperimental,
+                      jsExecution: Boolean(checked),
+                    },
+                  })
+                }
+              />
+            </div>
+
+            <div className="flex items-start justify-between gap-6 border-t border-border pt-4">
+              <div className="space-y-1">
+                <p className="flex flex-wrap items-center gap-2 text-sm font-medium text-foreground">
+                  {t("settings.controlledMode")}
+                  <Badge variant="outline">{t("settings.experimentalBadge")}</Badge>
+                </p>
+                <p className="text-sm leading-relaxed text-muted-foreground">
+                  {t("settings.controlledModeDesc")}
+                </p>
+                {!controlledModeSupport.available && (
+                  <p className="text-sm leading-relaxed text-muted-foreground">
+                    {t("settings.controlledModeUnavailable")}
+                  </p>
+                )}
+              </div>
+              <Switch
+                checked={controlledModeSupport.available && preferences.assistantExperimental.controlledMode}
+                disabled={!controlledModeSupport.available}
+                onCheckedChange={(checked) =>
+                  void updatePreferences({
+                    assistantExperimental: {
+                      ...preferences.assistantExperimental,
+                      controlledMode: Boolean(checked),
+                    },
+                  })
+                }
+              />
+            </div>
+          </section>
+
+          {/* 7. Local Browser E2EE Vault */}
           <section className="space-y-5 rounded-card bg-card p-6">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="space-y-1">

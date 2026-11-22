@@ -116,11 +116,37 @@ export interface AssistantModelPref {
   webSearch: boolean
 }
 
+/**
+ * Device credential the experimental controlled mode registered for this browser (`POST /devices/register`).
+ * Kept so re-enabling reuses the same device row instead of using up another `max_devices` slot.
+ */
+export interface ControlledDeviceCredential {
+  accountId: string
+  deviceId: string
+  deviceSecret: string
+  name: string
+  createdAt: number
+}
+
+/** Settings › Experimental (docs/v3/assistant-and-files-proposal.md §7). Everything here is off by default. */
+export interface AssistantExperimentalPrefs {
+  /** `js_run`: QuickJS-WASM sandbox with a confined workspace bridge. */
+  jsExecution: boolean
+  /** Register this tab's assistant as a temporary online instance (`aa.v3.Sessions`). */
+  controlledMode: boolean
+}
+
+export const DEFAULT_EXPERIMENTAL_PREFS: AssistantExperimentalPrefs = {
+  jsExecution: false,
+  controlledMode: false,
+}
+
 export interface UserPreferences {
   assistantPrimary: boolean
   defaultServerUrl: string
   assistantModel?: AssistantModelPref | null
   assistantMcpServers: AssistantMcpServerConfig[]
+  assistantExperimental: AssistantExperimentalPrefs
 }
 
 export const DEFAULT_PREFERENCES: UserPreferences = {
@@ -128,6 +154,7 @@ export const DEFAULT_PREFERENCES: UserPreferences = {
   defaultServerUrl: "",
   assistantModel: null,
   assistantMcpServers: [],
+  assistantExperimental: DEFAULT_EXPERIMENTAL_PREFS,
 }
 
 // ---------------------------------------------------------------------------
@@ -446,6 +473,20 @@ export const vault = {
     await backend.del("assistant_vfs", `${accountId}::${path}`)
   },
 
+  // ── Experimental controlled mode: this browser's assistant as a device ──
+
+  async getControlledDevice(accountId: string): Promise<ControlledDeviceCredential | null> {
+    return backend.get<ControlledDeviceCredential>("meta", `controlled_device::${accountId}`)
+  },
+
+  async saveControlledDevice(entry: ControlledDeviceCredential): Promise<void> {
+    await backend.put("meta", `controlled_device::${entry.accountId}`, entry)
+  },
+
+  async clearControlledDevice(accountId: string): Promise<void> {
+    await backend.del("meta", `controlled_device::${accountId}`)
+  },
+
   // ── Preferences ──
 
   async getPreferences(): Promise<UserPreferences> {
@@ -454,6 +495,7 @@ export const vault = {
       ...DEFAULT_PREFERENCES,
       ...saved,
       assistantMcpServers: saved?.assistantMcpServers ?? [],
+      assistantExperimental: { ...DEFAULT_EXPERIMENTAL_PREFS, ...saved?.assistantExperimental },
     }
   },
 
@@ -463,6 +505,7 @@ export const vault = {
       ...current,
       ...patch,
       assistantMcpServers: patch.assistantMcpServers ?? current.assistantMcpServers,
+      assistantExperimental: { ...current.assistantExperimental, ...patch.assistantExperimental },
     }
     await backend.put("meta", "preferences", next)
     return next

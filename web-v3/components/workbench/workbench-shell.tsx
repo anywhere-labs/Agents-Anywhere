@@ -129,9 +129,28 @@ export function WorkbenchShell({ children }: { children: ReactNode }) {
               <div className="font-mono font-semibold text-foreground">
                 {pendingToolConfirm.name}
               </div>
-              <pre className="max-h-52 overflow-auto whitespace-pre-wrap font-mono text-muted-foreground">
-                {JSON.stringify(pendingToolConfirm.args, null, 2)}
-              </pre>
+              {typeof pendingToolConfirm.args.code === "string" ? (
+                <>
+                  <pre className="max-h-64 overflow-auto whitespace-pre-wrap font-mono text-foreground">
+                    {pendingToolConfirm.args.code}
+                  </pre>
+                  {Object.keys(pendingToolConfirm.args).some((k) => k !== "code") && (
+                    <pre className="max-h-32 overflow-auto whitespace-pre-wrap font-mono text-muted-foreground">
+                      {JSON.stringify(
+                        Object.fromEntries(
+                          Object.entries(pendingToolConfirm.args).filter(([k]) => k !== "code")
+                        ),
+                        null,
+                        2
+                      )}
+                    </pre>
+                  )}
+                </>
+              ) : (
+                <pre className="max-h-52 overflow-auto whitespace-pre-wrap font-mono text-muted-foreground">
+                  {JSON.stringify(pendingToolConfirm.args, null, 2)}
+                </pre>
+              )}
             </div>
           )}
           <DialogFooter>

@@ -228,6 +228,14 @@ export const zhCN: Messages = {
   "settings.noPinnedDevices": "当前浏览器尚未配对任何加密设备。",
   "settings.resetVault": "重置本机 E2EE 身份",
   "settings.resetVaultConfirm": "这将重新生成浏览器密钥对并清空所有本地设备钉扎记录，之后需逐台重新配对加密设备。",
+  "settings.experimentalTitle": "助手实验性功能",
+  "settings.experimentalDesc": "默认关闭，之后可能调整或移除，只影响这个浏览器里的助手。",
+  "settings.experimentalBadge": "实验性",
+  "settings.jsExecution": "本地 JavaScript 工具",
+  "settings.jsExecutionDesc": "允许助手运行脚本来处理数据、转换格式或计算。脚本在隔离的 QuickJS 沙箱里运行，不能联网、不能访问页面和本地存储，只能读写助手工作区里的文件，超过 5 秒或 32 MB 会被终止。每次运行都要你确认。",
+  "settings.controlledMode": "被控模式",
+  "settings.controlledModeDesc": "把这个浏览器里的助手临时显示为一台在线设备，你的其他客户端可以查看并继续它的对话。关闭或切走这个标签页后就会离线。",
+  "settings.controlledModeUnavailable": "暂不可用：Web 版 MeshCall 库还不支持提供服务，浏览器暂时无法在 MeshCall Router 上注册为在线实例。",
 
   // Not found
   "notFound.title": "页面不存在",

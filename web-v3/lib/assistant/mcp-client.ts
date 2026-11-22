@@ -196,7 +196,8 @@ export async function callMcpServerTool(
 }
 
 /** Where a tool the assistant can call comes from. */
-export type ToolSource = "vfs" | "aa" | "external"
+/** `sandbox`: the experimental local JS tool — always needs confirmation. */
+export type ToolSource = "vfs" | "aa" | "external" | "sandbox"
 
 export interface ToolConfirmationInfo {
   /** The tool's own name on its server (not the possibly prefixed name the model sees). */
@@ -216,6 +217,7 @@ const AA_READ_ONLY = new Set(["list_devices", "list_sessions", "read_session"])
  * read-only name to skip confirmation.
  */
 export function requiresToolConfirmation(tool: ToolConfirmationInfo): boolean {
+  if (tool.source === "sandbox") return true
   if (tool.source === "vfs") return !VFS_READ_ONLY.has(tool.name)
   if (tool.source === "aa") return !AA_READ_ONLY.has(tool.name)
   return tool.readOnlyHint !== true
