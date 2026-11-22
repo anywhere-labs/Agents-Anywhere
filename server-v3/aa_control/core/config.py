@@ -5,6 +5,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Literal
 
+from aa_control.core.drive import DAY_SECONDS, MIB, DrivePolicyDefaults
 from aa_control.core.entitlements import EntitlementMap, sanitize_entitlements
 from aa_control.core.oidc import ALLOWED_OIDC_ALGORITHMS, DEFAULT_OIDC_ALGORITHMS
 
@@ -106,6 +107,61 @@ class OidcAuthConfig:
 
 
 @dataclass(frozen=True)
+class S3ObjectStoreConfig:
+    """S3-compatible object storage configuration for cloud drive presigned transfers."""
+
+    endpoint: str
+    bucket: str
+    access_key_id: str
+    secret_access_key: str = field(repr=False)
+    region: str = "us-east-1"
+    public_endpoint: str | None = None
+    path_style: bool = True
+    key_prefix: str = "aa-drive"
+
+    def __post_init__(self) -> None:
+        if not self.endpoint.strip():
+            raise ValueError("S3 endpoint must be non-empty")
+        if not self.bucket.strip():
+            raise ValueError("S3 bucket must be non-empty")
+        if not self.access_key_id.strip() or not self.secret_access_key.strip():
+            raise ValueError("S3 access_key_id and secret_access_key must be non-empty")
+        object.__setattr__(self, "endpoint", self.endpoint.strip().rstrip("/"))
+        if self.public_endpoint is not None:
+            cleaned_pub = self.public_endpoint.strip().rstrip("/") or None
+            object.__setattr__(self, "public_endpoint", cleaned_pub)
+        object.__setattr__(self, "key_prefix", self.key_prefix.strip().strip("/"))
+
+    @property
+    def presign_endpoint(self) -> str:
+        return self.public_endpoint or self.endpoint
+
+
+@dataclass(frozen=True)
+class DriveConfig:
+    """Quota-limited cloud drive & large-file relay defaults."""
+
+    default_quota_bytes: int = 512 * MIB
+    default_max_file_bytes: int = 100 * MIB
+    default_ttl_seconds: int = 7 * DAY_SECONDS
+    max_ttl_seconds: int = 30 * DAY_SECONDS
+    rpc_direct_max_bytes: int = 8 * MIB
+    upload_url_ttl_seconds: int = 900
+    download_url_ttl_seconds: int = 300
+    cleanup_interval_seconds: float = 300.0
+    s3: S3ObjectStoreConfig | None = None
+
+    def policy_defaults(self) -> DrivePolicyDefaults:
+        return DrivePolicyDefaults(
+            quota_bytes=self.default_quota_bytes,
+            max_file_bytes=self.default_max_file_bytes,
+            default_ttl_seconds=self.default_ttl_seconds,
+            max_ttl_seconds=self.max_ttl_seconds,
+            rpc_direct_max_bytes=self.rpc_direct_max_bytes,
+        )
+
+
+@dataclass(frozen=True)
 class ControlSettings:
     database_url: str
     redis_url: str
@@ -115,6 +171,7 @@ class ControlSettings:
     auth_mode: AuthMode = "local"
     oidc_auth: OidcAuthConfig | None = None
     default_entitlements: EntitlementMap = field(default_factory=dict)
+    drive: DriveConfig = field(default_factory=DriveConfig)
     registration_open: bool = True
     bootstrap_setup_token: str | None = field(default=None, repr=False)
     access_token_ttl_seconds: int = 3600
@@ -166,6 +223,7 @@ class ControlSettings:
         auth_mode: AuthMode = raw_auth_mode  # type: ignore[assignment]
         oidc_auth = _parse_oidc_auth_env(required=auth_mode == "oidc")
         default_entitlements = _parse_default_entitlements_env()
+        drive = _parse_drive_env()
         registration_open = _env_bool("AA_CONTROL_REGISTRATION_OPEN", default=True)
         password_iterations = int(
             os.environ.get(
@@ -185,6 +243,7 @@ class ControlSettings:
             auth_mode=auth_mode,
             oidc_auth=oidc_auth,
             default_entitlements=default_entitlements,
+            drive=drive,
             registration_open=registration_open,
             bootstrap_setup_token=os.environ.get("AA_CONTROL_SETUP_TOKEN") or None,
             access_token_ttl_seconds=int(os.environ.get("AA_CONTROL_ACCESS_TOKEN_TTL", "3600")),
@@ -222,6 +281,41 @@ def _parse_default_entitlements_env() -> EntitlementMap:
     if not isinstance(parsed, dict):
         raise ValueError("AA_CONTROL_DEFAULT_ENTITLEMENTS_JSON must be a JSON object")
     return sanitize_entitlements(parsed)
+
+
+def _parse_drive_env() -> DriveConfig:
+    quota_mb = int(os.environ.get("AA_CONTROL_DRIVE_DEFAULT_QUOTA_MB", "512"))
+    max_file_mb = int(os.environ.get("AA_CONTROL_DRIVE_MAX_FILE_MB", "100"))
+    ttl_days = int(os.environ.get("AA_CONTROL_DRIVE_DEFAULT_TTL_DAYS", "7"))
+    max_ttl_days = int(os.environ.get("AA_CONTROL_DRIVE_MAX_TTL_DAYS", "30"))
+    rpc_max_bytes = int(os.environ.get("AA_CONTROL_DRIVE_RPC_MAX_BYTES", str(8 * MIB)))
+
+    s3: S3ObjectStoreConfig | None = None
+    endpoint = os.environ.get("AA_CONTROL_S3_ENDPOINT", "").strip()
+    bucket = os.environ.get("AA_CONTROL_S3_BUCKET", "").strip()
+    if endpoint and bucket:
+        s3 = S3ObjectStoreConfig(
+            endpoint=endpoint,
+            bucket=bucket,
+            access_key_id=os.environ.get("AA_CONTROL_S3_ACCESS_KEY_ID", ""),
+            secret_access_key=os.environ.get("AA_CONTROL_S3_SECRET_ACCESS_KEY", ""),
+            region=os.environ.get("AA_CONTROL_S3_REGION", "us-east-1"),
+            public_endpoint=os.environ.get("AA_CONTROL_S3_PUBLIC_ENDPOINT") or None,
+            path_style=_env_bool("AA_CONTROL_S3_PATH_STYLE", default=True),
+            key_prefix=os.environ.get("AA_CONTROL_S3_KEY_PREFIX", "aa-drive"),
+        )
+
+    return DriveConfig(
+        default_quota_bytes=-1 if quota_mb < 0 else quota_mb * MIB,
+        default_max_file_bytes=-1 if max_file_mb < 0 else max_file_mb * MIB,
+        default_ttl_seconds=max(60, ttl_days * DAY_SECONDS),
+        max_ttl_seconds=max(60, max_ttl_days * DAY_SECONDS),
+        rpc_direct_max_bytes=max(1024, rpc_max_bytes),
+        upload_url_ttl_seconds=max(60, int(os.environ.get("AA_CONTROL_DRIVE_UPLOAD_URL_TTL", "900"))),
+        download_url_ttl_seconds=max(30, int(os.environ.get("AA_CONTROL_DRIVE_DOWNLOAD_URL_TTL", "300"))),
+        cleanup_interval_seconds=max(5.0, float(os.environ.get("AA_CONTROL_DRIVE_CLEANUP_INTERVAL", "300"))),
+        s3=s3,
+    )
 
 
 def _parse_oidc_auth_env(*, required: bool) -> OidcAuthConfig | None:

@@ -13,12 +13,14 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from aa_control.api import auth as auth_api
+from aa_control.api import drive as drive_api
 from aa_control.api import health as health_api
 from aa_control.api import mcp as mcp_api
 from aa_control.core.config import ControlSettings
 from aa_control.core.errors import ControlError
 from aa_control.infra.db.engine import create_engine
 from aa_control.infra.db.repositories import ControlRepository
+from aa_control.infra.object_store import DriveCleanupWorker, ObjectStorePort, S3ObjectStore
 from aa_control.infra.oidc import OidcJwksVerifier, OidcVerifierPort
 from aa_control.infra.push import LoggingPushProvider, PushProvider, PushRetryWorker
 from aa_control.infra.redis_store import RedisControlStore
@@ -26,6 +28,7 @@ from aa_control.infra.router_pool import MeshCallRouterPool, RouterPoolPort
 from aa_control.rpc.control_service import ControlRpcService
 from aa_control.services.auth_service import AuthService
 from aa_control.services.device_service import DeviceService
+from aa_control.services.drive_service import DriveService
 from aa_control.services.fanout_service import FanoutService
 from aa_control.services.mcp_service import McpService
 from aa_control.services.push_service import PushService
@@ -40,13 +43,16 @@ def create_app(
     router_pool: RouterPoolPort | None = None,
     push_provider: PushProvider | None = None,
     oidc_verifier: OidcVerifierPort | None = None,
+    object_store: ObjectStorePort | None = None,
     start_push_worker: bool = True,
+    start_drive_cleanup_worker: bool | None = None,
 ) -> FastAPI:
     cfg = settings or ControlSettings.from_env()
     owns_engine = engine is None
     owns_redis = redis_client is None
     owns_router_pool = router_pool is None
     owns_oidc_verifier = False
+    owns_object_store = False
 
     verifier: OidcVerifierPort | None = oidc_verifier
     if cfg.auth_mode == "oidc" and verifier is None:
@@ -56,6 +62,11 @@ def create_app(
             default_entitlements=cfg.default_entitlements,
         )
         owns_oidc_verifier = True
+
+    store: ObjectStorePort | None = object_store
+    if store is None and cfg.drive.s3 is not None:
+        store = S3ObjectStore(cfg.drive.s3)
+        owns_object_store = True
 
     db_engine = engine or create_engine(cfg.database_url)
     redis_conn = redis_client or Redis.from_url(cfg.redis_url, decode_responses=False)
@@ -72,6 +83,12 @@ def create_app(
         oidc_verifier=verifier,
     )
     device_service = DeviceService(repo=repo, redis_store=redis_store, router_pool=pool)
+    drive_service = DriveService(
+        settings=cfg,
+        repo=repo,
+        redis_store=redis_store,
+        object_store=store,
+    )
     tunnel_service = TunnelService(settings=cfg, repo=repo, redis_store=redis_store, router_pool=pool)
     fanout_service = FanoutService(settings=cfg, repo=repo, redis_store=redis_store, router_pool=pool)
     push_service = PushService(repo=repo, redis_store=redis_store)
@@ -94,27 +111,43 @@ def create_app(
         max_attempts=cfg.push_max_attempts,
         base_backoff_seconds=cfg.push_base_backoff_seconds,
     )
+    drive_cleanup_worker = DriveCleanupWorker(
+        sweep_fn=drive_service.cleanup_expired,
+        interval_seconds=cfg.drive.cleanup_interval_seconds,
+    )
+    run_drive_cleanup = (
+        start_drive_cleanup_worker if start_drive_cleanup_worker is not None else (start_push_worker and store is not None)
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         push_task: asyncio.Task[None] | None = None
+        cleanup_task: asyncio.Task[None] | None = None
         try:
             control_rpc.bind_loop(asyncio.get_running_loop())
             if isinstance(pool, MeshCallRouterPool):
                 await pool.start(control_service=control_rpc)
             if start_push_worker:
                 push_task = asyncio.create_task(push_worker.run_forever(), name="aa-control-push-worker")
-            logger.info("aa-control-plane started routers={}", pool.router_ids)
+            if run_drive_cleanup:
+                cleanup_task = asyncio.create_task(
+                    drive_cleanup_worker.run_forever(),
+                    name="aa-control-drive-cleanup-worker",
+                )
+            logger.info("aa-control-plane started routers={} drive_enabled={}", pool.router_ids, drive_service.enabled)
             yield
         finally:
-            if push_task is not None:
-                push_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError, Exception):
-                    await push_task
+            for bg_task in (push_task, cleanup_task):
+                if bg_task is not None:
+                    bg_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        await bg_task
             if owns_router_pool and isinstance(pool, MeshCallRouterPool):
                 await pool.stop()
             if owns_oidc_verifier and verifier is not None:
                 await verifier.close()
+            if owns_object_store and store is not None:
+                await store.close()
             if owns_redis:
                 await redis_store.close()
             if owns_engine:
@@ -142,16 +175,20 @@ def create_app(
     app.state.redis_store = redis_store
     app.state.router_pool = pool
     app.state.oidc_verifier = verifier
+    app.state.object_store = store
     app.state.auth_service = auth_service
     app.state.device_service = device_service
+    app.state.drive_service = drive_service
     app.state.tunnel_service = tunnel_service
     app.state.fanout_service = fanout_service
     app.state.push_service = push_service
     app.state.mcp_service = mcp_service
     app.state.control_rpc = control_rpc
     app.state.push_worker = push_worker
+    app.state.drive_cleanup_worker = drive_cleanup_worker
 
     app.include_router(health_api.router)
     app.include_router(auth_api.router)
+    app.include_router(drive_api.router)
     app.include_router(mcp_api.router)
     return app

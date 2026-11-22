@@ -16,6 +16,7 @@ RATE_LIMIT_PREFIX = "aa:v3:rl:"
 PUSH_READY_KEY = "aa:v3:push:ready"
 PUSH_DELAYED_KEY = "aa:v3:push:delayed"
 PUSH_DEAD_KEY = "aa:v3:push:dead"
+USER_ENTITLEMENTS_PREFIX = "aa:v3:entitlements:"
 
 
 @dataclass(frozen=True)
@@ -186,6 +187,36 @@ class RedisControlStore:
             "delayed": int(await self._redis.zcard(PUSH_DELAYED_KEY)),
             "dead": int(await self._redis.llen(PUSH_DEAD_KEY)),
         }
+
+    # ------------------------------------------------------------------
+    # Cached OIDC entitlement snapshots (for Connector-initiated calls)
+    # ------------------------------------------------------------------
+
+    async def set_user_entitlements(
+        self,
+        user_id: str,
+        entitlements: dict[str, Any],
+        *,
+        ttl_seconds: int = 86_400,
+    ) -> None:
+        if not entitlements:
+            return
+        await self._redis.set(
+            f"{USER_ENTITLEMENTS_PREFIX}{user_id}",
+            json.dumps(entitlements),
+            ex=max(60, ttl_seconds),
+        )
+
+    async def get_user_entitlements(self, user_id: str) -> dict[str, Any] | None:
+        raw = await self._redis.get(f"{USER_ENTITLEMENTS_PREFIX}{user_id}")
+        if raw is None:
+            return None
+        try:
+            text = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+            data = json.loads(text)
+            return data if isinstance(data, dict) else None
+        except (ValueError, TypeError):
+            return None
 
 
 def _decode_presence(raw: Any) -> PresenceSnapshot | None:

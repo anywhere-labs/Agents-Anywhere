@@ -42,7 +42,7 @@ from aa_control.core.models import (
     UserView,
 )
 from aa_control.core.utc import utc_now_iso
-from aa_control.infra.db.repositories import ControlRepository, UserRow
+from aa_control.infra.db.repositories import ControlRepository, DeviceRow, UserRow
 from aa_control.infra.oidc import OidcVerifierPort
 from aa_control.infra.redis_store import RedisControlStore
 from aa_control.infra.router_pool import RouterPoolPort
@@ -209,6 +209,8 @@ class AuthService:
             )
             if user.disabled:
                 raise UnauthenticatedError("account is unavailable")
+            if identity.entitlements:
+                await self._redis.set_user_entitlements(user.id, identity.entitlements)
             return _user_view(
                 user,
                 email_override=identity.email or user.email,
@@ -259,6 +261,23 @@ class AuthService:
         )
         return ClientRouterTokenResponse(principal=principal, tokens=tokens)
 
+    async def authenticate_device_credentials(
+        self,
+        *,
+        device_id: str,
+        device_secret: str,
+    ) -> DeviceRow:
+        device = await self._repo.get_device(device_id)
+        secret_hash = await self._repo.get_device_secret_hash(device_id)
+        if device is None or secret_hash is None:
+            raise UnauthenticatedError("unknown or revoked device credentials")
+        if not verify_secret_digest(device_secret, secret_hash):
+            raise UnauthenticatedError("invalid device credentials")
+        owner = await self._repo.get_user_by_id(device.user_id)
+        if owner is None or owner.disabled:
+            raise UnauthenticatedError("account is unavailable")
+        return device
+
     async def issue_device_router_tokens(
         self,
         *,
@@ -273,12 +292,7 @@ class AuthService:
         if not allowed:
             raise RateLimitError("device router token rate limit exceeded")
 
-        device = await self._repo.get_device(device_id)
-        secret_hash = await self._repo.get_device_secret_hash(device_id)
-        if device is None or secret_hash is None:
-            raise UnauthenticatedError("unknown or revoked device credentials")
-        if not verify_secret_digest(device_secret, secret_hash):
-            raise UnauthenticatedError("invalid device credentials")
+        await self.authenticate_device_credentials(device_id=device_id, device_secret=device_secret)
 
         principal = format_device_principal(device_id)
         tokens = await self._routers.issue_device_tokens(
