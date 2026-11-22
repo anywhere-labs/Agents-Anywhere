@@ -1,16 +1,24 @@
 /**
- * Headless terminal sessions for the v3 Connector (`aa.v3.Terminals`, wired
- * in Wave 2).
+ * Terminal sessions for the v3 Connector (`aa.v3.Terminals`). Design: docs/v3/terminal-proposal.md; wire shapes:
+ * contracts/aa-v3/1.0/terminals.schema.json.
  *
- * No native addons: shells are spawned with `child_process.spawn` over pipes
- * (default) or, on Linux, wrapped in util-linux `script(1)` to get a real
- * pty. Output from stdout+stderr is merged, kept in a 64 KiB ring buffer for
- * late attachers, and fanned out to subscribers as base64 chunks.
+ * Process: by default a real pseudo-terminal from the optional native dependency `@lydell/node-pty`
+ * (`TERM=xterm-256color`, resize reaches the PTY), loaded lazily. When it cannot be loaded or started, shells are
+ * spawned with `child_process.spawn` over pipes (`TERM=dumb`), or on Linux wrapped in util-linux `script(1)`; the
+ * mode actually used is reported in `TerminalInfo.mode`.
  *
- * Process hygiene: on POSIX each shell is started `detached`, making it the
- * leader of its own process group, so closing a terminal signals the whole
- * group (shell plus anything it started). On Windows the tree is killed with
- * `taskkill /T /F`.
+ * Screen: every terminal feeds all of its output into a headless xterm.js (`@xterm/headless`) and tracks the last
+ * output seq the emulator has fully parsed. A new attach gets a serialized `snapshot` of the screen as of that seq,
+ * then the buffered chunks after it, then live output: no gaps, no duplicates. Output chunks are numbered and the
+ * last ~1 MiB is kept, so a reconnect with `resume_seq` inside that window only receives what it missed.
+ *
+ * Control: one controller per terminal; everyone else is a viewer. `claim` takes over immediately and bumps the
+ * control generation; `input` / `resize` are honoured only from the controlling stream with the current
+ * generation. When the controller's stream ends its control is kept for a grace period (default 10 s).
+ *
+ * Process hygiene: on POSIX each shell leads its own process group (pipes: `detached`; node-pty: the child is a
+ * session leader), so closing a terminal signals the whole group plus a snapshot of all descendants (job-control
+ * shells put background jobs in their own groups). On Windows the tree is killed with `taskkill /T /F`.
  */
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
@@ -19,7 +27,31 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-export type TerminalMode = "pipe" | "script";
+import serializeModule from "@xterm/addon-serialize";
+import headlessModule from "@xterm/headless";
+
+const { Terminal: HeadlessTerminal } = headlessModule;
+const { SerializeAddon } = serializeModule;
+type HeadlessTerminal = InstanceType<typeof HeadlessTerminal>;
+type SerializeAddon = InstanceType<typeof SerializeAddon>;
+
+// ---------------------------------------------------------------------------
+// Public types (shapes follow contracts/aa-v3/1.0/terminals.schema.json)
+// ---------------------------------------------------------------------------
+
+export type TerminalMode = "pty" | "pipe" | "script";
+export type TerminalOwner = "user" | "agent";
+export type AttachMode = "view" | "control";
+export type RejectReason = "not_controller" | "stale_generation" | "agent_owned";
+
+export interface TerminalController {
+  /** `e2e:<peer_key>` on encrypted calls, the tunnel principal on normal ones. Not a secret. */
+  client_id: string;
+  label: string;
+  /** false while the controller's attach is gone but its grace period has not ended. */
+  connected: boolean;
+  since: string;
+}
 
 export interface TerminalInfo {
   id: string;
@@ -34,11 +66,19 @@ export interface TerminalInfo {
   exited_at: string | null;
   pid: number | null;
   mode: TerminalMode;
+  owner: TerminalOwner;
+  controller: TerminalController | null;
+  generation: number;
+  /** Live attach streams, controller included. */
+  viewers: number;
 }
 
 export type TerminalEvent =
-  | { type: "output"; data: string }
-  | { type: "exit"; exit_code: number | null };
+  | { type: "snapshot"; data: string; seq: number; cols: number; rows: number }
+  | { type: "output"; data: string; seq: number }
+  | { type: "control"; controller: TerminalController | null; generation: number; you: boolean; cols: number; rows: number }
+  | { type: "rejected"; reason: RejectReason; generation: number }
+  | { type: "exit"; exit_code: number | null; exit_signal: string | null };
 
 export interface CreateTerminalOptions {
   cwd?: string;
@@ -48,25 +88,92 @@ export interface CreateTerminalOptions {
   cols?: number;
   rows?: number;
   env?: Record<string, string>;
-  /** `pipe` (default, works everywhere) or `script` (pty via util-linux script(1), Linux only). */
+  /**
+   * `pty` (default): real PTY via `@lydell/node-pty`, falling back to the manager's fallback mode when it is not
+   * available. `pipe`: plain pipes, works everywhere. `script`: pty via util-linux script(1), Linux only.
+   */
   mode?: TerminalMode;
+  /** Reserved: `agent` terminals are read-only for every client. Default `user`. */
+  owner?: TerminalOwner;
 }
 
-export interface SubscribeOptions {
+export interface AttachOptions {
+  /** Who is attaching (matches a reconnect within the grace period). Default `local`. */
+  clientId?: string;
+  /** Display name. Default: the client id. */
+  label?: string;
+  /** `control` claims control right away. Default `view`. */
+  mode?: AttachMode;
+  /** With `mode: "control"`: the size to apply. */
+  cols?: number;
+  rows?: number;
+  /** Last seq the client rendered: if everything after it is buffered, the stream starts with those chunks. */
+  resumeSeq?: number;
   signal?: AbortSignal;
-  /** Skip the buffered history snapshot. */
-  skipHistory?: boolean;
+}
+
+export interface ClaimOptions {
+  cols?: number;
+  rows?: number;
+  /** Keep the terminal's current size (cols / rows are ignored). */
+  keepSize?: boolean;
+}
+
+/**
+ * One attach stream: iterate it for frames; send input, resizes, claims and releases through it. Ends after the
+ * `exit` frame, when `close()` is called, when its signal aborts, or when it falls too far behind.
+ */
+export interface TerminalAttachment extends AsyncIterableIterator<TerminalEvent> {
+  readonly terminalId: string;
+  readonly clientId: string;
+  /** True once the stream has ended (no more frames will be queued). */
+  readonly done: boolean;
+  /** Write keystrokes. Resolves false when dropped (not the controller, stale generation, terminal gone). */
+  input(data: Uint8Array | string, generation: number): Promise<boolean>;
+  /** Resize the terminal. False when dropped. */
+  resize(cols: number, rows: number, generation: number): boolean;
+  /** Take control now. False when refused (agent-owned terminal, stream ended). */
+  claim(options?: ClaimOptions): boolean;
+  /** Give up control. False when this stream is not the controller. */
+  release(): boolean;
+  close(): void;
+}
+
+/** The parts of `@lydell/node-pty` the manager uses. */
+export interface PtyProcess {
+  readonly pid: number;
+  onData(listener: (data: string) => void): unknown;
+  onExit(listener: (event: { exitCode: number; signal?: number }) => void): unknown;
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  kill(signal?: string): void;
+}
+
+export interface PtyModule {
+  spawn(
+    file: string,
+    args: string[],
+    options: { name?: string; cols?: number; rows?: number; cwd?: string; env?: Record<string, string> },
+  ): PtyProcess;
 }
 
 export interface TerminalManagerOptions {
-  /** Ring buffer size per terminal. Default 64 KiB. */
-  historyBytes?: number;
+  /** Output kept per terminal for `resume_seq` (whole chunks). Default 1 MiB. */
+  replayBytes?: number;
+  /** Lines of scrollback in the snapshot. Default 1000. */
+  scrollback?: number;
   /** Max concurrently tracked terminals (running or exited). Default 32. */
   maxTerminals?: number;
   /** Grace period between SIGTERM/SIGHUP and SIGKILL. Default 2000 ms. */
   killGraceMs?: number;
-  /** A subscriber whose unread backlog exceeds this is dropped (it may resubscribe). Default 4 MiB. */
+  /** A subscriber whose unread backlog exceeds this is dropped (it may reattach). Default 4 MiB. */
   maxSubscriberBacklogBytes?: number;
+  /** How long a disconnected controller keeps control. Default 10 000 ms. */
+  controlGraceMs?: number;
+  /** Loads node-pty; reject (or resolve undefined) to force the fallback. Default: dynamic `import("@lydell/node-pty")`. */
+  loadPty?: () => Promise<PtyModule | undefined>;
+  /** Mode used when no PTY is available. Default: `script` on Linux when util-linux script is installed, else `pipe`. */
+  fallbackMode?: "pipe" | "script";
 }
 
 export class TerminalError extends Error {
@@ -75,6 +182,8 @@ export class TerminalError extends Error {
     | "terminal_not_running"
     | "terminal_limit_reached"
     | "terminal_manager_closed"
+    | "not_controller"
+    | "agent_owned"
     | "invalid_argument"
     | "spawn_failed";
 
@@ -86,56 +195,224 @@ export class TerminalError extends Error {
 }
 
 const IS_WINDOWS = process.platform === "win32";
-const DEFAULT_HISTORY_BYTES = 64 * 1024;
+const DEFAULT_REPLAY_BYTES = 1024 * 1024;
+const DEFAULT_SCROLLBACK = 1000;
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
+const DEFAULT_CONTROL_GRACE_MS = 10_000;
 const EXIT_DRAIN_MS = 250;
+const NODE_PTY_SPECIFIER = "@lydell/node-pty";
+
+/** Default loader: `@lydell/node-pty` is an optional dependency, so it may be missing or fail to load. */
+export async function loadNodePty(): Promise<PtyModule | undefined> {
+  // A variable specifier keeps TypeScript from requiring the package at compile time.
+  const specifier: string = NODE_PTY_SPECIFIER;
+  const mod = (await import(specifier)) as Partial<PtyModule> & { default?: Partial<PtyModule> };
+  const spawnFn = mod.spawn ?? mod.default?.spawn;
+  return typeof spawnFn === "function" ? { spawn: spawnFn } : undefined;
+}
 
 // ---------------------------------------------------------------------------
-// Ring buffer
+// Process abstraction: node-pty or child_process, same cleanup
 // ---------------------------------------------------------------------------
 
-class OutputRing {
+interface ShellHandlers {
+  onData(chunk: Buffer, raw: string | Buffer): void;
+  /** The process exited (code / signal name). */
+  onExit(code: number | null, signal: string | null): void;
+  /** All output streams are closed. */
+  onClosed(): void;
+}
+
+interface ShellProcess {
+  readonly pid: number | undefined;
+  write(data: Buffer): Promise<void>;
+  resize(cols: number, rows: number): void;
+  /** Close the shell's input (pipes: EOF on stdin; a PTY has no separate input to close). */
+  endInput(): void;
+  /** Stop reading output and release file descriptors. */
+  dispose(): void;
+  /** Signal only the process itself (Windows fallback; POSIX code signals the group by pid). */
+  kill(signal?: NodeJS.Signals): void;
+}
+
+function wrapChild(child: ChildProcess, handlers: ShellHandlers): ShellProcess {
+  const onData = (chunk: Buffer) => handlers.onData(chunk, chunk);
+  child.stdout?.on("data", onData);
+  child.stderr?.on("data", onData);
+  // EPIPE after the shell exits must not crash the Connector.
+  child.stdin?.on("error", () => undefined);
+  child.on("error", () => undefined);
+  child.once("exit", (code, signal) => handlers.onExit(code, signal));
+  child.once("close", () => handlers.onClosed());
+  return {
+    get pid() {
+      return child.pid;
+    },
+    write(data) {
+      const stdin = child.stdin;
+      if (!stdin || stdin.destroyed || !stdin.writable) {
+        return Promise.reject(new TerminalError("terminal_not_running", "the shell's input is closed"));
+      }
+      return new Promise<void>((resolve, reject) => {
+        stdin.write(data, (err) => {
+          if (err) reject(new TerminalError("terminal_not_running", `write failed: ${err.message}`, { cause: err }));
+          else resolve();
+        });
+      });
+    },
+    resize() {
+      // Pipes have no window size.
+    },
+    endInput() {
+      child.stdin?.end();
+    },
+    dispose() {
+      // Streams may still be held open by orphaned grandchildren; stop reading.
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      child.stdin?.destroy();
+    },
+    kill(signal) {
+      try {
+        child.kill(signal);
+      } catch {
+        // already gone
+      }
+    },
+  };
+}
+
+function wrapPty(pty: PtyProcess, handlers: ShellHandlers): ShellProcess {
+  let exited = false;
+  pty.onData((data) => handlers.onData(Buffer.from(data, "utf8"), data));
+  // node-pty reports exit only after its read side closed (or a short timeout), so output has drained.
+  pty.onExit(({ exitCode, signal }) => {
+    exited = true;
+    if (signal) handlers.onExit(null, signalName(signal));
+    else handlers.onExit(exitCode, null);
+    handlers.onClosed();
+  });
+  return {
+    get pid() {
+      return pty.pid;
+    },
+    write(data) {
+      if (exited) return Promise.reject(new TerminalError("terminal_not_running", "the shell exited"));
+      try {
+        // node-pty writes straight to the PTY socket, which accepts bytes; the typings only say string.
+        pty.write(data as unknown as string);
+        return Promise.resolve();
+      } catch (err) {
+        return Promise.reject(new TerminalError("terminal_not_running", `write failed: ${(err as Error).message}`, { cause: err }));
+      }
+    },
+    resize(cols, rows) {
+      if (exited) return;
+      try {
+        pty.resize(cols, rows);
+      } catch {
+        // The PTY is already closed.
+      }
+    },
+    endInput() {
+      // Hangup is delivered by signalling the group; nothing else to close.
+    },
+    dispose() {
+      const destroy = (pty as { destroy?: () => void }).destroy;
+      if (typeof destroy === "function") {
+        try {
+          destroy.call(pty);
+        } catch {
+          // already closed
+        }
+      }
+    },
+    kill(signal) {
+      // ConPTY's kill throws (asynchronously) once the process is gone.
+      if (exited) return;
+      try {
+        // ConPTY does not take signals.
+        if (IS_WINDOWS) pty.kill();
+        else pty.kill(signal);
+      } catch {
+        // already gone
+      }
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Output log: numbered chunks for resume
+// ---------------------------------------------------------------------------
+
+interface Chunk {
+  seq: number;
+  data: Buffer;
+}
+
+class ChunkLog {
   readonly #cap: number;
-  #chunks: Buffer[] = [];
+  readonly #chunks: Chunk[] = [];
+  #head = 0;
   #size = 0;
+  lastSeq = 0;
 
   constructor(cap: number) {
     this.#cap = cap;
   }
 
-  push(chunk: Buffer): void {
-    if (chunk.byteLength >= this.#cap) {
-      this.#chunks = [Buffer.from(chunk.subarray(chunk.byteLength - this.#cap))];
-      this.#size = this.#cap;
-      return;
-    }
-    this.#chunks.push(chunk);
-    this.#size += chunk.byteLength;
+  /** Seq of the oldest chunk still kept (lastSeq + 1 when empty). */
+  get firstSeq(): number {
+    return this.#chunks[this.#head]?.seq ?? this.lastSeq + 1;
+  }
+
+  append(data: Buffer): number {
+    const seq = ++this.lastSeq;
+    this.#chunks.push({ seq, data });
+    this.#size += data.byteLength;
+    return seq;
+  }
+
+  /** Drop the oldest chunks over the cap, but never one the emulator has not parsed yet (snapshots need them). */
+  trim(parsedSeq: number): void {
     while (this.#size > this.#cap) {
-      const head = this.#chunks[0];
-      if (!head) break;
-      const excess = this.#size - this.#cap;
-      if (head.byteLength <= excess) {
-        this.#chunks.shift();
-        this.#size -= head.byteLength;
-      } else {
-        this.#chunks[0] = head.subarray(excess);
-        this.#size -= excess;
-      }
+      const head = this.#chunks[this.#head];
+      if (!head || head.seq > parsedSeq || head.seq === this.lastSeq) break;
+      this.#size -= head.data.byteLength;
+      this.#head++;
+    }
+    if (this.#head > 1024 && this.#head * 2 > this.#chunks.length) {
+      this.#chunks.splice(0, this.#head);
+      this.#head = 0;
     }
   }
 
-  snapshot(): Buffer {
-    return Buffer.concat(this.#chunks, this.#size);
+  /** Chunks with seq > `seq`, oldest first. */
+  after(seq: number): Chunk[] {
+    const out: Chunk[] = [];
+    for (let i = this.#head; i < this.#chunks.length; i++) {
+      const chunk = this.#chunks[i]!;
+      if (chunk.seq > seq) out.push(chunk);
+    }
+    return out;
+  }
+
+  /** True when every chunk after `seq` is still here. */
+  canResumeFrom(seq: number): boolean {
+    return Number.isInteger(seq) && seq >= 0 && seq <= this.lastSeq && seq >= this.firstSeq - 1;
   }
 }
 
 // ---------------------------------------------------------------------------
-// Subscriptions
+// Subscriptions (attach streams)
 // ---------------------------------------------------------------------------
 
 class Subscription implements AsyncIterableIterator<TerminalEvent> {
+  readonly clientId: string;
+  readonly label: string;
+  /** Generation in which a `rejected` frame was last sent (at most one per generation). */
+  rejectedGeneration = -1;
   readonly #queue: TerminalEvent[] = [];
   #backlog = 0;
   #done = false;
@@ -145,7 +422,9 @@ class Subscription implements AsyncIterableIterator<TerminalEvent> {
   readonly #signal: AbortSignal | undefined;
   readonly #onAbort = () => this.end();
 
-  constructor(maxBacklog: number, onDispose: (sub: Subscription) => void, signal?: AbortSignal) {
+  constructor(clientId: string, label: string, maxBacklog: number, onDispose: (sub: Subscription) => void, signal?: AbortSignal) {
+    this.clientId = clientId;
+    this.label = label;
     this.#maxBacklog = maxBacklog;
     this.#onDispose = onDispose;
     this.#signal = signal;
@@ -164,11 +443,11 @@ class Subscription implements AsyncIterableIterator<TerminalEvent> {
       waiter({ value: event, done: false });
       return;
     }
-    if (event.type === "output") {
-      this.#backlog += event.data.length;
+    const size = eventBytes(event);
+    if (size > 0) {
+      this.#backlog += size;
       if (this.#backlog > this.#maxBacklog) {
-        // Slow consumer: drop it rather than buffer without bound. A fresh
-        // subscribe() starts from the ring-buffer snapshot.
+        // Slow consumer: drop it rather than buffer without bound. Reattaching starts from a snapshot.
         this.end();
         return;
       }
@@ -192,7 +471,7 @@ class Subscription implements AsyncIterableIterator<TerminalEvent> {
   next(): Promise<IteratorResult<TerminalEvent>> {
     const event = this.#queue.shift();
     if (event) {
-      if (event.type === "output") this.#backlog -= event.data.length;
+      this.#backlog -= eventBytes(event);
       return Promise.resolve({ value: event, done: false });
     }
     if (this.#done) return Promise.resolve({ value: undefined, done: true });
@@ -213,44 +492,73 @@ class Subscription implements AsyncIterableIterator<TerminalEvent> {
   }
 }
 
+function eventBytes(event: TerminalEvent): number {
+  return event.type === "output" || event.type === "snapshot" ? event.data.length : 0;
+}
+
 // ---------------------------------------------------------------------------
 // Terminal
 // ---------------------------------------------------------------------------
 
 interface Terminal {
-  info: TerminalInfo;
-  child: ChildProcess;
-  ring: OutputRing;
+  info: Omit<TerminalInfo, "controller" | "generation" | "viewers">;
+  proc: ShellProcess;
+  log: ChunkLog;
+  screen: HeadlessTerminal;
+  serializer: SerializeAddon;
+  /** Last seq the emulator has fully parsed. */
+  parsedSeq: number;
   subscribers: Set<Subscription>;
+  controller: TerminalController | null;
+  /** The stream holding control, or undefined while nobody does / during the grace period. */
+  controlStream: Subscription | undefined;
+  generation: number;
+  graceTimer: NodeJS.Timeout | undefined;
+  exited: boolean;
   /** Resolves once the process exited and output has drained. */
   finished: Promise<void>;
+  resolveFinished: (() => void) | undefined;
   closing: boolean;
 }
 
 export class TerminalManager {
   readonly #terminals = new Map<string, Terminal>();
-  readonly #historyBytes: number;
+  readonly #replayBytes: number;
+  readonly #scrollback: number;
   readonly #maxTerminals: number;
   readonly #killGraceMs: number;
   readonly #maxBacklog: number;
+  readonly #controlGraceMs: number;
+  readonly #loadPty: () => Promise<PtyModule | undefined>;
+  readonly #fallbackMode: "pipe" | "script" | undefined;
+  #pty: Promise<PtyModule | undefined> | undefined;
   #closed = false;
   readonly #onProcessExit = () => this.#killAllSync();
 
   constructor(opts: TerminalManagerOptions = {}) {
-    this.#historyBytes = opts.historyBytes ?? DEFAULT_HISTORY_BYTES;
+    this.#replayBytes = opts.replayBytes ?? DEFAULT_REPLAY_BYTES;
+    this.#scrollback = opts.scrollback ?? DEFAULT_SCROLLBACK;
     this.#maxTerminals = opts.maxTerminals ?? 32;
     this.#killGraceMs = opts.killGraceMs ?? 2000;
     this.#maxBacklog = opts.maxSubscriberBacklogBytes ?? 4 * 1024 * 1024;
+    this.#controlGraceMs = opts.controlGraceMs ?? DEFAULT_CONTROL_GRACE_MS;
+    this.#loadPty = opts.loadPty ?? loadNodePty;
+    this.#fallbackMode = opts.fallbackMode;
     // Last-resort cleanup if the Connector exits without calling closeAll().
     process.once("exit", this.#onProcessExit);
   }
 
+  /** Whether a real PTY is available on this device (loads node-pty on first use). */
+  async ptyAvailable(): Promise<boolean> {
+    return (await this.#ptyModule()) !== undefined;
+  }
+
   list(): TerminalInfo[] {
-    return [...this.#terminals.values()].map((t) => ({ ...t.info }));
+    return [...this.#terminals.values()].map((t) => this.#info(t));
   }
 
   get(id: string): TerminalInfo {
-    return { ...this.#require(id).info };
+    return this.#info(this.#require(id));
   }
 
   async create(opts: CreateTerminalOptions = {}): Promise<TerminalInfo> {
@@ -267,142 +575,430 @@ export class TerminalManager {
       throw new TerminalError("invalid_argument", "shell must be a non-empty string");
     }
     const shellArgs = opts.args ?? (IS_WINDOWS ? [] : ["-i"]);
-    const mode: TerminalMode = opts.mode ?? "pipe";
-    if (mode === "script" && process.platform !== "linux") {
+    const requested: TerminalMode = opts.mode ?? "pty";
+    if (requested === "script" && process.platform !== "linux") {
       // BSD/macOS script(1) requires its own stdin to be a tty, which a
       // headless Connector cannot provide; util-linux script works over pipes.
       throw new TerminalError("invalid_argument", 'mode "script" is only available on Linux (util-linux script)');
     }
-
-    const env: Record<string, string> = {};
-    for (const [key, value] of Object.entries(process.env)) if (value !== undefined) env[key] = value;
-    Object.assign(env, {
-      TERM: mode === "script" ? "xterm-256color" : "dumb",
-      COLUMNS: String(cols),
-      LINES: String(rows),
-    });
+    const owner: TerminalOwner = opts.owner ?? "user";
+    const baseEnv: Record<string, string> = {};
+    for (const [key, value] of Object.entries(process.env)) if (value !== undefined) baseEnv[key] = value;
     if (opts.env) {
       for (const [key, value] of Object.entries(opts.env)) {
         if (typeof value !== "string") throw new TerminalError("invalid_argument", `env.${key} must be a string`);
-        env[key] = value;
       }
     }
 
-    const [command, args] = mode === "script" ? scriptCommand(shell, shellArgs) : [shell, shellArgs];
-    const child = spawn(command, args, {
-      cwd,
-      env,
-      stdio: ["pipe", "pipe", "pipe"],
-      detached: !IS_WINDOWS,
-      windowsHide: true,
-    });
-
-    await new Promise<void>((resolve, reject) => {
-      const onSpawn = () => {
-        child.off("error", onError);
-        resolve();
-      };
-      const onError = (err: Error) => {
-        child.off("spawn", onSpawn);
-        reject(new TerminalError("spawn_failed", `could not start ${command}: ${err.message}`, { cause: err }));
-      };
-      child.once("spawn", onSpawn);
-      child.once("error", onError);
-    });
-
+    let mode: TerminalMode = requested;
     const id = `term_${randomBytes(9).toString("base64url")}`;
-    const info: TerminalInfo = {
-      id,
-      cwd,
-      shell,
+    // Late-bound so the process can be wired before the Terminal object exists.
+    let terminal: Terminal | undefined;
+    const pending: { chunks: [Buffer, string | Buffer][]; exit?: [number | null, string | null]; closed: boolean } = { chunks: [], closed: false };
+    const handlers: ShellHandlers = {
+      onData: (chunk, raw) => (terminal ? this.#onOutput(terminal, chunk, raw) : pending.chunks.push([chunk, raw])),
+      onExit: (code, signal) => (terminal ? this.#onExit(terminal, code, signal) : (pending.exit = [code, signal])),
+      onClosed: () => (terminal ? this.#onClosed(terminal) : (pending.closed = true)),
+    };
+
+    let proc: ShellProcess | undefined;
+    if (mode === "pty") {
+      const pty = await this.#ptyModule();
+      if (pty) {
+        const executable = resolveExecutable(shell, opts.env?.PATH ?? baseEnv.PATH);
+        if (!executable) throw new TerminalError("spawn_failed", `could not start ${shell}: not found or not executable`);
+        const env: Record<string, string> = { ...baseEnv, TERM: "xterm-256color", ...(opts.env ?? {}) };
+        delete env.COLUMNS;
+        delete env.LINES;
+        try {
+          proc = wrapPty(pty.spawn(shell, shellArgs, { name: env.TERM ?? "xterm-256color", cols, rows, cwd, env }), handlers);
+        } catch {
+          // A broken native build (e.g. spawn-helper not executable): use the fallback.
+          proc = undefined;
+        }
+      }
+      if (!proc) mode = this.#fallback();
+    }
+    if (!proc) {
+      const env: Record<string, string> = {
+        ...baseEnv,
+        TERM: mode === "script" ? "xterm-256color" : "dumb",
+        COLUMNS: String(cols),
+        LINES: String(rows),
+        ...(opts.env ?? {}),
+      };
+      const [command, args] = mode === "script" ? scriptCommand(shell, shellArgs) : [shell, shellArgs];
+      const child = spawn(command, args, {
+        cwd,
+        env,
+        stdio: ["pipe", "pipe", "pipe"],
+        detached: !IS_WINDOWS,
+        windowsHide: true,
+      });
+      await new Promise<void>((resolve, reject) => {
+        const onSpawn = () => {
+          child.off("error", onError);
+          resolve();
+        };
+        const onError = (err: Error) => {
+          child.off("spawn", onSpawn);
+          reject(new TerminalError("spawn_failed", `could not start ${command}: ${err.message}`, { cause: err }));
+        };
+        child.once("spawn", onSpawn);
+        child.once("error", onError);
+      });
+      proc = wrapChild(child, handlers);
+    }
+
+    const screen = new HeadlessTerminal({
       cols,
       rows,
-      created_at: new Date().toISOString(),
-      running: true,
-      exit_code: null,
-      exit_signal: null,
-      exited_at: null,
-      pid: child.pid ?? null,
-      mode,
-    };
-    const terminal: Terminal = {
-      info,
-      child,
-      ring: new OutputRing(this.#historyBytes),
+      scrollback: this.#scrollback,
+      allowProposedApi: true,
+      // Pipes carry bare LF; a PTY (and script(1)) already translates to CRLF.
+      convertEol: mode === "pipe",
+    });
+    const serializer = new SerializeAddon();
+    screen.loadAddon(serializer);
+
+    terminal = {
+      info: {
+        id,
+        cwd,
+        shell,
+        cols,
+        rows,
+        created_at: new Date().toISOString(),
+        running: true,
+        exit_code: null,
+        exit_signal: null,
+        exited_at: null,
+        pid: proc.pid ?? null,
+        mode,
+        owner,
+      },
+      proc,
+      log: new ChunkLog(this.#replayBytes),
+      screen,
+      serializer,
+      parsedSeq: 0,
       subscribers: new Set(),
+      controller: null,
+      controlStream: undefined,
+      generation: 0,
+      graceTimer: undefined,
+      exited: false,
       finished: Promise.resolve(),
+      resolveFinished: undefined,
       closing: false,
     };
-    terminal.finished = this.#wire(terminal);
-    this.#terminals.set(id, terminal);
-    return { ...info };
+    const t = terminal;
+    t.finished = new Promise<void>((resolve) => {
+      t.resolveFinished = resolve;
+    });
+    this.#terminals.set(id, t);
+    for (const [chunk, raw] of pending.chunks) this.#onOutput(t, chunk, raw);
+    if (pending.exit) this.#onExit(t, ...pending.exit);
+    if (pending.closed) this.#onClosed(t);
+    return this.#info(t);
   }
 
+  /**
+   * Write to the terminal directly, bypassing control (in-process callers and tests). Remote clients go through
+   * an attachment, where only the controller may write.
+   */
   async write(id: string, data: Uint8Array | string): Promise<void> {
     const terminal = this.#require(id);
-    const stdin = terminal.child.stdin;
-    if (!terminal.info.running || !stdin || stdin.destroyed || !stdin.writable) {
-      throw new TerminalError("terminal_not_running", `terminal ${id} is not running`);
-    }
-    await new Promise<void>((resolve, reject) => {
-      stdin.write(data, (err) => {
-        if (err) reject(new TerminalError("terminal_not_running", `write failed: ${err.message}`, { cause: err }));
-        else resolve();
-      });
-    });
+    if (!terminal.info.running) throw new TerminalError("terminal_not_running", `terminal ${id} is not running`);
+    await terminal.proc.write(toBuffer(data));
   }
 
   /**
-   * Update tracked dimensions. Pipes have no window size to change, so this
-   * only affects metadata (and COLUMNS/LINES for terminals created later).
+   * Change the size. With `by`, the caller must be the current controller (matched by client id; the unary
+   * `resize` method has no stream, so the client id stands in for it). Without `by` the change is unconditional.
    */
-  resize(id: string, cols: number, rows: number): TerminalInfo {
+  resize(id: string, cols: number, rows: number, by?: { clientId: string }): TerminalInfo {
     const terminal = this.#require(id);
-    terminal.info.cols = validateDimension(cols, "cols");
-    terminal.info.rows = validateDimension(rows, "rows");
-    return { ...terminal.info };
+    validateDimension(cols, "cols");
+    validateDimension(rows, "rows");
+    if (by) {
+      if (terminal.info.owner === "agent") throw new TerminalError("agent_owned", `terminal ${id} is controlled by an agent`);
+      if (terminal.controller?.client_id !== by.clientId) {
+        throw new TerminalError("not_controller", `only the terminal's controller may resize it (claim control first)`);
+      }
+    }
+    this.#applySize(terminal, cols, rows);
+    return this.#info(terminal);
   }
 
   /**
-   * Stream terminal events. The history snapshot and the live registration
-   * happen synchronously in this call, so no output can fall between them.
-   * The iterator ends after the `exit` event.
+   * Attach a stream. The first frames are, in order: a `snapshot` (or, with a usable `resumeSeq`, only the missed
+   * chunks), the buffered output the snapshot does not include yet, and a `control` frame; then live frames. The
+   * live registration happens in this same synchronous call, so nothing falls between them.
    */
-  subscribe(id: string, opts: SubscribeOptions = {}): AsyncIterableIterator<TerminalEvent> {
+  attach(id: string, opts: AttachOptions = {}): TerminalAttachment {
     const terminal = this.#require(id);
-    const sub = new Subscription(this.#maxBacklog, (s) => terminal.subscribers.delete(s), opts.signal);
-    if (!opts.skipHistory) {
-      const history = terminal.ring.snapshot();
-      if (history.byteLength > 0) sub.push({ type: "output", data: history.toString("base64") });
+    const clientId = opts.clientId ?? "local";
+    const label = opts.label || clientId;
+    if (opts.cols !== undefined) validateDimension(opts.cols, "cols");
+    if (opts.rows !== undefined) validateDimension(opts.rows, "rows");
+    if (opts.resumeSeq !== undefined && (!Number.isInteger(opts.resumeSeq) || opts.resumeSeq < 0)) {
+      throw new TerminalError("invalid_argument", "resume_seq must be a non-negative integer");
     }
+    const sub = new Subscription(clientId, label, this.#maxBacklog, (s) => this.#detach(terminal, s), opts.signal);
+    const attachment = this.#attachment(terminal, sub);
     if (opts.signal?.aborted) {
       sub.end();
-      return sub;
+      return attachment;
     }
-    if (terminal.info.running) {
-      terminal.subscribers.add(sub);
+    const running = terminal.info.running;
+    if (running) terminal.subscribers.add(sub);
+
+    if (opts.resumeSeq !== undefined && terminal.log.canResumeFrom(opts.resumeSeq)) {
+      for (const chunk of terminal.log.after(opts.resumeSeq)) sub.push(outputEvent(chunk));
     } else {
-      sub.push({ type: "exit", exit_code: terminal.info.exit_code });
+      sub.push({
+        type: "snapshot",
+        data: Buffer.from(terminal.serializer.serialize({ scrollback: this.#scrollback }), "utf8").toString("base64"),
+        seq: terminal.parsedSeq,
+        cols: terminal.screen.cols,
+        rows: terminal.screen.rows,
+      });
+      for (const chunk of terminal.log.after(terminal.parsedSeq)) sub.push(outputEvent(chunk));
+    }
+
+    if (sub.done) return attachment; // dropped while queueing the first frames (backlog)
+    if (running && opts.mode === "control" && terminal.info.owner !== "agent") {
+      this.#claim(terminal, sub, { cols: opts.cols, rows: opts.rows, keepSize: opts.cols === undefined && opts.rows === undefined });
+    } else {
+      sub.push(this.#controlEvent(terminal, sub));
+      if (opts.mode === "control" && terminal.info.owner === "agent") this.#reject(terminal, sub, "agent_owned");
+    }
+    if (!running) {
+      sub.push(exitEvent(terminal));
       sub.end();
     }
-    return sub;
+    return attachment;
   }
 
   /** Kill the terminal (SIGHUP/SIGTERM, then SIGKILL after the grace period) and forget it. */
   async close(id: string): Promise<void> {
     const terminal = this.#require(id);
     await this.#terminate(terminal);
-    this.#terminals.delete(id);
+    this.#forget(terminal);
   }
 
   async closeAll(): Promise<void> {
     this.#closed = true;
     await Promise.all([...this.#terminals.values()].map((t) => this.#terminate(t)));
-    this.#terminals.clear();
+    for (const terminal of [...this.#terminals.values()]) this.#forget(terminal);
     process.off("exit", this.#onProcessExit);
   }
 
+  // -- control ---------------------------------------------------------------
+
+  #attachment(terminal: Terminal, sub: Subscription): TerminalAttachment {
+    const manager = this;
+    return Object.assign(sub, {
+      terminalId: terminal.info.id,
+      async input(data: Uint8Array | string, generation: number): Promise<boolean> {
+        if (!manager.#mayDrive(terminal, sub, generation)) return false;
+        try {
+          await terminal.proc.write(toBuffer(data));
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      resize(cols: number, rows: number, generation: number): boolean {
+        validateDimension(cols, "cols");
+        validateDimension(rows, "rows");
+        if (!manager.#mayDrive(terminal, sub, generation)) return false;
+        manager.#applySize(terminal, cols, rows);
+        return true;
+      },
+      claim(options: ClaimOptions = {}): boolean {
+        if (options.cols !== undefined) validateDimension(options.cols, "cols");
+        if (options.rows !== undefined) validateDimension(options.rows, "rows");
+        if (sub.done || !terminal.info.running) return false;
+        if (terminal.info.owner === "agent") {
+          manager.#reject(terminal, sub, "agent_owned");
+          return false;
+        }
+        manager.#claim(terminal, sub, options);
+        return true;
+      },
+      release(): boolean {
+        if (sub.done) return false;
+        if (terminal.controlStream !== sub) {
+          manager.#reject(terminal, sub, terminal.info.owner === "agent" ? "agent_owned" : "not_controller");
+          return false;
+        }
+        manager.#clearControl(terminal);
+        return true;
+      },
+      close(): void {
+        sub.end();
+      },
+    }) as Subscription & TerminalAttachment;
+  }
+
+  /** Input / resize gate: owner, controller, generation. Sends `rejected` (once per generation) when dropped. */
+  #mayDrive(terminal: Terminal, sub: Subscription, generation: number): boolean {
+    if (sub.done) return false;
+    if (terminal.info.owner === "agent") return this.#reject(terminal, sub, "agent_owned");
+    if (terminal.controlStream !== sub) return this.#reject(terminal, sub, "not_controller");
+    if (generation !== terminal.generation) return this.#reject(terminal, sub, "stale_generation");
+    return terminal.info.running;
+  }
+
+  #reject(terminal: Terminal, sub: Subscription, reason: RejectReason): false {
+    if (sub.rejectedGeneration !== terminal.generation) {
+      sub.rejectedGeneration = terminal.generation;
+      sub.push({ type: "rejected", reason, generation: terminal.generation });
+    }
+    return false;
+  }
+
+  #claim(terminal: Terminal, sub: Subscription, options: ClaimOptions): void {
+    this.#stopGrace(terminal);
+    if (terminal.controlStream !== sub) {
+      terminal.generation += 1;
+      terminal.controlStream = sub;
+      terminal.controller = { client_id: sub.clientId, label: sub.label, connected: true, since: new Date().toISOString() };
+    }
+    const cols = options.keepSize ? terminal.info.cols : (options.cols ?? terminal.info.cols);
+    const rows = options.keepSize ? terminal.info.rows : (options.rows ?? terminal.info.rows);
+    if (cols !== terminal.info.cols || rows !== terminal.info.rows) this.#resizeProcess(terminal, cols, rows);
+    this.#broadcastControl(terminal);
+  }
+
+  #clearControl(terminal: Terminal): void {
+    this.#stopGrace(terminal);
+    terminal.controller = null;
+    terminal.controlStream = undefined;
+    terminal.generation += 1;
+    this.#broadcastControl(terminal);
+  }
+
+  #detach(terminal: Terminal, sub: Subscription): void {
+    terminal.subscribers.delete(sub);
+    if (terminal.controlStream !== sub) return;
+    terminal.controlStream = undefined;
+    if (!terminal.info.running || !terminal.controller) return;
+    // Keep control for a grace period; a claim (e.g. the same client reconnecting with mode=control) ends it.
+    terminal.controller = { ...terminal.controller, connected: false };
+    terminal.graceTimer = setTimeout(() => {
+      terminal.graceTimer = undefined;
+      if (terminal.controlStream === undefined && terminal.controller) this.#clearControl(terminal);
+    }, this.#controlGraceMs);
+    terminal.graceTimer.unref();
+    this.#broadcastControl(terminal);
+  }
+
+  #stopGrace(terminal: Terminal): void {
+    if (terminal.graceTimer) clearTimeout(terminal.graceTimer);
+    terminal.graceTimer = undefined;
+  }
+
+  #applySize(terminal: Terminal, cols: number, rows: number): void {
+    if (cols === terminal.info.cols && rows === terminal.info.rows) return;
+    this.#resizeProcess(terminal, cols, rows);
+    this.#broadcastControl(terminal);
+  }
+
+  #resizeProcess(terminal: Terminal, cols: number, rows: number): void {
+    terminal.info.cols = cols;
+    terminal.info.rows = rows;
+    if (terminal.info.running) terminal.proc.resize(cols, rows);
+    terminal.screen.resize(cols, rows);
+  }
+
+  #controlEvent(terminal: Terminal, sub: Subscription): TerminalEvent {
+    return {
+      type: "control",
+      controller: terminal.controller ? { ...terminal.controller } : null,
+      generation: terminal.generation,
+      you: terminal.controlStream === sub,
+      cols: terminal.info.cols,
+      rows: terminal.info.rows,
+    };
+  }
+
+  #broadcastControl(terminal: Terminal): void {
+    for (const sub of terminal.subscribers) sub.push(this.#controlEvent(terminal, sub));
+  }
+
+  // -- output / exit -----------------------------------------------------------
+
+  #onOutput(terminal: Terminal, chunk: Buffer, raw: string | Buffer): void {
+    const seq = terminal.log.append(chunk);
+    terminal.screen.write(raw, () => {
+      terminal.parsedSeq = seq;
+      terminal.log.trim(seq);
+    });
+    if (terminal.subscribers.size === 0) return;
+    const event: TerminalEvent = { type: "output", data: chunk.toString("base64"), seq };
+    for (const sub of terminal.subscribers) sub.push(event);
+  }
+
+  #onExit(terminal: Terminal, code: number | null, signal: string | null): void {
+    const { info } = terminal;
+    info.running = false;
+    info.exit_code = code;
+    info.exit_signal = signal;
+    info.exited_at = new Date().toISOString();
+    this.#stopGrace(terminal);
+    // Like a tty hangup: anything the shell left behind in its group gets SIGHUP.
+    signalGroup(terminal.proc, "SIGHUP");
+    terminal.exited = true;
+    setTimeout(() => this.#finalize(terminal), EXIT_DRAIN_MS).unref();
+  }
+
+  #onClosed(terminal: Terminal): void {
+    if (terminal.exited) this.#finalize(terminal);
+  }
+
+  #finalize(terminal: Terminal): void {
+    const resolve = terminal.resolveFinished;
+    if (!resolve) return;
+    terminal.resolveFinished = undefined;
+    terminal.proc.dispose();
+    const exit = exitEvent(terminal);
+    const subs = [...terminal.subscribers];
+    terminal.subscribers.clear();
+    terminal.controlStream = undefined;
+    if (terminal.controller) terminal.controller = { ...terminal.controller, connected: false };
+    for (const sub of subs) {
+      sub.push(exit);
+      sub.end();
+    }
+    resolve();
+  }
+
   // -- internals -----------------------------------------------------------
+
+  #ptyModule(): Promise<PtyModule | undefined> {
+    this.#pty ??= this.#loadPty().then(
+      (mod) => (mod && typeof mod.spawn === "function" ? mod : undefined),
+      () => undefined,
+    );
+    return this.#pty;
+  }
+
+  #fallback(): "pipe" | "script" {
+    if (this.#fallbackMode) return this.#fallbackMode;
+    return process.platform === "linux" && resolveExecutable("script", process.env.PATH) ? "script" : "pipe";
+  }
+
+  #info(terminal: Terminal): TerminalInfo {
+    return {
+      ...terminal.info,
+      controller: terminal.controller ? { ...terminal.controller } : null,
+      generation: terminal.generation,
+      viewers: terminal.subscribers.size,
+    };
+  }
 
   #require(id: string): Terminal {
     const terminal = this.#terminals.get(id);
@@ -410,78 +1006,36 @@ export class TerminalManager {
     return terminal;
   }
 
-  #wire(terminal: Terminal): Promise<void> {
-    const { child, info } = terminal;
-    const onData = (chunk: Buffer) => {
-      terminal.ring.push(chunk);
-      if (terminal.subscribers.size === 0) return;
-      const event: TerminalEvent = { type: "output", data: chunk.toString("base64") };
-      for (const sub of terminal.subscribers) sub.push(event);
-    };
-    child.stdout?.on("data", onData);
-    child.stderr?.on("data", onData);
-    // EPIPE after the shell exits must not crash the Connector.
-    child.stdin?.on("error", () => undefined);
-    child.on("error", () => undefined);
-
-    return new Promise<void>((resolve) => {
-      let exited = false;
-      let finalized = false;
-      const finalize = () => {
-        if (finalized) return;
-        finalized = true;
-        // Streams may still be held open by orphaned grandchildren; stop reading.
-        child.stdout?.destroy();
-        child.stderr?.destroy();
-        child.stdin?.destroy();
-        const exitEvent: TerminalEvent = { type: "exit", exit_code: info.exit_code };
-        for (const sub of [...terminal.subscribers]) {
-          sub.push(exitEvent);
-          sub.end();
-        }
-        terminal.subscribers.clear();
-        resolve();
-      };
-      child.once("exit", (code, signal) => {
-        exited = true;
-        info.running = false;
-        info.exit_code = code;
-        info.exit_signal = signal;
-        info.exited_at = new Date().toISOString();
-        // Like a tty hangup: anything the shell left behind in its group gets SIGHUP.
-        signalGroup(child, "SIGHUP");
-        setTimeout(finalize, EXIT_DRAIN_MS).unref();
-      });
-      child.once("close", () => {
-        if (exited) finalize();
-      });
-    });
+  #forget(terminal: Terminal): void {
+    this.#stopGrace(terminal);
+    this.#terminals.delete(terminal.info.id);
+    terminal.screen.dispose();
   }
 
   async #terminate(terminal: Terminal): Promise<void> {
-    const { child, info } = terminal;
+    const { proc, info } = terminal;
     if (info.running && !terminal.closing) {
       terminal.closing = true;
       // Snapshot descendant processes and their process groups BEFORE the shell
       // exits (interactive shells with job control may place background jobs in
       // their own PGIDs, which `kill(-shellPid)` alone would miss once the shell
       // exits via EOF).
-      const descendants = IS_WINDOWS ? [] : snapshotDescendants(child.pid);
+      const descendants = IS_WINDOWS ? [] : snapshotDescendants(proc.pid);
       if (IS_WINDOWS) {
-        child.stdin?.end();
-        killTreeWindows(child);
+        proc.endInput();
+        killTreeWindows(proc);
       } else {
         // Send SIGHUP before closing stdin so interactive shells propagate hangup
         // to their job table instead of exiting quietly on EOF.
-        signalGroup(child, "SIGHUP");
-        signalGroup(child, "SIGTERM");
+        signalGroup(proc, "SIGHUP");
+        signalGroup(proc, "SIGTERM");
         signalDescendants(descendants, "SIGHUP");
         signalDescendants(descendants, "SIGTERM");
-        child.stdin?.end();
+        proc.endInput();
       }
       const timer = setTimeout(() => {
         if (info.running || !IS_WINDOWS) {
-          signalGroup(child, "SIGKILL");
+          signalGroup(proc, "SIGKILL");
           if (!IS_WINDOWS) signalDescendants(descendants, "SIGKILL");
         }
       }, this.#killGraceMs);
@@ -493,7 +1047,7 @@ export class TerminalManager {
       }
       // Sweep the group and any job PGIDs once more: a child that trapped
       // SIGHUP/SIGTERM outlives the shell otherwise.
-      signalGroup(child, "SIGKILL");
+      signalGroup(proc, "SIGKILL");
       if (!IS_WINDOWS) signalDescendants(descendants, "SIGKILL");
     } else {
       await terminal.finished;
@@ -502,9 +1056,9 @@ export class TerminalManager {
 
   #pruneExited(): void {
     if (this.#terminals.size < this.#maxTerminals) return;
-    for (const [id, terminal] of this.#terminals) {
+    for (const terminal of [...this.#terminals.values()]) {
       if (!terminal.info.running && terminal.subscribers.size === 0) {
-        this.#terminals.delete(id);
+        this.#forget(terminal);
         if (this.#terminals.size < this.#maxTerminals) return;
       }
     }
@@ -513,8 +1067,8 @@ export class TerminalManager {
   #killAllSync(): void {
     for (const terminal of this.#terminals.values()) {
       if (!terminal.info.running) continue;
-      if (IS_WINDOWS) killTreeWindows(terminal.child, true);
-      else signalGroup(terminal.child, "SIGKILL");
+      if (IS_WINDOWS) killTreeWindows(terminal.proc, true);
+      else signalGroup(terminal.proc, "SIGKILL");
     }
   }
 }
@@ -523,9 +1077,48 @@ export class TerminalManager {
 // Helpers
 // ---------------------------------------------------------------------------
 
+function outputEvent(chunk: Chunk): TerminalEvent {
+  return { type: "output", data: chunk.data.toString("base64"), seq: chunk.seq };
+}
+
+function exitEvent(terminal: Terminal): TerminalEvent {
+  return { type: "exit", exit_code: terminal.info.exit_code, exit_signal: terminal.info.exit_signal };
+}
+
+function toBuffer(data: Uint8Array | string): Buffer {
+  return typeof data === "string" ? Buffer.from(data, "utf8") : Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+}
+
+function signalName(signal: number): string {
+  for (const [name, value] of Object.entries(os.constants.signals)) if (value === signal) return name;
+  return String(signal);
+}
+
 function defaultShell(): string {
   if (IS_WINDOWS) return process.env.ComSpec || "cmd.exe";
   return process.env.SHELL || "/bin/sh";
+}
+
+/** The shell's path when it exists and is executable (absolute / relative path, or looked up on PATH). */
+function resolveExecutable(command: string, pathEnv: string | undefined): string | undefined {
+  const isFile = (candidate: string) => {
+    try {
+      if (!fs.statSync(candidate).isFile()) return false;
+      if (!IS_WINDOWS) fs.accessSync(candidate, fs.constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const exts = IS_WINDOWS ? ["", ...(process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)] : [""];
+  const withExt = (base: string) => exts.map((ext) => base + ext).find(isFile);
+  if (command.includes("/") || (IS_WINDOWS && command.includes("\\"))) return withExt(path.resolve(command));
+  for (const dir of (pathEnv ?? "").split(path.delimiter)) {
+    if (!dir) continue;
+    const found = withExt(path.join(dir, command));
+    if (found) return found;
+  }
+  return undefined;
 }
 
 function resolveCwd(input: string | undefined): string {
@@ -560,12 +1153,15 @@ function shQuote(value: string): string {
   return /^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-function signalGroup(child: ChildProcess, signal: NodeJS.Signals): void {
-  const pid = child.pid;
+function signalGroup(proc: ShellProcess, signal: NodeJS.Signals): void {
+  const pid = proc.pid;
   if (pid === undefined) return;
+  if (IS_WINDOWS) {
+    proc.kill(signal);
+    return;
+  }
   try {
-    if (IS_WINDOWS) child.kill(signal);
-    else process.kill(-pid, signal);
+    process.kill(-pid, signal);
   } catch {
     // ESRCH: the group is already gone.
   }
@@ -642,14 +1238,14 @@ function signalDescendants(entries: readonly DescendantEntry[], signal: NodeJS.S
   }
 }
 
-function killTreeWindows(child: ChildProcess, sync = false): void {
-  const pid = child.pid;
+function killTreeWindows(proc: ShellProcess, sync = false): void {
+  const pid = proc.pid;
   if (pid === undefined) return;
   const args = ["/pid", String(pid), "/T", "/F"];
   try {
     if (sync) spawnSync("taskkill", args, { windowsHide: true, stdio: "ignore" });
-    else spawn("taskkill", args, { windowsHide: true, stdio: "ignore" }).on("error", () => child.kill());
+    else spawn("taskkill", args, { windowsHide: true, stdio: "ignore" }).on("error", () => proc.kill());
   } catch {
-    child.kill();
+    proc.kill();
   }
 }

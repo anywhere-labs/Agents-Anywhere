@@ -36,6 +36,7 @@ const addFormats = addFormatsModule.default;
 
 const CONNECTOR_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const CONTROL_SCHEMA_URL = new URL("../../../contracts/aa-v3/1.0/control.schema.json", import.meta.url);
+const TERMINALS_SCHEMA_URL = new URL("../../../contracts/aa-v3/1.0/terminals.schema.json", import.meta.url);
 
 function routerBinary(): string | undefined {
   const candidates = [process.env.MESHCALL_ROUTER_BINARY, path.resolve(CONNECTOR_ROOT, "../../meshcall/meshcall-router/bin/meshcall-router")];
@@ -227,6 +228,90 @@ class SessionView {
   }
 }
 
+interface TerminalInfoWire {
+  id: string;
+  mode: string;
+  cols: number;
+  rows: number;
+  viewers: number;
+  generation: number;
+  controller: { client_id: string; label: string; connected: boolean } | null;
+}
+
+interface TerminalFrame {
+  type: "snapshot" | "output" | "control" | "rejected" | "exit";
+  data?: string;
+  seq?: number;
+  cols?: number;
+  rows?: number;
+  generation?: number;
+  you?: boolean;
+  controller?: { client_id: string; label: string; connected: boolean } | null;
+  reason?: string;
+  exit_code?: number | null;
+}
+
+/** Client side of `aa.v3.Terminals/attach`: reads frames in the background (as a real client must), validating each. */
+class TerminalStream {
+  readonly seen: TerminalFrame[] = [];
+  text = "";
+  lastSeq = 0;
+  ended = false;
+  error: unknown;
+  #read = 0;
+
+  constructor(
+    readonly call: { send(item: unknown): Promise<void>; cancel(reason?: string): Promise<void> } & AsyncIterable<TerminalFrame>,
+    check: (frame: TerminalFrame) => void,
+  ) {
+    void (async () => {
+      try {
+        for await (const frame of call) {
+          check(frame);
+          if (frame.type === "output" && frame.data) {
+            this.text += Buffer.from(frame.data, "base64").toString("utf8");
+            this.lastSeq = frame.seq ?? this.lastSeq;
+          }
+          this.seen.push(frame);
+        }
+      } catch (error) {
+        this.error = error;
+      } finally {
+        this.ended = true;
+      }
+    })();
+  }
+
+  /** The next frame not yet consumed by next() / until(). */
+  async next(): Promise<TerminalFrame> {
+    const frame = await eventually(() => this.seen[this.#read] ?? (this.ended ? null : undefined), "next terminal frame");
+    if (frame === null) throw new Error(`terminal stream ended: ${String(this.error)}`);
+    this.#read++;
+    return frame;
+  }
+
+  async until(match: (frame: TerminalFrame) => boolean, what: string): Promise<TerminalFrame> {
+    for (;;) {
+      const frame = await this.next().catch((error: unknown) => {
+        throw new Error(`${what}: ${String(error)}`);
+      });
+      if (match(frame)) return frame;
+    }
+  }
+
+  untilText(pattern: RegExp): Promise<TerminalFrame> {
+    return this.until(() => pattern.test(this.text), `output ${pattern}`);
+  }
+
+  control(predicate: (frame: TerminalFrame) => boolean = () => true): Promise<TerminalFrame> {
+    return this.until((f) => f.type === "control" && predicate(f), "control frame");
+  }
+
+  rejected(): Promise<TerminalFrame> {
+    return this.until((f) => f.type === "rejected", "rejected frame");
+  }
+}
+
 // ── The test ────────────────────────────────────────────────────────────────────────────────────────────────────
 
 const SCOPES = ["aa.v3.Sessions", "aa.v3.Device", "aa.v3.Terminals"];
@@ -263,12 +348,16 @@ describe("ConnectorHost against a real meshcall-router", { skip: SKIP, timeout: 
   }
 
   before(async () => {
-    const schema = JSON.parse(await readFile(CONTROL_SCHEMA_URL, "utf8")) as { $id: string };
     const ajv = new Ajv2020({ allErrors: true, strict: false });
     addFormats(ajv);
-    ajv.addSchema(schema);
-    for (const def of ["SessionListPayload", "DeviceAdminPingResponse", "PresenceReport", "PushNotificationRequest"]) {
-      validators[def] = ajv.getSchema(`${schema.$id}#/$defs/${def}`);
+    const contracts: [URL, string[]][] = [
+      [CONTROL_SCHEMA_URL, ["SessionListPayload", "DeviceAdminPingResponse", "PresenceReport", "PushNotificationRequest"]],
+      [TERMINALS_SCHEMA_URL, ["TerminalInfo", "AttachRequest", "TerminalInputFrame", "TerminalOutputFrame"]],
+    ];
+    for (const [url, defs] of contracts) {
+      const schema = JSON.parse(await readFile(url, "utf8")) as { $id: string };
+      ajv.addSchema(schema);
+      for (const def of defs) validators[def] = ajv.getSchema(`${schema.$id}#/$defs/${def}`);
     }
 
     tmp = await mkdtemp(path.join(os.tmpdir(), "aa-connector-e2e-"));
@@ -300,7 +389,8 @@ describe("ConnectorHost against a real meshcall-router", { skip: SKIP, timeout: 
     await controlHost?.close().catch(() => undefined);
     await host?.stop().catch(() => undefined);
     await router?.close().catch(() => undefined);
-    if (tmp) await rm(tmp, { recursive: true, force: true });
+    // maxRetries: a debounced state write (e.g. after the revocation above) may land while the directory is removed.
+    if (tmp) await rm(tmp, { recursive: true, force: true, maxRetries: 5 });
   });
 
   it("normal mode: control plane, MCP policy, tunnel sessions with a real ACP agent", async () => {
@@ -404,9 +494,10 @@ describe("ConnectorHost against a real meshcall-router", { skip: SKIP, timeout: 
     // Terminals: duplex attach through the tunnel.
     if (!IS_WINDOWS) {
       const term = await client.unary<object, { id: string }>("aa.v3.Terminals", "create", { cwd: workDir, shell: "/bin/sh" }, { instance: deviceId });
-      const attach = client.duplex<object, { type: string; data?: string }, { type: string; data?: string; exit_code?: number | null }>(
-        "aa.v3.Terminals", "attach", { id: term.id }, { instance: deviceId });
-      await attach.send({ type: "input", data: Buffer.from("echo attach-$((40+2))\nexit\n").toString("base64") });
+      const attach = client.duplex<object, { type: string; data?: string; generation?: number }, { type: string; data?: string; exit_code?: number | null }>(
+        "aa.v3.Terminals", "attach", { id: term.id, mode: "control" }, { instance: deviceId });
+      // The first controller of a fresh terminal holds generation 1.
+      await attach.send({ type: "input", data: Buffer.from("echo attach-$((40+2))\nexit\n").toString("base64"), generation: 1 });
       let output = "";
       let exited = false;
       for await (const event of attach) {
@@ -434,6 +525,104 @@ describe("ConnectorHost against a real meshcall-router", { skip: SKIP, timeout: 
     await host.flush();
     const saved = JSON.parse(await readFile(path.join(tmp, "state", "sessions.json"), "utf8")) as unknown[];
     assert.equal(saved.length, 1);
+  });
+
+  it("terminals: one controller, viewers rejected, takeover drops stale input, resume_seq", { skip: IS_WINDOWS }, async () => {
+    const { mesh: laptop } = await tunnelClient("user:u1/client:laptop");
+    const { mesh: phone } = await tunnelClient("user:u1/client:phone");
+    const created = await laptop.unary<object, TerminalInfoWire>("aa.v3.Terminals", "create", { cwd: workDir, shell: "/bin/sh", cols: 80, rows: 24 }, { instance: deviceId });
+    validate("TerminalInfo", created);
+    assert.equal(created.mode, "pty");
+    assert.equal(created.controller, null);
+
+    const open = (mesh: Mesh, request: Record<string, unknown>) => {
+      validate("AttachRequest", request);
+      return new TerminalStream(
+        mesh.duplex<object, unknown, TerminalFrame>("aa.v3.Terminals", "attach", request, { instance: deviceId }),
+        (frame) => validate("TerminalOutputFrame", frame),
+      );
+    };
+    const send = async (stream: TerminalStream, frame: Record<string, unknown>) => {
+      validate("TerminalInputFrame", frame);
+      await stream.call.send(frame);
+    };
+    const input = (text: string, generation: number) => ({ type: "input", data: Buffer.from(text).toString("base64"), generation });
+
+    // A (laptop) creates and controls; B (phone) watches.
+    const a = open(laptop, { id: created.id, mode: "control", cols: 100, rows: 30, label: "Chrome · macOS" });
+    assert.equal((await a.next()).type, "snapshot");
+    const aCtl = await a.control();
+    assert.equal(aCtl.you, true);
+    assert.equal(aCtl.generation, 1);
+    assert.deepEqual([aCtl.controller?.client_id, aCtl.controller?.label, aCtl.cols, aCtl.rows], ["user:u1/client:laptop", "Chrome · macOS", 100, 30]);
+    const b = open(phone, { id: created.id, label: "iPhone" });
+    assert.equal((await b.next()).type, "snapshot");
+    const bCtl = await b.control();
+    assert.equal(bCtl.you, false);
+    assert.equal(bCtl.controller?.client_id, "user:u1/client:laptop");
+
+    // B's input is dropped and answered with one `rejected`.
+    await send(b, input("echo from-phone-$((1+1))\n", 1));
+    assert.deepEqual(await b.rejected(), { type: "rejected", reason: "not_controller", generation: 1 });
+    await send(a, input("stty size | sed 's/^/size=/'; echo from-laptop-$((2+2))\n", 1));
+    await a.untilText(/from-laptop-4/);
+    await b.untilText(/from-laptop-4/);
+    assert.match(a.text, /size=30 100/);
+
+    // B claims with its own size: A is told and becomes a viewer.
+    await send(b, { type: "claim", cols: 90, rows: 25 });
+    const bNow = await b.control((f) => f.generation === 2);
+    assert.equal(bNow.you, true);
+    assert.deepEqual([bNow.cols, bNow.rows], [90, 25]);
+    const aNow = await a.control((f) => f.generation === 2);
+    assert.equal(aNow.you, false);
+    assert.equal(aNow.controller?.client_id, "user:u1/client:phone");
+    assert.equal(aNow.controller?.label, "iPhone");
+
+    // A's stale keystrokes are dropped; B's go through.
+    await send(a, input("echo stale-$((3+3))\n", 1));
+    assert.deepEqual(await a.rejected(), { type: "rejected", reason: "not_controller", generation: 2 });
+    await send(b, input("stty size | sed 's/^/size=/'; echo from-phone-$((4+4))\n", 2));
+    await b.untilText(/from-phone-8/);
+    assert.match(b.text, /size=25 90/);
+    assert.doesNotMatch(b.text, /stale-6|from-phone-2/);
+
+    // The unary resize is controller-only.
+    const refused = await rejection(laptop.unary("aa.v3.Terminals", "resize", { id: created.id, cols: 70, rows: 20 }, { instance: deviceId }));
+    assert.equal(reasonOf(refused), "not_controller");
+    const resized = await phone.unary<object, TerminalInfoWire>("aa.v3.Terminals", "resize", { id: created.id, cols: 70, rows: 20 }, { instance: deviceId });
+    validate("TerminalInfo", resized);
+    assert.equal(resized.cols, 70);
+    assert.equal((await a.control((f) => f.cols === 70)).rows, 20);
+
+    const listed = await laptop.unary<object, { terminals: TerminalInfoWire[] }>("aa.v3.Terminals", "list", {}, { instance: deviceId });
+    for (const t of listed.terminals) validate("TerminalInfo", t);
+    const info = listed.terminals.find((t) => t.id === created.id);
+    assert.ok(info);
+    assert.deepEqual([info.viewers, info.generation, info.controller?.client_id, info.controller?.connected], [2, 2, "user:u1/client:phone", true]);
+
+    // A drops off and comes back with resume_seq: only the missed output, no snapshot.
+    const lastSeen = a.lastSeq;
+    assert.ok(lastSeen > 0);
+    await a.call.cancel();
+    await eventually(() => host.terminals.get(created.id).viewers === 1 || undefined, "laptop stream gone");
+    await send(b, input("echo while-away-$((5+5))\n", 2));
+    await b.untilText(/while-away-10/);
+    const again = open(laptop, { id: created.id, resume_seq: lastSeen, label: "Chrome · macOS" });
+    const firstBack = await again.next();
+    assert.equal(firstBack.type, "output", "a resumed stream starts with output, not a snapshot");
+    assert.equal(firstBack.seq, lastSeen + 1);
+    await again.untilText(/while-away-10/);
+    const backCtl = await again.control();
+    assert.equal(backCtl.you, false);
+    assert.ok(!again.seen.some((f) => f.type === "snapshot"));
+
+    // The controller types `exit`: every stream ends with the exit frame.
+    await send(b, input("exit\n", 2));
+    for (const stream of [b, again]) {
+      const exit = await stream.until((f) => f.type === "exit", "exit");
+      assert.equal(exit.exit_code, 0);
+    }
   });
 
   it("presence and push reach aa.v3.Control in the contract's shape", async () => {

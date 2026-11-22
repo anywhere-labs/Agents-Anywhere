@@ -22,6 +22,7 @@
 - **自动释放**：控制者的 `attach` 断开后保留 10 秒宽限期，期间同一客户端以 `mode: "control"` 重连会直接恢复控制（代数照样加一）；过了宽限期控制者清空，尺寸保持最后的值。
 - **自动认领**由客户端决定：没有控制者时，用户一打字客户端就先发 `claim`；已有控制者时，客户端提示「要接管吗？」，不悄悄抢。新建终端的那台设备 `attach` 时用 `mode: "control"`。
 - **尺寸只听控制者**：PTY 的行列数等于控制者窗口的大小。旁观者按控制者的行列数渲染（放不下就横向滚动或缩小字号），从不发 `resize`。`claim` 可以带上自己的尺寸，也可以 `keep_size: true` 保持当前尺寸（手机接管只敲一条命令时，不把电脑上的 vim 挤成手机宽度）。
+- 独立的一元方法 `Terminals/resize` 没有 `attach` 连接可以带代数，只在调用方身份（规则同上）等于当前控制者的 `client_id` 时执行（宽限期内也算），否则返回 `failed_precondition`（`details.reason = "not_controller"`）。客户端应优先在 `attach` 流里发 `resize` 帧。
 - 预留：将来由 Agent 通过 ACP `terminal/create` 创建的终端 `owner = "agent"`，所有人只读，`claim` 一律拒绝。
 
 ## 4. 第一帧：屏幕快照，而不是原始字节回放
