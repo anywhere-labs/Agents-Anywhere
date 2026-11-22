@@ -26,7 +26,7 @@ import type { AcpRuntimePreset } from "../core/config.js";
 import { DeviceGate, type DeviceGateOptions, type PairingHint, type PairingPayload } from "../core/gate.js";
 import { SessionStore } from "../core/session-store.js";
 import { AcpRuntimeHost, type PushEvent } from "../runtime/acp-host.js";
-import { devicePlatform } from "../runtime/device-ops.js";
+import { devicePlatform, removeSessionAttachments, type DriveDownload } from "../runtime/device-ops.js";
 import { StateStore, type ConnectorSettings, type DeviceIdentity, type DeviceMode, type PairedClientEntry } from "../runtime/state-store.js";
 import { TerminalManager } from "../runtime/terminal-manager.js";
 import { DeviceAdminService, TunnelStreamTracker } from "../rpc/device-admin-service.js";
@@ -37,6 +37,7 @@ import {
   backoffDelay,
   ControlPresenceClient,
   fetchDeviceRouterTokens,
+  fetchDriveDownload,
   isUnauthenticated,
   type PresenceSummary,
   type RouterTokenEntry,
@@ -169,6 +170,15 @@ export class ConnectorHost {
   get identity(): DeviceIdentity {
     return { ...this.#need(this.#identity, "identity") };
   }
+
+  /** Cloud-drive download links as this device, or undefined without a control plane (local/direct mode). */
+  driveDownloader(): ((fileId: string) => Promise<DriveDownload>) | undefined {
+    const identity = this.#identity;
+    const controlUrl = this.options.controlUrl ?? identity?.control_url;
+    if (!identity || !controlUrl || !identity.device_secret) return undefined;
+    return (fileId) =>
+      fetchDriveDownload({ controlUrl, deviceId: identity.device_id, deviceSecret: identity.device_secret, fileId });
+  }
   get isServing(): boolean {
     return this.#serving.length > 0;
   }
@@ -267,6 +277,7 @@ export class ConnectorHost {
         store,
         runtimes: this.#runtimes,
         streams: this.streams,
+        onSessionDeleted: (session) => removeSessionAttachments(state.dataDir, { sessionId: session.id, projectDir: session.cwd }),
         ...(this.options.waitTimeoutMs !== undefined ? { waitTimeoutMs: this.options.waitTimeoutMs } : {}),
       }),
       device: new DeviceService({
@@ -280,6 +291,10 @@ export class ConnectorHost {
         settings: () => this.settings,
         updateSettings: (patch) => this.updateSettings(patch, { deferModeSwitch: true }),
         runtimes: () => this.runtimes.list(),
+        sessionCwd: (sessionId) => (store.has(sessionId) ? store.get(sessionId)?.cwd : undefined),
+        get driveDownload() {
+          return host.driveDownloader();
+        },
         revokePairedClient: (clientPub) => this.revokePairedClient(clientPub),
       }),
       terminals: new TerminalsService({ gate, terminals: this.#terminals, streams: this.streams }),
