@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from aa_control.core.config import AuthMode
+from aa_control.core.entitlements import EntitlementValue
 
 DeviceMode = Literal["normal", "encrypted"]
 DevicePlatform = Literal["macos", "linux", "windows"]
@@ -267,13 +270,29 @@ class UserView(BaseModel):
     display_name: str
     role: str
     created_at: str
+    plan: str | None = None
+    entitlements: dict[str, EntitlementValue] = Field(default_factory=dict)
+    active_context: dict[str, Any] | None = None
+
+
+class OidcPublicConfig(BaseModel):
+    issuer: str
+    client_id: str | None = None
+    scopes: str
+    authorization_endpoint: str | None = None
+    token_endpoint: str | None = None
+    userinfo_endpoint: str | None = None
+    jwks_uri: str | None = None
+    end_session_endpoint: str | None = None
 
 
 class AuthConfigResponse(BaseModel):
+    auth_mode: AuthMode = "local"
     needs_bootstrap: bool
     registration_open: bool
     oauth_enabled: bool
     oauth_provider_label: str | None = None
+    oidc: OidcPublicConfig | None = None
     server_time: str
 
 

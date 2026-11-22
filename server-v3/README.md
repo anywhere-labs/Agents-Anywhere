@@ -11,8 +11,10 @@ Agents Anywhere v3 的轻控制面后端，实现定稿架构文档中定义的 
 
 ## 已实现功能
 
-- **账号与凭据（FastAPI）**：
-  - 密码登录与首次管理员注册（100% 兼容 2.x `pbkdf2_sha256` 密码摘要）、Refresh Token 轮换与撤销、可选外部 OAuth 登录回调；
+- **账号、认证双模式与权益（FastAPI）**：
+  - 支持 `AA_CONTROL_AUTH_MODE=oidc|local`（默认 `local`）：
+    - **`oidc` 模式**（对接 `anywhere-auth` 统一认证中心或任意标准第三方 OIDC，如 Keycloak / Auth0 / Authentik）：通过 OIDC Discovery 自动发现与本地缓存 JWKS（支持 RS/ES/PS/EdDSA 非对称验签、密钥轮换热刷新与未知 `kid` 冷却防洪），本地零网络开销验签 Bearer JWT 获取全局 `sub` 并 JIT 同步本地影子用户（自动保留 2.x 迁移用户的 `users.id == sub`）；完整解析 `plan`、`entitlements`（通用扁平权益字典，如 `aa.max_devices`、`aa.drive_quota_mb`、`aa.drive_ttl_days`）与 `active_context`（个人/组织多身份上下文），在 `/devices/register` 执行 `aa.max_devices` 配额校验并在 `/auth/me` 返回生效权益；同时关闭本地账密登录/注册端点；
+    - **`local` 模式**（单机开源自部署兜底）：保留内置密码登录与首次管理员注册（100% 兼容 2.x `pbkdf2_sha256` 密码摘要）、Refresh Token 轮换与撤销、可选外部 OAuth 登录回调；两种模式均支持通过 `AA_CONTROL_DEFAULT_ENTITLEMENTS_JSON` 配置默认权益基线；
   - 客户端换取 Router `mt_` Token（签发 `principal = user:<uid>/client:<cid>`，scope 仅限 `aa.v3.Control/*`）；
   - 设备注册与换取设备 Router `mt_` Token（仅存设备密钥 SHA-256 摘要，签发 `register: true` + `instance_ids: [device_id]` 与 `principal = device:<did>`）；
   - Redis 限流保护（抵御 Router 重启重连风暴）。
@@ -59,8 +61,17 @@ Agents Anywhere v3 的轻控制面后端，实现定稿架构文档中定义的 
 | `AA_CONTROL_ROUTER_URL` | 单个 MeshCall Router WS 地址（多实例用 `AA_CONTROL_ROUTERS_JSON`） | `ws://127.0.0.1:8765` |
 | `AA_CONTROL_ROUTER_PUBLIC_URL` | 返回给客户端连接的 Router 公网地址 | `wss://router.example.com` |
 | `AA_CONTROL_ROUTER_USERNAME` / `AA_CONTROL_ROUTER_PASSWORD` | Router `auth.json` 中控制面账号凭据 | `control` / `...` |
-| `AA_CONTROL_REGISTRATION_OPEN` | 是否开放自助注册（首账号始终为 admin） | `true` / `false` |
-| `AA_CONTROL_SETUP_TOKEN` | 可选：限制首次管理员注册所需的一次性 token | — |
+| `AA_CONTROL_AUTH_MODE` | 认证模式：`local`（默认内置账密）或 `oidc`（外部 OIDC/JWKS） | `local` / `oidc` |
+| `AA_CONTROL_OIDC_ISSUER` | `oidc` 模式必填：认证中心 Issuer URL（自动发现 `/.well-known/openid-configuration`） | `https://auth.anywhere.dev` |
+| `AA_CONTROL_OIDC_CLIENT_ID` | `oidc` 模式客户端 ID（写入 `/auth/config` 并作为默认 `aud`） | `aa-v3` |
+| `AA_CONTROL_OIDC_AUDIENCE` | 可选：允许的 JWT `aud`（逗号分隔，未设时回退到 `CLIENT_ID`） | `aa-v3` |
+| `AA_CONTROL_OIDC_JWKS_URI` | 可选：显式覆盖 JWKS URL（默认从 Discovery 获取） | `https://auth.anywhere.dev/.well-known/jwks.json` |
+| `AA_CONTROL_OIDC_SCOPES` | 可选：暴露给客户端请求的 OIDC Scope | `openid profile email offline_access entitlements` |
+| `AA_CONTROL_OIDC_ENTITLEMENTS_CLAIM` | 可选：自定义第三方 OIDC 权益声明键名（默认 `entitlements`） | `entitlements` |
+| `AA_CONTROL_OIDC_ADMIN_ROLES` | 可选：映射为管理员的角色名列表（逗号分隔，默认 `admin`） | `admin` |
+| `AA_CONTROL_DEFAULT_ENTITLEMENTS_JSON` | 可选：默认权益基线 JSON（第三方 OIDC 无权益声明或 `local` 模式时生效） | `{"aa.max_devices": 10}` |
+| `AA_CONTROL_REGISTRATION_OPEN` | `local` 模式：是否开放自助注册（首账号始终为 admin） | `true` / `false` |
+| `AA_CONTROL_SETUP_TOKEN` | `local` 模式可选：限制首次管理员注册所需的一次性 token | — |
 
 ### 2. 数据库迁移与启动
 

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
+from typing import Any
 
 from loguru import logger
 
 from aa_control.core.auth import generate_opaque_token, hash_secret_digest
+from aa_control.core.entitlements import EntitlementSet
 from aa_control.core.errors import (
     DeviceOfflineError,
     ForbiddenError,
@@ -67,7 +69,16 @@ class DeviceService:
         user_id: str,
         req: RegisterDeviceRequest,
         actor: str,
+        entitlements: Mapping[str, Any] | None = None,
     ) -> RegisterDeviceResponse:
+        max_devices = EntitlementSet.from_mapping(entitlements).max_devices()
+        if max_devices is not None:
+            existing_count = await self._repo.count_devices_for_user(user_id)
+            if existing_count >= max_devices:
+                raise ForbiddenError(
+                    f"device limit reached ({max_devices} devices allowed)",
+                    code="device_limit_reached",
+                )
         raw_secret = generate_opaque_token("aadev_")
         row = await self._repo.create_device(
             user_id=user_id,
