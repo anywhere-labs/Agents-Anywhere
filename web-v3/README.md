@@ -28,6 +28,7 @@ AA_CONTROL_SERVER_URL=http://127.0.0.1:8787 corepack yarn dev
   - 完整会话工作区（`/sessions/[deviceId]/[sessionId]`）：实时流式时间线（基于 `v3poc` 渲染原语 + 视口虚拟化）、审批内联操作、排队消息（插话/取消）、大文件超过 8 MiB 自动经限额云盘 S3 预签名中转。
   - 设备工作台（`/devices/[deviceId]`）：概览与发起会话、文件浏览与 Git Diff、xterm.js 交互终端、加密配对与已配对客户端管理。
   - 终端（`aa.v3.Terminals`，设计见 `docs/v3/terminal-proposal.md`）：屏幕快照首帧 + `seq` 断线续传、单控制者多旁观者（无人控制时输入即接管，他人控制时提示「接管」，可「接管并保持尺寸」）、旁观者按控制者行列数渲染、非 PTY 设备提示不支持全屏程序；触屏设备支持单指滚动（含惯性）、长按选择复制、双指缩放字号与扩展键栏（Esc、Ctrl、Tab、方向键、PgUp/PgDn、Home/End）。协议状态机 `lib/terminal/` 不依赖 React，传输层可替换为移动端原生 bridge。
+  - 移动端渲染包（[`embed/`](embed/README.md)）：iOS / Android WebView 加载的单文件 HTML（`corepack yarn embed:build` → `embed/dist/aa-render.html`），复用上面的对话组件与 xterm.js 终端，经 `aa.render/2` bridge（[`docs/v3/mobile-bridge.md`](../docs/v3/mobile-bridge.md)）收发消息，自己不联网；附夹具回放页与无头冒烟测试。
 - **随身助手 Pi Lite + 云端工作区 VFS（T518）**：
   - 按需动态加载 `@earendil-works/pi-agent-core` 与 `@earendil-works/pi-ai`（不污染首屏体积）。
   - Tokens Anywhere PKCE S256 一键接入 + 账号级单 Key 跨浏览器复用与自动续期（`/assistant/tokens`、`/oauth/tokens/callback`），以及本地 BYOK API Key 回退。
@@ -52,6 +53,8 @@ corepack yarn lint
 corepack yarn test
 corepack yarn build
 ```
+
+移动端渲染包另有 `corepack yarn embed:build && corepack yarn embed:smoke`（见 [embed/README.md](embed/README.md)）。
 
 ## 相关文档索引
 

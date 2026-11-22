@@ -5,13 +5,13 @@ import "@xterm/xterm/css/xterm.css"
 import type { FitAddon } from "@xterm/addon-fit"
 import type { ITheme, Terminal } from "@xterm/xterm"
 import { CopyIcon, LoaderCircleIcon, MonitorSmartphoneIcon, RefreshCwIcon } from "lucide-react"
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react"
+import { useCallback, useEffect, useImperativeHandle, useRef, useState, useSyncExternalStore, type Ref } from "react"
 import { toast } from "sonner"
 
 import { useI18n } from "@/components/i18n-provider"
 import { TerminalExtraKeys } from "@/components/terminal/extra-keys"
 import { Button } from "@/components/ui/button"
-import { applyCtrl, keySequence, type ExtraKey } from "@/lib/terminal/keys"
+import { applyCtrl, keySequence, type ExtraKey, type KeyModifiers } from "@/lib/terminal/keys"
 import {
   canType,
   controlledElsewhere,
@@ -118,9 +118,23 @@ export interface TerminalViewProps {
   initialMode: "view" | "control"
   label: string
   className?: string
+  /** Drive the view from outside (the mobile render bundle: native's extra-keys bar over the bridge). */
+  handle?: Ref<TerminalViewHandle>
+  /** Show the on-screen extra-keys row on touch screens (default). Off where native draws its own bar. */
+  extraKeys?: boolean
+  /** Fill the parent's height instead of the fixed terminal height (the mobile bundle's full-screen terminal). */
+  fill?: boolean
 }
 
-export function TerminalView({ info, transport, initialMode, label, className }: TerminalViewProps) {
+export interface TerminalViewHandle {
+  /** An extra key, as the on-screen row sends it (applies, then clears, the latched Ctrl). */
+  key(key: ExtraKey, mods?: KeyModifiers): void
+  /** Bytes typed by the user (auto-claims like the keyboard). */
+  type(data: string): void
+  toggleCtrl(): void
+}
+
+export function TerminalView({ info, transport, initialMode, label, className, handle, extraKeys = true, fill = false }: TerminalViewProps) {
   const { t } = useI18n()
   const hostRef = useRef<HTMLDivElement>(null)
   const termElRef = useRef<HTMLDivElement>(null)
@@ -475,14 +489,19 @@ export function TerminalView({ info, transport, initialMode, label, className }:
   }, [flashCopied, info.id, info.owner, initialMode, label, setCtrl, slot, transport])
 
   const session = slot.session
-  const handleKey = (key: ExtraKey) => {
+  const handleKey = (key: ExtraKey, mods: KeyModifiers = {}) => {
     const term = termRef.current
     if (!session || !term) return
-    const seq = keySequence(key, { ctrl: ctrlRef.current }, { applicationCursorKeys: term.modes.applicationCursorKeysMode })
+    const seq = keySequence(key, { ...mods, ctrl: mods.ctrl || ctrlRef.current }, { applicationCursorKeys: term.modes.applicationCursorKeysMode })
     setCtrl(false)
     session.input(seq, { intent: "type" })
     term.focus()
   }
+  useImperativeHandle(handle, () => ({
+    key: handleKey,
+    type: (data) => void session?.input(data, { intent: "type" }),
+    toggleCtrl: () => setCtrl(!ctrlRef.current),
+  }))
   const handleCopySelection = async () => {
     const term = termRef.current
     if (!term) return
@@ -589,7 +608,8 @@ export function TerminalView({ info, transport, initialMode, label, className }:
       <div
         ref={hostRef}
         className={cn(
-          "relative h-[min(64dvh,560px)] min-h-40 overflow-auto rounded-xl bg-background p-1",
+          "relative min-h-40 overflow-auto rounded-xl bg-background p-1",
+          fill ? "flex-1" : "h-[min(64dvh,560px)]",
           status !== "live" && status !== "exited" && "opacity-80"
         )}
       >
@@ -618,7 +638,7 @@ export function TerminalView({ info, transport, initialMode, label, className }:
         <p className="px-1 text-xs text-muted-foreground">{t("terminal.viewOnlyHint")}</p>
       )}
 
-      {coarse && status === "live" && !state?.readOnly && (
+      {extraKeys && coarse && status === "live" && !state?.readOnly && (
         <TerminalExtraKeys
           disabled={!typing}
           ctrlActive={ctrlActive}
