@@ -970,6 +970,7 @@ function DeviceWorkbenchPageInner() {
           if (!open) void loadDeviceRuntime()
         }}
         deviceNameHint={device?.name}
+        deviceId={device?.id}
       />
 
       <ConfirmDialog

@@ -74,6 +74,8 @@ export interface WorkbenchContextValue {
   refreshDevices: () => Promise<void>
   refreshSessions: () => Promise<void>
   pairEncryptedDevice: (uri: string, deviceNameHint?: string) => Promise<{ deviceId: string }>
+  /** Pair with a code typed by the user, for a device the control plane lists (e2ee-admission-proposal §4.1). */
+  pairEncryptedDeviceWithCode: (deviceId: string, code: string) => Promise<{ deviceId: string }>
   removeLocalDeviceTrust: (deviceId: string) => Promise<void>
   setAssistantPrimary: (enabled: boolean) => Promise<void>
   updatePreferences: (patch: Partial<UserPreferences>) => Promise<UserPreferences>
@@ -555,12 +557,12 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     setActiveAccountId(null)
   }, [accounts])
 
-  const pairEncryptedDevice = useCallback(
-    async (uri: string, deviceNameHint?: string) => {
+  const pairWith = useCallback(
+    async (pair: (tunnels: DeviceTunnelManager) => Promise<{ deviceId: string }>) => {
       const tunnels = tunnelsRef.current
       const acct = activeAccountRef.current
       if (!tunnels || !acct) throw new Error("Not signed in")
-      const res = await tunnels.pairEncryptedDevice(uri, deviceNameHint)
+      const res = await pair(tunnels)
       const updatedTrusts = await vault.listDeviceTrusts(acct.accountId)
       const map: Record<string, ClientDeviceTrustRecord> = {}
       for (const t of updatedTrusts) map[t.device_id] = t
@@ -570,6 +572,20 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       return { deviceId: res.deviceId }
     },
     [refreshSessions]
+  )
+
+  const pairEncryptedDevice = useCallback(
+    (uri: string, deviceNameHint?: string) => pairWith((tunnels) => tunnels.pairEncryptedDevice(uri, deviceNameHint)),
+    [pairWith]
+  )
+
+  const pairEncryptedDeviceWithCode = useCallback(
+    (deviceId: string, code: string) => {
+      const device = devices.find((d) => d.id === deviceId)
+      if (!device) return Promise.reject(new Error("Unknown device"))
+      return pairWith((tunnels) => tunnels.pairEncryptedDeviceWithCode(device, code))
+    },
+    [pairWith, devices]
   )
 
   const removeLocalDeviceTrust = useCallback(async (deviceId: string) => {
@@ -635,6 +651,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       refreshDevices,
       refreshSessions,
       pairEncryptedDevice,
+      pairEncryptedDeviceWithCode,
       removeLocalDeviceTrust,
       setAssistantPrimary,
       updatePreferences,
@@ -665,6 +682,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       refreshDevices,
       refreshSessions,
       pairEncryptedDevice,
+      pairEncryptedDeviceWithCode,
       removeLocalDeviceTrust,
       setAssistantPrimary,
       updatePreferences,
