@@ -492,6 +492,28 @@ export interface McpGrantView {
   created_at: string
 }
 
+/** `GET /oauth/authorize` (Bearer) consent preview from `server-v3` `McpService.consent_preview`. */
+export interface McpConsentScopeView {
+  scope: McpScope
+  default_checked: boolean
+  high_risk: boolean
+}
+
+export interface McpConsentPreview {
+  client_id: string
+  client_name: string
+  redirect_uri: string
+  scopes: McpConsentScopeView[]
+  eligible_devices: { id: string; name: string; platform: DevicePlatform }[]
+  note?: string
+}
+
+/** `POST /oauth/authorize` (Bearer) approval result. */
+export interface McpAuthorizeApproveResponse {
+  code: string
+  redirect_url: string
+}
+
 // ---------------------------------------------------------------------------
 // Cloud Drive (T517)
 // ---------------------------------------------------------------------------
