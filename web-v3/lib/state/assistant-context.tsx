@@ -10,7 +10,9 @@ import {
   useState,
   type ReactNode,
 } from "react"
+import { toast } from "sonner"
 
+import { useI18n } from "@/components/i18n-provider"
 import {
   deleteAssistantEncryption,
   fetchAssistantEncryption,
@@ -195,6 +197,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     getFreshAccessToken,
     updatePreferences,
   } = useWorkbench()
+  const { t } = useI18n()
 
   const [deviceTabIdValue] = useState(() => `tab_${Math.random().toString(36).slice(2, 10)}`)
   const deviceTabId = useRef(deviceTabIdValue)
@@ -558,7 +561,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         // Dynamically lazy-load Pi Lite runtime only when actually chatting!
         const { createPiLiteAgent } = await import("@/lib/assistant/runtime")
         const vfs = makeVfs() ?? undefined
-        const { agent } = await createPiLiteAgent({
+        const { agent, mcpErrors } = await createPiLiteAgent({
           choice: {
             format: modelPref.format,
             baseUrl: modelPref.baseUrl,
@@ -577,6 +580,9 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
               setPendingToolConfirm({ ...call, resolve })
             }),
         })
+        for (const failure of mcpErrors) {
+          toast.warning(t("assistant.mcpUnavailable", { name: failure.server, message: failure.message }))
+        }
 
         let accText = ""
         let accThinking = ""
@@ -639,6 +645,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       preferences.assistantModel,
       refreshVfs,
       startNewConversation,
+      t,
       tokensStatus?.key,
     ]
   )

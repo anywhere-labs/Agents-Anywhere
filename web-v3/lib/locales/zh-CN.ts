@@ -159,6 +159,7 @@ export const zhCN: Messages = {
   "assistant.byokDesc": "仅保存在当前浏览器，适用于任意支持 CORS 的兼容网关。",
   "assistant.mcpTitle": "MCP 工具服务",
   "assistant.mcpDesc": "一键挂载 Agents Anywhere 自己的 /mcp 实现跨设备调度，或添加外部 Streamable HTTP MCP 服务。",
+  "assistant.mcpUnavailable": "MCP 服务「{name}」的工具没有加载出来：{message}",
   "assistant.mountAaMcp": "一键挂载 AA /mcp",
   "assistant.mountAaMcpDesc": "为随身助手签发受限 MCP 授权以调度所选普通设备（默认不勾选自动回答审批）。",
   "assistant.addExternalMcp": "添加外部 HTTP MCP",

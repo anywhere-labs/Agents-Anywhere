@@ -11,6 +11,8 @@ import {
   parsePairingUri,
   trustTierToBadge,
 } from "@/lib/mesh/pairing"
+import type { ControlPlaneClient } from "@/lib/mesh/control-client"
+import { DeviceTunnelManager } from "@/lib/mesh/device-tunnel"
 import { vault } from "@/lib/storage/idb"
 import type { PairingPayload } from "@/lib/types/v3"
 
@@ -119,5 +121,50 @@ describe("Browser IndexedDB local vault", () => {
     expect(rotated.publicKey).not.toBe(id1.publicKey)
     const afterReset = await vault.getDeviceTrust(accountId, "dev_pin_01")
     expect(afterReset).toBeNull()
+  })
+})
+
+describe("Encrypted device pairing keeps the local pin", () => {
+  const accountId = "https://aa.local::u-pin"
+  // A control plane that refuses to hand out an E2E tunnel: pairing fails before any network handshake.
+  const plaintextControl = {
+    openTunnel: async () => ({
+      router_url: "wss://router.invalid",
+      credential: "mtun_plain_credential",
+      tunnel_id: "tun_1",
+      expires_at: new Date(Date.now() + 3600_000).toISOString(),
+      mode: "normal",
+    }),
+  } as unknown as ControlPlaneClient
+
+  it("refuses a link whose device key differs from the pinned one", async () => {
+    const pinned = await makeValidPayload({ instance_id: "dev_pin_swap" })
+    await vault.saveDeviceTrust(accountId, buildWebTrustRecord(pinned, "Laptop"))
+
+    const forged = await makeValidPayload({ instance_id: "dev_pin_swap" })
+    const manager = new DeviceTunnelManager(accountId, plaintextControl)
+    const err = await manager.pairEncryptedDevice(encodePairingUri(forged)).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(PairingError)
+    expect((err as PairingError).code).toBe("device_pub_mismatch")
+    expect((await vault.getDeviceTrust(accountId, "dev_pin_swap"))?.device_pub).toBe(pinned.device_pub)
+  })
+
+  it("removes the trust record of a first pairing that did not complete", async () => {
+    const payload = await makeValidPayload({ instance_id: "dev_pin_fail" })
+    const manager = new DeviceTunnelManager(accountId, plaintextControl)
+    const err = await manager.pairEncryptedDevice(encodePairingUri(payload)).catch((e: unknown) => e)
+    expect((err as PairingError).code).toBe("e2e_required_locally")
+    expect(await vault.getDeviceTrust(accountId, "dev_pin_fail")).toBeNull()
+  })
+
+  it("restores the previous record when re-pairing the same key fails", async () => {
+    const payload = await makeValidPayload({ instance_id: "dev_pin_again" })
+    const previous = { ...buildWebTrustRecord(payload, "Old name"), paired_at: "2026-01-01T00:00:00.000Z" }
+    await vault.saveDeviceTrust(accountId, previous)
+    const manager = new DeviceTunnelManager(accountId, plaintextControl)
+    await manager.pairEncryptedDevice(encodePairingUri(payload), "New name").catch(() => undefined)
+    const after = await vault.getDeviceTrust(accountId, "dev_pin_again")
+    expect(after?.paired_at).toBe("2026-01-01T00:00:00.000Z")
+    expect(after?.device_name_hint).toBe("Old name")
   })
 })

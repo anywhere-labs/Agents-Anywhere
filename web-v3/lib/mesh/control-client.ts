@@ -88,6 +88,24 @@ export class ControlPlaneClient {
     }
   }
 
+  /**
+   * Run a control-plane stream; if the Router refuses the token before the first item (it restarted, so every
+   * token it issued is gone), fetch a fresh token once and start over.
+   */
+  private async *streamWithRefresh<T>(open: (mesh: Mesh) => AsyncIterable<T>): AsyncGenerator<T, void, void> {
+    let yielded = false
+    try {
+      for await (const item of open(await this.ensureMesh(false))) {
+        yielded = true
+        yield item
+      }
+      return
+    } catch (err) {
+      if (yielded || !(err instanceof UnauthenticatedError)) throw err
+    }
+    yield* open(await this.ensureMesh(true))
+  }
+
   async close(): Promise<void> {
     const m = this.mesh
     this.mesh = null
@@ -170,12 +188,13 @@ export class ControlPlaneClient {
   }
 
   async *watchDevices(signal?: AbortSignal): AsyncGenerator<WatchDevicesEvent, void, void> {
-    const mesh = await this.ensureMesh(false)
-    const stream = mesh.serverStream<Record<string, never>, WatchDevicesEvent>(
-      CONTROL_SERVICE,
-      "watch_devices",
-      {},
-      signal ? { signal } : undefined
+    const stream = this.streamWithRefresh((mesh) =>
+      mesh.serverStream<Record<string, never>, WatchDevicesEvent>(
+        CONTROL_SERVICE,
+        "watch_devices",
+        {},
+        signal ? { signal } : undefined
+      )
     )
     for await (const ev of stream) {
       if (signal?.aborted) break
@@ -187,18 +206,16 @@ export class ControlPlaneClient {
     params?: { deviceIds?: string[]; limitPerDevice?: number },
     signal?: AbortSignal
   ): AsyncGenerator<DeviceSessionResult, void, void> {
-    const mesh = await this.ensureMesh(false)
-    const stream = mesh.serverStream<
-      { device_ids?: string[]; limit_per_device?: number },
-      DeviceSessionResult
-    >(
-      CONTROL_SERVICE,
-      "list_sessions",
-      {
-        ...(params?.deviceIds ? { device_ids: params.deviceIds } : {}),
-        ...(params?.limitPerDevice ? { limit_per_device: params.limitPerDevice } : {}),
-      },
-      signal ? { signal } : undefined
+    const stream = this.streamWithRefresh((mesh) =>
+      mesh.serverStream<{ device_ids?: string[]; limit_per_device?: number }, DeviceSessionResult>(
+        CONTROL_SERVICE,
+        "list_sessions",
+        {
+          ...(params?.deviceIds ? { device_ids: params.deviceIds } : {}),
+          ...(params?.limitPerDevice ? { limit_per_device: params.limitPerDevice } : {}),
+        },
+        signal ? { signal } : undefined
+      )
     )
     for await (const item of stream) {
       if (signal?.aborted) break

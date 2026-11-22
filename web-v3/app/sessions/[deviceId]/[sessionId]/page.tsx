@@ -110,6 +110,13 @@ export default function SessionWorkspacePage() {
     () => devices.find((d) => d.id === deviceId) ?? null,
     [devices, deviceId]
   )
+  // What the tunnel needs, as a value that only changes when one of these does: the device record itself is
+  // replaced on every presence heartbeat (~20 s), which must not restart the watch.
+  const tunnelDevice = useMemo(
+    () => (device ? { id: device.id, mode_hint: device.mode_hint, presence: device.presence } : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [device?.id, device?.mode_hint, device?.presence]
+  )
   const summary = useMemo(
     () => sessions.find((s) => s.device_id === deviceId && s.id === sessionId) ?? null,
     [sessions, deviceId, sessionId]
@@ -130,44 +137,61 @@ export default function SessionWorkspacePage() {
   const getScrollRoot = useCallback(() => viewportRef.current, [])
   useWindowTrimmer(store, getScrollRoot)
 
-  // Live watch stream over MeshCall device tunnel (normal or Noise_IK E2EE)
+  // Live watch stream over MeshCall device tunnel (normal or Noise_IK E2EE). A dropped or ended stream is
+  // watched again with backoff (the protocol is snapshot-then-replace, so a re-watch is all a reconnect needs);
+  // pairing problems stop it, since only the user can fix those.
   useEffect(() => {
     const abort = new AbortController()
     store.reset()
+    const pause = (ms: number) =>
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, ms)
+        abort.signal.addEventListener("abort", () => {
+          clearTimeout(timer)
+          resolve()
+        }, { once: true })
+      })
     ;(async () => {
       await Promise.resolve()
       if (abort.signal.aborted) return
       setConnectError(null)
-      if (!tunnelManager || !device || device.presence === "offline") {
+      if (!tunnelManager || !tunnelDevice || tunnelDevice.presence === "offline") {
         setConnecting(false)
         return
       }
       setConnecting(true)
-      try {
-        for await (const ev of tunnelManager.watchSession(device, sessionId, abort.signal)) {
-          if (abort.signal.aborted) break
+      let attempt = 0
+      while (!abort.signal.aborted) {
+        try {
+          for await (const ev of tunnelManager.watchSession(tunnelDevice, sessionId, abort.signal)) {
+            if (abort.signal.aborted) break
+            attempt = 0
+            setConnecting(false)
+            setConnectError(null)
+            store.apply(ev)
+          }
+        } catch (err) {
+          if (abort.signal.aborted) return
           setConnecting(false)
-          setConnectError(null)
-          store.apply(ev)
-        }
-      } catch (err) {
-        if (abort.signal.aborted) return
-        setConnecting(false)
-        if (err instanceof PairingError) {
-          setConnectError({ code: err.code, message: err.message })
-        } else {
+          if (err instanceof PairingError) {
+            setConnectError({ code: err.code, message: err.message })
+            return
+          }
           setConnectError({
             code: "watch_error",
             message: err instanceof Error ? err.message : String(err),
           })
         }
+        if (abort.signal.aborted) return
+        attempt++
+        await pause(Math.min(30_000, 1000 * 2 ** Math.min(attempt - 1, 5)) * (0.5 + Math.random() * 0.5))
       }
     })()
 
     return () => {
       abort.abort()
     }
-  }, [device, retryNonce, sessionId, store, tunnelManager])
+  }, [retryNonce, sessionId, store, tunnelDevice, tunnelManager])
 
   const loadOlder = useCallback(async () => {
     if (!tunnelManager || !device || timeline.loadingOlder || !timeline.has_more) return

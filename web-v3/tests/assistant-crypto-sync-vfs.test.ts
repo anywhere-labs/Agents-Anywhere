@@ -12,7 +12,7 @@ import {
   unwrapDekWithPassword,
   wrapDekWithPassword,
 } from "@/lib/assistant/crypto"
-import { requiresToolConfirmation } from "@/lib/assistant/mcp-client"
+import { listMcpServerTools, requiresToolConfirmation, resetMcpSessions } from "@/lib/assistant/mcp-client"
 import { resolveSyncDecision } from "@/lib/assistant/sync"
 import { AssistantVfsManager, normalizeWorkspacePath } from "@/lib/assistant/vfs"
 
@@ -207,18 +207,123 @@ describe("Cloud VFS path safety, CRUD, grep & encrypted Drive sync", () => {
   })
 })
 
-describe("MCP tool confirmation policy", () => {
-  it("allows read-only tools automatically and requires confirmation for write/high-impact tools", () => {
-    expect(requiresToolConfirmation("list_devices")).toBe(false)
-    expect(requiresToolConfirmation("list_sessions")).toBe(false)
-    expect(requiresToolConfirmation("vfs_read")).toBe(false)
-    expect(requiresToolConfirmation("vfs_grep")).toBe(false)
+describe("Cloud VFS with encryption on", () => {
+  it("never uploads plaintext when the key version is not loaded yet", async () => {
+    const dek = generateDek()
+    const requests: string[] = []
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      requests.push(url)
+      if (url.includes("/drive/files?purpose=assistant_vfs")) {
+        return new Response(JSON.stringify({ files: [], quota: { enabled: true } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+      }
+      return new Response("unexpected", { status: 500 })
+    }))
+    try {
+      const vfs = new AssistantVfsManager({
+        accountId: "https://aa.local::u-vfs-nokv",
+        userId: "u-vfs-nokv",
+        serverUrl: "https://aa.local",
+        getAccessToken: async () => "token-1",
+        getEncryptionContext: () => ({ enabled: true, dek, keyVersion: null }),
+      })
+      await vfs.writeText("secret.md", "do not leak")
+      await expect(vfs.syncWithCloudDrive()).rejects.toThrow(/not ready/)
+      expect(requests.some((u) => u.endsWith("/drive/uploads"))).toBe(false)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})
 
-    expect(requiresToolConfirmation("send_message")).toBe(true)
-    expect(requiresToolConfirmation("create_session")).toBe(true)
-    expect(requiresToolConfirmation("answer_approval")).toBe(true)
-    expect(requiresToolConfirmation("vfs_write")).toBe(true)
-    expect(requiresToolConfirmation("vfs_delete")).toBe(true)
-    expect(requiresToolConfirmation("external__delete_record")).toBe(true)
+describe("MCP tool confirmation policy", () => {
+  it("runs only known read-only built-in tools without asking", () => {
+    expect(requiresToolConfirmation({ name: "list_devices", source: "aa" })).toBe(false)
+    expect(requiresToolConfirmation({ name: "list_sessions", source: "aa" })).toBe(false)
+    expect(requiresToolConfirmation({ name: "vfs_read", source: "vfs" })).toBe(false)
+    expect(requiresToolConfirmation({ name: "vfs_grep", source: "vfs" })).toBe(false)
+
+    expect(requiresToolConfirmation({ name: "send_message", source: "aa" })).toBe(true)
+    expect(requiresToolConfirmation({ name: "create_session", source: "aa" })).toBe(true)
+    expect(requiresToolConfirmation({ name: "answer_approval", source: "aa" })).toBe(true)
+    expect(requiresToolConfirmation({ name: "vfs_write", source: "vfs" })).toBe(true)
+    expect(requiresToolConfirmation({ name: "vfs_delete", source: "vfs" })).toBe(true)
+  })
+
+  it("asks for every external tool unless its server marks it read-only", () => {
+    // Names no pattern list would catch.
+    expect(requiresToolConfirmation({ name: "send_email", source: "external" })).toBe(true)
+    expect(requiresToolConfirmation({ name: "git_push", source: "external" })).toBe(true)
+    // An external server cannot borrow a built-in read-only name.
+    expect(requiresToolConfirmation({ name: "vfs_read", source: "external" })).toBe(true)
+    expect(requiresToolConfirmation({ name: "list_sessions", source: "external" })).toBe(true)
+    expect(requiresToolConfirmation({ name: "search_docs", source: "external", readOnlyHint: true })).toBe(false)
+  })
+})
+
+describe("Streamable HTTP MCP client", () => {
+  it("initializes once, then sends the session id on every request", async () => {
+    resetMcpSessions()
+    const seen: { method: string; session: string | null; protocol: string | null }[] = []
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      const headers = new Headers(init.headers)
+      const body = JSON.parse(String(init.body)) as { method: string; id?: number }
+      seen.push({ method: body.method, session: headers.get("mcp-session-id"), protocol: headers.get("mcp-protocol-version") })
+      if (body.method === "initialize") {
+        return new Response(JSON.stringify({ jsonrpc: "2.0", id: body.id, result: { protocolVersion: "2025-06-18" } }), {
+          headers: { "Content-Type": "application/json", "Mcp-Session-Id": "sess-1" },
+        })
+      }
+      if (body.method === "notifications/initialized") return new Response(null, { status: 202 })
+      return new Response(
+        `event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: body.id, result: { tools: [{ name: "search_docs", inputSchema: {} }] } })}\n\n`,
+        { headers: { "Content-Type": "text/event-stream" } }
+      )
+    })
+    vi.stubGlobal("fetch", fetchMock)
+    try {
+      const server = { url: "https://mcp.example.test/mcp" }
+      expect((await listMcpServerTools(server)).map((t) => t.name)).toEqual(["search_docs"])
+      await listMcpServerTools(server)
+      expect(seen.map((s) => s.method)).toEqual(["initialize", "notifications/initialized", "tools/list", "tools/list"])
+      expect(seen[0]?.session).toBeNull()
+      for (const later of seen.slice(1)) {
+        expect(later.session).toBe("sess-1")
+        expect(later.protocol).toBe("2025-06-18")
+      }
+    } finally {
+      vi.unstubAllGlobals()
+      resetMcpSessions()
+    }
+  })
+
+  it("starts a new session when the server forgets the old one", async () => {
+    resetMcpSessions()
+    let sessionNo = 0
+    const methods: string[] = []
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+      const headers = new Headers(init.headers)
+      const body = JSON.parse(String(init.body)) as { method: string; id?: number }
+      methods.push(body.method)
+      if (body.method === "initialize") {
+        sessionNo++
+        return new Response(JSON.stringify({ jsonrpc: "2.0", id: body.id, result: {} }), {
+          headers: { "Mcp-Session-Id": `sess-${sessionNo}` },
+        })
+      }
+      if (body.method === "notifications/initialized") return new Response(null, { status: 202 })
+      if (headers.get("mcp-session-id") === "sess-1") return new Response("gone", { status: 404 })
+      return new Response(JSON.stringify({ jsonrpc: "2.0", id: body.id, result: { tools: [] } }))
+    }))
+    try {
+      expect(await listMcpServerTools({ url: "https://mcp.example.test/mcp" })).toEqual([])
+      expect(methods).toEqual(["initialize", "notifications/initialized", "tools/list", "initialize", "notifications/initialized", "tools/list"])
+    } finally {
+      vi.unstubAllGlobals()
+      resetMcpSessions()
+    }
   })
 })

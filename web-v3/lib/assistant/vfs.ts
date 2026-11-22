@@ -234,6 +234,11 @@ export class AssistantVfsManager {
     if (enc.enabled && !enc.dek) {
       throw new Error("Unlock assistant encryption password before syncing encrypted VFS files")
     }
+    // With encryption on, a file is only ever uploaded encrypted: a missing key version (the envelope has not
+    // loaded yet) stops the sync instead of falling back to plaintext.
+    if (enc.enabled && !enc.keyVersion) {
+      throw new Error("Assistant encryption key is not ready yet; try syncing again in a moment")
+    }
 
     let uploaded = 0
     let downloaded = 0
@@ -256,7 +261,8 @@ export class AssistantVfsManager {
       let encryptedMeta: string | null = null
       let keyVersion: number | null = null
 
-      if (enc.enabled && enc.dek && enc.keyVersion) {
+      if (enc.enabled) {
+        if (!enc.dek || !enc.keyVersion) throw new Error("Assistant encryption key is not ready")
         const sealed = await encryptVfsFile(enc.dek, this.ctx.userId, entry.path, plainBytes, filename)
         uploadBytes = sealed.ciphertext
         encryptionMode = "account_dek"

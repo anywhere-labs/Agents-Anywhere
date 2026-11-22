@@ -87,6 +87,13 @@ function DeviceWorkbenchPageInner() {
     () => devices.find((d) => d.id === deviceId) ?? null,
     [devices, deviceId]
   )
+  // What tunnel calls need, as a value that only changes with these fields: the device record is replaced on
+  // every presence heartbeat (~20 s), which must not reload the page's data or re-attach the terminal.
+  const tunnelDevice = useMemo(
+    () => (device ? { id: device.id, mode_hint: device.mode_hint, presence: device.presence } : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [device?.id, device?.mode_hint, device?.presence]
+  )
   const trust = deviceTrusts[deviceId]
   const isEncrypted = device?.mode_hint === "encrypted" || Boolean(trust)
   const deviceSessions = useMemo(
@@ -157,24 +164,21 @@ function DeviceWorkbenchPageInner() {
     trust?.device_pub && fingerprintState?.pub === trust.device_pub ? fingerprintState.fp : null
 
   const loadDeviceRuntime = useCallback(async () => {
-    if (!device || !tunnelManager || device.presence === "offline") return
+    if (!tunnelDevice || !tunnelManager || tunnelDevice.presence === "offline") return
     setLoadingStatus(true)
     setTunnelError(null)
     try {
       const [st, cfg] = await Promise.all([
-        tunnelManager.getDeviceStatus(device),
-        tunnelManager.getDeviceSettings(device).catch(() => null),
+        tunnelManager.getDeviceStatus(tunnelDevice),
+        tunnelManager.getDeviceSettings(tunnelDevice).catch(() => null),
       ])
       setStatus(st)
       setSettings(cfg)
-      if (!agentName && st.runtimes.length > 0) {
-        setAgentName(st.runtimes[0].id || st.runtimes[0].name)
-      }
-      if (!sessionCwd && st.cwd) {
-        setSessionCwd(st.cwd)
-      }
+      const firstRuntime = st.runtimes[0]
+      if (firstRuntime) setAgentName((prev) => prev || firstRuntime.id || firstRuntime.name)
+      if (st.cwd) setSessionCwd((prev) => prev || st.cwd || "")
       if (st.mode === "encrypted" || isEncrypted) {
-        const paired = await tunnelManager.listPairedClients(device).catch(() => ({ clients: [] }))
+        const paired = await tunnelManager.listPairedClients(tunnelDevice).catch(() => ({ clients: [] }))
         setPairedClients(paired.clients)
       }
     } catch (err) {
@@ -189,7 +193,7 @@ function DeviceWorkbenchPageInner() {
     } finally {
       setLoadingStatus(false)
     }
-  }, [agentName, device, isEncrypted, sessionCwd, tunnelManager])
+  }, [tunnelDevice, isEncrypted, tunnelManager])
 
   useEffect(() => {
     let active = true
@@ -203,10 +207,10 @@ function DeviceWorkbenchPageInner() {
 
   const loadDirectory = useCallback(
     async (targetPath?: string) => {
-      if (!device || !tunnelManager || device.presence === "offline") return
+      if (!tunnelDevice || !tunnelManager || tunnelDevice.presence === "offline") return
       setLoadingFiles(true)
       try {
-        const listing = await tunnelManager.listDirs(device, targetPath || undefined)
+        const listing = await tunnelManager.listDirs(tunnelDevice, targetPath || undefined)
         setDirListing(listing)
         setDirPath(listing.path)
         setFileView(null)
@@ -216,15 +220,15 @@ function DeviceWorkbenchPageInner() {
         setLoadingFiles(false)
       }
     },
-    [device, tunnelManager]
+    [tunnelDevice, tunnelManager]
   )
 
   const openFile = useCallback(
     async (path: string) => {
-      if (!device || !tunnelManager) return
+      if (!tunnelDevice || !tunnelManager) return
       setLoadingFiles(true)
       try {
-        const res = await tunnelManager.readFile(device, path, { maxBytes: 128 * 1024 })
+        const res = await tunnelManager.readFile(tunnelDevice, path, { maxBytes: 128 * 1024 })
         setFileView(res)
       } catch (err) {
         toast.error(err instanceof Error ? err.message : String(err))
@@ -232,16 +236,16 @@ function DeviceWorkbenchPageInner() {
         setLoadingFiles(false)
       }
     },
-    [device, tunnelManager]
+    [tunnelDevice, tunnelManager]
   )
 
   const inspectGit = useCallback(async () => {
-    if (!device || !tunnelManager || !dirPath) return
+    if (!tunnelDevice || !tunnelManager || !dirPath) return
     setLoadingFiles(true)
     try {
       const [st, diff] = await Promise.all([
-        tunnelManager.gitStatus(device, dirPath),
-        tunnelManager.gitDiff(device, dirPath),
+        tunnelManager.gitStatus(tunnelDevice, dirPath),
+        tunnelManager.gitDiff(tunnelDevice, dirPath),
       ])
       setGitInfo(st)
       setGitDiff(diff.diff ?? "")
@@ -250,41 +254,46 @@ function DeviceWorkbenchPageInner() {
     } finally {
       setLoadingFiles(false)
     }
-  }, [device, dirPath, tunnelManager])
+  }, [tunnelDevice, dirPath, tunnelManager])
 
   const loadTerminals = useCallback(async () => {
-    if (!device || !tunnelManager || device.presence === "offline") return
+    if (!tunnelDevice || !tunnelManager || tunnelDevice.presence === "offline") return
     try {
-      const res = await tunnelManager.listTerminals(device)
+      const res = await tunnelManager.listTerminals(tunnelDevice)
       setTerminals(res.terminals)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
     }
-  }, [device, tunnelManager])
+  }, [tunnelDevice, tunnelManager])
 
   useEffect(() => {
     let active = true
     queueMicrotask(() => {
       if (!active) return
-      if (tab === "files" && !dirListing && device?.presence === "online") {
+      if (tab === "files" && !dirListing && tunnelDevice?.presence === "online") {
         void loadDirectory(dirPath || undefined)
-      } else if (tab === "terminals" && device?.presence === "online") {
+      } else if (tab === "terminals" && tunnelDevice?.presence === "online") {
         void loadTerminals()
       }
     })
     return () => {
       active = false
     }
-  }, [device?.presence, dirListing, dirPath, loadDirectory, loadTerminals, tab])
+  }, [tunnelDevice?.presence, dirListing, dirPath, loadDirectory, loadTerminals, tab])
 
   // Duplex terminal attachment
   useEffect(() => {
-    if (!device || !tunnelManager || !activeTerminalId) return
+    if (!tunnelDevice || !tunnelManager || !activeTerminalId) return
     const abort = new AbortController()
+    let duplex: RpcDuplex<TerminalInputFrame, TerminalOutputFrame> | null = null
     ;(async () => {
       setTerminalOutput("")
       try {
-        const duplex = await tunnelManager.attachTerminal(device, activeTerminalId, abort.signal)
+        duplex = await tunnelManager.attachTerminal(tunnelDevice, activeTerminalId, abort.signal)
+        if (abort.signal.aborted) {
+          void duplex.closeSend().catch(() => undefined)
+          return
+        }
         duplexRef.current = duplex
         for await (const frame of duplex) {
           if (abort.signal.aborted) break
@@ -299,16 +308,17 @@ function DeviceWorkbenchPageInner() {
           toast.error(err instanceof Error ? err.message : String(err))
         }
       } finally {
-        duplexRef.current = null
+        // Only clear the ref if it is still ours: a newer attachment may already own it.
+        if (duplexRef.current === duplex) duplexRef.current = null
       }
     })()
 
     return () => {
       abort.abort()
-      void duplexRef.current?.closeSend().catch(() => undefined)
-      duplexRef.current = null
+      void duplex?.closeSend().catch(() => undefined)
+      if (duplexRef.current === duplex) duplexRef.current = null
     }
-  }, [activeTerminalId, device, tunnelManager])
+  }, [activeTerminalId, tunnelDevice, tunnelManager])
 
   const sendTerminalLine = async () => {
     const duplex = duplexRef.current

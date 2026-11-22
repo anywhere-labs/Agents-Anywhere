@@ -80,6 +80,13 @@ export interface WorkbenchContextValue {
   resetBrowserVault: () => Promise<void>
 }
 
+/** Run `task` holding a Web Lock shared by every tab of this origin (or just run it where Web Locks are missing). */
+function withCrossTabLock<T>(name: string, task: () => Promise<T>): Promise<T> {
+  const locks = typeof navigator !== "undefined" ? navigator.locks : undefined
+  if (!locks?.request) return task()
+  return locks.request(name, task) as Promise<T>
+}
+
 const WorkbenchContext = createContext<WorkbenchContextValue | null>(null)
 
 export function WorkbenchProvider({ children }: { children: ReactNode }) {
@@ -139,6 +146,10 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  // One refresh per account at a time. server-v3 (local mode) and most OIDC providers rotate refresh tokens, so
+  // two refreshes with the same token make all but the first fail.
+  const refreshInFlightRef = useRef(new Map<string, Promise<string>>())
+
   const getFreshAccessToken = useCallback(async (): Promise<string> => {
     const current = activeAccountRef.current
     if (!current) throw new Error("Not signed in")
@@ -148,24 +159,46 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     if (!current.refreshToken) {
       return current.accessToken
     }
-    let next: StoredAccountSession
-    if (current.authMode === "oidc") {
-      next = await refreshOidcSession(current)
-    } else {
-      const refreshed = await refreshLocalSession(current.serverUrl, current.refreshToken)
-      next = {
-        ...current,
-        accessToken: refreshed.access_token,
-        refreshToken: refreshed.refresh_token,
-        expiresAt: Date.now() + refreshed.expires_in * 1000,
-        user: refreshed.user,
-        lastUsedAt: Date.now(),
+    const inflight = refreshInFlightRef.current.get(current.accountId)
+    if (inflight) return inflight
+
+    const task = withCrossTabLock(`aa-v3-token-refresh:${current.accountId}`, async () => {
+      // Another tab may have refreshed while we waited for the lock: the vault holds the newest session, and its
+      // refresh token is the only one still valid.
+      const stored =
+        (await vault.listAccounts()).find((a) => a.accountId === current.accountId) ?? current
+      let next: StoredAccountSession
+      if (stored.expiresAt - Date.now() > 60_000) {
+        next = stored
+      } else if (!stored.refreshToken) {
+        return stored.accessToken
+      } else if (stored.authMode === "oidc") {
+        next = await refreshOidcSession(stored)
+      } else {
+        const refreshed = await refreshLocalSession(stored.serverUrl, stored.refreshToken)
+        next = {
+          ...stored,
+          accessToken: refreshed.access_token,
+          refreshToken: refreshed.refresh_token,
+          expiresAt: Date.now() + refreshed.expires_in * 1000,
+          user: refreshed.user,
+          lastUsedAt: Date.now(),
+        }
+      }
+      if (next !== stored) await vault.saveAccountSession(next)
+      // The user may have switched accounts meanwhile; only the account this was for takes the new session.
+      if (activeAccountRef.current?.accountId === next.accountId) activeAccountRef.current = next
+      setAccounts((prev) => prev.map((a) => (a.accountId === next.accountId ? next : a)))
+      return next.accessToken
+    })
+    refreshInFlightRef.current.set(current.accountId, task)
+    try {
+      return await task
+    } finally {
+      if (refreshInFlightRef.current.get(current.accountId) === task) {
+        refreshInFlightRef.current.delete(current.accountId)
       }
     }
-    await vault.saveAccountSession(next)
-    activeAccountRef.current = next
-    setAccounts((prev) => prev.map((a) => (a.accountId === next.accountId ? next : a)))
-    return next.accessToken
   }, [])
 
   // Refresh /auth/me + hydrate pinned trusts & session cache + bind ControlPlaneClient & TunnelManager
@@ -332,38 +365,54 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
         // Keep cached user snapshot if control plane temporarily unreachable
       }
 
-      // Subscribe to aa.v3.Control/watch_devices
-      try {
-        setMeshError(null)
-        for await (const ev of control.watchDevices(abort.signal)) {
-          if (abort.signal.aborted) break
-          setMeshConnected(true)
-          if (ev.type === "snapshot") {
-            setDevices(ev.devices)
-            void refreshSessionsInternal(
-              acct.accountId,
-              control,
-              tunnels,
-              ev.devices,
-              deviceTrustsRef.current
-            )
-          } else if (ev.type === "upsert") {
-            setDevices((prev) => {
-              const idx = prev.findIndex((d) => d.id === ev.device.id)
-              if (idx < 0) return [...prev, ev.device]
-              const next = prev.slice()
-              next[idx] = ev.device
-              return next
-            })
-          } else if (ev.type === "remove") {
-            setDevices((prev) => prev.filter((d) => d.id !== ev.device_id))
+      // Subscribe to aa.v3.Control/watch_devices. The stream starts with a snapshot, so after any drop
+      // (Router restart, network change) watching again with backoff is a full recovery.
+      const pause = (ms: number) =>
+        new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, ms)
+          abort.signal.addEventListener("abort", () => {
+            clearTimeout(timer)
+            resolve()
+          }, { once: true })
+        })
+      let attempt = 0
+      while (!abort.signal.aborted) {
+        try {
+          setMeshError(null)
+          for await (const ev of control.watchDevices(abort.signal)) {
+            if (abort.signal.aborted) break
+            attempt = 0
+            setMeshConnected(true)
+            setMeshError(null)
+            if (ev.type === "snapshot") {
+              setDevices(ev.devices)
+              void refreshSessionsInternal(
+                acct.accountId,
+                control,
+                tunnels,
+                ev.devices,
+                deviceTrustsRef.current
+              )
+            } else if (ev.type === "upsert") {
+              setDevices((prev) => {
+                const idx = prev.findIndex((d) => d.id === ev.device.id)
+                if (idx < 0) return [...prev, ev.device]
+                const next = prev.slice()
+                next[idx] = ev.device
+                return next
+              })
+            } else if (ev.type === "remove") {
+              setDevices((prev) => prev.filter((d) => d.id !== ev.device_id))
+            }
           }
-        }
-      } catch (err) {
-        if (!abort.signal.aborted) {
-          setMeshConnected(false)
+        } catch (err) {
+          if (abort.signal.aborted) break
           setMeshError(err instanceof Error ? err.message : String(err))
         }
+        if (abort.signal.aborted) break
+        setMeshConnected(false)
+        attempt++
+        await pause(Math.min(30_000, 1000 * 2 ** Math.min(attempt - 1, 5)) * (0.5 + Math.random() * 0.5))
       }
     })()
 

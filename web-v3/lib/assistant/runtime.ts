@@ -24,6 +24,7 @@ import {
   callMcpServerTool,
   listMcpServerTools,
   requiresToolConfirmation,
+  type ToolConfirmationInfo,
 } from "@/lib/assistant/mcp-client"
 import { prettyModelName, type ModelFormat } from "@/lib/assistant/tokens"
 import type { AssistantVfsManager } from "@/lib/assistant/vfs"
@@ -230,55 +231,93 @@ function buildVfsTools(vfs: AssistantVfsManager): AgentTool[] {
   ]
 }
 
-async function buildMcpTools(servers: AssistantMcpServerConfig[]): Promise<AgentTool[]> {
-  const enabled = servers.filter((s) => s.enabled)
+/** Provider tool names: `^[a-zA-Z0-9_-]{1,64}$`, unique within one request. */
+function toolNameSlug(raw: string, fallback: string): string {
+  const slug = raw.replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "")
+  return slug || fallback
+}
+
+function uniqueToolName(wanted: string, prefix: string, used: Set<string>): string {
+  const candidates = [wanted, `${prefix}__${wanted}`]
+  for (const candidate of candidates) {
+    const name = candidate.slice(0, 64)
+    if (!used.has(name)) return name
+  }
+  for (let i = 2; ; i++) {
+    const suffix = `_${i}`
+    const name = `${prefix}__${wanted}`.slice(0, 64 - suffix.length) + suffix
+    if (!used.has(name)) return name
+  }
+}
+
+interface BuiltMcpTools {
+  tools: AgentTool[]
+  info: Map<string, ToolConfirmationInfo>
+  errors: { server: string; message: string }[]
+}
+
+async function buildMcpTools(
+  servers: AssistantMcpServerConfig[],
+  usedNames: Set<string>
+): Promise<BuiltMcpTools> {
+  // AA's own server first, so its tools keep their documented names when they are free.
+  const enabled = servers
+    .filter((s) => s.enabled)
+    .sort((a, b) => Number(Boolean(b.isBuiltInAA)) - Number(Boolean(a.isBuiltInAA)))
   const out: AgentTool[] = []
-  const usedNames = new Set<string>()
+  const info = new Map<string, ToolConfirmationInfo>()
+  const errors: { server: string; message: string }[] = []
 
   for (const server of enabled) {
+    let specs
     try {
-      const specs = await listMcpServerTools(server)
-      const slug = server.name
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "_")
-        .replace(/^_|_$/g, "")
-      for (const spec of specs) {
-        const toolName =
-          server.isBuiltInAA || !usedNames.has(spec.name) ? spec.name : `${slug}__${spec.name}`
-        usedNames.add(toolName)
-        const parameters = { ...(spec.inputSchema as Record<string, unknown>) }
-        delete parameters.title
-        out.push({
-          name: toolName,
-          label: `${server.name}: ${spec.name}`,
-          description: spec.description ?? "",
-          parameters: parameters as never,
-          executionMode: "sequential",
-          async execute(_id, params, signal) {
-            const res = await callMcpServerTool(
-              server,
-              spec.name,
-              (params ?? {}) as Record<string, unknown>,
-              signal
-            )
-            const text = res.content.map((c) => c.text ?? "").join("\n")
-            return {
-              content: [{ type: "text", text }],
-              details: { server: server.name, tool: spec.name, isError: res.isError },
-            }
-          },
-        })
-      }
-    } catch {
-      // Unreachable optional external MCP server should not prevent the assistant from chatting.
+      specs = await listMcpServerTools(server)
+    } catch (err) {
+      // An unreachable optional MCP server should not stop the assistant, but the user should know.
+      errors.push({ server: server.name, message: err instanceof Error ? err.message : String(err) })
+      continue
+    }
+    const prefix = toolNameSlug(server.name.toLowerCase(), "mcp")
+    for (const spec of specs) {
+      const toolName = uniqueToolName(toolNameSlug(spec.name, "tool"), prefix, usedNames)
+      usedNames.add(toolName)
+      info.set(toolName, {
+        name: spec.name,
+        source: server.isBuiltInAA ? "aa" : "external",
+        readOnlyHint: spec.annotations?.readOnlyHint === true,
+      })
+      const parameters = { ...(spec.inputSchema as Record<string, unknown>) }
+      delete parameters.title
+      out.push({
+        name: toolName,
+        label: `${server.name}: ${spec.name}`,
+        description: spec.description ?? "",
+        parameters: parameters as never,
+        executionMode: "sequential",
+        async execute(_id, params, signal) {
+          const res = await callMcpServerTool(
+            server,
+            spec.name,
+            (params ?? {}) as Record<string, unknown>,
+            signal
+          )
+          const text = res.content.map((c) => c.text ?? "").join("\n")
+          return {
+            content: [{ type: "text", text }],
+            details: { server: server.name, tool: spec.name, isError: res.isError },
+          }
+        },
+      })
     }
   }
-  return out
+  return { tools: out, info, errors }
 }
 
 export async function createPiLiteAgent(options: CreatePiLiteOptions): Promise<{
   agent: Agent
   toolCount: number
+  /** MCP servers whose tools could not be loaded. */
+  mcpErrors: { server: string; message: string }[]
 }> {
   const model = buildModel(options.choice)
   const models = createModels()
@@ -302,8 +341,15 @@ export async function createPiLiteAgent(options: CreatePiLiteOptions): Promise<{
   )
 
   const vfsTools = options.vfs ? buildVfsTools(options.vfs) : []
-  const mcpTools = options.mcpServers?.length ? await buildMcpTools(options.mcpServers) : []
-  const tools = [...vfsTools, ...mcpTools]
+  const toolInfo = new Map<string, ToolConfirmationInfo>(
+    vfsTools.map((t) => [t.name, { name: t.name, source: "vfs" }])
+  )
+  const usedNames = new Set(vfsTools.map((t) => t.name))
+  const mcp = options.mcpServers?.length
+    ? await buildMcpTools(options.mcpServers, usedNames)
+    : { tools: [], info: new Map<string, ToolConfirmationInfo>(), errors: [] }
+  for (const [name, entry] of mcp.info) toolInfo.set(name, entry)
+  const tools = [...vfsTools, ...mcp.tools]
 
   const agent = new Agent({
     initialState: {
@@ -325,7 +371,9 @@ export async function createPiLiteAgent(options: CreatePiLiteOptions): Promise<{
     onPayload: (payload, m) =>
       options.choice.webSearch ? withWebSearch(payload, m.api) : undefined,
     beforeToolCall: async ({ toolCall, args }: BeforeToolCallContext) => {
-      if (!requiresToolConfirmation(toolCall.name)) return undefined
+      // A name we did not hand out is treated as external: it needs confirmation.
+      const info = toolInfo.get(toolCall.name) ?? { name: toolCall.name, source: "external" as const }
+      if (!requiresToolConfirmation(info)) return undefined
       const ok = await options.confirm({
         id: toolCall.id,
         name: toolCall.name,
@@ -341,7 +389,7 @@ export async function createPiLiteAgent(options: CreatePiLiteOptions): Promise<{
     },
   })
 
-  return { agent, toolCount: tools.length }
+  return { agent, toolCount: tools.length, mcpErrors: mcp.errors }
 }
 
 export type { Agent, AgentEvent, AgentMessage }

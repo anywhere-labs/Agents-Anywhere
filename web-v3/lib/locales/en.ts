@@ -157,6 +157,7 @@ export const en = {
   "assistant.byokDesc": "Stored only in this browser. Useful as a fallback for any CORS-compatible gateway.",
   "assistant.mcpTitle": "MCP Tools",
   "assistant.mcpDesc": "Mount Agents Anywhere's own /mcp for cross-device orchestration or add external Streamable HTTP MCP servers.",
+  "assistant.mcpUnavailable": "Tools from the MCP server \"{name}\" could not be loaded: {message}",
   "assistant.mountAaMcp": "One-click mount AA /mcp",
   "assistant.mountAaMcpDesc": "Grants the assistant scoped access to selected normal devices (approval answers stay unchecked by default).",
   "assistant.addExternalMcp": "Add HTTP MCP server",
