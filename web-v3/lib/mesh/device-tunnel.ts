@@ -25,26 +25,18 @@ import type {
   ReadFileResult,
   Session,
   SessionListPayload,
+  TerminalAttachRequest,
   TerminalInfo,
+  TerminalInputFrame,
+  TerminalOutputFrame,
   WatchEvent,
 } from "@/lib/types/v3"
+
+export type { TerminalAttachRequest, TerminalInputFrame, TerminalOutputFrame } from "@/lib/types/v3"
 
 const SESSIONS_SVC = "aa.v3.Sessions"
 const DEVICE_SVC = "aa.v3.Device"
 const TERMINALS_SVC = "aa.v3.Terminals"
-
-export interface TerminalInputFrame {
-  type: "input" | "resize"
-  data?: string
-  cols?: number
-  rows?: number
-}
-
-export interface TerminalOutputFrame {
-  type: "output" | "exit"
-  data?: string
-  exit_code?: number | null
-}
 
 interface PooledTunnel {
   deviceId: string
@@ -563,16 +555,20 @@ export class DeviceTunnelManager {
     return this.callUnary(device, TERMINALS_SVC, "close", { id })
   }
 
+  /**
+   * Open the `attach` duplex (thin transport only). Control rules, seq tracking and reconnects live in
+   * `lib/terminal/session.ts`; `lib/terminal/mesh-transport.ts` adapts this call to it.
+   */
   async attachTerminal(
     device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">,
-    terminalId: string,
+    request: TerminalAttachRequest,
     signal?: AbortSignal
   ): Promise<RpcDuplex<TerminalInputFrame, TerminalOutputFrame>> {
     const pooled = await this.openTunnelForDevice(device, false)
-    const duplex = pooled.mesh.duplex<{ id: string }, TerminalInputFrame, TerminalOutputFrame>(
+    const duplex = pooled.mesh.duplex<TerminalAttachRequest, TerminalInputFrame, TerminalOutputFrame>(
       TERMINALS_SVC,
       "attach",
-      { id: terminalId },
+      request,
       signal ? { signal } : undefined
     )
     // The call opens lazily, so a refused credential only shows while reading: evict the tunnel then, and the
