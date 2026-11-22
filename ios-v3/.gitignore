@@ -1,0 +1,9 @@
+# Local link to the MeshCall Swift SDK (scripts/bootstrap.sh)
+Vendor/
+.build/
+build/
+DerivedData/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/
+Packages/AAClientCore/.swiftpm/
+Packages/AAClientCore/Package.resolved
