@@ -17,6 +17,8 @@ import {
   ChevronRightIcon,
   ChevronsUpDownIcon,
   CircleAlertIcon,
+  CopyIcon,
+  EllipsisIcon,
   FolderIcon,
   KeyRoundIcon,
   LaptopIcon,
@@ -35,11 +37,14 @@ import {
   Trash2Icon,
   UserPlusIcon,
 } from "lucide-react"
+import { toast } from "sonner"
 
 import { BrandWordmark } from "@/components/brand-wordmark"
 import { UserAvatar } from "@/components/console/user-avatar"
 import { useI18n } from "@/components/i18n-provider"
 import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -145,7 +150,10 @@ export function WorkbenchSidebar() {
     switchAccount,
     signOutAccount,
     signOutAllAccounts,
+    tunnelManager,
+    refreshSessions,
   } = useWorkbench()
+  const [renaming, setRenaming] = useState<{ session: SessionSummary; title: string } | null>(null)
   const {
     conversations,
     activeConversationId,
@@ -184,7 +192,8 @@ export function WorkbenchSidebar() {
     () =>
       [...sessions]
         .filter((s) => !(s.pinned || pins.has(sessionKey(s))))
-        .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+        // Running conversations first, then by last activity (v2 session-list-order).
+        .sort((a, b) => Number(b.state === "running") - Number(a.state === "running") || b.updated_at.localeCompare(a.updated_at))
         .slice(0, RECENT_LIMIT),
     [pins, sessions]
   )
@@ -202,6 +211,61 @@ export function WorkbenchSidebar() {
 
   const togglePin = (s: SessionSummary) =>
     setPrefs((p) => ({ pins: toggleIn(p.pins, sessionKey(s)) }))
+
+  const hasIndicator = (s: SessionSummary) => s.state === "running" || s.state === "waiting" || s.state === "error" || s.unread
+
+  /** The row's menu (v2 session row context menu): pin, rename, copy ID, open the device. */
+  const rowMenu = (s: SessionSummary) => (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={<SidebarMenuAction showOnHover className="top-1/2 -translate-y-1/2" aria-label={t("conv.more")} />}
+      >
+        <EllipsisIcon />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent side="right" align="start" className="w-52">
+        <DropdownMenuItem onClick={() => togglePin(s)}>
+          <PinIcon />
+          {isPinned(s) ? t("wb.unpin") : t("wb.pin")}
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          disabled={devices.find((d) => d.id === s.device_id)?.presence !== "online"}
+          onClick={() => setRenaming({ session: s, title: s.title })}
+        >
+          <SquarePenIcon />
+          {t("conv.rename")}
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={() =>
+            void navigator.clipboard
+              ?.writeText(s.id)
+              .then(() => toast.success(t("common.copied")))
+              .catch(() => toast.error(t("common.copyFailed")))
+          }
+        >
+          <CopyIcon />
+          {t("conv.copyId")}
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => go(deviceHref(s.device_id))}>
+          <LaptopIcon />
+          {t("conv.openDevice")}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+
+  const submitRename = async () => {
+    if (!renaming || !tunnelManager) return
+    const next = renaming.title.trim()
+    const dev = devices.find((d) => d.id === renaming.session.device_id)
+    setRenaming(null)
+    if (!next || !dev || next === renaming.session.title) return
+    try {
+      await tunnelManager.renameSession(dev, renaming.session.id, next)
+      void refreshSessions()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    }
+  }
 
   /** A pinned / recent row: title, then "Agent · Device" in small type. */
   const renderCrossDeviceRow = (s: SessionSummary) => {
@@ -221,16 +285,13 @@ export function WorkbenchSidebar() {
             </span>
           </span>
         </SidebarMenuButton>
-        <SidebarMenuBadge>
-          <SessionStatus state={s.state} unread={s.unread} />
-        </SidebarMenuBadge>
-        <SidebarMenuAction
-          showOnHover
-          aria-label={isPinned(s) ? t("wb.unpin") : t("wb.pin")}
-          onClick={() => togglePin(s)}
-        >
-          <PinIcon className={cn(isPinned(s) && "fill-current")} />
-        </SidebarMenuAction>
+        {hasIndicator(s) ? (
+          <SidebarMenuBadge className="top-1/2 -translate-y-1/2">
+            <SessionStatus state={s.state} unread={s.unread} />
+          </SidebarMenuBadge>
+        ) : (
+          rowMenu(s)
+        )}
       </SidebarMenuItem>
     )
   }
@@ -676,6 +737,36 @@ export function WorkbenchSidebar() {
           </DropdownMenu>
         </SidebarFooter>
       )}
+      <Dialog open={Boolean(renaming)} onOpenChange={(open) => !open && setRenaming(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t("conv.renameTitle")}</DialogTitle>
+          </DialogHeader>
+          <form
+            id="sidebar-rename"
+            onSubmit={(e) => {
+              e.preventDefault()
+              void submitRename()
+            }}
+          >
+            <Input
+              autoFocus
+              value={renaming?.title ?? ""}
+              placeholder={t("conv.renamePlaceholder")}
+              aria-label={t("conv.renameTitle")}
+              onChange={(e) => setRenaming((r) => (r ? { ...r, title: e.target.value } : r))}
+            />
+          </form>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRenaming(null)}>
+              {t("common.cancel")}
+            </Button>
+            <Button type="submit" form="sidebar-rename">
+              {t("common.save")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <SidebarRail />
     </Sidebar>
   )
