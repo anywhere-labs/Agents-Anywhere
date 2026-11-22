@@ -69,6 +69,16 @@ function readDraft(key?: string): string {
   }
 }
 
+/** Store (or, when empty, forget) the composer draft kept under `key` — e.g. to hand text over to another page. */
+export function writeDraft(key: string, text: string) {
+  try {
+    if (text) window.localStorage.setItem(draftStorageKey(key), text)
+    else window.localStorage.removeItem(draftStorageKey(key))
+  } catch {
+    // Storage unavailable: the draft lives for this page only.
+  }
+}
+
 /** A command-like token at the start ("/comp"), not a path ("/Users/…"). */
 function commandToken(text: string): string | null {
   const m = /^\/([a-z][\w-]*)?$/i.exec(text)
@@ -136,30 +146,44 @@ export function Composer({
   const [sending, setSending] = useState(false)
   const [menuIndex, setMenuIndex] = useState(0)
   const [menuClosed, setMenuClosed] = useState(false)
+  // "+ → Commands" opens the "/" menu over whatever is typed (the text then becomes the command's argument).
+  const [menuForced, setMenuForced] = useState(false)
   const [injected, setInjected] = useState<number | null>(null)
   if (inject && inject.nonce !== injected) {
     setInjected(inject.nonce)
     setDraft({ key: draftKey, text: text ? `${text}\n${inject.text}` : inject.text })
   }
 
+  // Saved 300 ms after typing stops; a cleared input (sent) is forgotten at once, and a save still waiting when the
+  // reader switches conversations or leaves the page is written then, not dropped.
+  const unsaved = useRef<{ key: string; text: string } | null>(null)
   useEffect(() => {
     if (!draftKey) return
-    const save = () => {
-      try {
-        if (text) window.localStorage.setItem(draftStorageKey(draftKey), text)
-        else window.localStorage.removeItem(draftStorageKey(draftKey))
-      } catch {
-        // Storage unavailable: the draft lives for this page only.
-      }
-    }
-    // A cleared input (sent) is forgotten at once: the page may navigate away before a debounce fires.
     if (!text) {
-      save()
+      unsaved.current = null
+      writeDraft(draftKey, "")
       return
     }
-    const timer = window.setTimeout(save, 300)
+    unsaved.current = { key: draftKey, text }
+    const timer = window.setTimeout(() => {
+      writeDraft(draftKey, text)
+      unsaved.current = null
+    }, 300)
     return () => window.clearTimeout(timer)
   }, [draftKey, text])
+  useEffect(() => {
+    const box = unsaved
+    const flush = () => {
+      const pending = box.current
+      if (pending) writeDraft(pending.key, pending.text)
+      box.current = null
+    }
+    window.addEventListener("pagehide", flush)
+    return () => {
+      window.removeEventListener("pagehide", flush)
+      flush()
+    }
+  }, [draftKey])
 
   const hasFiles = !!drafts?.items.length
   const hasText = Boolean(text.trim())
@@ -171,8 +195,13 @@ export function Composer({
   // The "/" menu: built-in commands whose name starts with what is typed.
   const token = commandToken(text)
   const matches = useMemo(
-    () => (token === null ? [] : commands.filter((c) => c.name.startsWith(token.toLowerCase()))),
-    [commands, token]
+    () =>
+      token === null
+        ? menuForced
+          ? commands
+          : []
+        : commands.filter((c) => c.name.startsWith(token.toLowerCase())),
+    [commands, menuForced, token]
   )
   const menuOpen = !menuClosed && matches.length > 0
   const active = Math.min(menuIndex, Math.max(0, matches.length - 1))
@@ -199,13 +228,8 @@ export function Composer({
       const ok = await onSubmit(text.trim(), delivery)
       if (ok) {
         setText("")
-        if (draftKey) {
-          try {
-            window.localStorage.removeItem(draftStorageKey(draftKey))
-          } catch {
-            // ignore
-          }
-        }
+        unsaved.current = null
+        if (draftKey) writeDraft(draftKey, "")
       }
     } finally {
       setSending(false)
@@ -213,7 +237,9 @@ export function Composer({
   }
 
   const pickCommand = (c: ComposerCommand) => {
-    setText(`/${c.name} `)
+    // From "+ → Commands" over typed text: that text becomes the argument (e.g. /rename <title>).
+    setText(token === null && text.trim() ? `/${c.name} ${text.trim()}` : `/${c.name} `)
+    setMenuForced(false)
     setMenuClosed(true)
     requestAnimationFrame(() => form.current?.querySelector("textarea")?.focus())
   }
@@ -286,6 +312,7 @@ export function Composer({
             onChange={(e) => {
               setText(e.target.value)
               setMenuClosed(false)
+              setMenuForced(false)
               setMenuIndex(0)
             }}
             onPaste={(e) => {
@@ -298,7 +325,8 @@ export function Composer({
             aria-label={placeholder ?? t("composer.send")}
             className="max-h-60 min-h-12 px-4 pt-3.5 pb-1 text-[15px] leading-relaxed md:text-sm"
             onKeyDown={(e) => {
-              if (e.nativeEvent.isComposing) return
+              // Safari ends the composition before the Enter that confirms a candidate; that Enter has keyCode 229.
+              if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return
               if (menuOpen) {
                 if (e.key === "ArrowDown" || e.key === "ArrowUp") {
                   e.preventDefault()
@@ -314,13 +342,20 @@ export function Composer({
                 if (e.key === "Escape") {
                   e.preventDefault()
                   setMenuClosed(true)
+                  setMenuForced(false)
                   return
                 }
-                if (e.key === "Enter" && !e.shiftKey && token !== null && matches[active]?.name !== token) {
+                if (e.key === "Enter" && !e.shiftKey && (token === null || matches[active]?.name !== token)) {
                   e.preventDefault()
                   pickCommand(matches[active])
                   return
                 }
+              }
+              // Esc stops the running turn (Claude Code, Codex), as the Stop button does.
+              if (e.key === "Escape" && running && onStop) {
+                e.preventDefault()
+                onStop()
+                return
               }
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault()
@@ -358,8 +393,10 @@ export function Composer({
                   {commands.length > 0 && (
                     <DropdownMenuItem
                       onClick={() => {
-                        setText("/")
+                        if (!text) setText("/")
+                        else setMenuForced(true)
                         setMenuClosed(false)
+                        setMenuIndex(0)
                         requestAnimationFrame(() => form.current?.querySelector("textarea")?.focus())
                       }}
                     >

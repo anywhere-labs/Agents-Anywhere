@@ -9,6 +9,7 @@ import {
   BotIcon,
   CloudIcon,
   FolderIcon,
+  KeyboardIcon,
   KeyRoundIcon,
   LaptopIcon,
   LockIcon,
@@ -24,6 +25,7 @@ import {
 import { useI18n } from "@/components/i18n-provider"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { useAssistant } from "@/lib/state/assistant-context"
+import { isMacPlatform } from "@/components/workbench/shortcuts-dialog"
 import { useWorkbench } from "@/lib/state/workbench-context"
 import { cn } from "@/lib/utils"
 import { deviceInfoCache } from "@/lib/workbench/device-info"
@@ -56,11 +58,13 @@ export function CommandPalette({
   onOpenChange,
   onRegisterDevice,
   onPairDevice,
+  onShortcuts,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   onRegisterDevice: () => void
   onPairDevice: () => void
+  onShortcuts: () => void
 }) {
   const { t, locale } = useI18n()
   const router = useRouter()
@@ -93,6 +97,7 @@ export function CommandPalette({
         group: gActions,
         icon: <SquarePenIcon />,
         label: t("wb.newConversation"),
+        hint: isMacPlatform() ? "⌘⇧O" : "Ctrl+Shift+O",
         haystack: `${t("wb.newConversation")} new conversation`,
         run: () => router.push("/new"),
       },
@@ -120,6 +125,15 @@ export function CommandPalette({
         label: t("devices.pair"),
         haystack: `${t("devices.pair")} pair encrypted`,
         run: onPairDevice,
+      },
+      {
+        key: "act:shortcuts",
+        group: gActions,
+        icon: <KeyboardIcon />,
+        label: t("shortcuts.title"),
+        hint: isMacPlatform() ? "⌘/" : "Ctrl+/",
+        haystack: `${t("shortcuts.title")} keyboard shortcuts keys hotkeys`,
+        run: onShortcuts,
       }
     )
 
@@ -220,6 +234,7 @@ export function CommandPalette({
     locale,
     onPairDevice,
     onRegisterDevice,
+    onShortcuts,
     preferences.assistantPrimary,
     router,
     selectConversation,

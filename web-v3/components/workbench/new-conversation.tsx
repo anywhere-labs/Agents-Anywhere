@@ -17,8 +17,8 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
-import { useDraftAttachments, useTransferPorts } from "@/components/conversation/attachments"
-import { Composer } from "@/components/conversation/composer"
+import { DropOverlay, useDraftAttachments, useDropZone, useTransferPorts } from "@/components/conversation/attachments"
+import { Composer, writeDraft } from "@/components/conversation/composer"
 import { useI18n } from "@/components/i18n-provider"
 import { FullPageSpinner } from "@/components/spinner"
 import { Button } from "@/components/ui/button"
@@ -55,10 +55,11 @@ function NewConversationInner() {
   // Device: ?device=, else the last one used (if still here and online), else the first online device.
   const [pickedDevice, setPickedDevice] = useState<string | null>(search.get("device"))
   const deviceId = useMemo(() => {
-    const candidates = [pickedDevice, last?.deviceId, devices.find((d) => d.presence === "online")?.id, devices[0]?.id]
+    const lastOnline = devices.some((d) => d.id === last?.deviceId && d.presence === "online") ? last?.deviceId : null
+    const candidates = [pickedDevice, lastOnline, devices.find((d) => d.presence === "online")?.id, devices[0]?.id]
     return candidates.find((id) => id && devices.some((d) => d.id === id)) ?? null
   }, [devices, last?.deviceId, pickedDevice])
-  const { device, tunnelDevice, encrypted, info, tunnelManager } = useDevice(deviceId)
+  const { device, tunnelDevice, encrypted, info, reload, tunnelManager } = useDevice(deviceId)
   const runtimes = useMemo(() => info.status?.runtimes ?? [], [info.status?.runtimes])
 
   // Agent: ?agent=, else the last one used on this device, else the device's first.
@@ -109,9 +110,21 @@ function NewConversationInner() {
   const loadingAgents = online && !info.status && !info.error
   const ready = Boolean(online && agent && tunnelManager && tunnelDevice)
 
+  const drop = useDropZone((files) => drafts.add(files), Boolean(ready))
+
+  // The conversation exists but its first message did not go: continue there, the text waiting in its composer.
+  const handOver = (id: string, text: string) => {
+    if (!deviceId) return false
+    if (text) writeDraft(`${deviceId}:${id}`, text)
+    void refreshSessions()
+    router.push(sessionHref(deviceId, id))
+    return true
+  }
+
   const start = async (text: string): Promise<boolean> => {
     if (!tunnelManager || !tunnelDevice || !agent || !deviceId) return false
     setStarting(true)
+    let created: string | null = null
     try {
       const config = prefs.configByAgent[`${deviceId}:${agent}`]
       const session = await tunnelManager.createSession(tunnelDevice, {
@@ -119,14 +132,13 @@ function NewConversationInner() {
         ...(cwd ? { cwd } : {}),
         ...(config && Object.keys(config).length ? { config } : {}),
       })
-      setPrefs((p) => ({ lastStart: rememberStart(p.lastStart, deviceId, agent, cwd ?? undefined) }))
+      created = session.id
+      setPrefs((p) => ({ lastStart: rememberStart(p.lastStart, deviceId, agent, cwd) }))
       const refs = drafts.items.length ? await drafts.upload(session.id) : []
       if (refs === null) {
-        // The conversation exists; its attachments did not all go. Open it so the user can retry from there.
+        // Its attachments did not all go: open it with the text kept, to add the files again there.
         toast.error(t("attach.blocked"))
-        void refreshSessions()
-        router.push(sessionHref(deviceId, session.id))
-        return false
+        return handOver(session.id, text)
       }
       if (text || refs.length) {
         await tunnelManager.sendMessage(tunnelDevice, {
@@ -142,7 +154,12 @@ function NewConversationInner() {
       router.push(sessionHref(deviceId, session.id))
       return true
     } catch (err) {
-      toast.error(t("newConv.failed", { error: err instanceof Error ? err.message : String(err) }))
+      const error = err instanceof Error ? err.message : String(err)
+      if (created) {
+        toast.error(t("newConv.sendFailed", { error }))
+        return handOver(created, text)
+      }
+      toast.error(t("newConv.failed", { error }))
       return false
     } finally {
       setStarting(false)
@@ -175,7 +192,8 @@ function NewConversationInner() {
   else if (online && info.status && runtimes.length === 0) notice = `${t("newConv.noAgents")} — ${t("newConv.noAgentsHint")}`
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+    <div className="relative flex min-h-0 flex-1 flex-col overflow-y-auto" {...drop.handlers}>
+      <DropOverlay show={drop.over} />
       <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center gap-6 px-4 py-10 sm:px-6">
         <div className="space-y-1.5 text-center">
           <h1 className="font-heading text-2xl font-semibold tracking-tight">{t("newConv.title")}</h1>
@@ -271,7 +289,16 @@ function NewConversationInner() {
           </Popover>
         </div>
 
-        {notice && <p className="text-center text-xs leading-relaxed text-muted-foreground">{notice}</p>}
+        {notice && (
+          <p className="text-center text-xs leading-relaxed text-muted-foreground">
+            {notice}
+            {info.error && (
+              <button type="button" onClick={() => void reload()} className="ml-2 font-medium text-foreground underline-offset-4 hover:underline">
+                {t("wb.retry")}
+              </button>
+            )}
+          </p>
+        )}
 
         <Composer
           agent={agentName}
@@ -304,11 +331,17 @@ function NewConversationInner() {
   )
 }
 
+/** Another `/new?device=…&agent=…` (⌘K, a device page) is a fresh launcher: its choices come from the link. */
+function NewConversationFromLink() {
+  const search = useSearchParams()
+  return <NewConversationInner key={search.toString()} />
+}
+
 /** The launcher, with `useSearchParams` behind a Suspense boundary (static prerendering needs one). */
 export function NewConversation() {
   return (
     <Suspense fallback={<FullPageSpinner />}>
-      <NewConversationInner />
+      <NewConversationFromLink />
     </Suspense>
   )
 }

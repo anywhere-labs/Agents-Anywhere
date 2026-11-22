@@ -6,12 +6,13 @@
 // conversation exists (`upload(sessionId)`). Chips show a thumbnail or icon, name, progress or size, and why one
 // cannot go.
 import { useCallback, useEffect, useRef, useState } from "react"
-import { CircleAlertIcon, FileTextIcon, LoaderCircleIcon, XIcon } from "lucide-react"
+import type * as React from "react"
+import { CircleAlertIcon, FileTextIcon, LoaderCircleIcon, UploadIcon, XIcon } from "lucide-react"
 
 import { useI18n } from "@/components/i18n-provider"
 import { useWorkbench } from "@/lib/state/workbench-context"
-import { completeDriveUpload, createDriveUpload } from "@/lib/api/control-http"
-import { rememberPreview } from "@/lib/attachments/previews"
+import { completeDriveUpload, createDriveUpload, deleteDriveFile } from "@/lib/api/control-http"
+import { rememberPreview, sentPreview } from "@/lib/attachments/previews"
 import {
   MAX_ATTACHMENTS,
   planTransfer,
@@ -45,7 +46,10 @@ export interface DraftAttachments {
   items: Draft[]
   add: (files: File[]) => void
   remove: (id: string) => void
-  clear: () => void
+  /** Drop these chips (the ones just sent), or all of them. Chips added while a send was in flight stay. */
+  clear: (ids?: string[]) => void
+  /** Put back attachments already saved on the device (editing a queued message): ready chips, nothing re-sent. */
+  restore: (refs: AttachmentRef[]) => void
   /** Upload whatever has not gone yet; null when one could not (its chip says why). */
   upload: (sessionId: string) => Promise<AttachmentRef[] | null>
   blocked: boolean
@@ -65,6 +69,7 @@ export function useTransferPorts(
     fetchDriveFile: (payload) => manager.fetchDriveFile(device, payload),
     createUpload: async (payload) => createDriveUpload(serverUrl, await getFreshAccessToken(), payload),
     completeUpload: async (fileId, etag) => completeDriveUpload(serverUrl, await getFreshAccessToken(), fileId, etag),
+    deleteUpload: async (fileId) => deleteDriveFile(serverUrl, await getFreshAccessToken(), fileId),
   }
 }
 
@@ -173,16 +178,39 @@ export function useDraftAttachments(opts: {
     const d = itemsRef.current.find((x) => x.id === id)
     if (d?.preview && !d.ref) URL.revokeObjectURL(d.preview)
     setItems((all) => all.filter((x) => x.id !== id))
+    itemsRef.current = itemsRef.current.filter((x) => x.id !== id)
   }, [])
 
-  const clear = useCallback(() => setItems([]), [])
+  const clear = useCallback((ids?: string[]) => {
+    const drop = ids ? new Set(ids) : null
+    setItems((all) => (drop ? all.filter((x) => !drop.has(x.id)) : []))
+    itemsRef.current = drop ? itemsRef.current.filter((x) => !drop.has(x.id)) : []
+  }, [])
+
+  const restore = useCallback((refs: AttachmentRef[]) => {
+    const back: Draft[] = refs.map((ref) => ({
+      id: Math.random().toString(36).slice(2, 10),
+      file: new File([], ref.name, { type: ref.mime }),
+      image: ref.mime.startsWith("image/"),
+      preview: ref.mime.startsWith("image/") ? (sentPreview(ref.path) ?? undefined) : undefined,
+      route: { kind: "rpc" },
+      status: "ready",
+      sent: ref.size,
+      ref,
+    }))
+    setItems((all) => [...all, ...back])
+    itemsRef.current = [...itemsRef.current, ...back]
+  }, [])
 
   const upload = useCallback(
     async (sessionId: string): Promise<AttachmentRef[] | null> => {
       const all = itemsRef.current
       if (all.some((x) => x.status === "error")) return null
       const refs = await Promise.all(all.map((d) => uploadOne(d, sessionId)))
-      return refs.every(Boolean) ? (refs as AttachmentRef[]) : null
+      // A chip removed while its file was still going is not attached.
+      const still = new Set(itemsRef.current.map((x) => x.id))
+      const kept = refs.filter((_, i) => still.has(all[i].id))
+      return kept.every(Boolean) ? (kept as AttachmentRef[]) : null
     },
     [uploadOne]
   )
@@ -192,6 +220,7 @@ export function useDraftAttachments(opts: {
     add,
     remove,
     clear,
+    restore,
     upload,
     blocked: items.some((x) => x.status === "error"),
     busy: items.some((x) => x.status === "reading" || x.status === "uploading" || x.status === "saving"),
@@ -205,7 +234,8 @@ export function DraftChips({ drafts }: { drafts: DraftAttachments }) {
   return (
     <div className="flex flex-wrap gap-1.5 px-1 pb-2">
       {drafts.items.map((d) => {
-        const pct = d.file.size ? Math.round((d.sent / d.file.size) * 100) : 100
+        const size = d.ref?.size ?? d.file.size
+        const pct = size ? Math.min(100, Math.round((d.sent / size) * 100)) : 100
         const working = d.status === "reading" || d.status === "uploading" || d.status === "saving"
         const sub =
           d.status === "error"
@@ -217,8 +247,8 @@ export function DraftChips({ drafts }: { drafts: DraftAttachments }) {
                 : d.status === "saving"
                   ? t("attach.saving")
                   : d.route.kind === "drive"
-                    ? t("attach.viaDrive", { size: formatSize(d.file.size) })
-                    : formatSize(d.file.size)
+                    ? t("attach.viaDrive", { size: formatSize(size) })
+                    : formatSize(size)
         return (
           <div
             key={d.id}
@@ -269,6 +299,47 @@ export function DraftChips({ drafts }: { drafts: DraftAttachments }) {
           </div>
         )
       })}
+    </div>
+  )
+}
+
+/**
+ * Files dropped anywhere on a page (ChatGPT, Claude.ai): `handlers` go on the area, `over` drives the overlay. A drop
+ * the composer already took (it calls preventDefault) is not added twice.
+ */
+export function useDropZone(onFiles: (files: File[]) => void, enabled: boolean) {
+  const [over, setOver] = useState(false)
+  const handlers = {
+    onDragOver: (e: React.DragEvent<HTMLElement>) => {
+      if (!enabled || !e.dataTransfer.types.includes("Files")) return
+      e.preventDefault()
+      e.dataTransfer.dropEffect = "copy"
+      if (!over) setOver(true)
+    },
+    onDragLeave: (e: React.DragEvent<HTMLElement>) => {
+      const next = e.relatedTarget as Node | null
+      if (next && e.currentTarget.contains(next)) return
+      setOver(false)
+    },
+    onDrop: (e: React.DragEvent<HTMLElement>) => {
+      setOver(false)
+      if (e.defaultPrevented || !enabled || !e.dataTransfer.files.length) return
+      e.preventDefault()
+      onFiles([...e.dataTransfer.files])
+    },
+  }
+  return { over: over && enabled, handlers }
+}
+
+/** "Drop files to attach" over the page while files are dragged across it. */
+export function DropOverlay({ show }: { show: boolean }) {
+  const { t } = useI18n()
+  if (!show) return null
+  return (
+    <div className="pointer-events-none absolute inset-2 z-40 flex flex-col items-center justify-center gap-2 rounded-card bg-background/85 ring-2 ring-ring/30 backdrop-blur-sm ring-inset">
+      <UploadIcon className="size-6 text-muted-foreground" />
+      <p className="text-sm font-medium text-foreground">{t("attach.dropTitle")}</p>
+      <p className="text-xs text-muted-foreground">{t("attach.dropHint")}</p>
     </div>
   )
 }

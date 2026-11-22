@@ -17,6 +17,7 @@ import {
   LoaderCircleIcon,
   RefreshCwIcon,
 } from "lucide-react"
+import { toast } from "sonner"
 
 import { Markdown } from "@/components/conversation/markdown"
 import { languageOf } from "@/components/conversation/text"
@@ -34,6 +35,11 @@ type TunnelDevice = Pick<DeviceRecord, "id" | "mode_hint" | "presence">
 
 const PREVIEW_MAX = 1024 * 1024
 const BINARY_MAX = 8 * 1024 * 1024
+/** A download reads the whole file over the tunnel in BINARY_MAX slices; past this it is not offered. */
+const DOWNLOAD_MAX = 256 * 1024 * 1024
+
+const bytesOf = (r: ReadFileResult) =>
+  r.encoding === "base64" ? base64ToBytes(r.content) : new TextEncoder().encode(r.content)
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i
 const PDF_EXT = /\.pdf$/i
@@ -164,17 +170,41 @@ export function FilePreview({
     if (blobUrl) URL.revokeObjectURL(blobUrl)
   }, [blobUrl])
 
-  const download = useCallback(() => {
+  // The preview holds only the first slice of a large file: a download reads the rest before saving.
+  const [downloading, setDownloading] = useState(false)
+  const download = useCallback(async () => {
     if (!result) return
-    const bytes =
-      result.encoding === "base64" ? base64ToBytes(result.content) : new TextEncoder().encode(result.content)
-    const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: mimeOf(path) }))
+    const parts: Uint8Array[] = [bytesOf(result)]
+    if (!result.eof) {
+      if (!tunnelManager || !device) return
+      if (result.size > DOWNLOAD_MAX) {
+        toast.error(t("panel.tooLargeToDownload", { size: formatSize(result.size), limit: formatSize(DOWNLOAD_MAX) }))
+        return
+      }
+      setDownloading(true)
+      try {
+        let offset = result.offset + result.bytes_read
+        while (offset < result.size) {
+          const chunk = await tunnelManager.readFile(device, path, { offsetBytes: offset, maxBytes: BINARY_MAX })
+          if (chunk.bytes_read === 0) break
+          parts.push(bytesOf(chunk))
+          offset += chunk.bytes_read
+          if (chunk.eof) break
+        }
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : String(err))
+        return
+      } finally {
+        setDownloading(false)
+      }
+    }
+    const url = URL.createObjectURL(new Blob(parts as BlobPart[], { type: mimeOf(path) }))
     const a = document.createElement("a")
     a.href = url
     a.download = path.split(/[\\/]/).pop() || "file"
     a.click()
     setTimeout(() => URL.revokeObjectURL(url), 5000)
-  }, [path, result])
+  }, [device, path, result, t, tunnelManager])
 
   const name = path.split(/[\\/]/).pop() || path
   const isMarkdown = MD_EXT.test(path)
@@ -196,8 +226,8 @@ export function FilePreview({
           <RefreshCwIcon className="size-3.5" />
         </Button>
         {result && (
-          <Button variant="ghost" size="icon-xs" aria-label={t("attach.download")} onClick={download}>
-            <DownloadIcon className="size-3.5" />
+          <Button variant="ghost" size="icon-xs" aria-label={t("attach.download")} disabled={downloading} onClick={() => void download()}>
+            {downloading ? <LoaderCircleIcon className="size-3.5 animate-spin" /> : <DownloadIcon className="size-3.5" />}
           </Button>
         )}
       </div>
@@ -220,8 +250,8 @@ export function FilePreview({
             <p className="text-xs text-muted-foreground">
               {binaryKind ? t("panel.truncated", { size: formatSize(result.bytes_read) }) : t("panel.binary")}
             </p>
-            <Button variant="outline" size="sm" onClick={download}>
-              <DownloadIcon className="size-3.5" />
+            <Button variant="outline" size="sm" disabled={downloading} onClick={() => void download()}>
+              {downloading ? <LoaderCircleIcon className="size-3.5 animate-spin" /> : <DownloadIcon className="size-3.5" />}
               {t("attach.download")}
             </Button>
           </div>

@@ -107,11 +107,15 @@ export function toggleIn(list: string[], value: string, on?: boolean): string[] 
 }
 
 /** Remember a started conversation's device, agent and directory for the next one. */
-export function rememberStart(prev: LastStart | null, deviceId: string, agent: string, cwd?: string): LastStart {
+/** `cwd`: the directory used (null: the home directory, which is then the default again; undefined: unchanged). */
+export function rememberStart(prev: LastStart | null, deviceId: string, agent: string, cwd?: string | null): LastStart {
+  const dirs = { ...(prev?.cwdByDevice ?? {}) }
+  if (cwd) dirs[deviceId] = cwd
+  else if (cwd === null) delete dirs[deviceId]
   return {
     deviceId,
     agent,
     agentByDevice: { ...(prev?.agentByDevice ?? {}), [deviceId]: agent },
-    cwdByDevice: cwd ? { ...(prev?.cwdByDevice ?? {}), [deviceId]: cwd } : (prev?.cwdByDevice ?? {}),
+    cwdByDevice: dirs,
   }
 }

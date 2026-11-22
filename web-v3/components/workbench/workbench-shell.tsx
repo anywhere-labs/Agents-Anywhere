@@ -26,6 +26,7 @@ import { RegisterDeviceDialog } from "@/components/workbench/register-device-dia
 import { WorkbenchSidebar } from "@/components/workbench/workbench-sidebar"
 import { WorkbenchUiContext, type WorkbenchUi } from "@/components/workbench/workbench-ui"
 import { CommandPalette } from "@/components/workbench/command-palette"
+import { ShortcutsDialog } from "@/components/workbench/shortcuts-dialog"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
 import { useAssistant } from "@/lib/state/assistant-context"
@@ -74,6 +75,7 @@ export function WorkbenchShell({
   const [registerOpen, setRegisterOpen] = useState(false)
   const [pairOpen, setPairOpen] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
 
   useEffect(() => {
     if (ready && !activeAccount) {
@@ -81,19 +83,28 @@ export function WorkbenchShell({
     }
   }, [ready, activeAccount, router])
 
-  // ⌘K / Ctrl+K: the search palette, from anywhere in the workbench (not while typing in a terminal).
+  // Workbench-wide keys, from anywhere but a terminal: ⌘K search, ⌘⇧O new conversation (⌘N belongs to the browser),
+  // ⌘/ the shortcut sheet. ⌘B (sidebar) and ⌘J (assistant) are bound where they act.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "k") {
-        const target = e.target as HTMLElement | null
-        if (target?.closest(".xterm")) return
+      if (!(e.metaKey || e.ctrlKey) || e.altKey) return
+      const target = e.target as HTMLElement | null
+      if (target?.closest(".xterm")) return
+      const key = e.key.toLowerCase()
+      if (key === "k" && !e.shiftKey) {
         e.preventDefault()
         setPaletteOpen((v) => !v)
+      } else if (key === "o" && e.shiftKey) {
+        e.preventDefault()
+        router.push("/new")
+      } else if (key === "/" && !e.shiftKey) {
+        e.preventDefault()
+        setShortcutsOpen((v) => !v)
       }
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [])
+  }, [router])
 
   const ui = useMemo<WorkbenchUi>(
     () => ({
@@ -167,7 +178,9 @@ export function WorkbenchShell({
         onOpenChange={setPaletteOpen}
         onRegisterDevice={() => setRegisterOpen(true)}
         onPairDevice={() => setPairOpen(true)}
+        onShortcuts={() => setShortcutsOpen(true)}
       />
+      <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
 
       {/* Global Pi Lite `beforeToolCall` High-Risk Confirmation Dialog */}
       <Dialog

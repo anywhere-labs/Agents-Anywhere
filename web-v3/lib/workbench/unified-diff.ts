@@ -30,11 +30,14 @@ export function parseUnifiedDiff(text: string): DiffFile[] {
       continue
     }
     if (!cur) continue
-    if (raw.startsWith("new file mode")) cur.status = "added"
-    else if (raw.startsWith("deleted file mode")) cur.status = "deleted"
-    else if (raw.startsWith("Binary files")) cur.status = "binary"
-    else if (raw.startsWith("+++ ") || raw.startsWith("--- ") || raw.startsWith("index ")) continue
-    else if (raw.startsWith("rename from") || raw.startsWith("rename to") || raw.startsWith("similarity index")) continue
+    // Header lines come before a file's first hunk; inside hunks "--- x" is a removed line that starts with "-- ".
+    const header = cur.lines.length === 0
+    if (header && raw.startsWith("new file mode")) cur.status = "added"
+    else if (header && raw.startsWith("deleted file mode")) cur.status = "deleted"
+    else if (header && raw.startsWith("Binary files")) cur.status = "binary"
+    else if (header && (raw.startsWith("+++ ") || raw.startsWith("--- ") || raw.startsWith("index "))) continue
+    else if (header && (raw.startsWith("rename from") || raw.startsWith("rename to") || raw.startsWith("similarity index")))
+      continue
     else if (raw.startsWith("@@")) cur.lines.push({ kind: "hunk", text: raw })
     else if (raw.startsWith("+")) {
       cur.additions++

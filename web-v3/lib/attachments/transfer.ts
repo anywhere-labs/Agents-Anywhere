@@ -79,12 +79,15 @@ export interface TransferPorts {
     purpose: "transfer"
     size_bytes: number
     sha256: string
-    filename: string
-    mime_type: string
+    /** Left out for sealed (ephemeral_key) uploads: the control plane sees no plaintext metadata. */
+    filename?: string | null
+    mime_type?: string | null
     encryption_mode: "none" | "ephemeral_key"
     encryption_nonce?: string | null
   }) => Promise<{ file: DriveFileView; upload: PresignedHttpTarget }>
   completeUpload: (fileId: string, etag: string | null) => Promise<DriveFileView>
+  /** Removes a drive object the device never took (best effort; otherwise it waits for its TTL). */
+  deleteUpload?: (fileId: string) => Promise<unknown>
 }
 
 export type TransferPhase = "reading" | "uploading" | "saving"
@@ -224,20 +227,26 @@ export async function transferAttachment(
     purpose: "transfer",
     size_bytes: body.byteLength,
     sha256,
-    filename: file.name,
-    mime_type: mime,
+    ...(sealed ? {} : { filename: file.name, mime_type: mime }),
     encryption_mode: sealed ? "ephemeral_key" : "none",
     encryption_nonce: sealed?.nonce ?? null,
   })
+  // Whatever fails from here on leaves an object the device never took: remove it rather than let it hold quota.
+  const discard = () => void ports.deleteUpload?.(created.file.id)?.catch(() => undefined)
   onProgress?.({ phase: "uploading", sent: 0, total })
-  const put = await putWithProgress(
-    created.upload,
-    body,
-    (sent) => onProgress?.({ phase: "uploading", sent: Math.min(total, sent), total }),
-    signal
-  )
-  check()
-  await ports.completeUpload(created.file.id, put.etag)
+  try {
+    const put = await putWithProgress(
+      created.upload,
+      body,
+      (sent) => onProgress?.({ phase: "uploading", sent: Math.min(total, sent), total }),
+      signal
+    )
+    check()
+    await ports.completeUpload(created.file.id, put.etag)
+  } catch (err) {
+    discard()
+    throw err
+  }
   onProgress?.({ phase: "saving", sent: 0, total })
   try {
     const saved = await ports.fetchDriveFile({
@@ -250,6 +259,7 @@ export async function transferAttachment(
     })
     return { path: saved.path, name: saved.name, mime: saved.mime || mime, size: saved.size }
   } catch (err) {
+    discard()
     if (isUnimplemented(err)) {
       throw new TransferError("unimplemented", "This device's Connector cannot receive large files yet")
     }

@@ -26,6 +26,8 @@ export interface ThreadEnv {
   open: (target: OpenTarget) => void
   copy: (text: string) => void
   rewind?: (message_id: string) => void
+  /** Ask for the last reply again: the host resends the prompt `message_id` (a rewind with the same text). */
+  regenerate?: (message_id: string) => void
   fork?: (message_id: string) => void
   haptic?: (style: 'light' | 'medium' | 'success') => void
   /** Streamdown's table / diagram buttons. The renderer turns fullscreen off (native has its own sheets). */

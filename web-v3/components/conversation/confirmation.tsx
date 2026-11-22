@@ -21,7 +21,7 @@ export function Confirmation({ request, tool }: { request: PendingRequest; tool:
   // Reject on the left, the plain "allow" last (the primary button), as in the pattern.
   const options = [...request.options].sort((a, b) => ORDER[a.kind] - ORDER[b.kind])
   return (
-    <Item variant="outline" size="sm" className="flex-wrap">
+    <Item variant="outline" size="sm" className="flex-wrap" data-request-id={request.request_id}>
       <ItemMedia variant="icon">{command ? <TerminalIcon /> : <ShieldQuestionIcon />}</ItemMedia>
       <ItemContent className="min-w-48">
         <ItemTitle className="block">

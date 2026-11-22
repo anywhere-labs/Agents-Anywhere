@@ -6,7 +6,7 @@
 // in the document scroller (renderer/document-scroller.tsx). Everything that acts goes out through ThreadEnv.
 import { memo, useEffect, useMemo, useState } from 'react'
 import type * as React from 'react'
-import { CopyIcon, FileIcon, GitForkIcon, ImageIcon, LoaderCircleIcon, Undo2Icon } from 'lucide-react'
+import { CopyIcon, FileIcon, GitForkIcon, ImageIcon, LoaderCircleIcon, RefreshCwIcon, Undo2Icon } from 'lucide-react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import type { AssistantMessage, CompactPart, Control, FilePart, ImagePart, PendingRequest, UserMessage } from '@/lib/types/v3'
 import { Attachment, AttachmentContent, AttachmentDescription, AttachmentMedia, AttachmentTitle, AttachmentTrigger } from '@/components/ui/attachment'
@@ -268,6 +268,10 @@ function AgentTurn({ turn, live, last, control, ctx: base }: { turn: TurnData; l
   // How long the turn took, on its last step group once it is done (from its first item to its last).
   const turnMs = !live && assistant.length > 1 ? new Date(lastItem!.created_at).getTime() - new Date(assistant[0].created_at).getTime() : undefined
   const lastGroup = segments.findLast((s) => s.kind === 'steps')
+  // The last reply can be asked for again (its prompt resent); a prompt with attachments cannot be resent as text.
+  const canRegenerate = Boolean(
+    env.regenerate && turn.user?.rewindable && !turn.outgoing && turn.user.parts.every((p) => p.type === 'text'),
+  )
   return (
     <Message>
       <MessageContent className="gap-4">
@@ -315,11 +319,18 @@ function AgentTurn({ turn, live, last, control, ctx: base }: { turn: TurnData; l
             <BubbleContent>{error}</BubbleContent>
           </Bubble>
         )}
-        {!live && text && (
+        {!live && (text || (last && canRegenerate)) && (
           <MessageFooter className="-ml-1.5 gap-0.5 px-0">
-            <MessageAction label="复制" onClick={() => env.copy(text)}>
-              <CopyIcon />
-            </MessageAction>
+            {text && (
+              <MessageAction label="复制" onClick={() => env.copy(text)}>
+                <CopyIcon />
+              </MessageAction>
+            )}
+            {last && canRegenerate && (
+              <MessageAction label="重新生成" onClick={() => env.regenerate!(turn.user!.id)}>
+                <RefreshCwIcon />
+              </MessageAction>
+            )}
             {env.fork && lastItem && (
               <MessageAction label="从这里分叉" onClick={() => env.fork!(lastItem.id)}>
                 <GitForkIcon />

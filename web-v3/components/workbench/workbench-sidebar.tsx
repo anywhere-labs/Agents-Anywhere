@@ -285,13 +285,13 @@ export function WorkbenchSidebar() {
             </span>
           </span>
         </SidebarMenuButton>
-        {hasIndicator(s) ? (
-          <SidebarMenuBadge className="top-1/2! -translate-y-1/2">
+        {/* A running / waiting / unread mark gives way to the row's menu on hover, so every row can be pinned or renamed. */}
+        {hasIndicator(s) && (
+          <SidebarMenuBadge className="top-1/2! -translate-y-1/2 transition-opacity group-focus-within/menu-item:opacity-0 group-hover/menu-item:opacity-0 group-has-data-popup-open/menu-item:opacity-0">
             <SessionStatus state={s.state} unread={s.unread} />
           </SidebarMenuBadge>
-        ) : (
-          rowMenu(s)
         )}
+        {rowMenu(s)}
       </SidebarMenuItem>
     )
   }

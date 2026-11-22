@@ -23,9 +23,13 @@ export interface DeviceInfoState {
 
 const EMPTY: DeviceInfoState = { status: null, settings: null, loading: false, error: null }
 
+/** How long a failed status read is trusted before the next page that asks reads it again. */
+const RETRY_AFTER_MS = 5_000
+
 class DeviceInfoCache {
   private entries = new WeakMap<DeviceTunnelManager, Map<string, DeviceInfoState>>()
   private inflight = new WeakMap<DeviceTunnelManager, Map<string, Promise<void>>>()
+  private failedAt = new WeakMap<DeviceTunnelManager, Map<string, number>>()
   private listeners = new Set<() => void>()
 
   subscribe = (l: () => void) => {
@@ -49,7 +53,10 @@ class DeviceInfoCache {
 
   load(manager: DeviceTunnelManager, device: TunnelDevice, force = false): Promise<void> {
     const current = this.get(manager, device.id)
-    if (!force && (current.status || current.error)) return Promise.resolve()
+    if (!force && current.status) return Promise.resolve()
+    // A failure is not kept for good: asked again (another page, the device back online) it is retried after a pause.
+    const failed = this.failedAt.get(manager)?.get(device.id)
+    if (!force && current.error && failed !== undefined && Date.now() - failed < RETRY_AFTER_MS) return Promise.resolve()
     let flights = this.inflight.get(manager)
     if (!flights) this.inflight.set(manager, (flights = new Map()))
     const running = flights.get(device.id)
@@ -62,7 +69,11 @@ class DeviceInfoCache {
           manager.getDeviceSettings(device).catch(() => null),
         ])
         this.set(manager, device.id, { status, settings, loading: false, error: null })
+        this.failedAt.get(manager)?.delete(device.id)
       } catch (err) {
+        let failures = this.failedAt.get(manager)
+        if (!failures) this.failedAt.set(manager, (failures = new Map()))
+        failures.set(device.id, Date.now())
         const code = err instanceof PairingError ? err.code : "device_error"
         this.set(manager, device.id, {
           loading: false,
@@ -104,10 +115,13 @@ export function useDevice(deviceId: string | null | undefined, opts: { load?: bo
     () => EMPTY
   )
   const shouldLoad = opts.load !== false
+  // Pairing in this browser clears an "unpaired" failure at once.
+  const paired = Boolean(trust)
   useEffect(() => {
     if (!shouldLoad || !tunnelManager || !tunnelDevice || tunnelDevice.presence !== "online") return
-    void deviceInfoCache.load(tunnelManager, tunnelDevice)
-  }, [shouldLoad, tunnelDevice, tunnelManager])
+    const unpaired = deviceInfoCache.get(tunnelManager, tunnelDevice.id).error?.code === "e2e_not_paired"
+    void deviceInfoCache.load(tunnelManager, tunnelDevice, paired && unpaired)
+  }, [paired, shouldLoad, tunnelDevice, tunnelManager])
   const reload = useCallback(() => {
     if (!tunnelManager || !tunnelDevice) return Promise.resolve()
     return deviceInfoCache.load(tunnelManager, tunnelDevice, true)

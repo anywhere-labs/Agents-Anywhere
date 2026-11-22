@@ -85,6 +85,19 @@ describe("local workbench preferences", () => {
     expect(second).toMatchObject({ deviceId: "d2", agent: "codex" })
     expect(second.agentByDevice).toEqual({ d1: "pi", d2: "codex" })
     expect(second.cwdByDevice).toEqual({ d1: "/x" })
+    // Starting in the home directory makes it the default again.
+    expect(rememberStart(second, "d1", "pi", null).cwdByDevice).toEqual({})
+  })
+})
+
+describe("unified diff content lines that look like headers", () => {
+  it("keeps removed and added lines starting with -- and ++ inside a hunk", () => {
+    const [file] = parseUnifiedDiff(
+      ["diff --git a/q.sql b/q.sql", "--- a/q.sql", "+++ b/q.sql", "@@ -1,2 +1,2 @@", "--- old comment", "+++ new comment", " select 1;"].join("\n")
+    )
+    expect(file.deletions).toBe(1)
+    expect(file.additions).toBe(1)
+    expect(file.lines.map((l) => l.kind)).toEqual(["hunk", "del", "add", "same"])
   })
 })
 

@@ -1,8 +1,10 @@
 "use client"
 
-// A conversation (client-experience-proposal §2.4). Thread in the middle (Effi Cloud's turn rendering), approvals
-// docked above the composer, queued messages above the input, the composer at the bottom, and the side panel (files,
-// changes, terminal, plan) beside the thread on wide screens, over it on medium ones and in a bottom sheet on phones.
+// A conversation (client-experience-proposal §2.4). Thread in the middle (Effi Cloud's turn rendering, approvals inline
+// under the tool call as in Claude Code Desktop / Codex / Cursor), queued messages above the input, the composer at the
+// bottom — centred under a greeting while the conversation is empty, as in ChatGPT / Claude.ai — and the side panel
+// (files, changes, terminal, plan) beside the thread on wide screens, over it on medium ones and in a bottom sheet on
+// phones. Files dropped anywhere on the conversation are attached.
 // Behaviour follows AA v2 web-next mapped to aa.v3.Sessions: watch (snapshot then live), send with
 // delivery auto / queue / steer, answer, set_config, stop, rename, fork, compact, delete, unqueue, steer_queued.
 import { useParams, useRouter } from "next/navigation"
@@ -19,7 +21,7 @@ import { toast } from "sonner"
 
 import { ConfirmDialog } from "@/components/console/confirm-dialog"
 import { ApprovalDock } from "@/components/conversation/approval-dock"
-import { useDraftAttachments, useTransferPorts } from "@/components/conversation/attachments"
+import { DropOverlay, useDraftAttachments, useDropZone, useTransferPorts } from "@/components/conversation/attachments"
 import { Composer, type ComposerCommand, type Delivery } from "@/components/conversation/composer"
 import { ContextMeter } from "@/components/conversation/context-meter"
 import { ConversationHeader } from "@/components/conversation/conversation-header"
@@ -50,6 +52,7 @@ import { TimelineStore } from "@/lib/timeline/store"
 import type { FilePart, ImagePart, QueuedMessage } from "@/lib/types/v3"
 import { useDevice, useDriveQuota } from "@/lib/workbench/device-info"
 import { toggleIn, useLocalPrefs } from "@/lib/workbench/local-prefs"
+import { cn } from "@/lib/utils"
 import { agentLabel, sessionHref, sessionKey, tildePath } from "@/lib/workbench/tree"
 
 const WebThreadItem: ThreadItem = ({ id, anchor, children }) => (
@@ -90,15 +93,23 @@ export default function SessionWorkspacePage() {
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [openFile, setOpenFile] = useState<{ path: string; nonce: number } | null>(null)
   const [inject, setInject] = useState<{ text: string; nonce: number } | null>(null)
+  // Rewinding drops a message and everything after it (and the agent's context): asked first. With `content`, the
+  // prompt is sent again (regenerate).
+  const [rewindTarget, setRewindTarget] = useState<{ id: string; content?: string } | null>(null)
 
   const getScrollRoot = useCallback(() => viewportRef.current, [])
   useWindowTrimmer(store, getScrollRoot)
 
   // Live watch over the device tunnel (normal or Noise_IK E2EE). A dropped stream is watched again with backoff (the
   // protocol is snapshot-then-replace, so a re-watch is the whole reconnect); pairing problems stop it.
+  // A new conversation starts empty; the device going offline or coming back keeps what is shown (a re-watch is
+  // snapshot-then-replace anyway).
+  useEffect(() => {
+    store.reset()
+  }, [sessionId, store])
+
   useEffect(() => {
     const abort = new AbortController()
-    store.reset()
     const pause = (ms: number) =>
       new Promise<void>((resolve) => {
         const timer = setTimeout(resolve, ms)
@@ -133,11 +144,16 @@ export default function SessionWorkspacePage() {
         } catch (err) {
           if (abort.signal.aborted) return
           setConnecting(false)
-          if (err instanceof PairingError) {
+          // Pairing problems need the reader; a failed handshake (the device restarting, a network blip) is retried.
+          if (err instanceof PairingError && err.code !== "e2e_handshake_failed") {
             setConnectError({ code: err.code, message: err.message })
             return
           }
-          setConnectError({ code: "watch_error", message: errorText(err) })
+          setConnectError(
+            err instanceof PairingError
+              ? { code: err.code, message: err.message }
+              : { code: "watch_error", message: errorText(err) }
+          )
         }
         if (abort.signal.aborted) return
         attempt++
@@ -219,6 +235,7 @@ export default function SessionWorkspacePage() {
         return false
       }
       const clientMsgId = `msg_${crypto.randomUUID()}`
+      const sentIds = drafts.items.map((d) => d.id)
       const parts: (ImagePart | FilePart | { type: "text"; text: string })[] = [
         ...refs.map((a) =>
           a.mime.startsWith("image/") ? ({ type: "image", ...a } as const) : ({ type: "file", ...a } as const)
@@ -231,7 +248,8 @@ export default function SessionWorkspacePage() {
         done: true,
         role: "user",
         client_msg_id: clientMsgId,
-        author: activeAccount.user.display_name,
+        // As the Connector will record it, so the thread knows it is the reader's own.
+        author: `user:${activeAccount.user.id}`,
         created_at: new Date().toISOString(),
         parts,
       })
@@ -243,7 +261,7 @@ export default function SessionWorkspacePage() {
           delivery,
           attachments: refs.length ? refs : undefined,
         })
-        drafts.clear()
+        drafts.clear(sentIds)
         return true
       } catch (err) {
         store.removeOutgoing(clientMsgId)
@@ -272,6 +290,14 @@ export default function SessionWorkspacePage() {
     if (!tunnelManager || !tunnelDevice) return
     void call(() => tunnelManager.stopSession(tunnelDevice, sessionId))
   }, [call, sessionId, tunnelDevice, tunnelManager])
+
+  const runRewind = useCallback(
+    (target: { id: string; content?: string }) => {
+      if (!tunnelManager || !tunnelDevice) return
+      void call(() => tunnelManager.rewindSession(tunnelDevice, sessionId, target.id, target.content))
+    },
+    [call, sessionId, tunnelDevice, tunnelManager]
+  )
 
   const handleConfig = useCallback(
     (configId: string, value: string) => {
@@ -397,7 +423,7 @@ export default function SessionWorkspacePage() {
         if (author.startsWith("e2e:")) return myPub && author.includes(myPub) ? null : pairedClientLabel
         return author
       },
-      approvals: "host",
+      approvals: "inline",
       reduceMotion: false,
       imageSrc: (path) => sentPreview(path) ?? "",
       loadImage:
@@ -420,7 +446,13 @@ export default function SessionWorkspacePage() {
             window.open(url, "_blank", "noopener,noreferrer")
             return
           }
-          const local = decodeURIComponent(url.replace(/^file:\/\//, "")).split("#")[0]
+          let local = url.replace(/^file:\/\//, "")
+          try {
+            local = decodeURIComponent(local)
+          } catch {
+            // A literal "%" in the path: keep it as written.
+          }
+          local = local.split("#")[0]
           path = local.startsWith("/") || local.startsWith("~") || !cwd ? local : `${cwd}/${local.replace(/^\.\//, "")}`
         } else {
           path = target.path
@@ -429,13 +461,21 @@ export default function SessionWorkspacePage() {
         setPanel(true, "files")
       },
       copy,
-      rewind: (messageId) => {
-        if (!tunnelManager || !tunnelDevice) return
-        void call(() => tunnelManager.rewindSession(tunnelDevice, sessionId, messageId))
+      rewind: (messageId) => setRewindTarget({ id: messageId }),
+      regenerate: (messageId) => {
+        const s = store.get()
+        const index = s.messages.findIndex((m) => m.id === messageId)
+        const message = s.messages[index]
+        if (!message || message.role !== "user") return
+        const content = message.parts.map((p) => (p.type === "text" ? p.text : "")).join("")
+        if (!content.trim()) return
+        // The agent restarts without the earlier turns: say so first when there are any.
+        if (index > 0 || s.has_more) setRewindTarget({ id: messageId, content })
+        else runRewind({ id: messageId, content })
       },
       fork: forkAt,
     }),
-    [call, copy, cwd, forkAt, myId, myName, myPub, pairedClientLabel, sessionId, setPanel, tunnelDevice, tunnelManager]
+    [call, copy, cwd, forkAt, myId, myName, myPub, pairedClientLabel, runRewind, sessionId, setPanel, store, tunnelDevice, tunnelManager]
   )
 
   const commands = useMemo<ComposerCommand[]>(() => {
@@ -465,6 +505,8 @@ export default function SessionWorkspacePage() {
       void call(async () => {
         await tunnelManager.cancelQueued(tunnelDevice, sessionId, q.client_msg_id)
         setInject((prev) => ({ text: q.content, nonce: (prev?.nonce ?? 0) + 1 }))
+        // Its files are already on the device: they come back as ready chips.
+        if (q.attachments?.length) drafts.restore(q.attachments.map(({ path, name, mime, size }) => ({ path, name, mime, size })))
       })
     },
   }
@@ -491,12 +533,16 @@ export default function SessionWorkspacePage() {
     />
   )
 
-  const empty = !connecting && timeline.messages.length === 0 && timeline.outgoing.length === 0
+  const noMessages = timeline.messages.length === 0 && timeline.outgoing.length === 0
+  // Nothing said yet: the greeting and the composer sit in the middle; the first message moves the composer down.
+  const centered = !connecting && noMessages && !offline && !connectError && !timeline.has_more
+  const drop = useDropZone((files) => drafts.add(files), !readOnly)
 
   return (
     <WorkbenchShell hideMobileBar>
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" {...drop.handlers}>
+          <DropOverlay show={drop.over} />
           <ConversationHeader
             title={title}
             deviceId={deviceId}
@@ -524,7 +570,7 @@ export default function SessionWorkspacePage() {
             }}
           />
 
-          {offline && (
+          {offline && !noMessages && (
             <div className="mx-auto w-full max-w-3xl shrink-0 px-4">
               <p className="rounded-full bg-card px-4 py-2 text-xs text-muted-foreground">{t("conv.offlineReadOnly")}</p>
             </div>
@@ -555,7 +601,19 @@ export default function SessionWorkspacePage() {
             </div>
           ) : (
             <>
-              <ScrollRootContext.Provider value={getScrollRoot}>
+              {centered ? (
+                <div key="greeting" className="flex min-h-0 flex-1 flex-col items-center justify-end px-6 pb-8 text-center">
+                  <p className="font-heading text-2xl font-semibold tracking-tight text-foreground">{t("conv.emptyTitle")}</p>
+                  <p className="mt-2 max-w-md text-sm text-muted-foreground">
+                    {t("conv.emptyHint", {
+                      agent: agentName || "Agent",
+                      cwd: cwd ? tildePath(cwd) : "~",
+                      device: device?.name ?? deviceId,
+                    })}
+                  </p>
+                </div>
+              ) : (
+              <ScrollRootContext.Provider key="thread" value={getScrollRoot}>
                 <ThreadEnvContext.Provider value={threadEnv}>
                   <MessageScroller className="min-h-0 flex-1">
                     <MessageScrollerViewport ref={viewportRef} className="px-4 pt-4 pb-6 sm:px-6">
@@ -565,24 +623,15 @@ export default function SessionWorkspacePage() {
                             <LoaderCircleIcon className="size-4 animate-spin text-muted-foreground" />
                           </div>
                         )}
-                        {connecting && timeline.messages.length === 0 ? (
+                        {connecting && noMessages ? (
                           <div className="flex items-center justify-center gap-2 py-20 text-sm text-muted-foreground">
                             <LoaderCircleIcon className="size-4 animate-spin" />
                             <span>{t("common.loading")}</span>
                           </div>
-                        ) : empty ? (
-                          <div className="flex flex-col items-center gap-2 py-24 text-center">
-                            <p className="font-heading text-xl font-semibold tracking-tight text-foreground">
-                              {t("conv.emptyTitle")}
-                            </p>
-                            <p className="max-w-md text-sm text-muted-foreground">
-                              {t("conv.emptyHint", {
-                                agent: agentName || "Agent",
-                                cwd: cwd ? tildePath(cwd) : "~",
-                                device: device?.name ?? deviceId,
-                              })}
-                            </p>
-                          </div>
+                        ) : noMessages ? (
+                          <p className="py-24 text-center text-sm text-muted-foreground">
+                            {offline ? t("conv.offlineEmpty") : t("common.loading")}
+                          </p>
                         ) : (
                           <Thread state={timeline} Item={WebThreadItem} showQueued={false} />
                         )}
@@ -592,9 +641,28 @@ export default function SessionWorkspacePage() {
                   </MessageScroller>
                 </ThreadEnvContext.Provider>
               </ScrollRootContext.Provider>
+              )}
 
-              <div className="shrink-0 px-3 pb-3 sm:px-6 sm:pb-4">
+              <div key="composer" className="shrink-0 px-3 pb-3 sm:px-6 sm:pb-4">
                 <div className="mx-auto w-full max-w-3xl">
+                  {connectError && (
+                    <div className="mb-2 flex items-center gap-2 rounded-full bg-surface-raised py-1 pr-1 pl-3.5 text-xs">
+                      <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                        {connectError.code === "e2e_required_locally"
+                          ? t("devices.locallyLockedError")
+                          : t("conv.connectionLost", { error: connectError.message })}
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 gap-1 rounded-full px-2.5 text-xs"
+                        onClick={() => setRetryNonce((n) => n + 1)}
+                      >
+                        <RefreshCwIcon className="size-3.5" />
+                        {t("common.refresh")}
+                      </Button>
+                    </div>
+                  )}
                   <ApprovalDock
                     pending={pending}
                     messages={timeline.messages}
@@ -635,9 +703,11 @@ export default function SessionWorkspacePage() {
                     }
                     onSubmit={handleSubmit}
                     onStop={handleStop}
+                    autoFocus={centered}
                   />
                 </div>
               </div>
+              {centered && <div key="below" aria-hidden className={cn("min-h-0 flex-[1.3]")} />}
             </>
           )}
         </div>
@@ -701,6 +771,23 @@ export default function SessionWorkspacePage() {
         destructive
         pending={deleting}
         onConfirm={() => void handleDelete()}
+      />
+
+      <ConfirmDialog
+        open={rewindTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setRewindTarget(null)
+        }}
+        title={rewindTarget?.content ? t("conv.regenerateTitle") : t("conv.rewindTitle")}
+        description={rewindTarget?.content ? t("conv.regenerateDesc") : t("conv.rewindDesc")}
+        confirmLabel={rewindTarget?.content ? t("conv.regenerate") : t("conv.rewind")}
+        cancelLabel={t("common.cancel")}
+        destructive={!rewindTarget?.content}
+        onConfirm={() => {
+          const target = rewindTarget
+          setRewindTarget(null)
+          if (target) runRewind(target)
+        }}
       />
 
       <PairDeviceDialog
