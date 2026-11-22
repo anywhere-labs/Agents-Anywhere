@@ -300,7 +300,7 @@ describe("ConnectorHost against a real meshcall-router", { skip: SKIP, timeout: 
     await controlHost?.close().catch(() => undefined);
     await host?.stop().catch(() => undefined);
     await router?.close().catch(() => undefined);
-    if (tmp) await rm(tmp, { recursive: true, force: true });
+    if (tmp) await rm(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   it("normal mode: control plane, MCP policy, tunnel sessions with a real ACP agent", async () => {
