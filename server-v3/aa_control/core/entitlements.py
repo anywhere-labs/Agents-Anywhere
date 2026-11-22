@@ -11,6 +11,7 @@ EntitlementMap = dict[str, EntitlementValue]
 ENTITLEMENT_MAX_DEVICES = "aa.max_devices"
 ENTITLEMENT_DRIVE_QUOTA_MB = "aa.drive_quota_mb"
 ENTITLEMENT_DRIVE_TTL_DAYS = "aa.drive_ttl_days"
+ENTITLEMENT_DRIVE_MAX_FILE_MB = "aa.drive_max_file_mb"
 
 
 def sanitize_entitlements(raw: Mapping[str, Any] | None) -> EntitlementMap:
@@ -93,6 +94,9 @@ class EntitlementSet:
 
     def drive_ttl_days(self) -> int | None:
         return self.limit_or_none(ENTITLEMENT_DRIVE_TTL_DAYS)
+
+    def drive_max_file_mb(self) -> int | None:
+        return self.limit_or_none(ENTITLEMENT_DRIVE_MAX_FILE_MB)
 
     def to_dict(self) -> EntitlementMap:
         return dict(self.values)

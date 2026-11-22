@@ -156,3 +156,50 @@ audit_logs = Table(
     Column("created_at", Text, nullable=False),
     Index("idx_audit_logs_user_created", "user_id", "created_at"),
 )
+
+# ---------------------------------------------------------------------------
+# Quota-limited cloud drive & large-file relay tables (v3_1)
+# ---------------------------------------------------------------------------
+
+drive_user_policies = Table(
+    "drive_user_policies",
+    metadata,
+    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
+    Column("quota_bytes", BigInteger),
+    Column("max_file_bytes", BigInteger),
+    Column("default_ttl_seconds", Integer),
+    Column("max_ttl_seconds", Integer),
+    Column("updated_by", Text),
+    Column("updated_at", Text, nullable=False),
+)
+
+drive_files = Table(
+    "drive_files",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("purpose", Text, nullable=False),
+    Column("status", Text, nullable=False),
+    Column("object_key", Text, nullable=False, unique=True),
+    Column("size_bytes", BigInteger, nullable=False),
+    Column("sha256", Text, nullable=False),
+    Column("etag", Text),
+    Column("filename", Text),
+    Column("mime_type", Text),
+    Column("vfs_path", Text),
+    Column("encryption_mode", Text, nullable=False, server_default="none"),
+    Column("encryption_nonce", Text),
+    Column("encryption_key_version", Integer),
+    Column("encrypted_meta", Text),
+    Column("source_device_id", Text),
+    Column("ttl_seconds", Integer, nullable=False),
+    Column("upload_expires_at", BigInteger, nullable=False),
+    Column("expires_at", BigInteger, nullable=False),
+    Column("created_at", Text, nullable=False),
+    Column("completed_at", Text),
+    Column("updated_at", Text, nullable=False),
+    Index("idx_drive_files_user_status_exp", "user_id", "status", "expires_at"),
+    Index("idx_drive_files_user_vfs", "user_id", "purpose", "vfs_path"),
+    Index("idx_drive_files_status_exp", "status", "expires_at"),
+    Index("idx_drive_files_status_upload_exp", "status", "upload_expires_at"),
+)

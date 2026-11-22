@@ -31,8 +31,14 @@ Agents Anywhere v3 的轻控制面后端，实现定稿架构文档中定义的 
 - **MCP（`/mcp` Streamable HTTP）**：
   - OAuth 2.1 发现元数据、RFC 7591 动态客户端注册、PKCE S256 授权码、授权预览（`approvals:answer` 默认不勾选、加密设备不可选）、授权查询与撤销；
   - 7 个工具：`list_devices`、`list_sessions`、`read_session`、`create_session`、`send_message`、`stop_session`、`answer_approval`，严格过滤加密设备，透传 `aa-via: mcp`，审计日志只记元数据不存对话内容。
-- **3.0 数据库迁移（`migrations/versions/v3_0.py`）**：
-  - 支持空库全新初始化，也支持从 2.x PostgreSQL 原地升级：仅保留 `users` 和 `oauth_accounts`，清理其余全部 2.x 旧表（含会话、时间线、`instance_settings` 等）。
+- **限额大文件云盘与对象存储中转（`/drive/*`、`/admin/drive/policies/*`）**：
+  - 纯 Python 异步 S3 SigV4 预签名直传/下载（兼容 AWS S3、Cloudflare R2、MinIO、阿里云 OSS / 七牛云 Kodo 等 S3 兼容存储，支持内网 `AA_CONTROL_S3_ENDPOINT` 与客户端直连 `AA_CONTROL_S3_PUBLIC_ENDPOINT` 分离，流量不经控制面）；
+  - 上传预签名强制签名 `Content-Length` 并在 `/complete` 校验 `HEAD` 字节数，防止绕过配额；
+  - 默认 RPC 直传阈值 8 MiB（与 `connector-v3` 对齐），默认总配额 512 MiB、单文件上限 100 MiB、默认过期 7 天（上限 30 天）；配额与 TTL 按「管理员单账号策略覆盖 > OIDC/默认权益声明（`aa.drive_quota_mb`、`aa.drive_ttl_days`、`aa.drive_max_file_mb`）> 服务默认值」三层生效；
+  - 双模式鉴权（用户 Bearer JWT 与 Connector `X-AA-Device-Id` / `X-AA-Device-Secret` 均可上传下载，且 Connector 自动继承用户 Redis 缓存的 OIDC 权益）；
+  - 支持普通文件、助手云端 VFS（`assistant_vfs`，按 `vfs_path` 覆写并自动回收旧版本、`account_dek` 端侧加密剥离明文文件名）与加密设备大文件单次密钥中转（`ephemeral_key`，服务端绝不接收或存储 `file_key`）；内置后台定时清理过期文件与超时未完成预占。
+- **3.0 数据库迁移（`migrations/versions/v3_0.py`、`v3_1.py`）**：
+  - `v3_0` 支持空库全新初始化与 2.x 原地升级（保留 `users` / `oauth_accounts`，清理旧会话表）；`v3_1` 新增 `drive_files` 与 `drive_user_policies`。
 
 ## 目录分层
 
@@ -70,6 +76,13 @@ Agents Anywhere v3 的轻控制面后端，实现定稿架构文档中定义的 
 | `AA_CONTROL_OIDC_ENTITLEMENTS_CLAIM` | 可选：自定义第三方 OIDC 权益声明键名（默认 `entitlements`） | `entitlements` |
 | `AA_CONTROL_OIDC_ADMIN_ROLES` | 可选：映射为管理员的角色名列表（逗号分隔，默认 `admin`） | `admin` |
 | `AA_CONTROL_DEFAULT_ENTITLEMENTS_JSON` | 可选：默认权益基线 JSON（第三方 OIDC 无权益声明或 `local` 模式时生效） | `{"aa.max_devices": 10}` |
+| `AA_CONTROL_S3_ENDPOINT` / `AA_CONTROL_S3_BUCKET` | 云盘对象存储 S3 Endpoint 与 Bucket（两者均配置后启用云盘） | `http://127.0.0.1:9000` / `aa-drive` |
+| `AA_CONTROL_S3_ACCESS_KEY_ID` / `AA_CONTROL_S3_SECRET_ACCESS_KEY` | S3 凭据 | — |
+| `AA_CONTROL_S3_PUBLIC_ENDPOINT` | 可选：返回给客户端/Connector 预签名直连的公网 S3 地址 | `https://files.example.com` |
+| `AA_CONTROL_S3_REGION` / `AA_CONTROL_S3_PATH_STYLE` | 可选：S3 Region（默认 `us-east-1`）与 Path-Style 开关（默认 `true`） | `auto` / `true` |
+| `AA_CONTROL_DRIVE_DEFAULT_QUOTA_MB` / `AA_CONTROL_DRIVE_MAX_FILE_MB` | 可选：云盘默认账号配额（默认 `512`，`-1` 不限）与单文件上限（默认 `100`） | `512` / `100` |
+| `AA_CONTROL_DRIVE_DEFAULT_TTL_DAYS` / `AA_CONTROL_DRIVE_MAX_TTL_DAYS` | 可选：云盘文件默认过期天数（默认 `7`）与最大可调天数（默认 `30`） | `7` / `30` |
+| `AA_CONTROL_DRIVE_RPC_MAX_BYTES` | 可选：向客户端通告的 RPC 直传文件大小阈值（默认 8 MiB） | `8388608` |
 | `AA_CONTROL_REGISTRATION_OPEN` | `local` 模式：是否开放自助注册（首账号始终为 admin） | `true` / `false` |
 | `AA_CONTROL_SETUP_TOKEN` | `local` 模式可选：限制首次管理员注册所需的一次性 token | — |
 

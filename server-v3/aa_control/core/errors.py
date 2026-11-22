@@ -41,6 +41,11 @@ class ConflictError(ControlError):
     http_status = 409
 
 
+class PayloadTooLargeError(ControlError):
+    code = "payload_too_large"
+    http_status = 413
+
+
 class RateLimitError(ControlError):
     code = "resource_exhausted"
     http_status = 429

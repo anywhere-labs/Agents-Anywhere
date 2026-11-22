@@ -369,3 +369,115 @@ class DeviceRouterTokenResponse(BaseModel):
     device_id: str
     principal: str
     tokens: list[RouterTokenEntry]
+
+
+# ---------------------------------------------------------------------------
+# Quota-limited cloud drive & large-file relay models (T517)
+# ---------------------------------------------------------------------------
+
+DrivePurpose = Literal["transfer", "assistant_vfs"]
+DriveEncryptionMode = Literal["none", "account_dek", "ephemeral_key"]
+DriveFileStatus = Literal["pending", "ready"]
+
+
+class PresignedHttpTarget(BaseModel):
+    method: Literal["PUT", "GET"]
+    url: str
+    headers: dict[str, str] = Field(default_factory=dict)
+    expires_at: str
+
+
+class DriveFileView(BaseModel):
+    id: str
+    purpose: DrivePurpose
+    status: DriveFileStatus
+    size_bytes: int
+    sha256: str
+    etag: str | None = None
+    filename: str | None = None
+    mime_type: str | None = None
+    vfs_path: str | None = None
+    encryption_mode: DriveEncryptionMode = "none"
+    encryption_nonce: str | None = None
+    encryption_key_version: int | None = None
+    encrypted_meta: str | None = None
+    source_device_id: str | None = None
+    ttl_seconds: int
+    created_at: str
+    completed_at: str | None = None
+    expires_at: str
+
+
+class DriveQuotaView(BaseModel):
+    enabled: bool
+    rpc_direct_max_bytes: int
+    quota_bytes: int | None = None
+    used_bytes: int
+    reserved_bytes: int
+    remaining_bytes: int | None = None
+    max_file_bytes: int | None = None
+    default_ttl_seconds: int
+    max_ttl_seconds: int
+    file_count: int
+    policy_source: str
+
+
+class CreateDriveUploadRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    purpose: DrivePurpose = "transfer"
+    size_bytes: int = Field(gt=0)
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    filename: str | None = Field(default=None, max_length=255)
+    mime_type: str | None = Field(default=None, max_length=128)
+    vfs_path: str | None = Field(default=None, max_length=512)
+    ttl_seconds: int | None = Field(default=None, ge=60)
+    encryption_mode: DriveEncryptionMode = "none"
+    encryption_nonce: str | None = Field(default=None, max_length=64)
+    encryption_key_version: int | None = Field(default=None, ge=1)
+    encrypted_meta: str | None = Field(default=None, max_length=8192)
+
+
+class CreateDriveUploadResponse(BaseModel):
+    file: DriveFileView
+    upload: PresignedHttpTarget
+
+
+class CompleteDriveUploadRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    etag: str | None = Field(default=None, max_length=256)
+
+
+class DriveDownloadUrlResponse(BaseModel):
+    file: DriveFileView
+    download: PresignedHttpTarget
+
+
+class ListDriveFilesResponse(BaseModel):
+    files: list[DriveFileView]
+    quota: DriveQuotaView
+
+
+class DrivePolicyOverrideView(BaseModel):
+    quota_bytes: int | None = None
+    max_file_bytes: int | None = None
+    default_ttl_seconds: int | None = None
+    max_ttl_seconds: int | None = None
+    updated_by: str | None = None
+    updated_at: str | None = None
+
+
+class UpdateDrivePolicyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    quota_bytes: int | None = Field(default=None, ge=-1)
+    max_file_bytes: int | None = Field(default=None, ge=-1)
+    default_ttl_seconds: int | None = Field(default=None, ge=60)
+    max_ttl_seconds: int | None = Field(default=None, ge=60)
+
+
+class AdminDrivePolicyResponse(BaseModel):
+    user_id: str
+    override: DrivePolicyOverrideView | None = None
+    effective: DriveQuotaView

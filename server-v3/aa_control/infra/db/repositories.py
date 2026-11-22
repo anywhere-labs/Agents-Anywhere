@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import delete, func, insert, select, update
+from sqlalchemy import and_, delete, func, insert, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -96,6 +96,50 @@ class McpGrantRow:
     expires_at: int
     revoked_at: str | None
     created_at: str
+
+
+@dataclass(frozen=True)
+class DrivePolicyRow:
+    user_id: str
+    quota_bytes: int | None
+    max_file_bytes: int | None
+    default_ttl_seconds: int | None
+    max_ttl_seconds: int | None
+    updated_by: str | None
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class DriveFileRow:
+    id: str
+    user_id: str
+    purpose: str
+    status: str
+    object_key: str
+    size_bytes: int
+    sha256: str
+    etag: str | None
+    filename: str | None
+    mime_type: str | None
+    vfs_path: str | None
+    encryption_mode: str
+    encryption_nonce: str | None
+    encryption_key_version: int | None
+    encrypted_meta: str | None
+    source_device_id: str | None
+    ttl_seconds: int
+    upload_expires_at: int
+    expires_at: int
+    created_at: str
+    completed_at: str | None
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class DriveUsageSnapshot:
+    used_bytes: int
+    reserved_bytes: int
+    file_count: int
 
 
 class ControlRepository:
@@ -826,6 +870,254 @@ class ControlRepository:
                 for r in rows
             ]
 
+    # ------------------------------------------------------------------
+    # Quota-limited cloud drive policies & file metadata (T517)
+    # ------------------------------------------------------------------
+
+    async def get_drive_policy(self, user_id: str) -> DrivePolicyRow | None:
+        async with self._engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    select(schema.drive_user_policies).where(schema.drive_user_policies.c.user_id == user_id)
+                )
+            ).mappings().first()
+            return _to_drive_policy(row) if row else None
+
+    async def upsert_drive_policy(
+        self,
+        *,
+        user_id: str,
+        quota_bytes: int | None,
+        max_file_bytes: int | None,
+        default_ttl_seconds: int | None,
+        max_ttl_seconds: int | None,
+        updated_by: str | None,
+    ) -> DrivePolicyRow:
+        now = utc_now_iso()
+        async with self._engine.begin() as conn:
+            existing = (
+                await conn.execute(
+                    select(schema.drive_user_policies.c.user_id).where(schema.drive_user_policies.c.user_id == user_id)
+                )
+            ).scalar_one_or_none()
+            values = {
+                "quota_bytes": quota_bytes,
+                "max_file_bytes": max_file_bytes,
+                "default_ttl_seconds": default_ttl_seconds,
+                "max_ttl_seconds": max_ttl_seconds,
+                "updated_by": updated_by,
+                "updated_at": now,
+            }
+            if existing is None:
+                await conn.execute(insert(schema.drive_user_policies).values(user_id=user_id, **values))
+            else:
+                await conn.execute(
+                    update(schema.drive_user_policies)
+                    .where(schema.drive_user_policies.c.user_id == user_id)
+                    .values(**values)
+                )
+            row = (
+                await conn.execute(
+                    select(schema.drive_user_policies).where(schema.drive_user_policies.c.user_id == user_id)
+                )
+            ).mappings().one()
+            return _to_drive_policy(row)
+
+    async def delete_drive_policy(self, user_id: str) -> bool:
+        async with self._engine.begin() as conn:
+            res = await conn.execute(
+                delete(schema.drive_user_policies).where(schema.drive_user_policies.c.user_id == user_id)
+            )
+            return res.rowcount > 0
+
+    async def get_drive_usage(self, user_id: str, *, now_ts: int) -> DriveUsageSnapshot:
+        async with self._engine.connect() as conn:
+            ready_row = (
+                await conn.execute(
+                    select(
+                        func.coalesce(func.sum(schema.drive_files.c.size_bytes), 0),
+                        func.count(),
+                    ).where(
+                        schema.drive_files.c.user_id == user_id,
+                        schema.drive_files.c.status == "ready",
+                        schema.drive_files.c.expires_at > now_ts,
+                    )
+                )
+            ).one()
+            pending_bytes = (
+                await conn.execute(
+                    select(func.coalesce(func.sum(schema.drive_files.c.size_bytes), 0)).where(
+                        schema.drive_files.c.user_id == user_id,
+                        schema.drive_files.c.status == "pending",
+                        schema.drive_files.c.upload_expires_at > now_ts,
+                    )
+                )
+            ).scalar_one()
+            return DriveUsageSnapshot(
+                used_bytes=int(ready_row[0]),
+                reserved_bytes=int(pending_bytes),
+                file_count=int(ready_row[1]),
+            )
+
+    async def create_drive_file(
+        self,
+        *,
+        file_id: str,
+        user_id: str,
+        purpose: str,
+        object_key: str,
+        size_bytes: int,
+        sha256: str,
+        filename: str | None,
+        mime_type: str | None,
+        vfs_path: str | None,
+        encryption_mode: str,
+        encryption_nonce: str | None,
+        encryption_key_version: int | None,
+        encrypted_meta: str | None,
+        source_device_id: str | None,
+        ttl_seconds: int,
+        upload_expires_at: int,
+        expires_at: int,
+    ) -> DriveFileRow:
+        now = utc_now_iso()
+        async with self._engine.begin() as conn:
+            await conn.execute(
+                insert(schema.drive_files).values(
+                    id=file_id,
+                    user_id=user_id,
+                    purpose=purpose,
+                    status="pending",
+                    object_key=object_key,
+                    size_bytes=size_bytes,
+                    sha256=sha256,
+                    etag=None,
+                    filename=filename,
+                    mime_type=mime_type,
+                    vfs_path=vfs_path,
+                    encryption_mode=encryption_mode,
+                    encryption_nonce=encryption_nonce,
+                    encryption_key_version=encryption_key_version,
+                    encrypted_meta=encrypted_meta,
+                    source_device_id=source_device_id,
+                    ttl_seconds=ttl_seconds,
+                    upload_expires_at=upload_expires_at,
+                    expires_at=expires_at,
+                    created_at=now,
+                    completed_at=None,
+                    updated_at=now,
+                )
+            )
+            row = (
+                await conn.execute(select(schema.drive_files).where(schema.drive_files.c.id == file_id))
+            ).mappings().one()
+            return _to_drive_file(row)
+
+    async def get_drive_file(self, file_id: str) -> DriveFileRow | None:
+        async with self._engine.connect() as conn:
+            row = (
+                await conn.execute(select(schema.drive_files).where(schema.drive_files.c.id == file_id))
+            ).mappings().first()
+            return _to_drive_file(row) if row else None
+
+    async def mark_drive_file_ready(
+        self,
+        *,
+        file_id: str,
+        etag: str | None,
+        expires_at: int,
+    ) -> DriveFileRow | None:
+        now = utc_now_iso()
+        async with self._engine.begin() as conn:
+            await conn.execute(
+                update(schema.drive_files)
+                .where(schema.drive_files.c.id == file_id)
+                .values(
+                    status="ready",
+                    etag=etag,
+                    expires_at=expires_at,
+                    completed_at=now,
+                    updated_at=now,
+                )
+            )
+            row = (
+                await conn.execute(select(schema.drive_files).where(schema.drive_files.c.id == file_id))
+            ).mappings().first()
+            return _to_drive_file(row) if row else None
+
+    async def list_superseded_vfs_files(
+        self,
+        *,
+        user_id: str,
+        vfs_path: str,
+        exclude_file_id: str,
+    ) -> list[DriveFileRow]:
+        async with self._engine.connect() as conn:
+            rows = (
+                await conn.execute(
+                    select(schema.drive_files).where(
+                        schema.drive_files.c.user_id == user_id,
+                        schema.drive_files.c.purpose == "assistant_vfs",
+                        schema.drive_files.c.vfs_path == vfs_path,
+                        schema.drive_files.c.status == "ready",
+                        schema.drive_files.c.id != exclude_file_id,
+                    )
+                )
+            ).mappings().all()
+            return [_to_drive_file(r) for r in rows]
+
+    async def list_drive_files(
+        self,
+        user_id: str,
+        *,
+        now_ts: int,
+        purpose: str | None = None,
+        vfs_prefix: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[DriveFileRow]:
+        stmt = select(schema.drive_files).where(
+            schema.drive_files.c.user_id == user_id,
+            schema.drive_files.c.status == "ready",
+            schema.drive_files.c.expires_at > now_ts,
+        )
+        if purpose is not None:
+            stmt = stmt.where(schema.drive_files.c.purpose == purpose)
+        if vfs_prefix is not None:
+            stmt = stmt.where(schema.drive_files.c.vfs_path.startswith(vfs_prefix))
+        stmt = stmt.order_by(schema.drive_files.c.created_at.desc()).limit(limit).offset(offset)
+        async with self._engine.connect() as conn:
+            rows = (await conn.execute(stmt)).mappings().all()
+            return [_to_drive_file(r) for r in rows]
+
+    async def delete_drive_file(self, file_id: str) -> bool:
+        async with self._engine.begin() as conn:
+            res = await conn.execute(delete(schema.drive_files).where(schema.drive_files.c.id == file_id))
+            return res.rowcount > 0
+
+    async def list_expired_drive_files(self, *, now_ts: int, limit: int = 100) -> list[DriveFileRow]:
+        async with self._engine.connect() as conn:
+            rows = (
+                await conn.execute(
+                    select(schema.drive_files)
+                    .where(
+                        or_(
+                            and_(
+                                schema.drive_files.c.status == "ready",
+                                schema.drive_files.c.expires_at <= now_ts,
+                            ),
+                            and_(
+                                schema.drive_files.c.status == "pending",
+                                schema.drive_files.c.upload_expires_at <= now_ts,
+                            ),
+                        )
+                    )
+                    .order_by(schema.drive_files.c.expires_at.asc())
+                    .limit(limit)
+                )
+            ).mappings().all()
+            return [_to_drive_file(r) for r in rows]
+
 
 def _to_user(row: Any) -> UserRow:
     return UserRow(
@@ -900,4 +1192,45 @@ def _to_mcp_grant(row: Any) -> McpGrantRow:
         expires_at=int(row["expires_at"]),
         revoked_at=row["revoked_at"],
         created_at=str(row["created_at"]),
+    )
+
+
+def _to_drive_policy(row: Any) -> DrivePolicyRow:
+    return DrivePolicyRow(
+        user_id=str(row["user_id"]),
+        quota_bytes=int(row["quota_bytes"]) if row["quota_bytes"] is not None else None,
+        max_file_bytes=int(row["max_file_bytes"]) if row["max_file_bytes"] is not None else None,
+        default_ttl_seconds=int(row["default_ttl_seconds"]) if row["default_ttl_seconds"] is not None else None,
+        max_ttl_seconds=int(row["max_ttl_seconds"]) if row["max_ttl_seconds"] is not None else None,
+        updated_by=row["updated_by"],
+        updated_at=str(row["updated_at"]),
+    )
+
+
+def _to_drive_file(row: Any) -> DriveFileRow:
+    return DriveFileRow(
+        id=str(row["id"]),
+        user_id=str(row["user_id"]),
+        purpose=str(row["purpose"]),
+        status=str(row["status"]),
+        object_key=str(row["object_key"]),
+        size_bytes=int(row["size_bytes"]),
+        sha256=str(row["sha256"]),
+        etag=row["etag"],
+        filename=row["filename"],
+        mime_type=row["mime_type"],
+        vfs_path=row["vfs_path"],
+        encryption_mode=str(row["encryption_mode"]),
+        encryption_nonce=row["encryption_nonce"],
+        encryption_key_version=(
+            int(row["encryption_key_version"]) if row["encryption_key_version"] is not None else None
+        ),
+        encrypted_meta=row["encrypted_meta"],
+        source_device_id=row["source_device_id"],
+        ttl_seconds=int(row["ttl_seconds"]),
+        upload_expires_at=int(row["upload_expires_at"]),
+        expires_at=int(row["expires_at"]),
+        created_at=str(row["created_at"]),
+        completed_at=row["completed_at"],
+        updated_at=str(row["updated_at"]),
     )
