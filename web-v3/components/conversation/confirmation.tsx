@@ -54,7 +54,7 @@ export function Answered({ request, by, device, option_id }: { request: PendingR
   const env = useThreadEnv()
   const option = request.options.find((o) => o.id === option_id)
   const allowed = option ? option.kind.startsWith('allow') : true
-  const who = by === env.me ? '你' : by
+  const who = (env.whoIs ? env.whoIs(by) === null : by === env.me) ? '你' : (env.whoIs?.(by) ?? by)
   return (
     <Marker>
       <MarkerIcon>{allowed ? <CheckIcon /> : <XIcon />}</MarkerIcon>

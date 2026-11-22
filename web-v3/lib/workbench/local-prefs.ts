@@ -21,6 +21,8 @@ export interface WorkbenchLocalPrefs {
   lastStart: LastStart | null
   expandedDevices: string[]
   panel: { open: boolean; tab: string }
+  /** Per `${deviceId}:${agent}`: the session options last chosen (model, effort, mode), passed to the next create. */
+  configByAgent: Record<string, Record<string, string>>
 }
 
 const DEFAULTS: WorkbenchLocalPrefs = {
@@ -28,6 +30,7 @@ const DEFAULTS: WorkbenchLocalPrefs = {
   lastStart: null,
   expandedDevices: [],
   panel: { open: false, tab: "files" },
+  configByAgent: {},
 }
 
 const listeners = new Set<() => void>()

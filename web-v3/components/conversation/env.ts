@@ -7,11 +7,21 @@ import type { ControlsConfig } from 'streamdown'
 export interface ThreadEnv {
   /** The reader's account name: answers by them read "你". */
   me: string
+  /**
+   * Who sent a message or answered a request, from the Connector's principal (`user:<id>/client:<id>`, `e2e:<key>`):
+   * null for the reader themself (nothing is shown), else a name to show. Without it `me` is compared as is.
+   */
+  whoIs?: (author: string) => string | null
   /** `host`: the native app draws the approval buttons (its dock); the thread only marks the waiting call. */
   approvals: 'inline' | 'host'
   reduceMotion: boolean
   /** Where an attachment's bytes come from (`aa-app://file?path=…` on mobile, a local preview on the web). */
   imageSrc: (path: string, mime: string, name: string) => string
+  /**
+   * Where `imageSrc` has nothing yet (an image this browser did not send): read the bytes from the device and resolve
+   * an object URL, or null when it cannot be read. The web reads them over the tunnel; mobile uses `imageSrc` only.
+   */
+  loadImage?: (path: string, mime: string) => Promise<string | null>
   answer: (request_id: string, option_id: string) => void
   open: (target: OpenTarget) => void
   copy: (text: string) => void
