@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import delete, func, insert, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from aa_control.core.utc import utc_now_iso
@@ -231,6 +232,127 @@ class ControlRepository:
             )
             return _to_user(user_row)
 
+    async def upsert_oidc_user(
+        self,
+        *,
+        issuer: str,
+        subject: str,
+        email: str | None,
+        email_verified: bool,
+        display_name: str,
+        role: str,
+    ) -> UserRow:
+        """Resolve or JIT-provision the local shadow user for a verified OIDC subject.
+
+        Uses the verified global ``sub`` as ``users.id`` so migrated AA 2.x accounts
+        and ``anywhere-auth`` accounts share the exact same primary key, while keeping
+        steady-state authenticated requests read-only (zero DB writes when unchanged).
+        """
+        normalized_email = email.strip().lower() if email and email.strip() else None
+        cleaned_name = display_name.strip() or (
+            normalized_email.split("@", 1)[0] if normalized_email and "@" in normalized_email else subject
+        )
+        cleaned_role = "admin" if role == "admin" else "member"
+
+        # Fast read-only lookup (hot path).
+        existing = await self._find_oidc_user(issuer=issuer, subject=subject)
+        if existing is not None:
+            if existing.disabled:
+                return existing
+            needs_name = existing.display_name != cleaned_name
+            needs_role = existing.role != cleaned_role
+            needs_email = normalized_email is not None and existing.email != normalized_email
+            if not (needs_name or needs_role or needs_email):
+                return existing
+
+            now = utc_now_iso()
+            async with self._engine.begin() as conn:
+                values: dict[str, Any] = {
+                    "display_name": cleaned_name,
+                    "role": cleaned_role,
+                    "updated_at": now,
+                }
+                if needs_email and normalized_email is not None:
+                    owner = (
+                        await conn.execute(
+                            select(schema.users.c.id).where(func.lower(schema.users.c.email) == normalized_email)
+                        )
+                    ).scalar_one_or_none()
+                    if owner is None or str(owner) == existing.id:
+                        values["email"] = normalized_email
+                        if email_verified:
+                            values["email_verified_at"] = now
+                await conn.execute(update(schema.users).where(schema.users.c.id == existing.id).values(**values))
+                row = (await conn.execute(select(schema.users).where(schema.users.c.id == existing.id))).mappings().one()
+                return _to_user(row)
+
+        now = utc_now_iso()
+        try:
+            async with self._engine.begin() as conn:
+                stored_email = normalized_email
+                if stored_email is not None:
+                    owner = (
+                        await conn.execute(
+                            select(schema.users.c.id).where(func.lower(schema.users.c.email) == stored_email)
+                        )
+                    ).scalar_one_or_none()
+                    if owner is not None:
+                        # Never crash on unique email index or silently hijack an existing local account.
+                        stored_email = None
+                await conn.execute(
+                    insert(schema.users).values(
+                        id=subject,
+                        password_hash="",
+                        role=cleaned_role,
+                        disabled=0,
+                        email=stored_email,
+                        email_verified_at=now if (stored_email and email_verified) else None,
+                        display_name=cleaned_name,
+                        avatar=None,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+                await conn.execute(
+                    insert(schema.oauth_accounts).values(
+                        provider=issuer,
+                        subject=subject,
+                        user_id=subject,
+                        email=normalized_email,
+                        display_name=cleaned_name,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+                row = (await conn.execute(select(schema.users).where(schema.users.c.id == subject))).mappings().one()
+                return _to_user(row)
+        except IntegrityError:
+            # Concurrent first-login race for the same subject: re-read winning row.
+            raced = await self._find_oidc_user(issuer=issuer, subject=subject)
+            if raced is not None:
+                return raced
+            raise
+
+    async def _find_oidc_user(self, *, issuer: str, subject: str) -> UserRow | None:
+        async with self._engine.connect() as conn:
+            row = (await conn.execute(select(schema.users).where(schema.users.c.id == subject))).mappings().first()
+            if row is not None:
+                return _to_user(row)
+            acct = (
+                await conn.execute(
+                    select(schema.oauth_accounts).where(
+                        schema.oauth_accounts.c.provider == issuer,
+                        schema.oauth_accounts.c.subject == subject,
+                    )
+                )
+            ).mappings().first()
+            if acct is None:
+                return None
+            linked = (
+                await conn.execute(select(schema.users).where(schema.users.c.id == acct["user_id"]))
+            ).mappings().first()
+            return _to_user(linked) if linked is not None else None
+
     # ------------------------------------------------------------------
     # Refresh tokens (account sessions)
     # ------------------------------------------------------------------
@@ -350,6 +472,13 @@ class ControlRepository:
                 )
             ).mappings().all()
             return [_to_device(r) for r in rows]
+
+    async def count_devices_for_user(self, user_id: str) -> int:
+        async with self._engine.connect() as conn:
+            res = await conn.execute(
+                select(func.count()).select_from(schema.devices).where(schema.devices.c.user_id == user_id)
+            )
+            return int(res.scalar_one())
 
     async def get_device(self, device_id: str) -> DeviceRow | None:
         async with self._engine.connect() as conn:

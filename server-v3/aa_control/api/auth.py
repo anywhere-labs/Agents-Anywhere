@@ -131,6 +131,7 @@ async def register_device(
         user_id=user.id,
         req=payload,
         actor=f"user:{user.id}",
+        entitlements=user.entitlements,
     )
 
 

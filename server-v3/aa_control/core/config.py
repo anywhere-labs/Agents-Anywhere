@@ -3,6 +3,12 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field
+from typing import Literal
+
+from aa_control.core.entitlements import EntitlementMap, sanitize_entitlements
+from aa_control.core.oidc import ALLOWED_OIDC_ALGORITHMS, DEFAULT_OIDC_ALGORITHMS
+
+AuthMode = Literal["local", "oidc"]
 
 
 @dataclass(frozen=True)
@@ -18,7 +24,7 @@ class RouterEndpoint:
 
 @dataclass(frozen=True)
 class OAuthProviderConfig:
-    """Optional external OAuth login provider configured via environment."""
+    """Optional external OAuth login provider configured via environment (local mode)."""
 
     name: str
     authorize_url: str
@@ -31,12 +37,84 @@ class OAuthProviderConfig:
 
 
 @dataclass(frozen=True)
+class OidcAuthConfig:
+    """OIDC / JWKS verification config for ``auth_mode="oidc"`` (anywhere-auth or third-party OIDC)."""
+
+    issuer: str
+    audiences: tuple[str, ...] = ()
+    client_id: str | None = None
+    verify_audience: bool = True
+    jwks_uri: str | None = None
+    authorization_endpoint: str | None = None
+    token_endpoint: str | None = None
+    userinfo_endpoint: str | None = None
+    end_session_endpoint: str | None = None
+    scopes: str = "openid profile email offline_access entitlements"
+    provider_label: str = "Agents Anywhere"
+    algorithms: tuple[str, ...] = DEFAULT_OIDC_ALGORITHMS
+    jwks_cache_ttl_seconds: int = 300
+    jwks_min_refresh_interval_seconds: int = 10
+    leeway_seconds: int = 30
+    role_claim: str = "role"
+    admin_roles: tuple[str, ...] = ("admin",)
+    plan_claim: str = "plan"
+    entitlements_claim: str = "entitlements"
+
+    def __post_init__(self) -> None:
+        cleaned_issuer = self.issuer.strip().rstrip("/")
+        if not cleaned_issuer:
+            raise ValueError("OIDC issuer must be non-empty when auth_mode='oidc'")
+        object.__setattr__(self, "issuer", cleaned_issuer)
+
+        cleaned_audiences = tuple(item.strip() for item in self.audiences if item.strip())
+        object.__setattr__(self, "audiences", cleaned_audiences)
+
+        cleaned_client_id = self.client_id.strip() if self.client_id and self.client_id.strip() else None
+        object.__setattr__(self, "client_id", cleaned_client_id)
+
+        if not self.algorithms:
+            raise ValueError("OIDC algorithms must not be empty")
+        invalid_algs = [alg for alg in self.algorithms if alg not in ALLOWED_OIDC_ALGORITHMS]
+        if invalid_algs:
+            raise ValueError(
+                f"OIDC algorithms must be asymmetric ({', '.join(sorted(ALLOWED_OIDC_ALGORITHMS))}); "
+                f"rejected: {', '.join(invalid_algs)}"
+            )
+        if self.verify_audience and not self.effective_audiences:
+            raise ValueError(
+                "AA_CONTROL_OIDC_AUDIENCE or AA_CONTROL_OIDC_CLIENT_ID must be set when "
+                "auth_mode='oidc' and verify_audience=True"
+            )
+        if self.jwks_cache_ttl_seconds < 1:
+            raise ValueError("jwks_cache_ttl_seconds must be >= 1")
+        if self.jwks_min_refresh_interval_seconds < 0:
+            raise ValueError("jwks_min_refresh_interval_seconds must be >= 0")
+        if self.leeway_seconds < 0:
+            raise ValueError("leeway_seconds must be >= 0")
+
+    @property
+    def effective_audiences(self) -> tuple[str, ...]:
+        if self.audiences:
+            return self.audiences
+        if self.client_id:
+            return (self.client_id,)
+        return ()
+
+    @property
+    def discovery_url(self) -> str:
+        return f"{self.issuer}/.well-known/openid-configuration"
+
+
+@dataclass(frozen=True)
 class ControlSettings:
     database_url: str
     redis_url: str
     secret_key: str = field(repr=False)
     public_origin: str = "http://127.0.0.1:8080"
     routers: tuple[RouterEndpoint, ...] = ()
+    auth_mode: AuthMode = "local"
+    oidc_auth: OidcAuthConfig | None = None
+    default_entitlements: EntitlementMap = field(default_factory=dict)
     registration_open: bool = True
     bootstrap_setup_token: str | None = field(default=None, repr=False)
     access_token_ttl_seconds: int = 3600
@@ -55,6 +133,13 @@ class ControlSettings:
     password_iterations: int = 120_000
     cors_origins: tuple[str, ...] = ("*",)
     oauth_provider: OAuthProviderConfig | None = None
+
+    def __post_init__(self) -> None:
+        if self.auth_mode not in ("local", "oidc"):
+            raise ValueError(f"unsupported auth_mode: {self.auth_mode!r} (expected 'local' or 'oidc')")
+        if self.auth_mode == "oidc" and self.oidc_auth is None:
+            raise ValueError("oidc_auth configuration is required when auth_mode='oidc'")
+        object.__setattr__(self, "default_entitlements", sanitize_entitlements(self.default_entitlements))
 
     @classmethod
     def from_env(cls) -> ControlSettings:
@@ -75,11 +160,13 @@ class ControlSettings:
         )
         public_origin = os.environ.get("AA_CONTROL_PUBLIC_ORIGIN", "http://127.0.0.1:8080").rstrip("/")
         routers = _parse_routers_env()
-        registration_open = os.environ.get("AA_CONTROL_REGISTRATION_OPEN", "true").lower() in {
-            "1",
-            "true",
-            "yes",
-        }
+        raw_auth_mode = os.environ.get("AA_CONTROL_AUTH_MODE", "local").strip().lower()
+        if raw_auth_mode not in ("local", "oidc"):
+            raise ValueError(f"AA_CONTROL_AUTH_MODE must be 'local' or 'oidc', got {raw_auth_mode!r}")
+        auth_mode: AuthMode = raw_auth_mode  # type: ignore[assignment]
+        oidc_auth = _parse_oidc_auth_env(required=auth_mode == "oidc")
+        default_entitlements = _parse_default_entitlements_env()
+        registration_open = _env_bool("AA_CONTROL_REGISTRATION_OPEN", default=True)
         password_iterations = int(
             os.environ.get(
                 "AA_CONTROL_PASSWORD_ITERATIONS",
@@ -95,6 +182,9 @@ class ControlSettings:
             secret_key=secret_key,
             public_origin=public_origin,
             routers=routers,
+            auth_mode=auth_mode,
+            oidc_auth=oidc_auth,
+            default_entitlements=default_entitlements,
             registration_open=registration_open,
             bootstrap_setup_token=os.environ.get("AA_CONTROL_SETUP_TOKEN") or None,
             access_token_ttl_seconds=int(os.environ.get("AA_CONTROL_ACCESS_TOKEN_TTL", "3600")),
@@ -110,6 +200,59 @@ class ControlSettings:
             cors_origins=cors_origins,
             oauth_provider=oauth_provider,
         )
+
+
+def _env_bool(name: str, *, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_csv(name: str) -> tuple[str, ...]:
+    raw = os.environ.get(name, "")
+    return tuple(item.strip() for item in raw.split(",") if item.strip())
+
+
+def _parse_default_entitlements_env() -> EntitlementMap:
+    raw = os.environ.get("AA_CONTROL_DEFAULT_ENTITLEMENTS_JSON", "").strip()
+    if not raw:
+        return {}
+    parsed = json.loads(raw)
+    if not isinstance(parsed, dict):
+        raise ValueError("AA_CONTROL_DEFAULT_ENTITLEMENTS_JSON must be a JSON object")
+    return sanitize_entitlements(parsed)
+
+
+def _parse_oidc_auth_env(*, required: bool) -> OidcAuthConfig | None:
+    issuer = os.environ.get("AA_CONTROL_OIDC_ISSUER", "").strip()
+    if not issuer:
+        if required:
+            raise ValueError("AA_CONTROL_OIDC_ISSUER is required when AA_CONTROL_AUTH_MODE=oidc")
+        return None
+    algorithms = _env_csv("AA_CONTROL_OIDC_ALGORITHMS") or DEFAULT_OIDC_ALGORITHMS
+    admin_roles = _env_csv("AA_CONTROL_OIDC_ADMIN_ROLES") or ("admin",)
+    return OidcAuthConfig(
+        issuer=issuer,
+        audiences=_env_csv("AA_CONTROL_OIDC_AUDIENCE"),
+        client_id=os.environ.get("AA_CONTROL_OIDC_CLIENT_ID") or None,
+        verify_audience=_env_bool("AA_CONTROL_OIDC_VERIFY_AUDIENCE", default=True),
+        jwks_uri=os.environ.get("AA_CONTROL_OIDC_JWKS_URI") or None,
+        authorization_endpoint=os.environ.get("AA_CONTROL_OIDC_AUTHORIZE_URL") or None,
+        token_endpoint=os.environ.get("AA_CONTROL_OIDC_TOKEN_URL") or None,
+        userinfo_endpoint=os.environ.get("AA_CONTROL_OIDC_USERINFO_URL") or None,
+        end_session_endpoint=os.environ.get("AA_CONTROL_OIDC_END_SESSION_URL") or None,
+        scopes=os.environ.get("AA_CONTROL_OIDC_SCOPES", "openid profile email offline_access entitlements"),
+        provider_label=os.environ.get("AA_CONTROL_OIDC_LABEL", "Agents Anywhere"),
+        algorithms=algorithms,
+        jwks_cache_ttl_seconds=int(os.environ.get("AA_CONTROL_OIDC_JWKS_TTL", "300")),
+        jwks_min_refresh_interval_seconds=int(os.environ.get("AA_CONTROL_OIDC_JWKS_MIN_REFRESH", "10")),
+        leeway_seconds=int(os.environ.get("AA_CONTROL_OIDC_LEEWAY", "30")),
+        role_claim=os.environ.get("AA_CONTROL_OIDC_ROLE_CLAIM", "role"),
+        admin_roles=admin_roles,
+        plan_claim=os.environ.get("AA_CONTROL_OIDC_PLAN_CLAIM", "plan"),
+        entitlements_claim=os.environ.get("AA_CONTROL_OIDC_ENTITLEMENTS_CLAIM", "entitlements"),
+    )
 
 
 def _parse_routers_env() -> tuple[RouterEndpoint, ...]:

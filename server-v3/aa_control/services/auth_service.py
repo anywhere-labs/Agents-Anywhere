@@ -3,6 +3,8 @@ from __future__ import annotations
 import hmac
 import secrets
 import time
+from collections.abc import Mapping
+from typing import Any
 from urllib.parse import urlencode
 
 import httpx
@@ -19,6 +21,7 @@ from aa_control.core.auth import (
     verify_secret_digest,
 )
 from aa_control.core.config import ControlSettings
+from aa_control.core.entitlements import merge_entitlements
 from aa_control.core.errors import (
     ConflictError,
     ForbiddenError,
@@ -40,17 +43,30 @@ from aa_control.core.models import (
 )
 from aa_control.core.utc import utc_now_iso
 from aa_control.infra.db.repositories import ControlRepository, UserRow
+from aa_control.infra.oidc import OidcVerifierPort
 from aa_control.infra.redis_store import RedisControlStore
 from aa_control.infra.router_pool import RouterPoolPort
 
 
-def _user_view(row: UserRow) -> UserView:
+def _user_view(
+    row: UserRow,
+    *,
+    email_override: str | None = None,
+    display_name_override: str | None = None,
+    role_override: str | None = None,
+    plan: str | None = None,
+    entitlements: Mapping[str, Any] | None = None,
+    active_context: dict[str, Any] | None = None,
+) -> UserView:
     return UserView(
         id=row.id,
-        email=row.email,
-        display_name=row.display_name,
-        role=row.role,
+        email=email_override if email_override is not None else row.email,
+        display_name=display_name_override if display_name_override is not None else row.display_name,
+        role=role_override if role_override is not None else row.role,
         created_at=row.created_at,
+        plan=plan,
+        entitlements=merge_entitlements(None, entitlements),
+        active_context=active_context,
     )
 
 
@@ -62,24 +78,50 @@ class AuthService:
         repo: ControlRepository,
         redis_store: RedisControlStore,
         router_pool: RouterPoolPort,
+        oidc_verifier: OidcVerifierPort | None = None,
     ) -> None:
+        if settings.auth_mode == "oidc" and oidc_verifier is None:
+            raise ValueError("oidc_verifier is required when auth_mode='oidc'")
         self._settings = settings
         self._repo = repo
         self._redis = redis_store
         self._routers = router_pool
+        self._oidc = oidc_verifier
+
+    def _require_local_mode(self) -> None:
+        if self._settings.auth_mode != "local":
+            raise ForbiddenError(
+                "local password authentication is disabled in oidc auth mode",
+                code="local_auth_disabled",
+            )
 
     async def auth_config(self) -> AuthConfigResponse:
+        if self._settings.auth_mode == "oidc":
+            assert self._settings.oidc_auth is not None
+            assert self._oidc is not None
+            return AuthConfigResponse(
+                auth_mode="oidc",
+                needs_bootstrap=False,
+                registration_open=False,
+                oauth_enabled=True,
+                oauth_provider_label=self._settings.oidc_auth.provider_label,
+                oidc=await self._oidc.public_config(),
+                server_time=utc_now_iso(),
+            )
         needs_bootstrap = (await self._repo.count_users()) == 0
         provider = self._settings.oauth_provider
         return AuthConfigResponse(
+            auth_mode="local",
             needs_bootstrap=needs_bootstrap,
             registration_open=self._settings.registration_open,
             oauth_enabled=provider is not None,
             oauth_provider_label=provider.label if provider is not None else None,
+            oidc=None,
             server_time=utc_now_iso(),
         )
 
     async def register(self, req: RegisterRequest) -> AuthTokenResponse:
+        self._require_local_mode()
         email = req.email.strip().lower()
         if "@" not in email:
             raise ValidationError("valid email is required")
@@ -115,6 +157,7 @@ class AuthService:
         )
 
     async def login(self, req: LoginRequest) -> AuthTokenResponse:
+        self._require_local_mode()
         email = req.email.strip().lower()
         user = await self._repo.get_user_by_email(email)
         if user is None or not user.password_hash:
@@ -130,6 +173,7 @@ class AuthService:
         )
 
     async def refresh(self, refresh_token: str) -> AuthTokenResponse:
+        self._require_local_mode()
         token_hash = hash_secret_digest(refresh_token)
         stored = await self._repo.get_refresh_token_by_hash(token_hash)
         if stored is None or stored.revoked_at is not None or stored.expires_at < int(time.time()):
@@ -148,9 +192,33 @@ class AuthService:
         )
 
     async def logout(self, refresh_token: str) -> bool:
+        self._require_local_mode()
         return await self._repo.revoke_refresh_token(hash_secret_digest(refresh_token))
 
     async def authenticate_access_token(self, token: str) -> UserView:
+        if self._settings.auth_mode == "oidc":
+            assert self._oidc is not None
+            identity = await self._oidc.verify_token(token)
+            user = await self._repo.upsert_oidc_user(
+                issuer=identity.issuer,
+                subject=identity.subject,
+                email=identity.email,
+                email_verified=identity.email_verified,
+                display_name=identity.display_name,
+                role=identity.role,
+            )
+            if user.disabled:
+                raise UnauthenticatedError("account is unavailable")
+            return _user_view(
+                user,
+                email_override=identity.email or user.email,
+                display_name_override=identity.display_name or user.display_name,
+                role_override=identity.role,
+                plan=identity.plan,
+                entitlements=identity.entitlements,
+                active_context=identity.active_context,
+            )
+
         payload = verify_access_token(
             secret_key=self._settings.secret_key,
             token=token,
@@ -161,7 +229,7 @@ class AuthService:
         user = await self._repo.get_user_by_id(str(payload["sub"]))
         if user is None or user.disabled:
             raise UnauthenticatedError("account is unavailable")
-        return _user_view(user)
+        return _user_view(user, entitlements=self._settings.default_entitlements)
 
     async def issue_client_router_tokens(
         self,
@@ -221,6 +289,7 @@ class AuthService:
         return DeviceRouterTokenResponse(device_id=device_id, principal=principal, tokens=tokens)
 
     def oauth_authorize_url(self, *, state: str, redirect_uri: str) -> str:
+        self._require_local_mode()
         provider = self._settings.oauth_provider
         if provider is None:
             raise NotFoundError("OAuth login provider is not configured")
@@ -245,6 +314,7 @@ class AuthService:
         client_platform: ClientPlatform = "web",
         http_client: httpx.AsyncClient | None = None,
     ) -> AuthTokenResponse:
+        self._require_local_mode()
         provider = self._settings.oauth_provider
         if provider is None:
             raise NotFoundError("OAuth login provider is not configured")
@@ -331,7 +401,7 @@ class AuthService:
             extra={"cid": resolved_client_id},
         )
         return AuthTokenResponse(
-            user=_user_view(user),
+            user=_user_view(user, entitlements=self._settings.default_entitlements),
             access_token=access_token,
             refresh_token=raw_refresh,
             expires_in=self._settings.access_token_ttl_seconds,

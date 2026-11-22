@@ -19,6 +19,7 @@ from aa_control.core.config import ControlSettings
 from aa_control.core.errors import ControlError
 from aa_control.infra.db.engine import create_engine
 from aa_control.infra.db.repositories import ControlRepository
+from aa_control.infra.oidc import OidcJwksVerifier, OidcVerifierPort
 from aa_control.infra.push import LoggingPushProvider, PushProvider, PushRetryWorker
 from aa_control.infra.redis_store import RedisControlStore
 from aa_control.infra.router_pool import MeshCallRouterPool, RouterPoolPort
@@ -38,12 +39,23 @@ def create_app(
     redis_client: Redis | None = None,
     router_pool: RouterPoolPort | None = None,
     push_provider: PushProvider | None = None,
+    oidc_verifier: OidcVerifierPort | None = None,
     start_push_worker: bool = True,
 ) -> FastAPI:
     cfg = settings or ControlSettings.from_env()
     owns_engine = engine is None
     owns_redis = redis_client is None
     owns_router_pool = router_pool is None
+    owns_oidc_verifier = False
+
+    verifier: OidcVerifierPort | None = oidc_verifier
+    if cfg.auth_mode == "oidc" and verifier is None:
+        assert cfg.oidc_auth is not None
+        verifier = OidcJwksVerifier(
+            config=cfg.oidc_auth,
+            default_entitlements=cfg.default_entitlements,
+        )
+        owns_oidc_verifier = True
 
     db_engine = engine or create_engine(cfg.database_url)
     redis_conn = redis_client or Redis.from_url(cfg.redis_url, decode_responses=False)
@@ -52,7 +64,13 @@ def create_app(
     provider: PushProvider = push_provider or LoggingPushProvider()
 
     repo = ControlRepository(db_engine)
-    auth_service = AuthService(settings=cfg, repo=repo, redis_store=redis_store, router_pool=pool)
+    auth_service = AuthService(
+        settings=cfg,
+        repo=repo,
+        redis_store=redis_store,
+        router_pool=pool,
+        oidc_verifier=verifier,
+    )
     device_service = DeviceService(repo=repo, redis_store=redis_store, router_pool=pool)
     tunnel_service = TunnelService(settings=cfg, repo=repo, redis_store=redis_store, router_pool=pool)
     fanout_service = FanoutService(settings=cfg, repo=repo, redis_store=redis_store, router_pool=pool)
@@ -95,6 +113,8 @@ def create_app(
                     await push_task
             if owns_router_pool and isinstance(pool, MeshCallRouterPool):
                 await pool.stop()
+            if owns_oidc_verifier and verifier is not None:
+                await verifier.close()
             if owns_redis:
                 await redis_store.close()
             if owns_engine:
@@ -121,6 +141,7 @@ def create_app(
     app.state.repo = repo
     app.state.redis_store = redis_store
     app.state.router_pool = pool
+    app.state.oidc_verifier = verifier
     app.state.auth_service = auth_service
     app.state.device_service = device_service
     app.state.tunnel_service = tunnel_service
