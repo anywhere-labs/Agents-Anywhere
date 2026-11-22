@@ -29,6 +29,7 @@ import {
 
 import { ControlPresenceClient, type PresenceReport } from "../src/host/control-client.js";
 import { ConnectorHost } from "../src/host/connector-host.js";
+import { PAIRING_CODE_ID, derivePairingCodePsk } from "../src/core/gate.js";
 import type { Control, Message, Session, SessionListEvent, WatchEvent } from "../src/core/timeline.js";
 
 const Ajv2020 = Ajv2020Module.default;
@@ -566,6 +567,46 @@ describe("ConnectorHost against a real meshcall-router", { skip: SKIP, timeout: 
       assert.equal(reasonOf(refused), "e2e_handshake_failed");
     } finally {
       await next.close();
+    }
+  });
+
+  it("encrypted mode: a typed pairing code pairs; a wrong code fails without spending it", async () => {
+    // The client knows the device key from the control plane (e2e_public_key_hint), not from a QR code.
+    const devicePub = host.gate.e2ePublicKey;
+    const created = await host.createPairingCode(60_000, { label: "Bob browser", platform: "web" });
+    const connect = async (keys: E2EKeyPair, code: string) =>
+      new Mesh(routerUrl, {
+        tunnel: (await control.tunnels.open({ instance: deviceId, scopes: SCOPES, principal: "user:u1/client:code", e2eKey: devicePub })).credential,
+        e2eKey: devicePub,
+        e2eIdentity: { privateKey: keys.privateKey, instanceId: deviceId, pairing: { id: PAIRING_CODE_ID, psk: await derivePairingCodePsk(code, deviceId) } },
+      });
+
+    // A typo: the handshake fails and the code is still good.
+    const typo = created.code.startsWith("0") ? `1${created.code.slice(1)}` : `0${created.code.slice(1)}`;
+    const wrong = await connect(await generateE2EKey(), typo);
+    try {
+      const refused = await rejection(wrong.unary("aa.v3.Sessions", "list", {}, { instance: deviceId }));
+      assert.ok(refused instanceof Error, String(refused));
+    } finally {
+      await wrong.close();
+    }
+
+    const bob = await generateE2EKey();
+    const paired = await connect(bob, created.code.toLowerCase());
+    cleanup.push(paired);
+    const status = await paired.unary<object, { mode: string }>("aa.v3.Device", "status", {}, { instance: deviceId });
+    assert.equal(status.mode, "encrypted");
+    const entry = host.listPairedClients().find((c) => c.client_pub === bob.publicKey);
+    assert.equal(entry?.label, "Bob browser");
+    assert.equal(entry?.platform, "web");
+
+    // Spent: the same code does not pair anyone else.
+    const late = await connect(await generateE2EKey(), created.code);
+    try {
+      const refused = await rejection(late.unary("aa.v3.Sessions", "list", {}, { instance: deviceId }));
+      assert.ok(refused instanceof UnauthenticatedError, String(refused));
+    } finally {
+      await late.close();
     }
   });
 });

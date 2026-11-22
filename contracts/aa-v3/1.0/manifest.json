@@ -35,6 +35,7 @@
     "pairing.schema.json"
   ],
   "fixtures": [
-    "fixtures/session-merge.json"
+    "fixtures/session-merge.json",
+    "fixtures/pairing-code.json"
   ]
 }

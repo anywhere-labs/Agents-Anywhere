@@ -115,14 +115,14 @@ node dist/src/cli.js start --router 'wss://router.example.com#mt_xxx'   # URL#TO
 | --- | --- |
 | `register` | 在控制面注册设备，保存 `identity.json` |
 | `start` | 启动并服务，直到 Ctrl-C / SIGTERM |
-| `pair [--ttl 秒] [--label 名称] [--platform ios\|android\|desktop\|web\|cli]` | 生成一次性配对链接 `aa-pair://v1/…`（需要 Connector 正在运行） |
+| `pair [--code \| --link] [--ttl 秒] [--label 名称] [--platform ios\|android\|desktop\|web\|cli]` | 生成一次性配对码（如 `7KQ2M-X9PTA`，在客户端手动输入）和配对链接 `aa-pair://v1/…`（扫码或粘贴）；`--code` / `--link` 只要其中一种（需要 Connector 正在运行） |
 | `mode <normal\|encrypted> [--yes]` | 切换设备模式；运行中会立即安全切换 |
 | `mcp <on\|off>` | 「允许外部 Agent 控制」开关（只对普通模式生效） |
 | `clients` | 列出已配对客户端 |
 | `revoke <client_pub>` | 撤销客户端：它的现有流立即结束，下次握手失败 |
 | `status` | 运行状态，或未运行时的本地设置 |
 
-`start` 会在数据目录里监听本地管理 socket（`admin.sock`，0600；路径过长时放在临时目录），`pair`、`mode`、`mcp`、`clients`、`revoke` 通过它操作正在运行的 Connector。没有运行时，后四个命令直接修改状态文件。配对链接里带有配对密钥，只能在本机显示（终端或二维码），不能经过服务端。
+`start` 会在数据目录里监听本地管理 socket（`admin.sock`，0600；路径过长时放在临时目录），`pair`、`mode`、`mcp`、`clients`、`revoke` 通过它操作正在运行的 Connector。没有运行时，后四个命令直接修改状态文件。配对码和配对链接里都带有配对密钥，只能在本机显示（终端或二维码），不能经过服务端。配对码 10 分钟内有效、只能用一次、最多试 8 次，同一时间只有一个；输错不会作废，换一个新码会替换旧码。
 
 ### 环境变量
 
