@@ -225,6 +225,7 @@ class ControlSettings:
     redis_url: str
     secret_key: str = field(repr=False)
     public_origin: str = "http://127.0.0.1:8080"
+    web_origin: str | None = None
     routers: tuple[RouterEndpoint, ...] = ()
     auth_mode: AuthMode = "local"
     oidc_auth: OidcAuthConfig | None = None
@@ -256,6 +257,8 @@ class ControlSettings:
         if self.auth_mode == "oidc" and self.oidc_auth is None:
             raise ValueError("oidc_auth configuration is required when auth_mode='oidc'")
         object.__setattr__(self, "default_entitlements", sanitize_entitlements(self.default_entitlements))
+        cleaned_web_origin = (self.web_origin or "").strip().rstrip("/") or None
+        object.__setattr__(self, "web_origin", cleaned_web_origin)
 
     @classmethod
     def from_env(cls) -> ControlSettings:
@@ -275,6 +278,7 @@ class ControlSettings:
             os.environ.get("AGENT_SERVER_SECRET", "aa-control-dev-secret"),
         )
         public_origin = os.environ.get("AA_CONTROL_PUBLIC_ORIGIN", "http://127.0.0.1:8080").rstrip("/")
+        web_origin = os.environ.get("AA_CONTROL_WEB_ORIGIN", "").strip().rstrip("/") or None
         routers = _parse_routers_env()
         raw_auth_mode = os.environ.get("AA_CONTROL_AUTH_MODE", "local").strip().lower()
         if raw_auth_mode not in ("local", "oidc"):
@@ -299,6 +303,7 @@ class ControlSettings:
             redis_url=redis_url,
             secret_key=secret_key,
             public_origin=public_origin,
+            web_origin=web_origin,
             routers=routers,
             auth_mode=auth_mode,
             oidc_auth=oidc_auth,
