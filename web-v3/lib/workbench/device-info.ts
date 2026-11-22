@@ -140,16 +140,20 @@ export function useDriveQuota(): DriveQuotaView | null {
     if (quotaState?.key === key && Date.now() - quotaState.at < 60_000) return
     if (quotaInflight) return
     quotaInflight = (async () => {
-      try {
-        const token = await getFreshAccessToken()
-        const quota = await fetchDriveQuota(activeAccount.serverUrl, token)
-        quotaState = { key, quota, at: Date.now() }
-      } catch {
-        quotaState = { key, quota: null, at: Date.now() }
-      } finally {
-        quotaInflight = null
-        for (const l of quotaListeners) l()
+      // Run after this commit: the provider learns the active account in its own effect, which runs after ours.
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      let quota: DriveQuotaView | null = null
+      for (let attempt = 0; attempt < 3 && !quota; attempt++) {
+        try {
+          const token = await getFreshAccessToken()
+          quota = await fetchDriveQuota(activeAccount.serverUrl, token)
+        } catch {
+          await new Promise((resolve) => setTimeout(resolve, 2000 * (attempt + 1)))
+        }
       }
+      quotaState = { key, quota, at: quota ? Date.now() : Date.now() - 45_000 }
+      quotaInflight = null
+      for (const l of quotaListeners) l()
     })()
   }, [activeAccount, getFreshAccessToken, key])
   return snap

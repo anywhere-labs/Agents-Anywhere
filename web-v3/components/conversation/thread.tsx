@@ -236,7 +236,7 @@ function UserAttachment({ part }: { part: ImagePart | FilePart }) {
       </>
     )
   return (
-    <Attachment>
+    <Attachment className="min-w-44 border-0 bg-card">
       <AttachmentMedia>
         <FileIcon />
       </AttachmentMedia>

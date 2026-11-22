@@ -143,8 +143,11 @@ export function putWithProgress(
     }
     xhr.upload.onprogress = (e) => onProgress(e.loaded)
     xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) resolve({ etag: xhr.getResponseHeader("etag") })
-      else reject(new TransferError("upload_failed", `Cloud drive upload failed (HTTP ${xhr.status})`))
+      if (xhr.status >= 200 && xhr.status < 300) {
+        // Storage only shows ETag when its CORS rule exposes it; asking for a hidden header logs an error.
+        const exposed = /^etag:/im.test(xhr.getAllResponseHeaders())
+        resolve({ etag: exposed ? xhr.getResponseHeader("etag") : null })
+      } else reject(new TransferError("upload_failed", `Cloud drive upload failed (HTTP ${xhr.status})`))
     }
     xhr.onerror = () => reject(new TransferError("upload_failed", "Cloud drive upload failed (network)"))
     xhr.onabort = () => reject(new TransferError("aborted", "Upload cancelled"))
