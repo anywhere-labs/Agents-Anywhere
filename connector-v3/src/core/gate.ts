@@ -405,7 +405,7 @@ export class DeviceGate {
         throw deny("e2e_peer_required", "this device is encrypted: calls are accepted only in an authenticated end-to-end session");
       }
       if (!this.paired.has(peerKey)) {
-        throw deny("e2e_not_paired", "this client is not paired with the device (or was revoked); scan the device's QR code again");
+        throw deny("e2e_not_paired", "this client is not paired with the device (or was revoked); pair again with a pairing code or link from the device");
       }
       if (via === "mcp") {
         throw deny("e2e_peer_required", "an encrypted device never accepts MCP control");
