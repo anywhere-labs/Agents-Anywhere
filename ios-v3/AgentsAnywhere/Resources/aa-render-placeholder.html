@@ -1,0 +1,244 @@
+<!doctype html>
+<!--
+  Minimal stand-in for the web-v3 render bundle (web-v3/embed/dist/aa-render.html), used until that bundle is
+  copied in at build time (scripts/copy-render-bundle.sh). It speaks the same bridge, `aa.render/2`
+  (docs/v3/mobile-bridge.md): says `ready`, renders messages as plain text, forwards approvals, older pages,
+  links, scroll state and a plain-text terminal. No network access: everything arrives from the native layer.
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:">
+<style>
+  :root { color-scheme: light dark; --top: 0px; --bottom: 0px; --left: 0px; --right: 0px; --scale: 1;
+          --bg: #ffffff; --fg: #1c1c1e; --muted: #6e6e73; --bubble: #e9e9eb; --line: rgba(60,60,67,.18); --accent: #0a84ff; }
+  :root[data-scheme="dark"] { --bg: #000000; --fg: #f2f2f7; --muted: #98989f; --bubble: #2c2c2e; --line: rgba(235,235,245,.18); }
+  :root[data-contrast="high"] { --muted: inherit; --line: currentColor; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+               font: calc(16px * var(--scale)) / 1.45 -apple-system, system-ui, sans-serif; -webkit-text-size-adjust: none; }
+  #scroll { position: fixed; inset: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+  #content { padding: calc(var(--top) + 8px) calc(var(--right) + 16px) calc(var(--bottom) + 12px) calc(var(--left) + 16px); }
+  .banner { font-size: .8em; color: var(--muted); text-align: center; margin: 8px 0 12px; }
+  .msg { margin: 10px 0; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: anywhere; }
+  .user { display: flex; justify-content: flex-end; }
+  .user > div { background: var(--bubble); border-radius: 18px; padding: 8px 14px; max-width: 82%; }
+  .attachment { display: block; font-size: .85em; color: var(--muted); }
+  .thinking { color: var(--muted); font-style: italic; font-size: .9em; }
+  .tool { color: var(--muted); font-size: .85em; border-left: 2px solid var(--line); padding-left: 8px; }
+  .tool.failed { color: #ff453a; }
+  .plan { font-size: .9em; }
+  .approval { border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; margin: 10px 0; }
+  .approval button { font: inherit; font-size: .9em; margin: 6px 6px 0 0; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line);
+                     background: transparent; color: var(--fg); }
+  .running { color: var(--muted); font-size: .85em; margin: 8px 0; }
+  a { color: var(--accent); }
+  #terminal { display: none; position: fixed; inset: 0; background: #000; color: #e5e5e5; }
+  #terminal pre { margin: 0; padding: calc(var(--top) + 6px) calc(var(--right) + 8px) calc(var(--bottom) + 6px) calc(var(--left) + 8px);
+                  font: 13px/1.3 ui-monospace, Menlo, monospace; white-space: pre-wrap; word-break: break-all; height: 100%; box-sizing: border-box; overflow-y: auto; }
+  #term-input { position: fixed; left: 0; bottom: 0; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0; }
+  @media (prefers-reduced-motion: reduce) { #scroll { scroll-behavior: auto; } }
+</style>
+</head>
+<body>
+<div id="scroll"><div id="content"></div></div>
+<div id="terminal"><pre id="term-out"></pre><textarea id="term-input" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"></textarea></div>
+<script>
+(() => {
+  "use strict";
+  const V = 2;
+  const post = (msg) => {
+    msg = Object.assign({ v: V }, msg);
+    if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.aa) window.webkit.messageHandlers.aa.postMessage(msg);
+    else if (window.AndroidAA) window.AndroidAA.postMessage(JSON.stringify(msg));
+    else if (window.parent !== window) window.parent.postMessage(msg, "*");
+  };
+  const root = document.documentElement;
+  const scroller = document.getElementById("scroll");
+  const content = document.getElementById("content");
+  const term = document.getElementById("terminal");
+  const termOut = document.getElementById("term-out");
+  const termInput = document.getElementById("term-input");
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+
+  let mode = "conversation";
+  let sessionId = null;
+  let stale = false;
+  let hasMore = false;
+  let loadingOlder = false;
+  let control = null;
+  let messages = new Map();
+  let terminalId = null;
+  let stick = true;
+
+  const b64decode = (s) => Uint8Array.from(atob(s || ""), (c) => c.charCodeAt(0));
+  const b64encode = (bytes) => { let s = ""; bytes.forEach((b) => (s += String.fromCharCode(b))); return btoa(s); };
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  const atBottom = () => scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 24;
+
+  function renderPart(part, wrap) {
+    switch (part && part.type) {
+      case "text": wrap.appendChild(el("div", null, part.text)); break;
+      case "thinking": wrap.appendChild(el("div", "thinking", part.text.length > 280 ? part.text.slice(0, 280) + "…" : part.text)); break;
+      case "tool": wrap.appendChild(el("div", "tool" + (part.status === "failed" ? " failed" : ""), "⚙︎ " + part.title + " · " + part.status)); break;
+      case "plan": wrap.appendChild(el("div", "plan", part.entries.map((e) => (e.status === "completed" ? "☑︎ " : "☐ ") + e.content).join("\n"))); break;
+      case "subagent": wrap.appendChild(el("div", "tool", "↳ " + part.title + " · " + part.status)); break;
+      case "compaction": wrap.appendChild(el("div", "tool", "上下文压缩 · " + part.status)); break;
+      case "image": case "file": wrap.appendChild(el("span", "attachment", "📎 " + part.name)); break;
+      default: wrap.appendChild(el("div", "tool", "[" + ((part && part.type) || "?") + "]"));
+    }
+  }
+
+  function render() {
+    const keep = stick || atBottom();
+    const prevHeight = scroller.scrollHeight, prevTop = scroller.scrollTop;
+    content.textContent = "";
+    if (stale) content.appendChild(el("div", "banner", "设备离线 · 显示的是本机缓存（只读）"));
+    else if (hasMore) content.appendChild(el("div", "banner", "上滑加载更早的消息"));
+    const sorted = [...messages.values()].sort((a, b) => a.seq - b.seq);
+    for (const m of sorted) {
+      if (m.subagent_id) continue;
+      const row = el("div", "msg " + m.role);
+      const inner = el("div");
+      (m.parts || []).forEach((p) => renderPart(p, inner));
+      row.appendChild(inner);
+      content.appendChild(row);
+    }
+    if (control && control.pending && control.pending.length) {
+      for (const p of control.pending) {
+        const box = el("div", "approval", p.title);
+        box.appendChild(el("br"));
+        for (const o of p.options) {
+          const b = el("button", null, o.name);
+          b.onclick = () => post({ type: "answer", session_id: sessionId, request_id: p.request_id, option_id: o.id });
+          box.appendChild(b);
+        }
+        content.appendChild(box);
+      }
+    }
+    if (control && control.state === "running") content.appendChild(el("div", "running", "正在运行…"));
+    if (control && control.state === "error" && control.error) content.appendChild(el("div", "tool failed", control.error));
+    if (keep) scroller.scrollTop = scroller.scrollHeight;
+    else if (loadingOlder) scroller.scrollTop = prevTop + (scroller.scrollHeight - prevHeight);
+  }
+
+  function setMessages(list) { messages = new Map(); for (const m of list || []) messages.set(m.id, m); }
+
+  function onEvent(ev) {
+    switch (ev.type) {
+      case "snapshot": setMessages(ev.messages); control = ev.control; hasMore = !!ev.has_more; stale = false; stick = true; break;
+      case "message": messages.set(ev.message.id, ev.message); break;
+      case "control": control = ev.control; break;
+      case "session": break;
+    }
+    render();
+  }
+
+  // ── terminal ──
+  const KEYS = { Escape: "\x1b", Tab: "\t", Enter: "\r", Backspace: "\x7f", ArrowUp: "\x1b[A", ArrowDown: "\x1b[B", ArrowRight: "\x1b[C",
+                 ArrowLeft: "\x1b[D", Home: "\x1b[H", End: "\x1b[F", PageUp: "\x1b[5~", PageDown: "\x1b[6~", Delete: "\x1b[3~", Insert: "\x1b[2~" };
+  function keySequence(k) {
+    let seq = KEYS[k.key];
+    if (seq == null) {
+      seq = k.key.length === 1 ? k.key : "";
+      if (k.ctrl && seq.length === 1) {
+        const c = seq.toUpperCase().charCodeAt(0);
+        if (c >= 64 && c <= 95) seq = String.fromCharCode(c - 64);
+      }
+    }
+    if (k.shift && k.key === "Tab") seq = "\x1b[Z";
+    if (k.alt && seq) seq = "\x1b" + seq;
+    return seq;
+  }
+  const sendInput = (text) => { if (terminalId && text) post({ type: "term.input", terminal_id: terminalId, data: b64encode(encoder.encode(text)) }); };
+  const ANSI = /\x1b\[[0-9;?]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b[()][0-9A-B]|\x1b[=>78]/g;
+  function termWrite(bytes) {
+    let text = decoder.decode(bytes, { stream: true }).replace(ANSI, "").replace(/\r\n/g, "\n");
+    let out = termOut.textContent;
+    for (const ch of text) {
+      if (ch === "\r") { const nl = out.lastIndexOf("\n"); out = out.slice(0, nl + 1); }
+      else if (ch === "\b" || ch === "\x7f") out = out.slice(0, -1);
+      else if (ch === "\x07") continue;
+      else out += ch;
+    }
+    if (out.length > 200000) out = out.slice(-150000);
+    termOut.textContent = out;
+    termOut.scrollTop = termOut.scrollHeight;
+  }
+  function termSize() {
+    const cols = Math.max(20, Math.floor((termOut.clientWidth - 16) / 7.8));
+    const rows = Math.max(5, Math.floor((termOut.clientHeight - 12) / 17));
+    return { cols, rows };
+  }
+  termInput.addEventListener("input", () => { sendInput(termInput.value.replace(/\n/g, "\r")); termInput.value = ""; });
+  termInput.addEventListener("keydown", (e) => {
+    if (KEYS[e.key]) { e.preventDefault(); sendInput(keySequence({ key: e.key, ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey })); }
+  });
+  term.addEventListener("click", () => termInput.focus());
+  window.addEventListener("resize", () => { if (terminalId) post(Object.assign({ type: "term.resize", terminal_id: terminalId }, termSize())); });
+
+  // ── native → web ──
+  function receive(msg) {
+    if (!msg || typeof msg !== "object") return;
+    switch (msg.type) {
+      case "batch": (msg.messages || []).forEach(receive); return;
+      case "theme": {
+        root.dataset.scheme = msg.scheme;
+        root.dataset.contrast = msg.high_contrast ? "high" : "normal";
+        const i = msg.insets || {};
+        for (const k of ["top", "bottom", "left", "right"]) root.style.setProperty("--" + k, (i[k] || 0) + "px");
+        root.style.setProperty("--scale", msg.font_scale || 1);
+        if (stick) requestAnimationFrame(() => (scroller.scrollTop = scroller.scrollHeight));
+        return;
+      }
+      case "locale": root.lang = msg.locale; return;
+      case "view.conversation":
+        mode = "conversation"; term.style.display = "none"; scroller.style.display = "";
+        if (terminalId) post({ type: "term.detach", terminal_id: terminalId });
+        terminalId = null; sessionId = msg.session_id; messages = new Map(); control = null; stale = false; stick = true; render(); return;
+      case "conversation.event": if (msg.session_id === sessionId) onEvent(msg.event); return;
+      case "conversation.cached":
+        if (msg.session_id !== sessionId) return;
+        setMessages(msg.messages); control = msg.control; stale = true; hasMore = false; render(); return;
+      case "conversation.older":
+        if (msg.session_id !== sessionId) return;
+        loadingOlder = true; stick = false; for (const m of msg.messages || []) messages.set(m.id, m); hasMore = !!msg.has_more; render(); loadingOlder = false; return;
+      case "scroll":
+        if (msg.to === "bottom") { stick = true; scroller.scrollTop = scroller.scrollHeight; } else scroller.scrollTop = 0; return;
+      case "view.terminal":
+        mode = "terminal"; scroller.style.display = "none"; term.style.display = "block"; termOut.textContent = "";
+        terminalId = msg.terminal_id;
+        requestAnimationFrame(() => post(Object.assign({ type: "term.attach", terminal_id: terminalId, mode: "control" }, termSize())));
+        return;
+      case "term.snapshot": termOut.textContent = ""; if (msg.data) termWrite(b64decode(msg.data)); return;
+      case "term.output": if (msg.data) termWrite(b64decode(msg.data)); return;
+      case "term.exit": termWrite(encoder.encode("\n[进程已退出" + (msg.exit_code != null ? "，退出码 " + msg.exit_code : "") + "]\n")); return;
+      case "term.closed": termWrite(encoder.encode("\n[终端已关闭]\n")); return;
+      case "term.key": sendInput(keySequence(msg)); return;
+    }
+  }
+
+  scroller.addEventListener("scroll", () => {
+    stick = atBottom();
+    const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+    post({ type: "scroll_state", at_bottom: stick, distance: Math.max(0, Math.round(distance)) });
+    if (scroller.scrollTop < 40 && hasMore && !loadingOlder && sessionId) {
+      const first = [...messages.values()].reduce((min, m) => Math.min(min, m.seq), Infinity);
+      if (Number.isFinite(first)) { hasMore = false; post({ type: "load_older", session_id: sessionId, before_seq: first }); }
+    }
+  }, { passive: true });
+
+  document.addEventListener("click", (e) => {
+    const a = e.target.closest && e.target.closest("a[href]");
+    if (a) { e.preventDefault(); post({ type: "open_link", url: a.href }); }
+  });
+
+  window.aa = { receive, placeholder: true };
+  // Browser debugging: the host posts native → web messages to this window.
+  window.addEventListener("message", (e) => { if (e.source === window || e.source === window.parent) receive(e.data); });
+  post({ type: "ready", version: "placeholder-1", capabilities: ["conversation", "terminal"] });
+})();
+</script>
+</body>
+</html>
