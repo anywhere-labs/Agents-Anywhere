@@ -155,7 +155,7 @@ node dist/src/cli.js start --router 'wss://router.example.com#mt_xxx'   # URL#TO
 | `settings.json` | 模式、MCP 开关、配对确认、RPC 文件上限、设备名 |
 | `paired-clients.json` | 已配对客户端公钥（加密模式的信任名单） |
 | `sessions.json` | 会话快照（防抖写入） |
-| `attachments/` | 客户端上传的附件 |
+| `attachments/<对话 id>/` | 对话没有工作目录或目录不可写时的附件（通常附件在项目的 `.agents-anywhere/attachments/<对话 id>/`） |
 
 ## 在 Desktop 中嵌入
 
@@ -191,3 +191,10 @@ yarn test
 - Router token 过期被拒后会重新获取 token 并重新挂载，期间该 Router 上的隧道会断开，客户端需要重连。
 - MeshCall 的契约检查（W002）只把 `idempotent/readOnly/destructive: true` 当作声明；`create`、`send` 等方法确实不幂等，已显式标 `idempotent: false`，启动时仍会打印 5 条 W002 警告。
 - 尚未与真实的 `server-v3` 实例和真实的 Claude Code / Codex ACP 适配器联调；兼容性目前由契约 schema 校验和 Router 端到端测试保证。
+
+### 附件
+
+- `aa.v3.Device/save_attachment({ name, base64, mime?, session_id? })`：不超过 `max_rpc_file_bytes`（默认 8 MiB）的附件随 RPC 传来。带 `session_id` 时保存到该对话工作目录下的 `.agents-anywhere/attachments/<对话 id>/`（首次创建时写入内容为 `*` 的 `.gitignore`，不会被提交），这样 Agent 不离开工作区就能读到；目录不存在或不可写时退回数据目录的 `attachments/<对话 id>/`。
+- `aa.v3.Device/fetch_drive_file({ file_id, session_id?, name?, mime?, sha256?, file_key? })`：大附件先由客户端传到控制面云盘，设备再用自己的设备凭据换下载链接、下载到同一个附件目录。下载后按云盘记录核对大小和 SHA-256（针对存储的字节）。`ephemeral_key` 文件是 AES-256-GCM：密钥为 `file_key`（32 字节 base64url，只能经端到端加密隧道传来），nonce 为云盘记录的 `encryption_nonce`，对象内容为密文后接 16 字节认证标签，无附加数据。只在接入控制面时可用。
+- 删除对话时一并删除它的附件目录。
+- 发给 Agent 时，附件作为 `file://` 链接（`resource_link`）；Agent 声明支持图片输入时，不超过 5 MiB 的图片改为内联图片块。
