@@ -23,6 +23,10 @@ REDIS_NAME=aa-v3-local-redis
 ADMIN_EMAIL="${AA_V3_ADMIN_EMAIL:-dev@aa.local}"
 ADMIN_PASSWORD="${AA_V3_ADMIN_PASSWORD:-aa-dev-password}"
 
+# Browser origins allowed to call the Router and the control plane: the Web port plus 3012–3019 for side-by-side dev
+# servers (other branches, Desktop's renderer). Override with AA_V3_ORIGINS (comma-separated).
+ORIGINS="${AA_V3_ORIGINS:-$(for p in "$WEB_PORT" 3012 3013 3014 3015 3016 3017 3018 3019; do printf 'http://127.0.0.1:%s,http://localhost:%s,' "$p" "$p"; done | sed 's/,$//')}"
+
 mkdir -p "$STATE"
 log() { printf '\033[1;34m[v3]\033[0m %s\n' "$*"; }
 
@@ -72,7 +76,7 @@ control_env() {
   export AA_CONTROL_ROUTER_URL="ws://127.0.0.1:$ROUTER_PORT"
   export AA_CONTROL_ROUTER_PUBLIC_URL="ws://127.0.0.1:$ROUTER_PORT"
   export AA_CONTROL_ROUTER_USERNAME=control AA_CONTROL_ROUTER_PASSWORD="$ROUTER_PASSWORD"
-  export AA_CONTROL_CORS_ORIGINS="http://127.0.0.1:$WEB_PORT,http://localhost:$WEB_PORT"
+  export AA_CONTROL_CORS_ORIGINS="$ORIGINS"
 }
 
 write_router_auth() {
@@ -109,7 +113,7 @@ up() {
 
   [[ -f "$STATE/router-auth.json" ]] || write_router_auth
   start_bg router "$(router_bin)" -host 127.0.0.1 -port "$ROUTER_PORT" -auth-file "$STATE/router-auth.json" \
-    -http-cors-origin "http://127.0.0.1:$WEB_PORT,http://localhost:$WEB_PORT"
+    -http-cors-origin "$ORIGINS"
 
   control_env
   (cd "$ROOT/server-v3" && uv sync -q && uv run -q alembic upgrade head)
