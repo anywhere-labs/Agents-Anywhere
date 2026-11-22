@@ -25,8 +25,11 @@ AA_CONTROL_SERVER_URL=http://127.0.0.1:8787 corepack yarn dev
   - 普通设备与加密设备统一走 `meshcall/web` 隧道（`aa.v3.Sessions`、`aa.v3.Device`、`aa.v3.Terminals`）。
   - 加密设备严格执行 **带外一次性 `aa-pair://v1/...` 配对**（`Noise_IKpsk2` 首配 + `Noise_IK` 后续连接）、IndexedDB 公钥钉扎（`require_e2ee: true` 不可明文降级）与 **Web 灰锁分级**（`E2eeLockBadge`）。
   - 多设备会话合并器严格对齐跨端契约 `contracts/aa-v3/1.0/fixtures/session-merge.json` 全部 6 组用例。
-  - 完整会话工作区（`/sessions/[deviceId]/[sessionId]`）：实时流式时间线（基于 `v3poc` 渲染原语 + 视口虚拟化）、审批内联操作、排队消息（插话/取消）、大文件超过 8 MiB 自动经限额云盘 S3 预签名中转。
-  - 设备工作台（`/devices/[deviceId]`）：概览与发起会话、文件浏览与 Git Diff、xterm.js 交互终端、加密配对与已配对客户端管理。
+  - 信息架构按 `docs/v3/client-experience-proposal.md`：侧栏为新对话、⌘K 搜索、随身助手、置顶、跨设备最近对话和设备列表，设备展开为 Agent → 项目（工作目录）→ 对话；「助手为主角」模式下点设备侧栏翻页进入设备子页。
+  - 新对话（`/new`，设备优先模式下也是首页）：选设备 → Agent → 目录（记住上次选择），第一条消息发出时才创建对话。
+  - 对话页（`/sessions/[deviceId]/[sessionId]`）：实时流式时间线（视口虚拟化、滚到顶部自动加载更早消息）、设备 › Agent › 项目面包屑与更多菜单（重命名、置顶、分叉、压缩上下文、详情、导出、删除）、固定在输入框上方的审批区、排队消息（立即发送 / 编辑 / 移除），右侧面板（文件、改动、终端、计划）在 ≥1280 并排、768–1279 覆盖、手机为底部 Sheet。
+  - 输入框（参考 Effi）：多行增高、附件粘贴 / 拖入 / 选择并显示进度，≤ 设备直传上限走 `save_attachment`，更大的经云盘中转后由设备 `fetch_drive_file` 拉取（加密设备用一次性密钥加密）；模型 / 推理强度 / 权限选择；运行中 Enter 排队、⌘/Ctrl+Enter 插话；`/` 命令；按对话保存草稿。
+  - 设备页（`/devices/[deviceId]`）：概览（Agent 列表、状态、最近对话、重命名 / 删除）、对话（按 Agent / 项目分组与筛选）、终端、文件（浏览与预览）、安全（配对、已配对客户端、MCP 开关）。
   - 终端（`aa.v3.Terminals`，设计见 `docs/v3/terminal-proposal.md`）：屏幕快照首帧 + `seq` 断线续传、单控制者多旁观者（无人控制时输入即接管，他人控制时提示「接管」，可「接管并保持尺寸」）、旁观者按控制者行列数渲染、非 PTY 设备提示不支持全屏程序；触屏设备支持单指滚动（含惯性）、长按选择复制、双指缩放字号与扩展键栏（Esc、Ctrl、Tab、方向键、PgUp/PgDn、Home/End）。协议状态机 `lib/terminal/` 不依赖 React，传输层可替换为移动端原生 bridge。
 - **随身助手 Pi Lite + 云端工作区 VFS（T518）**：
   - 按需动态加载 `@earendil-works/pi-agent-core` 与 `@earendil-works/pi-ai`（不污染首屏体积）。

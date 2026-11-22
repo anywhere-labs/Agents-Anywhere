@@ -15,7 +15,9 @@ Read [`.agents/skills/anywhere-ui/SKILL.md`](./.agents/skills/anywhere-ui/SKILL.
 - `lib/assistant/{crypto,sync,tokens,vfs,mcp-client,runtime}.ts` — Lazy-loaded Pi Lite agent, arbitrary-password PBKDF2 + AES-256-GCM KEK/DEK encryption, dual-fingerprint sync, Tokens Anywhere PKCE + single-key reuse, OPFS/IDB Cloud VFS, and Streamable HTTP MCP client.
 - `lib/terminal/{session,keys,touch,mesh-transport,bridge-transport}.ts` & `components/terminal/*` — Framework-free `aa.v3.Terminals` client (snapshot/seq resume, controller/generation rules, auto-claim, keep_size), key→sequence map, touch gesture state machine, MeshCall duplex and mobile `term.*` bridge transports, and the xterm.js view (`docs/v3/terminal-proposal.md`).
 - `lib/state/{workbench-context,assistant-context}.tsx` — Top-level providers wired into `components/providers.tsx`.
-- `components/workbench/*` & `components/conversation/*` — Workbench chrome (`WorkbenchShell`, dual-mode `WorkbenchSidebar`, `E2eeLockBadge`, `AssistantPanel`, dialogs) and timeline conversation renderer.
+- `components/workbench/*` & `components/conversation/*` — Workbench chrome (`WorkbenchShell`, dual-mode `WorkbenchSidebar`, ⌘K `CommandPalette`, `NewConversation`, `FileBrowser`, `E2eeLockBadge`, `AssistantPanel`, dialogs) and the conversation (timeline renderer shared with the mobile bundle, `Composer`, `ConfigPickers`, `ApprovalDock`, `QueueRows`, `SidePanel`, `ConversationHeader`). Interaction logic follows the v2 Web client (`web-next/`); layout follows `docs/v3/client-experience-proposal.md`.
+- `lib/workbench/*` — Device → agent → project tree, per-account local UI memory (pins, last start, panel), cached device status/settings and drive quota, unified-diff parser.
+- `lib/attachments/*` — Attachment transfer (RPC ≤ device cap, Cloud Drive + `fetch_drive_file` above it, one-time AES-GCM key for encrypted devices) and image preview cache.
 
 ## Hard Product & Design Guardrails
 
