@@ -17,6 +17,8 @@ REDIS_PORT="${AA_V3_REDIS_PORT:-56429}"
 ROUTER_PORT="${AA_V3_ROUTER_PORT:-7690}"
 CONTROL_PORT="${AA_V3_CONTROL_PORT:-8790}"
 WEB_PORT="${AA_V3_WEB_PORT:-3011}"
+S3_PORT="${AA_V3_S3_PORT:-59000}"
+DRIVE="${AA_V3_DRIVE:-1}" # 1: start an in-memory S3 (moto) so the cloud drive works; 0: no drive
 ROUTER_PASSWORD="${AA_V3_ROUTER_PASSWORD:-control-dev-password}"
 PG_NAME=aa-v3-local-pg
 REDIS_NAME=aa-v3-local-redis
@@ -77,6 +79,10 @@ control_env() {
   export AA_CONTROL_ROUTER_PUBLIC_URL="ws://127.0.0.1:$ROUTER_PORT"
   export AA_CONTROL_ROUTER_USERNAME=control AA_CONTROL_ROUTER_PASSWORD="$ROUTER_PASSWORD"
   export AA_CONTROL_CORS_ORIGINS="$ORIGINS"
+  if [[ "$DRIVE" == 1 ]]; then
+    export AA_CONTROL_S3_ENDPOINT="http://127.0.0.1:$S3_PORT" AA_CONTROL_S3_BUCKET=aa-drive
+    export AA_CONTROL_S3_ACCESS_KEY_ID=aa-dev AA_CONTROL_S3_SECRET_ACCESS_KEY=aa-dev-secret AA_CONTROL_S3_PATH_STYLE=true
+  fi
 }
 
 write_router_auth() {
@@ -115,6 +121,13 @@ up() {
   start_bg router "$(router_bin)" -host 127.0.0.1 -port "$ROUTER_PORT" -auth-file "$STATE/router-auth.json" \
     -http-cors-origin "$ORIGINS"
 
+  if [[ "$DRIVE" == 1 ]]; then
+    # In-memory S3 for the cloud drive (data is lost when it stops; fine for development).
+    start_bg s3 uvx --from "moto[server]" moto_server -H 127.0.0.1 -p "$S3_PORT"
+    wait_http "http://127.0.0.1:$S3_PORT/" "S3 (moto)"
+    curl -fsS -o /dev/null -X PUT "http://127.0.0.1:$S3_PORT/aa-drive" || true
+  fi
+
   control_env
   (cd "$ROOT/server-v3" && uv sync -q && uv run -q alembic upgrade head)
   start_bg control bash -c "cd '$ROOT/server-v3' && exec uv run -q python -m aa_control.main"
@@ -151,13 +164,13 @@ connector_up() {
 }
 
 down() {
-  stop_bg connector; stop_bg web; stop_bg control; stop_bg router
+  stop_bg connector; stop_bg web; stop_bg control; stop_bg router; stop_bg s3
   docker stop "$PG_NAME" "$REDIS_NAME" >/dev/null 2>&1 || true
   log "stopped (data kept in Docker volume aa-v3-local-pg and $STATE)"
 }
 
 status() {
-  for n in router control web connector; do
+  for n in s3 router control web connector; do
     if alive "$n"; then echo "$n: running (pid $(cat "$STATE/$n.pid"))"; else echo "$n: stopped"; fi
   done
   docker ps --filter "name=aa-v3-local" --format '{{.Names}}: {{.Status}}'
