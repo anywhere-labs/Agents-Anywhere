@@ -11,11 +11,12 @@
 import { Mesh, Router, UnauthenticatedError, type RpcDuplex } from "meshcall/web"
 
 import type { ControlPlaneClient } from "@/lib/mesh/control-client"
-import { buildWebTrustRecord, PairingError, parsePairingUri } from "@/lib/mesh/pairing"
+import { buildCodePairingPayload, buildWebTrustRecord, PairingError, parsePairingUri } from "@/lib/mesh/pairing"
 import { vault } from "@/lib/storage/idb"
 import type {
   DeviceMode,
   DeviceRecord,
+  PairingPayload,
   DeviceSettings,
   DeviceStatus,
   ListDirsResult,
@@ -78,14 +79,33 @@ export class DeviceTunnelManager {
   }
 
   /**
-   * First-time out-of-band pairing (`Noise_IKpsk2_25519_AESGCM_SHA256`).
+   * First-time out-of-band pairing (`Noise_IKpsk2_25519_AESGCM_SHA256`) with a pasted `aa-pair://v1/` link.
    * Persists `require_e2ee: true` + `device_pub` to IndexedDB BEFORE opening the tunnel.
    */
   async pairEncryptedDevice(
     rawUri: string,
     deviceNameHint?: string
   ): Promise<{ deviceId: string; status: DeviceStatus; trustPub: string }> {
-    const payload = parsePairingUri(rawUri)
+    return this.pairWith(parsePairingUri(rawUri), deviceNameHint, "link")
+  }
+
+  /**
+   * First-time pairing with a code typed by the user (e2ee-admission-proposal §4.1). The device key is the
+   * control plane's hint; the PSK handshake authenticates it, and it is pinned only after that handshake succeeds.
+   */
+  async pairEncryptedDeviceWithCode(
+    device: Pick<DeviceRecord, "id" | "name" | "e2e_public_key_hint">,
+    code: string
+  ): Promise<{ deviceId: string; status: DeviceStatus; trustPub: string }> {
+    const payload = await buildCodePairingPayload(code, device)
+    return this.pairWith(payload, device.name, "code")
+  }
+
+  private async pairWith(
+    payload: PairingPayload,
+    deviceNameHint: string | undefined,
+    source: "link" | "code"
+  ): Promise<{ deviceId: string; status: DeviceStatus; trustPub: string }> {
     const deviceId = payload.instance_id
 
     // A pin is never replaced by a pasted link: a different key could be a forged link or a lying server.
@@ -99,11 +119,14 @@ export class DeviceTunnelManager {
       )
     }
 
-    // Step 1: Lock local trust record BEFORE contacting server or opening tunnel, so nothing in between can
-    // talk plaintext to this device. It is rolled back below if the pairing does not complete.
+    // Step 1 (link): lock the local trust record BEFORE contacting the server or opening the tunnel, so nothing in
+    // between can talk plaintext to this device; it is rolled back below if the pairing does not complete.
+    // A code's key comes from the server and must not be pinned before the PSK handshake proves it (a pin left
+    // behind by a crash would let whoever holds that key pass the later IK handshakes), so it is saved after.
     const trustRecord = buildWebTrustRecord(payload, deviceNameHint)
-    await vault.saveDeviceTrust(this.accountId, trustRecord)
+    if (source === "link") await vault.saveDeviceTrust(this.accountId, trustRecord)
     const rollback = async () => {
+      if (source === "code") return
       if (previous) await vault.saveDeviceTrust(this.accountId, previous)
       else await vault.removeDeviceTrust(this.accountId, deviceId)
     }
@@ -137,7 +160,9 @@ export class DeviceTunnelManager {
         },
       })
       await mesh.connect()
+      // An encrypted device serves only paired peers: an answer means the device accepted the pairing.
       const status = await mesh.unary<Record<string, never>, DeviceStatus>(DEVICE_SVC, "status", {})
+      if (source === "code") await vault.saveDeviceTrust(this.accountId, trustRecord)
       const pooled: PooledTunnel = {
         deviceId,
         mode: "encrypted",

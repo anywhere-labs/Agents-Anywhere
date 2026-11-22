@@ -4,9 +4,15 @@ import { generateE2EKey, generateE2EPsk } from "meshcall/web"
 import { describe, expect, it } from "vitest"
 
 import {
+  buildCodePairingPayload,
   buildWebTrustRecord,
+  derivePairingCodePsk,
   encodePairingUri,
   formatKeyFingerprint,
+  formatPairingCode,
+  isPairingUriInput,
+  normalizePairingCode,
+  PAIRING_CODE_ID,
   PairingError,
   parsePairingUri,
   trustTierToBadge,
@@ -166,5 +172,79 @@ describe("Encrypted device pairing keeps the local pin", () => {
     const after = await vault.getDeviceTrust(accountId, "dev_pin_again")
     expect(after?.paired_at).toBe("2026-01-01T00:00:00.000Z")
     expect(after?.device_name_hint).toBe("Old name")
+  })
+})
+
+// Same vectors as contracts/aa-v3/1.0/fixtures/pairing-code.json (the Connector derives the PSK the same way).
+const CODE_VECTORS = [
+  { input: "7KQ2M-X9PTA", instance_id: "dev_fa7dce281d0548fc2d52a53f", code: "7KQ2MX9PTA", psk: "i_9rB4Qk4eF4KEi8X8IozFlFdCEpIMDkx0Ttlx7PXQQ" },
+  { input: "7kq2m x9pta", instance_id: "dev_fa7dce281d0548fc2d52a53f", code: "7KQ2MX9PTA", psk: "i_9rB4Qk4eF4KEi8X8IozFlFdCEpIMDkx0Ttlx7PXQQ" },
+  { input: "0123456789", instance_id: "dev_0000000000000000000000aa", code: "0123456789", psk: "_c_2OkN-_Fr22FMStkwUdhQZbT_vCFy1q4m6ppKTMGE" },
+  { input: "OILZZ-ZZZZZ", instance_id: "dev_0000000000000000000000aa", code: "011ZZZZZZZ", psk: "typK8EfGoMlSBRgJ1fxrLY7Ft9d6YqyNJ1VJtB2wXww" },
+]
+
+describe("Pairing codes typed instead of scanned", () => {
+  it("normalize and derive the PSK exactly like the contract vectors", async () => {
+    for (const v of CODE_VECTORS) {
+      expect(normalizePairingCode(v.input)).toBe(v.code)
+      expect(await derivePairingCodePsk(v.input, v.instance_id)).toBe(v.psk)
+    }
+    for (const bad of ["", "7KQ2M-X9PT", "7KQ2M-X9PTAA", "7KQ2M-X9PTU", "7KQ2M_X9PTA"]) {
+      expect(normalizePairingCode(bad)).toBeNull()
+      await expect(derivePairingCodePsk(bad, "dev_1")).rejects.toMatchObject({ code: "invalid_pairing_code" })
+    }
+    expect(formatPairingCode("7kq2mx9pta")).toBe("7KQ2M-X9PTA")
+    expect(isPairingUriInput("  aa-pair://v1/abc")).toBe(true)
+    expect(isPairingUriInput("7KQ2M-X9PTA")).toBe(false)
+  })
+
+  it("build the pairing from the control plane's key hint and the fixed pairing id", async () => {
+    const { publicKey } = await generateE2EKey()
+    const payload = await buildCodePairingPayload("7KQ2M-X9PTA", { id: "dev_fa7dce281d0548fc2d52a53f", e2e_public_key_hint: publicKey })
+    expect(payload.pairing_id).toBe(PAIRING_CODE_ID)
+    expect(payload.device_pub).toBe(publicKey)
+    expect(payload.psk).toBe(CODE_VECTORS[0].psk)
+    await expect(buildCodePairingPayload("7KQ2M-X9PTA", { id: "dev_x", e2e_public_key_hint: null })).rejects.toMatchObject({
+      code: "device_offline",
+    })
+  })
+
+  it("never pin the server's key before the handshake proves it", async () => {
+    const accountId = "https://aa.local::u-code"
+    const { publicKey } = await generateE2EKey()
+    let pinnedDuringHandshake: unknown = "not called"
+    const control = {
+      openTunnel: async (params: { deviceId: string; e2eKey?: string }) => {
+        pinnedDuringHandshake = await vault.getDeviceTrust(accountId, params.deviceId)
+        expect(params.e2eKey).toBe(publicKey)
+        return {
+          router_url: "wss://router.invalid",
+          credential: "mtun_plain_credential",
+          tunnel_id: "tun_1",
+          expires_at: new Date(Date.now() + 3600_000).toISOString(),
+          mode: "normal",
+        }
+      },
+    } as unknown as ControlPlaneClient
+    const manager = new DeviceTunnelManager(accountId, control)
+    const err = await manager
+      .pairEncryptedDeviceWithCode({ id: "dev_code_1", name: "Build box", e2e_public_key_hint: publicKey }, "7KQ2M-X9PTA")
+      .catch((e: unknown) => e)
+    expect((err as PairingError).code).toBe("e2e_required_locally")
+    expect(pinnedDuringHandshake).toBeNull()
+    expect(await vault.getDeviceTrust(accountId, "dev_code_1")).toBeNull()
+  })
+
+  it("refuse a code pairing when the server's key differs from the pinned one", async () => {
+    const accountId = "https://aa.local::u-code-swap"
+    const pinned = await makeValidPayload({ instance_id: "dev_code_swap" })
+    await vault.saveDeviceTrust(accountId, buildWebTrustRecord(pinned, "Laptop"))
+    const { publicKey: other } = await generateE2EKey()
+    const manager = new DeviceTunnelManager(accountId, {} as ControlPlaneClient)
+    const err = await manager
+      .pairEncryptedDeviceWithCode({ id: "dev_code_swap", name: "Laptop", e2e_public_key_hint: other }, "7KQ2M-X9PTA")
+      .catch((e: unknown) => e)
+    expect((err as PairingError).code).toBe("device_pub_mismatch")
+    expect((await vault.getDeviceTrust(accountId, "dev_code_swap"))?.device_pub).toBe(pinned.device_pub)
   })
 })
