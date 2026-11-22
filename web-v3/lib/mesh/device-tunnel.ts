@@ -4,7 +4,8 @@
 //   1. Single-device operations ALWAYS go over a MeshCall tunnel (normal or E2E).
 //   2. If a device is locally pinned in IndexedDB (`require_e2ee: true`) OR reports `mode_hint === "encrypted"`:
 //      - NEVER downgrade to a plain tunnel, even if the server lies and sends a plain `mtun_` credential.
-//      - ONLY use the locally pinned `device_pub` from QR / `aa-pair://v1/...`, never server hints.
+//      - ONLY use the locally pinned `device_pub` (from a QR / `aa-pair://v1/...` link, or a server hint that a
+//        pairing-code handshake proved), never an unproven server hint.
 //      - First-time pairing persists trust in IndexedDB BEFORE opening the `Noise_IKpsk2` tunnel.
 //      - Subsequent connections use `Noise_IK` with the browser's persistent X25519 private key.
 
@@ -210,7 +211,7 @@ export class DeviceTunnelManager {
       if (requireE2ee && !trust) {
         throw new PairingError(
           "e2e_not_paired",
-          "This encrypted device is not paired with this browser yet; scan or paste its pairing link."
+          "This encrypted device is not paired with this browser yet; enter its pairing code or paste its pairing link."
         )
       }
 
@@ -551,10 +552,16 @@ export class DeviceTunnelManager {
     })
   }
 
+  /** A one-time pairing for another client: a code to type in (`kind: "code"`) or an `aa-pair://` link. */
   createPairing(
     device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">,
-    options?: { ttl_ms?: number; label?: string; platform?: "ios" | "android" | "desktop" | "web" }
-  ): Promise<{ uri: string; pairing_id: string; expires_at: string }> {
+    options?: {
+      kind?: "link" | "code"
+      ttl_ms?: number
+      label?: string
+      platform?: "ios" | "android" | "desktop" | "web"
+    }
+  ): Promise<{ uri?: string; code?: string; pairing_id: string; expires_at: string; fingerprint?: string }> {
     return this.callUnary(device, DEVICE_SVC, "create_pairing", options ?? {})
   }
 
