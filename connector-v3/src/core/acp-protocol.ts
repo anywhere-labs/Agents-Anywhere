@@ -537,6 +537,8 @@ interface PendingPermission {
  * Every item of a turn carries the turn's `turn_id` (the user message that started it). Output arriving outside a
  * turn opens an autonomous one whose `turn_id` is its first item's id.
  */
+const CONTENT_UPDATES = new Set<string>(["agent_message_chunk", "agent_thought_chunk", "tool_call", "tool_call_update", "plan"]);
+
 export class AcpTimelineProjector {
   readonly sessionId: string;
   availableCommands: AcpAvailableCommand[] = [];
@@ -555,6 +557,8 @@ export class AcpTimelineProjector {
   private readonly permissions = new Map<string, PendingPermission>();
   private replayUser: { text: string } | undefined;
   private replayCount = 0;
+  /** What is left of this turn's prompt that the agent may still echo back as `user_message_chunk`s. */
+  private echo: string | undefined;
 
   constructor(options: AcpTimelineProjectorOptions) {
     this.store = options.store;
@@ -575,17 +579,23 @@ export class AcpTimelineProjector {
     return this.turnId;
   }
 
-  /** Start a turn for the user message `turnId` (call before `session/prompt`). */
-  beginTurn(turnId: string): void {
+  /**
+   * Start a turn for the user message `turnId` (call before `session/prompt`). Pass the prompt so that agents which
+   * echo it back as `user_message_chunk` (Antigravity does) don't get it recorded as a second user message.
+   */
+  beginTurn(turnId: string, prompt?: readonly AcpContentBlock[]): void {
     this.flushReplayUser();
     if (this.turnId !== undefined) this.closeTurnItems(false);
     this.turnId = turnId;
     this.autonomous = false;
+    const text = prompt?.map((block) => contentBlockText(block)).join("") ?? "";
+    this.echo = text.length > 0 ? text : undefined;
     this.store.updateControl(this.sessionId, { state: "running", error: undefined });
   }
 
   /** The `session/prompt` result (or a failure): close the turn's items and cancel waiting permissions. */
   endTurn(stopReason: AcpStopReason | "error" = "end_turn", error?: string): void {
+    this.echo = undefined;
     this.flushReplayUser();
     const interrupted = stopReason === "cancelled" || stopReason === "error";
     this.closeTurnItems(interrupted);
@@ -598,6 +608,8 @@ export class AcpTimelineProjector {
 
   /** A `session/update` notification's `update`. */
   handleUpdate(update: AcpSessionUpdate): void {
+    // Only real output ends the window in which a prompt echo is expected; metadata updates may come first.
+    if (CONTENT_UPDATES.has(update.sessionUpdate)) this.echo = undefined;
     switch (update.sessionUpdate) {
       case "user_message_chunk":
         this.userChunk(update.content);
@@ -740,6 +752,18 @@ export class AcpTimelineProjector {
 
   /** `session/load` replays history: user chunks become one user message that opens the next turn. */
   private userChunk(block: AcpContentBlock): void {
+    if (this.echo !== undefined && this.replayUser === undefined && this.turnId !== undefined && !this.autonomous) {
+      const text = contentBlockText(block);
+      const rest = this.echo.trimStart();
+      const chunk = text.trimStart();
+      if (chunk.length === 0 || rest.startsWith(chunk)) {
+        // The agent echoing the prompt of the turn we started: already recorded.
+        const left = rest.slice(chunk.length);
+        this.echo = left.trim().length > 0 ? left : undefined;
+        return;
+      }
+      this.echo = undefined;
+    }
     if (this.replayUser === undefined) {
       if (this.turnId !== undefined) this.closeTurnItems(false);
       this.turnId = undefined;

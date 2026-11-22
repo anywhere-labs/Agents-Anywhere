@@ -211,6 +211,28 @@ describe("AcpTimelineProjector", () => {
     assert.equal(tool?.interrupted, true);
   });
 
+  it("drops an agent's echo of the prompt it was just sent (Antigravity)", () => {
+    const { projector, send, all, assistant } = setup();
+    const user = send("Reply with PONG");
+    projector.beginTurn(user.id, [{ type: "text", text: "Reply with PONG" }]);
+    projector.handleUpdate({ sessionUpdate: "available_commands_update", availableCommands: [] });
+    projector.handleUpdate({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "Reply with " } });
+    projector.handleUpdate({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "PONG" } });
+    projector.handleUpdate(text("PONG"));
+    projector.endTurn("end_turn");
+    assert.deepEqual(all().map((m) => m.role), ["user", "assistant"]);
+    assert.equal(assistant()[0]?.turn_id, user.id);
+  });
+
+  it("still records user chunks that are not an echo of the prompt (session/load replay)", () => {
+    const { projector, send, all } = setup();
+    projector.beginTurn(send("first").id, [{ type: "text", text: "first" }]);
+    projector.handleUpdate({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "something else" } });
+    projector.handleUpdate(text("ok"));
+    projector.endTurn("end_turn");
+    assert.deepEqual(all().map((m) => m.role), ["user", "user", "assistant"]);
+  });
+
   it("opens an autonomous turn for output outside a prompt", () => {
     const { projector, assistant } = setup();
     projector.handleUpdate(text("Background job finished."));

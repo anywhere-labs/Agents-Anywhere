@@ -106,6 +106,10 @@ const SendResponseSchema = z.object({
   session_id: z.string(),
   delivered: z.enum(["started", "steered", "queued"]),
   reply_text: z.string().optional(),
+  /** With `wait`: how the turn ended (`end_turn`, `cancelled`, `error`, …); absent if it is still running. */
+  turn_result: z.string().optional(),
+  /** With `wait` and `turn_result: "error"`: what the agent reported (for example "Authentication required"). */
+  error: z.string().optional(),
 });
 
 const AnswerRequestSchema = z.object({
@@ -539,7 +543,11 @@ export class SessionsService {
     const budget = Math.max(0, Math.min(this.#waitTimeoutMs, remaining === null ? Infinity : remaining - 1000));
     const ended = await Promise.race([waiter.promise, delay(budget).then(() => undefined)]);
     const messageId = ended?.messageId ?? knownMessageId;
-    if (ended !== undefined) response.message_id = ended.messageId;
+    if (ended !== undefined) {
+      response.message_id = ended.messageId;
+      response.turn_result = ended.result;
+      if (ended.result === "error") response.error = (this.#store.has(sessionId) ? this.#store.getControl(sessionId).error : undefined) ?? "the agent failed";
+    }
     if (messageId !== undefined && this.#store.has(sessionId)) response.reply_text = turnReplyText(this.#store, sessionId, messageId);
   }
 
