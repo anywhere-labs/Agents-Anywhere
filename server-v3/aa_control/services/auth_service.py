@@ -4,11 +4,13 @@ import hmac
 import secrets
 import time
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlencode
 
 import httpx
 
+from aa_control.core.assistant import is_first_party_oidc_session
 from aa_control.core.auth import (
     create_access_token,
     format_client_principal,
@@ -46,6 +48,13 @@ from aa_control.infra.db.repositories import ControlRepository, DeviceRow, UserR
 from aa_control.infra.oidc import OidcVerifierPort
 from aa_control.infra.redis_store import RedisControlStore
 from aa_control.infra.router_pool import RouterPoolPort
+
+
+@dataclass(frozen=True)
+class AuthenticatedUserSession:
+    user: UserView
+    is_first_party_session: bool
+    client_id: str | None = None
 
 
 def _user_view(
@@ -196,8 +205,13 @@ class AuthService:
         return await self._repo.revoke_refresh_token(hash_secret_digest(refresh_token))
 
     async def authenticate_access_token(self, token: str) -> UserView:
+        session = await self.authenticate_access_token_session(token)
+        return session.user
+
+    async def authenticate_access_token_session(self, token: str) -> AuthenticatedUserSession:
         if self._settings.auth_mode == "oidc":
             assert self._oidc is not None
+            assert self._settings.oidc_auth is not None
             identity = await self._oidc.verify_token(token)
             user = await self._repo.upsert_oidc_user(
                 issuer=identity.issuer,
@@ -211,14 +225,27 @@ class AuthService:
                 raise UnauthenticatedError("account is unavailable")
             if identity.entitlements:
                 await self._redis.set_user_entitlements(user.id, identity.entitlements)
-            return _user_view(
-                user,
-                email_override=identity.email or user.email,
-                display_name_override=identity.display_name or user.display_name,
-                role_override=identity.role,
-                plan=identity.plan,
-                entitlements=identity.entitlements,
-                active_context=identity.active_context,
+            allowed_clients = self._settings.assistant.allowed_tokens_client_ids
+            if not allowed_clients and self._settings.oidc_auth.client_id:
+                allowed_clients = (self._settings.oidc_auth.client_id,)
+            first_party = is_first_party_oidc_session(
+                identity.raw_claims,
+                allowed_client_ids=allowed_clients,
+            )
+            raw_cid = identity.raw_claims.get("azp") or identity.raw_claims.get("client_id")
+            client_id = str(raw_cid).strip() if isinstance(raw_cid, str) and raw_cid.strip() else None
+            return AuthenticatedUserSession(
+                user=_user_view(
+                    user,
+                    email_override=identity.email or user.email,
+                    display_name_override=identity.display_name or user.display_name,
+                    role_override=identity.role,
+                    plan=identity.plan,
+                    entitlements=identity.entitlements,
+                    active_context=identity.active_context,
+                ),
+                is_first_party_session=first_party,
+                client_id=client_id,
             )
 
         payload = verify_access_token(
@@ -231,7 +258,15 @@ class AuthService:
         user = await self._repo.get_user_by_id(str(payload["sub"]))
         if user is None or user.disabled:
             raise UnauthenticatedError("account is unavailable")
-        return _user_view(user, entitlements=self._settings.default_entitlements)
+        kind = str(payload.get("kind") or "").strip().lower()
+        first_party = kind not in {"oauth", "mcp", "third_party"} and not bool(payload.get("oauth_client"))
+        raw_cid = payload.get("cid")
+        client_id = str(raw_cid).strip() if isinstance(raw_cid, str) and raw_cid.strip() else None
+        return AuthenticatedUserSession(
+            user=_user_view(user, entitlements=self._settings.default_entitlements),
+            is_first_party_session=first_party,
+            client_id=client_id,
+        )
 
     async def issue_client_router_tokens(
         self,

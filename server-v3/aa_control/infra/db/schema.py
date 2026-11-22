@@ -203,3 +203,60 @@ drive_files = Table(
     Index("idx_drive_files_status_exp", "status", "expires_at"),
     Index("idx_drive_files_status_upload_exp", "status", "upload_expires_at"),
 )
+
+# ---------------------------------------------------------------------------
+# Portable assistant sync, KEK/DEK key envelope & Tokens Anywhere tables (v3_2)
+# ---------------------------------------------------------------------------
+
+assistant_conversations = Table(
+    "assistant_conversations",
+    metadata,
+    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("conversation_id", Text, nullable=False),
+    Column("encrypted", Integer, nullable=False, server_default="0"),
+    Column("title", Text),
+    Column("updated_at", BigInteger, nullable=False),
+    Column("content_hash", Text, nullable=False),
+    Column("device", Text, nullable=False),
+    Column("size_bytes", BigInteger, nullable=False),
+    Column("messages_json", Text),
+    Column("settings_json", Text),
+    Column("key_version", Integer),
+    Column("dek_epoch", Integer),
+    Column("nonce", Text),
+    Column("ciphertext", Text),
+    Column("encrypted_meta", Text),
+    Column("meta_nonce", Text),
+    Column("server_updated_at", Text, nullable=False),
+    PrimaryKeyConstraint("user_id", "conversation_id"),
+    Index("idx_assistant_conv_user_updated", "user_id", "updated_at"),
+)
+
+assistant_key_envelopes = Table(
+    "assistant_key_envelopes",
+    metadata,
+    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
+    Column("kdf", Text, nullable=False),
+    Column("kdf_params_json", Text, nullable=False),
+    Column("salt", Text, nullable=False),
+    Column("wrap_alg", Text, nullable=False, server_default="AES-256-GCM"),
+    Column("wrap_nonce", Text),
+    Column("wrapped_dek", Text, nullable=False),
+    Column("key_version", Integer, nullable=False, server_default="1"),
+    Column("dek_epoch", Integer, nullable=False, server_default="1"),
+    Column("created_at", Text, nullable=False),
+    Column("updated_at", Text, nullable=False),
+)
+
+assistant_tokens_connections = Table(
+    "assistant_tokens_connections",
+    metadata,
+    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
+    Column("key_enc", Text, nullable=False),
+    Column("key_hash", Text, nullable=False),
+    Column("key_prefix", Text, nullable=False),
+    Column("refresh_enc", Text),
+    Column("refreshed_at", BigInteger, nullable=False),
+    Column("created_at", Text, nullable=False),
+    Column("updated_at", Text, nullable=False),
+)

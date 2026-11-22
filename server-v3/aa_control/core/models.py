@@ -481,3 +481,138 @@ class AdminDrivePolicyResponse(BaseModel):
     user_id: str
     override: DrivePolicyOverrideView | None = None
     effective: DriveQuotaView
+
+
+# ---------------------------------------------------------------------------
+# Portable assistant sync, KEK/DEK key envelope & Tokens Anywhere models (T516)
+# ---------------------------------------------------------------------------
+
+AssistantKdf = Literal["pbkdf2-sha256", "argon2id"]
+AssistantWrapAlg = Literal["AES-256-GCM"]
+AssistantEventType = Literal["assistant", "assistant_encryption", "assistant_tokens"]
+
+
+class PutAssistantConversationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    encrypted: bool = False
+    updated_at: int = Field(ge=0)
+    hash: str = Field(min_length=1, max_length=64)
+    device: str = Field(min_length=1, max_length=64)
+    # Plaintext fields (forbidden when encrypted=True)
+    title: str | None = Field(default=None, max_length=200)
+    messages: list[dict[str, Any]] | None = None
+    settings: dict[str, Any] | None = None
+    # E2EE fields (required when encrypted=True, forbidden when encrypted=False)
+    key_version: int | None = Field(default=None, ge=1)
+    dek_epoch: int | None = Field(default=None, ge=1)
+    nonce: str | None = Field(default=None, max_length=64)
+    ciphertext: str | None = None
+    encrypted_meta: str | None = None
+    meta_nonce: str | None = Field(default=None, max_length=64)
+
+
+class AssistantConversationMeta(BaseModel):
+    id: str
+    encrypted: bool = False
+    title: str | None = None
+    encrypted_meta: str | None = None
+    meta_nonce: str | None = None
+    key_version: int | None = None
+    dek_epoch: int | None = None
+    updated_at: int
+    hash: str
+    device: str
+    size: int
+
+
+class AssistantConversationDetail(AssistantConversationMeta):
+    settings: dict[str, Any] | None = None
+    messages: list[dict[str, Any]] | None = None
+    nonce: str | None = None
+    ciphertext: str | None = None
+
+
+class ListAssistantConversationsResponse(BaseModel):
+    conversations: list[AssistantConversationMeta]
+    max_conversations: int
+    max_conversation_bytes: int
+
+
+class AssistantStreamEvent(BaseModel):
+    event: AssistantEventType
+    payload: dict[str, Any]
+
+
+class AssistantKeyEnvelopePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kdf: AssistantKdf
+    kdf_params: dict[str, Any]
+    salt: str = Field(min_length=16, max_length=256)
+    wrap_alg: AssistantWrapAlg = "AES-256-GCM"
+    wrap_nonce: str | None = Field(default=None, max_length=64)
+    wrapped_dek: str = Field(min_length=32, max_length=1024)
+
+
+class PutAssistantKeyEnvelopeRequest(AssistantKeyEnvelopePayload):
+    expected_version: int | None = Field(default=None, ge=0)
+    device: str | None = Field(default=None, max_length=64)
+
+
+class ResetAssistantEncryptionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    confirm_wipe: bool
+    new_envelope: AssistantKeyEnvelopePayload | None = None
+    wipe_drive_vfs: bool = True
+    device: str | None = Field(default=None, max_length=64)
+
+
+class AssistantKeyEnvelopeView(BaseModel):
+    kdf: AssistantKdf
+    kdf_params: dict[str, Any]
+    salt: str
+    wrap_alg: AssistantWrapAlg
+    wrap_nonce: str | None = None
+    wrapped_dek: str
+    key_version: int
+    dek_epoch: int
+    created_at: str
+    updated_at: str
+
+
+class AssistantEncryptionStatusResponse(BaseModel):
+    enabled: bool
+    envelope: AssistantKeyEnvelopeView | None = None
+
+
+class ResetAssistantEncryptionResponse(BaseModel):
+    enabled: bool
+    envelope: AssistantKeyEnvelopeView | None = None
+    wiped_conversations: int
+    wiped_drive_files: int
+
+
+class PutAssistantTokensRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    key: str = Field(min_length=8, max_length=300)
+    refresh: str | None = Field(default=None, max_length=500)
+
+
+class AssistantTokensView(BaseModel):
+    connected: bool
+    key: str | None = None
+    prefix: str | None = None
+    connected_at: str | None = None
+    refreshed_at: str | None = None
+    kept: bool | None = None
+    hint: str | None = None
+    tokens_url: str
+    client_id: str
+
+
+class DeleteAssistantTokensResponse(BaseModel):
+    connected: bool
+    removed: bool
