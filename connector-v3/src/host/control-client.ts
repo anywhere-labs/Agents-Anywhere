@@ -180,7 +180,8 @@ export interface ControlPresenceOptions {
 
 const DEFAULT_PRESENCE_INTERVAL_MS = 20_000;
 
-function isUnauthenticated(error: unknown): boolean {
+/** The Router or the control plane refused the credential (`401` / `4401`). */
+export function isUnauthenticated(error: unknown): boolean {
   if (error instanceof UnauthenticatedError) return true;
   if (error instanceof MeshCallError && error.code === "unauthenticated") return true;
   const text = String(error);
