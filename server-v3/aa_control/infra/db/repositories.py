@@ -687,6 +687,19 @@ class ControlRepository:
             ).mappings().all()
             return [_to_client(r) for r in rows if r["push_token"]]
 
+    async def clear_client_push_token(self, *, client_id: str, push_token: str) -> bool:
+        """Drop a push token the platform reported dead, unless the client re-registered meanwhile."""
+        async with self._engine.begin() as conn:
+            res = await conn.execute(
+                update(schema.clients)
+                .where(
+                    schema.clients.c.id == client_id,
+                    schema.clients.c.push_token == push_token,
+                )
+                .values(push_token=None)
+            )
+            return res.rowcount > 0
+
     # ------------------------------------------------------------------
     # MCP OAuth 2.1 clients, codes, and grants
     # ------------------------------------------------------------------

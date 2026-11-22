@@ -27,6 +27,8 @@ async def readyz(request: Request) -> JSONResponse:
             "redis": redis_ok,
             "meshcall_routers": routers_ok,
         },
+        # Informational only: an unconfigured push platform is skipped, not a readiness failure.
+        "push": request.app.state.push_status,
         "server_time": utc_now_iso(),
     }
     return JSONResponse(status_code=200 if ready else 503, content=payload)
