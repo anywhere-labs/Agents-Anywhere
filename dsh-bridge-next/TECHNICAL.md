@@ -125,7 +125,7 @@ corepack yarn dev
 | `corepack yarn typecheck` | Host、Client、构建脚本类型检查 |
 | `corepack yarn build` | 构建两端产物并复制 Connector 源码 |
 | `corepack yarn dev` | 持续构建 |
-| `corepack yarn check:build` | 产物导入、官方 UI 交互、CSS 热更新契约、Client 注册与释放、源码副本检查 |
+| `corepack yarn check:build` | 产物导入、官方 UI 交互、CSS 热更新契约、官方组件样式覆盖、Client 注册与释放、源码副本检查 |
 | `corepack yarn test` | 单元与集成测试；运行前需已完成 build 和 Python 依赖准备 |
 | `corepack yarn check` | 完整构建和自动化验证，可在 headless 环境运行 |
 
@@ -149,9 +149,9 @@ Connector 状态来自 `aa.local.v2.Control` 的 `events` 流（`kind: "state"`�
 
 弹窗标题复用 Desktop/Web 左上角的 wordmark 样式：Caveat、20px、字重 500。`src/client/assets/caveat-latin.woff2` 复制自 Desktop 的同名字体，构建时内嵌到 Client CSS，无需网络或额外静态资源路由。
 
-外部插件无法直接使用官方仓库未发布的构建 helper，因此 `scripts/client-css.ts` 按其输出契约处理 CSS：监听源文件、生成局部类名，在 Client factory 执行时注入带 `data-plugin` / `data-plugin-css` 的样式。DSH 0.2.2 及更早版本在 HMR 重新加载前清理这些样式；0.2.3 不再清理，factory 被替换（HMR 或在插件页更新版本）时原地改写同名样式标签，所以不刷新页面也会用上新样式。插件不改用 0.2.3 的 `meta.stylesheets`：更早的 DSH 会忽略它，插件就没有样式。实现参考官方 `docs/web-styling.zh.md` 与 `packages/client/tsdown.client.ts`。
+外部插件无法直接使用官方仓库未发布的构建 helper，因此 `scripts/client-css.ts` 按其输出契约处理 CSS：监听源文件、生成局部类名，在 Client factory 执行时注入带 `data-plugin` / `data-plugin-css` 的样式。DSH 0.2.2 及更早版本在 HMR 重新加载前清理这些样式；0.2.3 不再清理，factory 被替换（HMR 或在插件页更新版本）时原地改写同名样式标签，所以不刷新页面也会用上新样式。插件不改用 0.2.3 的 `meta.stylesheets`：更早的 DSH 会忽略它，插件就没有样式。0.2.3 还改由渲染器在插件样式之后插入官方组件库的样式，同等优先级时组件库胜出；因此传给官方组件的类名一律用两个类名的选择器覆盖（例如 `.dialog.accountDialog`、`.section .input`），`check:build` 会检查。实现参考官方 `docs/web-styling.zh.md` 与 `packages/client/tsdown.client.ts`。
 
-`check:build` 在 headless DOM 中加载真实官方组件，验证侧边栏展开/收起、弹窗打开/关闭/焦点恢复、云端与自建服务登录、单地址输入校验、取消、登录后面板切换、头像回退、Connector 状态、打开 Web 和退出登录，以及卸载时弹窗与入口清理；同时检查样式去重、factory 替换后的原地改写，以及 HMR 清理后的重新注入。Node 中的 CSS loader 仅用于验证，不进入插件产物。
+`check:build` 在 headless DOM 中加载真实官方组件，验证侧边栏展开/收起、弹窗打开/关闭/焦点恢复、云端与自建服务登录、单地址输入校验、取消、登录后面板切换、头像回退、Connector 状态、打开 Web 和退出登录，以及卸载时弹窗与入口清理；同时检查样式去重、factory 替换后的原地改写、HMR 清理后的重新注入，以及传给官方组件的类名没有只由单个类名组成的覆盖规则。Node 中的 CSS loader 仅用于验证，不进入插件产物。
 
 ## 配置与本地状态
 
