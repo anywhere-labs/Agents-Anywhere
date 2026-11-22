@@ -69,9 +69,9 @@
           "type": "string",
           "enum": ["view", "control"],
           "default": "view",
-          "description": "control = claim control right away (the device that created the terminal, or a reconnect of the controller). Same effect as sending a claim frame first."
+          "description": "control = take control, but only when nobody holds it or the current controller (connected or within its grace period) has this caller's client_id: the device that created the terminal, or a reconnect of the controller. Otherwise the stream joins as a viewer (its control frame says you=false) and must send an explicit claim frame to take over; only claim is an unconditional takeover."
         },
-        "cols": { "$ref": "#/$defs/Dimension", "description": "With mode=control: the size to apply." },
+        "cols": { "$ref": "#/$defs/Dimension", "description": "With mode=control: the size to apply, only if control is actually taken." },
         "rows": { "$ref": "#/$defs/Dimension" },
         "resume_seq": { "$ref": "#/$defs/Seq", "description": "Last seq this client rendered. If everything after it is still buffered, the stream starts with those chunks instead of a snapshot." },
         "label": { "type": "string", "maxLength": 80, "description": "Display name of this client (\"iPhone\", \"Chrome · macOS\"). Ignored on encrypted devices, which use the paired-client label." }

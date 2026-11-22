@@ -81,8 +81,9 @@ class Reader {
     }
   }
 
-  untilText(pattern: RegExp, timeoutMs = 10_000): Promise<TerminalEvent> {
-    return this.until(() => pattern.test(this.text), `output ${pattern}`, timeoutMs);
+  /** Consume frames until the consumed output matches (no-op when it already does). */
+  async untilText(pattern: RegExp, timeoutMs = 10_000): Promise<void> {
+    if (!pattern.test(this.text)) await this.until(() => pattern.test(this.text), `output ${pattern}`, timeoutMs);
   }
 
   control(predicate: (event: Extract<TerminalEvent, { type: "control" }>) => boolean = () => true) {
@@ -360,6 +361,47 @@ describe("TerminalManager: controller and viewers", { skip: IS_WINDOWS }, () => 
       (({ controller, generation, viewers }) => ({ controller, generation, viewers }))(terminals.get(info.id)),
       { controller: null, generation: 6, viewers: 1 },
     );
+    await terminals.close(info.id);
+  });
+
+  test("attach with mode=control never takes control from another client; only claim does", async () => {
+    const terminals = manager({ controlGraceMs: 5000 });
+    const info = await terminals.create({ shell: SH, cwd: root, mode: "pipe", cols: 80, rows: 24 });
+    const a = new Reader(terminals.attach(info.id, { clientId: "client-a", mode: "control" }));
+    assert.equal((await a.control()).generation, 1);
+    const b = new Reader(terminals.attach(info.id, { clientId: "client-b" }));
+    await b.control();
+    assert.equal(b.att.claim(), true);
+    await a.control((e) => e.generation === 2 && !e.you);
+
+    // A's stream drops and A comes back with mode=control within B's tenure: A is a viewer, size untouched.
+    a.att.close();
+    const a2 = new Reader(terminals.attach(info.id, { clientId: "client-a", mode: "control", cols: 50, rows: 10 }));
+    assert.equal((await a2.next())?.type, "snapshot");
+    const a2Ctl = await a2.control();
+    assert.deepEqual(
+      { you: a2Ctl.you, generation: a2Ctl.generation, controller: a2Ctl.controller?.client_id, cols: a2Ctl.cols },
+      { you: false, generation: 2, controller: "client-b", cols: 80 },
+    );
+    assert.equal(terminals.get(info.id).cols, 80);
+    assert.equal(await a2.att.input("echo nope\n", 2), false);
+
+    // B's stream drops: during its grace another client's mode=control is still only a viewer…
+    b.att.close();
+    await a2.control((e) => e.controller?.connected === false);
+    const c = new Reader(terminals.attach(info.id, { clientId: "client-c", mode: "control" }));
+    const cCtl = await c.control();
+    assert.deepEqual({ you: cCtl.you, generation: cCtl.generation, controller: cCtl.controller?.client_id }, { you: false, generation: 2, controller: "client-b" });
+    // …while B itself reconnecting with mode=control gets control back (generation + 1).
+    const b2 = new Reader(terminals.attach(info.id, { clientId: "client-b", mode: "control" }));
+    const b2Ctl = await b2.control();
+    assert.deepEqual({ you: b2Ctl.you, generation: b2Ctl.generation, connected: b2Ctl.controller?.connected }, { you: true, generation: 3, connected: true });
+
+    // An explicit claim is an unconditional takeover.
+    assert.equal(a2.att.claim(), true);
+    const taken = await b2.control((e) => e.generation === 4);
+    assert.equal(taken.you, false);
+    assert.equal(taken.controller?.client_id, "client-a");
     await terminals.close(info.id);
   });
 

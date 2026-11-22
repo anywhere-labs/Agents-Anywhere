@@ -102,9 +102,13 @@ export interface AttachOptions {
   clientId?: string;
   /** Display name. Default: the client id. */
   label?: string;
-  /** `control` claims control right away. Default `view`. */
+  /**
+   * `control` takes control only when nobody holds it or the current controller (connected or in its grace
+   * period) has this `clientId`; otherwise the stream joins as a viewer. Only `claim()` takes over unconditionally.
+   * Default `view`.
+   */
   mode?: AttachMode;
-  /** With `mode: "control"`: the size to apply. */
+  /** With `mode: "control"`: the size to apply, only if control is actually taken. */
   cols?: number;
   rows?: number;
   /** Last seq the client rendered: if everything after it is buffered, the stream starts with those chunks. */
@@ -768,7 +772,13 @@ export class TerminalManager {
     }
 
     if (sub.done) return attachment; // dropped while queueing the first frames (backlog)
-    if (running && opts.mode === "control" && terminal.info.owner !== "agent") {
+    // mode=control never takes control away from another client (only an explicit claim does).
+    const takesControl =
+      running &&
+      opts.mode === "control" &&
+      terminal.info.owner !== "agent" &&
+      (terminal.controller === null || terminal.controller.client_id === clientId);
+    if (takesControl) {
       this.#claim(terminal, sub, { cols: opts.cols, rows: opts.rows, keepSize: opts.cols === undefined && opts.rows === undefined });
     } else {
       sub.push(this.#controlEvent(terminal, sub));

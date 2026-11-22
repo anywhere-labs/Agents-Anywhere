@@ -76,7 +76,7 @@ src/
 - **PTY**：默认用可选依赖 `@lydell/node-pty`（各平台预编译包）启动 shell，`TERM=xterm-256color`，改尺寸会真正下发到 PTY。它在第一次创建终端时才加载；加载或启动失败时退回 `script`（Linux 且装有 util-linux `script`）或 `pipe`（`TERM=dumb`），实际模式写在 `TerminalInfo.mode` 里。`pipe` 模式的输出是裸 `\n`，客户端渲染实时输出时应打开 xterm.js 的 `convertEol`（快照里已经是 `\r\n`）。
 - **第一帧是屏幕快照**：每个终端有一个 `@xterm/headless` 模拟器，接收全部输出，保留 1000 行历史。`attach` 的第一帧是序列化的屏幕（含全屏程序的备用屏、光标位置和终端模式），快照带上它已包含到的 `seq`，之后是快照之后缓冲的输出和实时输出，不重不漏。
 - **序号与续传**：输出块从 1 开始编号，保留最近约 1 MiB。`attach` 带 `resume_seq` 且后面的输出都还在缓冲区里时只补发缺的块，不发快照；否则发快照。积压超过 4 MiB 的连接会被断开，重连后从快照开始。
-- **控制者**：每个终端最多一个控制者，其他连接只读。`attach` 的 `mode: "control"` 或 `claim` 帧立即接管，控制代数 `generation` 加一；`input` / `resize` 必须来自控制者的这条连接并带上当前代数，否则丢弃并回一次 `rejected`（每条连接每代最多一次）。控制者的连接断开后保留 10 秒（`connected: false`），期间重新接管会恢复控制；超时后清空控制者（代数加一），尺寸保持不变。每次控制者、代数或尺寸变化都会给所有连接发 `control` 帧（`you` 表示这条连接是不是控制者）。
+- **控制者**：每个终端最多一个控制者，其他连接只读。`claim` 帧立即接管，控制代数 `generation` 加一；`attach` 的 `mode: "control"` 不抢控制权，只在没有控制者、或当前控制者（在线或在宽限期内）的 `client_id` 与调用方相同时才成为控制者（这时才应用 `attach` 的 `cols/rows`），否则按旁观者加入；`input` / `resize` 必须来自控制者的这条连接并带上当前代数，否则丢弃并回一次 `rejected`（每条连接每代最多一次）。控制者的连接断开后保留 10 秒（`connected: false`），期间重新接管会恢复控制；超时后清空控制者（代数加一），尺寸保持不变。每次控制者、代数或尺寸变化都会给所有连接发 `control` 帧（`you` 表示这条连接是不是控制者）。
 - **调用方身份**（`client_id`）：端到端加密的调用是 `e2e:<客户端公钥>`，名称取本机配对记录；普通隧道是隧道 `principal`，名称取 `attach` 里的 `label`；临时 token 的调用取 token principal，其余（控制面、MCP）是 `control`。
 - **一元 `resize`**：没有连接可以带代数，所以只在调用方身份等于当前控制者的 `client_id` 时执行，否则返回 `failed_precondition`（`details.reason = "not_controller"`）。正常客户端应在 `attach` 流里发 `resize` 帧。
 - `owner` 目前都是 `user`；`agent`（ACP `terminal/create` 创建的终端，所有人只读）已预留，对它的 `claim`、`input`、`resize` 都会被拒（`agent_owned`）。

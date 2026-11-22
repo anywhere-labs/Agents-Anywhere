@@ -254,7 +254,9 @@ interface TerminalFrame {
 /** Client side of `aa.v3.Terminals/attach`: reads frames in the background (as a real client must), validating each. */
 class TerminalStream {
   readonly seen: TerminalFrame[] = [];
+  /** Output text of the frames consumed so far. */
   text = "";
+  /** Seq of the last output frame received. */
   lastSeq = 0;
   ended = false;
   error: unknown;
@@ -268,10 +270,7 @@ class TerminalStream {
       try {
         for await (const frame of call) {
           check(frame);
-          if (frame.type === "output" && frame.data) {
-            this.text += Buffer.from(frame.data, "base64").toString("utf8");
-            this.lastSeq = frame.seq ?? this.lastSeq;
-          }
+          if (frame.type === "output") this.lastSeq = frame.seq ?? this.lastSeq;
           this.seen.push(frame);
         }
       } catch (error) {
@@ -287,6 +286,8 @@ class TerminalStream {
     const frame = await eventually(() => this.seen[this.#read] ?? (this.ended ? null : undefined), "next terminal frame");
     if (frame === null) throw new Error(`terminal stream ended: ${String(this.error)}`);
     this.#read++;
+    // Text grows only with consumed frames, so untilText never skips past a later frame.
+    if (frame.type === "output" && frame.data) this.text += Buffer.from(frame.data, "base64").toString("utf8");
     return frame;
   }
 
@@ -299,8 +300,9 @@ class TerminalStream {
     }
   }
 
-  untilText(pattern: RegExp): Promise<TerminalFrame> {
-    return this.until(() => pattern.test(this.text), `output ${pattern}`);
+  /** Consume frames until the consumed output matches (no-op when it already does). */
+  async untilText(pattern: RegExp): Promise<void> {
+    if (!pattern.test(this.text)) await this.until(() => pattern.test(this.text), `output ${pattern}`);
   }
 
   control(predicate: (frame: TerminalFrame) => boolean = () => true): Promise<TerminalFrame> {
@@ -601,20 +603,21 @@ describe("ConnectorHost against a real meshcall-router", { skip: SKIP, timeout: 
     assert.ok(info);
     assert.deepEqual([info.viewers, info.generation, info.controller?.client_id, info.controller?.connected], [2, 2, "user:u1/client:phone", true]);
 
-    // A drops off and comes back with resume_seq: only the missed output, no snapshot.
+    // A drops off and comes back with resume_seq (and mode=control, which does not take control from B):
+    // only the missed output, no snapshot, and A is a viewer.
     const lastSeen = a.lastSeq;
     assert.ok(lastSeen > 0);
     await a.call.cancel();
     await eventually(() => host.terminals.get(created.id).viewers === 1 || undefined, "laptop stream gone");
     await send(b, input("echo while-away-$((5+5))\n", 2));
     await b.untilText(/while-away-10/);
-    const again = open(laptop, { id: created.id, resume_seq: lastSeen, label: "Chrome · macOS" });
+    const again = open(laptop, { id: created.id, mode: "control", cols: 100, rows: 30, resume_seq: lastSeen, label: "Chrome · macOS" });
     const firstBack = await again.next();
     assert.equal(firstBack.type, "output", "a resumed stream starts with output, not a snapshot");
     assert.equal(firstBack.seq, lastSeen + 1);
     await again.untilText(/while-away-10/);
     const backCtl = await again.control();
-    assert.equal(backCtl.you, false);
+    assert.deepEqual([backCtl.you, backCtl.generation, backCtl.controller?.client_id, backCtl.cols], [false, 2, "user:u1/client:phone", 70]);
     assert.ok(!again.seen.some((f) => f.type === "snapshot"));
 
     // The controller types `exit`: every stream ends with the exit frame.

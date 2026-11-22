@@ -182,7 +182,8 @@ export class TerminalsService {
   @method.duplex({
     description:
       "Attach to a terminal: a screen snapshot (or the missed output when resume_seq is still buffered), the control state, then live output. " +
-      "Only the controller's input and resizes are applied; claim takes control, release gives it up.",
+      "Only the controller's input and resizes are applied. mode=control takes control only if nobody (or this same client) holds it; " +
+      "a claim frame takes over unconditionally, release gives it up.",
     reason: "keystrokes and output interleave for as long as the terminal is open",
     request: AttachRequestSchema,
     inputItem: TerminalInputSchema,
