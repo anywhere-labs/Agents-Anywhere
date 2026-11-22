@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { useParams, useRouter, useSearchParams } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react"
 import {
   ActivityIcon,
@@ -37,6 +37,7 @@ import { PairDeviceDialog } from "@/components/workbench/pair-device-dialog"
 import { WorkbenchShell } from "@/components/workbench/workbench-shell"
 import { TerminalsPanel } from "@/components/terminal/terminals-panel"
 import { formatKeyFingerprint, PairingError } from "@/lib/mesh/pairing"
+import { useRouteParams } from "@/lib/platform/route-params"
 import { useWorkbench } from "@/lib/state/workbench-context"
 import type {
   DeviceSettings,
@@ -47,7 +48,7 @@ import type {
 } from "@/lib/types/v3"
 
 function DeviceWorkbenchPageInner() {
-  const params = useParams<{ deviceId: string }>()
+  const params = useRouteParams<{ deviceId: string }>("/devices/[deviceId]")
   const searchParams = useSearchParams()
   const router = useRouter()
   const { t } = useI18n()

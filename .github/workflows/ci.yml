@@ -65,6 +65,7 @@ jobs:
       web: ${{ steps.paths.outputs.web }}
       web_v3: ${{ steps.paths.outputs.web_v3 }}
       desktop: ${{ steps.paths.outputs.desktop }}
+      desktop_v3: ${{ steps.paths.outputs.desktop_v3 }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -84,6 +85,7 @@ jobs:
           web=false
           web_v3=false
           desktop=false
+          desktop_v3=false
 
           run_everything() {
             echo "::notice::$1; running every check"
@@ -96,6 +98,7 @@ jobs:
             web=true
             web_v3=true
             desktop=true
+            desktop_v3=true
           }
 
           if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
@@ -119,7 +122,7 @@ jobs:
                   ;;
                 .github/workflows/dsh-bridge.yml) plugin=true ;;
                 .github/actions/setup-yarn/action.yml)
-                  plugin=true; web=true; web_v3=true; desktop=true; connector_v3=true ;;
+                  plugin=true; web=true; web_v3=true; desktop=true; connector_v3=true; desktop_v3=true ;;
                 .github/workflows/*|.github/actions/*|contracts/*)
                   run_everything "shared file changed: $path"
                   ;;
@@ -138,11 +141,12 @@ jobs:
                 web-next/*) web=true ;;
                 web-v3/*) web_v3=true ;;
                 desktop-workbench/*) desktop=true ;;
+                desktop-v3/*) desktop_v3=true ;;
               esac
             done < "$RUNNER_TEMP/changed-paths"
           fi
 
-          for scope in plugin connector acp server server_v3 connector_v3 web web_v3 desktop; do
+          for scope in plugin connector acp server server_v3 connector_v3 web web_v3 desktop desktop_v3; do
             echo "$scope=${!scope}" >> "$GITHUB_OUTPUT"
             echo "$scope: ${!scope}"
           done
@@ -527,3 +531,31 @@ jobs:
           corepack yarn lint
           corepack yarn test
           corepack yarn build
+      - name: Build the static export that Desktop v3 ships
+        working-directory: web-v3
+        env:
+          AA_DESKTOP_EXPORT: "1"
+        run: corepack yarn build
+
+  desktop_v3:
+    name: Desktop v3 headless checks
+    needs: changes
+    if: needs.changes.outputs.desktop_v3 == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # The unit tests never start Electron itself.
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+      - name: Install Desktop v3 dependencies
+        uses: ./.github/actions/setup-yarn
+        with:
+          project: desktop-v3
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Typecheck and test Desktop v3 main process
+        working-directory: desktop-v3
+        run: |
+          corepack yarn typecheck
+          corepack yarn test

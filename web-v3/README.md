@@ -37,6 +37,17 @@ AA_CONTROL_SERVER_URL=http://127.0.0.1:8787 corepack yarn dev
   - 全局右侧抽屉（`⌘J`）+ 独立全页（`/assistant`）+ **「助手为主角」** 侧边栏视图切换（主列表优先显示随身助手历史对话，点击工作设备翻页钻入设备子视图）。
 - **设置页（`/settings`）**：主题与语言（仅位于外观设置，不在侧边栏重复展示）、「助手为主角」布局开关、友好本地化的账号额度说明（不暴露内部字段名）、限额云盘清理、管理员单账号云盘配额策略、MCP 授权撤销、浏览器本地 E2EE 凭据库。
 
+## Desktop 静态导出
+
+[`desktop-v3`](../desktop-v3/README.md) 把本应用构建成静态导出打进安装包，用 `app://aa/` 加载（绿锁）：
+
+```bash
+AA_DESKTOP_EXPORT=1 corepack yarn build   # 产物在 .next-desktop/，不影响同时运行的 next dev
+```
+
+- 动态路由在导出时只为占位参数 `_` 生成页面（见各路由的 `layout.tsx`），Desktop 把任意 id 映射到占位页，页面用 `useRouteParams` 从地址栏读取真实 id。
+- `lib/platform/desktop.ts` 只在 Desktop 里生效：客户端私钥与 refresh token 存入系统钥匙串、加密设备显示绿锁、控制面请求经 Desktop 主进程转发。在浏览器里这些都不起作用。
+
 ## 注意事项
 
 - 遵循仓库规范：**不提交 `yarn.lock`**（已被根目录 `.gitignore` 忽略）。

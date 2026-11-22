@@ -12,6 +12,7 @@ import {
   SparklesIcon,
 } from "lucide-react"
 
+import { DesktopThisComputer } from "@/components/desktop/this-computer"
 import { useI18n } from "@/components/i18n-provider"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -96,6 +97,8 @@ function DeviceFirstHome() {
             </div>
           )}
         </header>
+
+        <DesktopThisComputer />
 
         {/* Devices Grid */}
         <section className="space-y-3">

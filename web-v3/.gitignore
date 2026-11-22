@@ -1,5 +1,6 @@
 node_modules/
 .next/
+.next-desktop/
 out/
 build/
 dist/

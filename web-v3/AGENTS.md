@@ -14,13 +14,14 @@ Read [`.agents/skills/anywhere-ui/SKILL.md`](./.agents/skills/anywhere-ui/SKILL.
 - `lib/mesh/pairing.ts` & `lib/mesh/session-merge.ts` — Out-of-band `aa-pair://v1/...` parser, SHA-256 key fingerprint formatter, and cross-client 5-rule session merger (verified against `../contracts/aa-v3/1.0/fixtures/session-merge.json`).
 - `lib/assistant/{crypto,sync,tokens,vfs,mcp-client,runtime}.ts` — Lazy-loaded Pi Lite agent, arbitrary-password PBKDF2 + AES-256-GCM KEK/DEK encryption, dual-fingerprint sync, Tokens Anywhere PKCE + single-key reuse, OPFS/IDB Cloud VFS, and Streamable HTTP MCP client.
 - `lib/terminal/{session,keys,touch,mesh-transport,bridge-transport}.ts` & `components/terminal/*` — Framework-free `aa.v3.Terminals` client (snapshot/seq resume, controller/generation rules, auto-claim, keep_size), key→sequence map, touch gesture state machine, MeshCall duplex and mobile `term.*` bridge transports, and the xterm.js view (`docs/v3/terminal-proposal.md`).
+- `lib/platform/{desktop,export-params,route-params}` & `components/desktop/*` — Desktop (`../desktop-v3`) integration: `window.aaDesktop` bridge (OS-keychain secrets, managed connector), green-lock trust tier, control-plane proxy URLs, and the `AA_DESKTOP_EXPORT=1` static export (dynamic routes pre-rendered for the placeholder `_`; read ids with `useRouteParams`, never `useParams`). All of it is inert in the browser.
 - `lib/state/{workbench-context,assistant-context}.tsx` — Top-level providers wired into `components/providers.tsx`.
 - `components/workbench/*` & `components/conversation/*` — Workbench chrome (`WorkbenchShell`, dual-mode `WorkbenchSidebar`, `E2eeLockBadge`, `AssistantPanel`, dialogs) and timeline conversation renderer.
 
 ## Hard Product & Design Guardrails
 
 - **AA v3 Auth Boundary**: AA only supports simple password login (`local` mode), role permissions (`admin` / `member`), and acting as an OAuth/OIDC client (`oidc` mode + Tokens Anywhere client). Do NOT add IdP or general OAuth provider UI to `web-v3`.
-- **Web Grey Lock**: Encrypted devices in Web MUST render the grey lock tier (`trust_tier: "web_browser"`), NEVER green lock, and NEVER fall back to plaintext when locally pinned (`require_e2ee: true`).
+- **Web Grey Lock**: Encrypted devices in a browser MUST render the grey lock tier (`trust_tier: "web_browser"`), NEVER green lock, and NEVER fall back to plaintext when locally pinned (`require_e2ee: true`). Only the bundle shipped inside Desktop (`isDesktopApp()` in `lib/platform/desktop.ts`) is a verified app and renders the green lock (`verified_app`).
 - **Any-Password Assistant E2EE**: NEVER enforce an artificial minimum password length or block weak passwords on assistant encryption; only show a calm advisory for short passwords.
 - **Anywhere UI Discipline (enforced by `tests/design-discipline.test.ts` & `tests/i18n.test.ts`)**:
   - Zero hard-coded hex colors in `.tsx` files (except `viewport.themeColor` in `app/layout.tsx`).
@@ -30,6 +31,8 @@ Read [`.agents/skills/anywhere-ui/SKILL.md`](./.agents/skills/anywhere-ui/SKILL.
   - Never expose raw dotted claim keys (like `aa.drive_quota_mb`) to end users; render allowances with `DetailCard` / `DetailList` using rich localized copy.
   - Keep `lib/locales/en.ts` and `lib/locales/zh-CN.ts` in exact key + placeholder parity.
 - **No Lockfile Commits**: Never commit `yarn.lock`.
+
+- **Desktop static export**: `desktop-v3` ships this app as a static export (`AA_DESKTOP_EXPORT=1 corepack yarn build`). Do not add server-only features (route handlers, middleware/proxy, server actions, `cookies()`/`headers()`); new dynamic routes need a `layout.tsx` with `generateStaticParams() { return exportPlaceholderParams(...) }` plus `PathKeyed`, and their pages must use `useRouteParams`.
 
 ## Verification
 

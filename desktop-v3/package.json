@@ -1,0 +1,101 @@
+{
+  "name": "agents-anywhere-desktop-v3",
+  "productName": "Agents Anywhere",
+  "private": true,
+  "version": "3.0.0-alpha.1",
+  "description": "Agents Anywhere v3 Desktop: the v3 workbench shipped locally, plus a managed connector-v3 and local MeshCall Router",
+  "packageManager": "yarn@4.6.0",
+  "main": "dist/src/main/main.js",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build:main": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.json",
+    "build:web": "node scripts/build-web.mjs",
+    "build:connector": "node scripts/bundle-connector.mjs",
+    "build": "yarn build:main && yarn build:web && yarn build:connector",
+    "dev": "node scripts/dev.mjs",
+    "start": "yarn build:main && electron .",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "yarn build:main && node --test dist/tests/*.test.js",
+    "package": "yarn build && electron-builder --publish never",
+    "package:dir": "yarn build && electron-builder --dir --publish never"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/qrcode": "^1.5.5",
+    "electron": "^45.4.1",
+    "electron-builder": "^26.18.0",
+    "typescript": "^5.8.3"
+  },
+  "build": {
+    "appId": "dev.agentsanywhere.desktop.v3",
+    "productName": "Agents Anywhere",
+    "artifactName": "AgentsAnywhere-${version}-${os}-${arch}.${ext}",
+    "directories": {
+      "output": "release",
+      "buildResources": "resources"
+    },
+    "files": [
+      "dist/src/**",
+      "!dist/src/**/*.map",
+      "build/web/**",
+      "resources/icon.png",
+      "config.json",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "build/connector",
+        "to": "connector",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "protocols": [
+      {
+        "name": "Agents Anywhere",
+        "schemes": [
+          "agents-anywhere"
+        ]
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "resources/icon.icns",
+      "hardenedRuntime": true,
+      "entitlements": "resources/entitlements.mac.plist",
+      "entitlementsInherit": "resources/entitlements.mac.plist",
+      "gatekeeperAssess": false,
+      "notarize": false,
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "win": {
+      "icon": "resources/icon.ico",
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "linux": {
+      "icon": "resources/icon.png",
+      "category": "Development",
+      "target": [
+        "AppImage",
+        "deb"
+      ]
+    },
+    "afterPack": "scripts/after-pack.cjs"
+  },
+  "author": {
+    "name": "Anywhere Labs"
+  }
+}

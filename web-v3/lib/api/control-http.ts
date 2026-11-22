@@ -25,6 +25,7 @@ import type {
   RegisterDeviceResponse,
   UserView,
 } from "@/lib/types/v3"
+import { clientPlatform, controlFetchUrl } from "@/lib/platform/desktop"
 
 export class ControlApiError extends Error {
   readonly status: number
@@ -59,7 +60,7 @@ async function requestJson<T>(
   }
   if (token) merged.set("Authorization", `Bearer ${token}`)
 
-  const res = await fetch(`${normalizeServerUrl(serverUrl)}${path}`, {
+  const res = await fetch(controlFetchUrl(`${normalizeServerUrl(serverUrl)}${path}`), {
     ...rest,
     headers: merged,
   })
@@ -100,7 +101,7 @@ export function loginWithPassword(
 ): Promise<AuthTokenResponse> {
   return requestJson<AuthTokenResponse>(serverUrl, "/auth/login", {
     method: "POST",
-    body: JSON.stringify({ ...payload, client_platform: "web" }),
+    body: JSON.stringify({ ...payload, client_platform: clientPlatform() }),
   })
 }
 
@@ -116,7 +117,7 @@ export function registerWithPassword(
 ): Promise<AuthTokenResponse> {
   return requestJson<AuthTokenResponse>(serverUrl, "/auth/register", {
     method: "POST",
-    body: JSON.stringify({ ...payload, client_platform: "web" }),
+    body: JSON.stringify({ ...payload, client_platform: clientPlatform() }),
   })
 }
 
@@ -489,7 +490,7 @@ export async function streamAssistantEvents(
   onEvent: (msg: AssistantSseMessage) => void,
   signal: AbortSignal
 ): Promise<void> {
-  const res = await fetch(`${normalizeServerUrl(serverUrl)}/assistant/events`, {
+  const res = await fetch(controlFetchUrl(`${normalizeServerUrl(serverUrl)}/assistant/events`), {
     method: "GET",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -621,7 +622,7 @@ export async function provisionBuiltInAssistantMcpToken(
     redirect_uri: redirectUri,
     code_verifier: verifier,
   })
-  const tokRes = await fetch(`${base}/oauth/token`, {
+  const tokRes = await fetch(controlFetchUrl(`${base}/oauth/token`), {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
     body: form.toString(),
