@@ -1,0 +1,17 @@
+node_modules/
+.next/
+out/
+build/
+dist/
+.turbo/
+yarn.lock
+package-lock.json
+pnpm-lock.yaml
+.yarn/
+!.yarnrc.yml
+.env
+.env.*
+!.env.example
+.DS_Store
+*.tsbuildinfo
+next-env.d.ts
