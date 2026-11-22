@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input"
 import { fetchAuthConfig, normalizeServerUrl } from "@/lib/api/control-http"
 import { startOidcLogin } from "@/lib/auth/oidc"
 import { APP_CONFIG } from "@/lib/config"
+import { safeNextPath } from "@/lib/oauth/consent"
 import { useWorkbench } from "@/lib/state/workbench-context"
 import type { AuthConfigResponse } from "@/lib/types/v3"
 
@@ -24,6 +25,8 @@ function SignInInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const isAddingAccount = searchParams.get("add") === "1"
+  // Where to go after signing in, e.g. back to an MCP consent page (`/oauth/authorize?...`).
+  const nextPath = safeNextPath(searchParams.get("next")) ?? "/"
 
   const {
     ready,
@@ -51,9 +54,9 @@ function SignInInner() {
   useEffect(() => {
     if (!ready) return
     if (activeAccount && !isAddingAccount) {
-      router.replace("/")
+      router.replace(nextPath)
     }
-  }, [ready, activeAccount, isAddingAccount, router])
+  }, [ready, activeAccount, isAddingAccount, nextPath, router])
 
   const loadConfig = async (url: string) => {
     if (!url.trim()) return
@@ -92,7 +95,7 @@ function SignInInner() {
       const authorizeUrl = await startOidcLogin({
         serverUrl,
         oidc: config.oidc,
-        returnTo: "/",
+        returnTo: nextPath,
       })
       window.location.assign(authorizeUrl)
     } catch (err) {
@@ -117,7 +120,7 @@ function SignInInner() {
       } else {
         await signInLocal({ serverUrl, email: email.trim(), password })
       }
-      router.replace("/")
+      router.replace(nextPath)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
     } finally {

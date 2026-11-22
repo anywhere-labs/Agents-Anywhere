@@ -33,7 +33,7 @@ def get_assistant_service(request: Request) -> AssistantService:
     return request.app.state.assistant_service
 
 
-def _bearer_token(authorization: str | None) -> str:
+def bearer_token(authorization: str | None) -> str:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise UnauthenticatedError("missing Bearer authorization header")
     token = authorization[7:].strip()
@@ -46,7 +46,7 @@ async def current_user(
     auth: Annotated[AuthService, Depends(get_auth_service)],
     authorization: str | None = Header(default=None),
 ) -> UserView:
-    return await auth.authenticate_access_token(_bearer_token(authorization))
+    return await auth.authenticate_access_token(bearer_token(authorization))
 
 
 async def current_own_session_user(
@@ -54,7 +54,7 @@ async def current_own_session_user(
     authorization: str | None = Header(default=None),
 ) -> UserView:
     """Require the user's own first-party login session (rejects MCP / third-party OAuth apps)."""
-    token = _bearer_token(authorization)
+    token = bearer_token(authorization)
     if token.startswith("aamcp_"):
         raise ForbiddenError(
             "Tokens Anywhere managed key is not accessible to OAuth/MCP apps",
@@ -84,7 +84,7 @@ async def current_drive_caller(
     device_secret: str | None = Header(default=None, alias="X-AA-Device-Secret"),
 ) -> DriveCaller:
     if authorization:
-        user = await auth.authenticate_access_token(_bearer_token(authorization))
+        user = await auth.authenticate_access_token(bearer_token(authorization))
         return DriveCaller(
             user_id=user.id,
             actor=f"user:{user.id}",
