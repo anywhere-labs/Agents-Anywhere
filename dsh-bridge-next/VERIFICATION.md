@@ -1,5 +1,23 @@
 # DSH Bridge Next 验证记录
 
+## DSH 0.2.3 官方组件样式顺序（2026-11-23）
+
+在 DSH Desktop Beta/Next（0.2.3-alpha.2）中，「远程控制」弹窗变窄：「登录和连接」折成两行，底部两个按钮从并排变成上下排。原因是 0.2.3 改由渲染器在页面挂载时插入官方组件库（`@deepseek-ai/dsh-client-ui-primitives`）的样式（DSH 仓库 `docs/upgrade-guide/v0.2.2-rc.2/client-module-metadata/`），插入位置在插件自行插入的样式之后；0.2.2 及以前组件库样式在页面 CSS 文件里，最先加载。于是插件里只用一个类名、覆盖官方组件同名属性的规则，在 0.2.3 上输给了组件库：
+
+- 弹窗宽度：Modal 自己的 `.dialog { width: min(380px, 100%) }` 盖掉了插件的 560px（未登录）、480px（已登录）和 820px（运行日志）。
+- 自建服务地址输入框：Input 的 `.wrap`（32px 高、`0 8px` 内边距）盖掉了插件的 44px 高、12px 内边距和圆角。
+
+#829 只在 jsdom 里检查插件前端：那里没有组件库样式，也不做布局，所以当时没有发现。
+
+修复：传给官方组件的类名一律用两个类名的选择器覆盖（`.dialog.accountDialog`、`.dialog .dialogContent`、`.section .input`、`.status .stateDot`、`.panel .recover`、`.panel .input`），优先级高于组件库的单类名规则，与插入顺序无关，在 0.2.2 及更早版本上效果不变。真正冲突的只有弹窗宽度和地址输入框两处，其余几处一并改写是为了满足下面的检查。`check:build` 新增检查：扫描 `src/client` 中传给官方组件的 `className`，对应 CSS 模块里如果有只由这个类名组成的选择器就失败；拿修复前的源码运行，9 处都被报出。
+
+验证：
+
+- 在无头 Chrome 中按 0.2.3 的顺序摆放样式（插件样式在前，用 alpha.2 组件库的 `Modal.module.css`、`Input.module.css` 编译出的样式在后）并量尺寸：修复前三种弹窗都是 380px、输入框 32px 高，与实机一致；修复后为 560、480、820px，输入框 44px 高、`0 12px` 内边距、12px 圆角。
+- Node 24.22.3 与 Node 22.23.3 上 `corepack yarn check` 都通过，259 项测试全部通过。
+
+未做：在 DSH Desktop 和 DSH 网页版中实际打开弹窗确认。
+
 ## DSH 0.2.3-alpha.2 测试基线与适配（2026-11-23）
 
 `@deepseek-ai/dsh-*` 开发依赖从 `0.2.2-rc.5` 升到 `0.2.3-alpha.2`。alpha 版从 DSH master 切出：alpha.1 比 rc.5 多 2343 个提交，alpha.2 再加 5 个，rc.3 以来本记录列为「master 上尚未发布」的三项变化都在其中。alpha.2 用新版本号发布了 Cordis 家族，开发依赖随之改为 `cordis` 4.2.0-alpha.1，`cordis-plugin-group`、`cordis-plugin-include`、`cordis-plugin-loader` 1.2.0-alpha.1，`schemastery` 3.20.0-alpha.1（`resolutions` 同步）。Cordis 与 Schemastery 的 peer 加上 `~4.2.0-alpha.1`、`~3.20.0-alpha.1`。DSH 判断插件兼容性时预发布版本参与范围匹配，Typert peer `>=0.2.0-rc.1 <0.3.0-0` 已经包含 `0.2.3-alpha.2`，不变。
