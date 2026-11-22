@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { useParams, useRouter } from "next/navigation"
+import { useRouter } from "next/navigation"
 import {
   useCallback,
   useEffect,
@@ -47,6 +47,7 @@ import {
 } from "@/lib/api/control-http"
 import { sha256Hex } from "@/lib/assistant/crypto"
 import { PairingError } from "@/lib/mesh/pairing"
+import { useRouteParams } from "@/lib/platform/route-params"
 import { useWorkbench } from "@/lib/state/workbench-context"
 import { TimelineStore } from "@/lib/timeline/store"
 import type { SessionState } from "@/lib/types/v3"
@@ -91,7 +92,7 @@ function stateBadgeLabel(
 }
 
 export default function SessionWorkspacePage() {
-  const params = useParams<{ deviceId: string; sessionId: string }>()
+  const params = useRouteParams<{ deviceId: string; sessionId: string }>("/sessions/[deviceId]/[sessionId]")
   const router = useRouter()
   const { t } = useI18n()
   const {
