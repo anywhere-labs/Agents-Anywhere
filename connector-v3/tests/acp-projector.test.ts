@@ -224,6 +224,24 @@ describe("AcpTimelineProjector", () => {
     assert.equal(assistant()[0]?.turn_id, user.id);
   });
 
+  it("matches echoed attachment links by URI, whatever name the agent gives them", () => {
+    const { projector, send, all, assistant } = setup();
+    const user = send("Read the file");
+    projector.beginTurn(user.id, [
+      { type: "text", text: "Read the file" },
+      { type: "resource_link", uri: "file:///p/.agents-anywhere/attachments/s/abc-notes.txt", name: "notes.txt" },
+    ]);
+    projector.handleUpdate({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "Read the file" } });
+    projector.handleUpdate({
+      sessionUpdate: "user_message_chunk",
+      content: { type: "resource_link", uri: "file:///p/.agents-anywhere/attachments/s/abc-notes.txt", name: "abc-notes.txt" },
+    });
+    projector.handleUpdate(text("secret"));
+    projector.endTurn("end_turn");
+    assert.deepEqual(all().map((m) => m.role), ["user", "assistant"]);
+    assert.equal(assistant()[0]?.turn_id, user.id);
+  });
+
   it("still records user chunks that are not an echo of the prompt (session/load replay)", () => {
     const { projector, send, all } = setup();
     projector.beginTurn(send("first").id, [{ type: "text", text: "first" }]);

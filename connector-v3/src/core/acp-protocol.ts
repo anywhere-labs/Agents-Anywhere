@@ -372,6 +372,14 @@ function toolStatus(value: unknown): ToolStatus | undefined {
 }
 
 /** Markdown-ish text of a content block (images and audio have none). */
+/** The URI a link, image or embedded resource points at. */
+function blockUri(block: AcpContentBlock): string | undefined {
+  if (block.type === "resource_link") return block.uri;
+  if (block.type === "image") return block.uri;
+  if (block.type === "resource") return block.resource.uri;
+  return undefined;
+}
+
 export function contentBlockText(block: AcpContentBlock | undefined): string {
   if (block === undefined) return "";
   switch (block.type) {
@@ -558,7 +566,7 @@ export class AcpTimelineProjector {
   private replayUser: { text: string } | undefined;
   private replayCount = 0;
   /** What is left of this turn's prompt that the agent may still echo back as `user_message_chunk`s. */
-  private echo: string | undefined;
+  private echo: { text: string; uris: Set<string> } | undefined;
 
   constructor(options: AcpTimelineProjectorOptions) {
     this.store = options.store;
@@ -588,8 +596,10 @@ export class AcpTimelineProjector {
     if (this.turnId !== undefined) this.closeTurnItems(false);
     this.turnId = turnId;
     this.autonomous = false;
-    const text = prompt?.map((block) => contentBlockText(block)).join("") ?? "";
-    this.echo = text.length > 0 ? text : undefined;
+    // Text is matched by prefix; links and images by URI (agents echo them with their own names).
+    const text = prompt?.filter((block) => block.type === "text").map((block) => contentBlockText(block)).join("") ?? "";
+    const uris = new Set((prompt ?? []).map(blockUri).filter((uri): uri is string => uri !== undefined));
+    this.echo = text.trim().length > 0 || uris.size > 0 ? { text, uris } : undefined;
     this.store.updateControl(this.sessionId, { state: "running", error: undefined });
   }
 
@@ -753,14 +763,21 @@ export class AcpTimelineProjector {
   /** `session/load` replays history: user chunks become one user message that opens the next turn. */
   private userChunk(block: AcpContentBlock): void {
     if (this.echo !== undefined && this.replayUser === undefined && this.turnId !== undefined && !this.autonomous) {
-      const text = contentBlockText(block);
-      const rest = this.echo.trimStart();
-      const chunk = text.trimStart();
-      if (chunk.length === 0 || rest.startsWith(chunk)) {
-        // The agent echoing the prompt of the turn we started: already recorded.
-        const left = rest.slice(chunk.length);
-        this.echo = left.trim().length > 0 ? left : undefined;
+      // The agent echoing the prompt of the turn we started: already recorded.
+      const echo = this.echo;
+      const uri = blockUri(block);
+      if (block.type !== "text" && uri !== undefined && echo.uris.delete(uri)) {
+        if (echo.text.trim().length === 0 && echo.uris.size === 0) this.echo = undefined;
         return;
+      }
+      if (block.type === "text") {
+        const rest = echo.text.trimStart();
+        const chunk = block.text.trimStart();
+        if (chunk.length === 0 || rest.startsWith(chunk)) {
+          echo.text = rest.slice(chunk.length);
+          if (echo.text.trim().length === 0 && echo.uris.size === 0) this.echo = undefined;
+          return;
+        }
       }
       this.echo = undefined;
     }
