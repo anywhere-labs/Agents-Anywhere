@@ -103,14 +103,19 @@ struct BridgeTests {
         #expect(frame["type"]?.stringValue == "term.output")
         #expect(frame["terminal_id"]?.stringValue == "t1")
         #expect(frame["data"]?.stringValue == "aGk=")
-        let key = BridgeOut.terminalKey("ArrowUp", ctrl: true)
+        let closed = BridgeOut.terminalClosed(terminalID: "t1", fatal: true)
+        #expect(closed["type"]?.stringValue == "term.closed")
+        #expect(closed["fatal"]?.boolValue == true)
+        let view = BridgeOut.viewTerminal(deviceID: "d", terminalID: "t1", attachMode: "control")
+        #expect(view["attach_mode"]?.stringValue == "control")
+        let key = BridgeOut.terminalKey("up", ctrl: true)
         #expect(key["ctrl"]?.boolValue == true)
         #expect(key["alt"] == nil)
     }
 
     @Test func parsesIncomingMessages() {
-        #expect(BridgeIn.parse(["v": 2, "type": "ready", "version": "1.0", "capabilities": ["conversation", "terminal"]] as [String: Any])
-            == .ready(version: "1.0", capabilities: ["conversation", "terminal"]))
+        #expect(BridgeIn.parse(["v": 2, "type": "ready", "version": "1.0", "protocol": "aa.render/2", "capabilities": ["conversation", "terminal"]] as [String: Any])
+            == .ready(version: "1.0", protocol: "aa.render/2", capabilities: ["conversation", "terminal"]))
         #expect(BridgeIn.parse(#"{"v":2,"type":"load_older","session_id":"s","before_seq":12}"#) == .loadOlder(sessionID: "s", beforeSeq: 12))
         #expect(BridgeIn.parse(["v": 2, "type": "answer", "session_id": "s", "request_id": "r", "option_id": "o"] as [String: Any])
             == .answer(sessionID: "s", requestID: "r", optionID: "o"))

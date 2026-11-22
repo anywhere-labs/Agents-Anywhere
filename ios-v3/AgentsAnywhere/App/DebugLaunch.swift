@@ -8,6 +8,7 @@ import Foundation
 ///     SIMCTL_CHILD_AA_DEBUG_EMAIL=dev@aa.local SIMCTL_CHILD_AA_DEBUG_PASSWORD=… \
 ///     SIMCTL_CHILD_AA_DEBUG_ROUTE='new:pi:Say hello' xcrun simctl launch booted dev.agentsanywhere.v3
 ///
+/// `AA_DEBUG_DEVICE` (id or part of the name) picks the device; otherwise the first online normal one.
 /// `AA_DEBUG_ROUTE`: `device` (first online device), `terminal` (a new terminal on it), `settings`, `newsheet`
 /// (the new-conversation sheet), `new:<agent>:<message>` (create a conversation, send the message, open it),
 /// `conversation:<device id>:<session id>`.
@@ -30,7 +31,10 @@ enum DebugLaunch {
         // Wait for the live device list.
         var device: DeviceRecord?
         for _ in 0..<60 {
-            device = model.devices.first { $0.isOnline && !$0.isEncryptedHint }
+            let wanted = env["AA_DEBUG_DEVICE"]
+            device = model.devices.first {
+                $0.isOnline && !$0.isEncryptedHint && (wanted == nil || $0.id == wanted || $0.name.localizedCaseInsensitiveContains(wanted!))
+            }
             if device != nil { break }
             try? await Task.sleep(for: .milliseconds(500))
         }
@@ -51,6 +55,7 @@ enum DebugLaunch {
             model.selection = .device(device.id)
             do {
                 let terminal = try await services.tunnels.createTerminal(device.id)
+                model.createdTerminals.insert(terminal.id)
                 try? await Task.sleep(for: .milliseconds(600))
                 model.open(.terminal(deviceID: device.id, terminalID: terminal.id))
             } catch {

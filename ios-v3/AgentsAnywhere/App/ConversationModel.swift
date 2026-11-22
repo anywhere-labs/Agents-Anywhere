@@ -169,7 +169,8 @@ final class ConversationModel {
         if let theme { messages.append(theme.message) }
         messages.append(BridgeOut.locale(Locale.preferredLanguages.first ?? "zh-CN"))
         messages.append(BridgeOut.viewConversation(
-            deviceID: deviceID, sessionID: sessionID, agent: session?.agent ?? "", readonly: readonly, encrypted: encrypted))
+            deviceID: deviceID, sessionID: sessionID, agent: session?.agent ?? "", readonly: readonly, encrypted: encrypted,
+            me: app?.account.map { "user:\($0.user.id)/client:\($0.clientID)" }))
         if case .live = connection, let sessionRaw = state.sessionRaw {
             let snapshot: JSONValue = [
                 "type": "snapshot", "session": sessionRaw, "messages": .array(state.messages), "has_more": .bool(state.hasMore),

@@ -49,6 +49,8 @@ final class AppModel {
     var showingNewConversation = false
     var showingSettings = false
     var pairingTarget: PairingTarget?
+    /// Terminals this client created this run: the page attaches to them in control mode.
+    var createdTerminals: Set<String> = []
 
     let secrets: any SecretStore = KeychainStore()
     private var watchTask: Task<Void, Never>?

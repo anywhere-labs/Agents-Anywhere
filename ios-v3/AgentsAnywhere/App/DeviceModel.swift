@@ -91,6 +91,7 @@ final class DeviceModel {
         do {
             let terminal = try await services.tunnels.createTerminal(deviceID)
             terminals.insert(terminal, at: 0)
+            app?.createdTerminals.insert(terminal.id)
             return terminal
         } catch {
             self.error = AppModel.describe(error)

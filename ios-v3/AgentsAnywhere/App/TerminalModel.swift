@@ -10,12 +10,11 @@ final class TerminalModel {
     let deviceID: String
     let terminalID: String
     let bridge = RenderBridge()
-    var ctrlLatched = false
     var errorMessage: String?
     private(set) var attached = false
     private weak var app: AppModel?
     private var theme: RenderTheme?
-    private var call: DuplexCall<JSONValue, JSONValue>?
+    private var activeCall: DuplexCall<JSONValue, JSONValue>?
     private var readTask: Task<Void, Never>?
 
     init(app: AppModel, deviceID: String, terminalID: String) {
@@ -39,17 +38,14 @@ final class TerminalModel {
         switch message {
         case .ready:
             detach()
-            var messages: [JSONValue] = []
-            if let theme { messages.append(theme.message) }
-            messages.append(BridgeOut.locale(Locale.preferredLanguages.first ?? "zh-CN"))
-            messages.append(BridgeOut.viewTerminal(deviceID: deviceID, terminalID: terminalID))
-            bridge.send(messages)
+            Task { await sendView() }
         case .terminal(let type, let fields):
             guard (fields["terminal_id"]?.stringValue ?? terminalID) == terminalID else { return }
             switch type {
             case "attach": attach(fields)
             case "detach": detach()
             case "input", "resize", "claim", "release":
+                // Same as the attach input frames (`generation` included); only `terminal_id` is bridge-only.
                 var frame = fields
                 frame.removeValue(forKey: "terminal_id")
                 frame["type"] = .string(type)
@@ -67,54 +63,99 @@ final class TerminalModel {
         }
     }
 
+    /// theme, locale, then `view.terminal` with what this client knows about the terminal.
+    private func sendView() async {
+        let info = try? await app?.services?.tunnels.listTerminals(deviceID).first { $0.id == terminalID }
+        let justCreated = app?.createdTerminals.contains(terminalID) ?? false
+        var messages: [JSONValue] = []
+        if let theme { messages.append(theme.message) }
+        messages.append(BridgeOut.locale(Locale.preferredLanguages.first ?? "zh-CN"))
+        messages.append(BridgeOut.viewTerminal(
+            deviceID: deviceID, terminalID: terminalID, controllerLabel: UIDevice.current.name,
+            attachMode: justCreated ? "control" : nil, info: info))
+        bridge.send(messages)
+    }
+
     private func attach(_ fields: [String: JSONValue]) {
-        guard let services = app?.services, readTask == nil else { return }
-        let mode = fields["mode"]?.stringValue
-        let size: JSONValue? = if let cols = fields["cols"]?.intValue, let rows = fields["rows"]?.intValue {
-            ["type": "resize", "cols": .int(cols), "rows": .int(rows)]
-        } else { nil }
+        guard let services = app?.services else { return }
+        detach()
+        var options = fields
+        if options["label"] == nil { options["label"] = .string(UIDevice.current.name) }
         readTask = Task { [weak self] in
             guard let self else { return }
+            var fatal = false
             do {
-                let call = try await services.tunnels.attachTerminal(deviceID, terminalID: terminalID, mode: mode)
-                self.call = call
+                let stream = try await services.tunnels.attachTerminal(deviceID, terminalID: terminalID, options: options)
+                activeCall = stream
                 attached = true
-                if let size { try? await call.send(size) }
-                for try await frame in call {
+                #if DEBUG
+                injectDebugKeys()
+                #endif
+                for try await frame in stream {
+                    if frame["type"]?.stringValue == "exit" { fatal = true }
                     bridge.send(BridgeOut.terminalFrame(terminalID: terminalID, frame: frame))
                 }
-                bridge.send(BridgeOut.terminalFrame(terminalID: terminalID, frame: ["type": "closed"]))
             } catch {
-                if !Task.isCancelled { errorMessage = "终端连接断开：\(AppModel.describe(error))" }
+                if Task.isCancelled { return }
+                #if DEBUG
+                print("[terminal] attach ended: \(error)")
+                #endif
+                let code = (error as? MeshCallError)?.code.rawValue
+                fatal = code == "invalid_argument" || code == "not_found" || error is PairingError
+                if fatal { errorMessage = "终端连接断开：\(AppModel.describe(error))" }
             }
             attached = false
-            self.call = nil
+            activeCall = nil
             readTask = nil
+            // The page reconnects (with `resume_seq`) unless the terminal is gone.
+            bridge.send(BridgeOut.terminalClosed(terminalID: terminalID, fatal: fatal))
         }
     }
 
     private func detach() {
         readTask?.cancel()
         readTask = nil
-        if let call {
-            Task { await call.cancel() }
+        if let stream = activeCall {
+            Task { await stream.cancel() }
         }
-        call = nil
+        activeCall = nil
         attached = false
     }
 
     private func sendFrame(_ frame: JSONValue) {
-        guard let call else { return }
+        guard let stream = activeCall else { return }
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["AA_DEBUG_BRIDGE"] != nil { print("[terminal] ← \(frame)") }
+        #endif
         Task {
-            do { try await call.send(frame) } catch { errorMessage = AppModel.describe(error) }
+            do { try await stream.send(frame) } catch { errorMessage = AppModel.describe(error) }
         }
     }
 
-    /// A key of the extra-keys bar. Ctrl latches for one key.
+    #if DEBUG
+    /// `AA_DEBUG_TERM_KEYS`: characters sent as extra-key presses after attaching (`\n` = enter), to exercise the
+    /// key → page → `term.input` → device path in the Simulator.
+    private func injectDebugKeys() {
+        guard let text = ProcessInfo.processInfo.environment["AA_DEBUG_TERM_KEYS"], !text.isEmpty else { return }
+        Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            for character in text {
+                key(character == "\n" ? "enter" : String(character))
+                try? await Task.sleep(for: .milliseconds(40))
+            }
+        }
+    }
+    #endif
+
+    /// A key of the extra-keys bar (names from the render bundle's `protocol.ts`).
     func key(_ key: String, ctrl: Bool = false) {
-        let useCtrl = ctrl || ctrlLatched
-        ctrlLatched = false
-        bridge.send(BridgeOut.terminalKey(key, ctrl: useCtrl))
+        bridge.send(BridgeOut.terminalKey(key, ctrl: ctrl))
+    }
+
+    /// Ctrl for the next character typed on the keyboard (the page latches it).
+    func latchCtrl() {
+        bridge.send(BridgeOut.terminalKey("ctrl"))
+        Haptics.play("light")
     }
 }
 
@@ -161,25 +202,24 @@ struct ExtraKeysBar: View {
     @Bindable var model: TerminalModel
 
     private let keys: [(label: String, key: String, symbol: String?)] = [
-        ("Esc", "Escape", nil), ("Tab", "Tab", nil), ("", "ArrowUp", "arrow.up"), ("", "ArrowDown", "arrow.down"),
-        ("", "ArrowLeft", "arrow.left"), ("", "ArrowRight", "arrow.right"), ("PgUp", "PageUp", nil), ("PgDn", "PageDown", nil),
-        ("Home", "Home", nil), ("End", "End", nil),
+        ("Esc", "escape", nil), ("Tab", "tab", nil), ("", "up", "arrow.up"), ("", "down", "arrow.down"),
+        ("", "left", "arrow.left"), ("", "right", "arrow.right"), ("PgUp", "page_up", nil), ("PgDn", "page_down", nil),
+        ("Home", "home", nil), ("End", "end", nil),
     ]
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
-                Button { model.ctrlLatched.toggle() } label: { keyLabel("Ctrl", symbol: nil) }
+                Button { model.latchCtrl() } label: { keyLabel("Ctrl", symbol: nil) }
                     .buttonStyle(.bordered)
-                    .tint(model.ctrlLatched ? .accentColor : nil)
-                    .accessibilityAddTraits(model.ctrlLatched ? .isSelected : [])
+                    .accessibilityHint("下一个键入的字符按 Ctrl 组合发送")
                 Button { model.key("c", ctrl: true) } label: { keyLabel("^C", symbol: nil) }
                     .buttonStyle(.bordered)
                     .accessibilityLabel("Control C")
                 ForEach(keys, id: \.key) { item in
                     Button { model.key(item.key) } label: { keyLabel(item.label, symbol: item.symbol) }
                         .buttonStyle(.bordered)
-                        .accessibilityLabel(item.key)
+                        .accessibilityLabel(item.label.isEmpty ? item.key : item.label)
                 }
             }
             .padding(.horizontal, 10)

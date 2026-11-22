@@ -351,10 +351,15 @@ public struct TerminalInfo: Codable, Sendable, Hashable, Identifiable {
     public var exitSignal: String?
     public var exitedAt: String?
     public var pid: Int?
+    /// `pty` | `pipe` | `script`.
     public var mode: String?
+    /// `user` | `agent` (agent terminals are read-only). Newer Connectors only.
+    public var owner: String?
+    public var generation: Int?
+    public var viewers: Int?
 
     enum CodingKeys: String, CodingKey {
-        case id, cwd, shell, cols, rows, running, pid, mode
+        case id, cwd, shell, cols, rows, running, pid, mode, owner, generation, viewers
         case createdAt = "created_at"
         case exitCode = "exit_code"
         case exitSignal = "exit_signal"

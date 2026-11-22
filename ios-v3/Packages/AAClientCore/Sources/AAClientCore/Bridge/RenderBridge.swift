@@ -56,11 +56,16 @@ public enum BridgeOut {
         message("locale", ["locale": .string(identifier.lowercased().hasPrefix("zh") ? "zh-CN" : "en")])
     }
 
-    public static func viewConversation(deviceID: String, sessionID: String, agent: String, readonly: Bool, encrypted: Bool) -> JSONValue {
-        message("view.conversation", [
+    /// `me`: the reader's name as the device records it (`author` / `answered.by`), shown as "you".
+    public static func viewConversation(
+        deviceID: String, sessionID: String, agent: String, readonly: Bool, encrypted: Bool, me: String? = nil
+    ) -> JSONValue {
+        var fields: [String: JSONValue] = [
             "device_id": .string(deviceID), "session_id": .string(sessionID), "agent": .string(agent),
             "readonly": .bool(readonly), "encrypted": .bool(encrypted),
-        ])
+        ]
+        if let me { fields["me"] = .string(me) }
+        return message("view.conversation", fields)
     }
 
     /// Forward an `aa.v3.Sessions/watch` event unchanged.
@@ -84,10 +89,28 @@ public enum BridgeOut {
         return message("file.data", fields)
     }
 
-    public static func viewTerminal(deviceID: String, terminalID: String, controllerLabel: String? = nil) -> JSONValue {
+    /// `attachMode` `control` when this client just created the terminal; `info` adds its mode, owner and size.
+    public static func viewTerminal(
+        deviceID: String, terminalID: String, controllerLabel: String? = nil, attachMode: String? = nil, info: TerminalInfo? = nil
+    ) -> JSONValue {
         var fields: [String: JSONValue] = ["device_id": .string(deviceID), "terminal_id": .string(terminalID)]
         if let controllerLabel { fields["controller_label"] = .string(controllerLabel) }
+        if let attachMode { fields["attach_mode"] = .string(attachMode) }
+        if let info {
+            if let mode = info.mode { fields["term_mode"] = .string(mode) }
+            if let owner = info.owner { fields["owner"] = .string(owner) }
+            fields["cols"] = .int(Int64(info.cols))
+            fields["rows"] = .int(Int64(info.rows))
+        }
         return message("view.terminal", fields)
+    }
+
+    /// The attach stream ended. `fatal`: do not reconnect (the terminal is gone). `snapshotNext`: start over from a
+    /// snapshot.
+    public static func terminalClosed(terminalID: String, fatal: Bool, snapshotNext: Bool = false) -> JSONValue {
+        var fields: [String: JSONValue] = ["terminal_id": .string(terminalID), "fatal": .bool(fatal)]
+        if snapshotNext { fields["snapshot_next"] = true }
+        return message("term.closed", fields)
     }
 
     /// An `aa.v3.Terminals/attach` output frame `{type: T, ...}` as `term.T`.
@@ -98,7 +121,9 @@ public enum BridgeOut {
         return message("term.\(type)", fields)
     }
 
-    /// A key of the native extra-keys bar; the page maps it to bytes exactly as the Web terminal does.
+    /// A key of the native extra-keys bar; the page maps it to bytes exactly as the Web terminal does. `key`:
+    /// `escape`, `tab`, `up`, `down`, `left`, `right`, `home`, `end`, `page_up`, `page_down`, a single character (with
+    /// `ctrl` / `alt`), or `ctrl` alone to latch Ctrl for the next typed character.
     public static func terminalKey(_ key: String, ctrl: Bool = false, alt: Bool = false, shift: Bool = false) -> JSONValue {
         var fields: [String: JSONValue] = ["key": .string(key)]
         if ctrl { fields["ctrl"] = true }
@@ -114,7 +139,8 @@ public enum BridgeOut {
 
 /// Messages the page sends to the native layer.
 public enum BridgeIn: Sendable, Equatable {
-    case ready(version: String?, capabilities: [String])
+    /// `protocol` is `aa.render/2` on the web-v3 bundle.
+    case ready(version: String?, protocol: String?, capabilities: [String])
     case loadOlder(sessionID: String, beforeSeq: Int)
     case answer(sessionID: String, requestID: String, optionID: String)
     case openLink(URL)
@@ -153,7 +179,7 @@ public enum BridgeIn: Sendable, Equatable {
         case "ready":
             let capabilities = object["capabilities"]?.arrayValue?.compactMap(\.stringValue) ?? []
             let version: String? = string("version") ?? object["version"]?.intValue.map { String($0) }
-            return .ready(version: version, capabilities: capabilities)
+            return .ready(version: version, protocol: string("protocol"), capabilities: capabilities)
         case "load_older":
             guard let sessionID = string("session_id"), let before = int("before_seq") else { return nil }
             return .loadOlder(sessionID: sessionID, beforeSeq: before)

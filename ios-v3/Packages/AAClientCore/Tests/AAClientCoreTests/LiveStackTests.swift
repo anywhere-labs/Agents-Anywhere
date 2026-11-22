@@ -45,7 +45,6 @@ struct LiveStackTests {
         #expect(sawDevice)
 
         let session = try await pool.createSession(device.id, agent: agent, cwd: nil, title: "iOS core live test")
-        defer { Task { try? await pool.deleteSession(device.id, sessionID: session.id) } }
 
         var state = ConversationState()
         let clientMsgID = UUID().uuidString
@@ -74,6 +73,44 @@ struct LiveStackTests {
         print("live reply from \(agent): \(reply.prefix(200))")
         let page = try await pool.listMessages(device.id, sessionID: session.id, beforeSeq: nil, limit: 10)
         #expect(!page.messages.isEmpty)
+        try? await pool.deleteSession(device.id, sessionID: session.id)
+        await pool.closeAll()
+        await control.close()
+    }
+
+    /// Create a terminal, attach in control mode, type a command and read its output back.
+    @Test(.timeLimit(.minutes(1))) func terminalRoundTrip() async throws {
+        let store = MemorySecretStore()
+        let auth = try await AuthSession.signIn(
+            controlURL: env["AA_LIVE_CONTROL_URL"]!, email: env["AA_LIVE_EMAIL"] ?? "dev@aa.local",
+            password: env["AA_LIVE_PASSWORD"] ?? "aa-dev-password", store: store)
+        let control = ControlPlaneClient(auth: auth)
+        let devices = try await control.listDevices()
+        let device = try #require(devices.first { $0.isOnline && !$0.isEncryptedHint })
+        let pool = DeviceTunnelPool(
+            issuer: control, trust: TrustStore(store: store, accountID: await auth.current.user.id), identity: ClientIdentityStore(store: store))
+        let terminal = try await pool.createTerminal(device.id)
+        let call = try await pool.attachTerminal(
+            device.id, terminalID: terminal.id, options: ["mode": "control", "cols": 80, "rows": 24, "label": "ios-test"])
+        var output = ""
+        var sent = false
+        for try await frame in call {
+            let type = frame["type"]?.stringValue
+            if type == "control", !sent {
+                let generation = frame["generation"] ?? 0
+                if frame["you"]?.boolValue != true { try await call.send(["type": "claim", "cols": 80, "rows": 24]) }
+                let command = Data("echo ios-$((40+2))\r".utf8).base64EncodedString()
+                try await call.send(["type": "input", "data": .string(command), "generation": generation])
+                sent = true
+            }
+            if let data = frame["data"]?.stringValue, let bytes = Data(base64Encoded: data) {
+                output += String(decoding: bytes, as: UTF8.self)
+                if output.contains("ios-42") { break }
+            }
+        }
+        #expect(output.contains("ios-42"))
+        await call.cancel()
+        try? await pool.closeTerminal(device.id, terminalID: terminal.id)
         await pool.closeAll()
         await control.close()
     }

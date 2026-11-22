@@ -154,6 +154,8 @@ enum RelativeTime {
 struct SessionRow: View {
     let session: SessionSummary
     var deviceName: String?
+    /// Inside a device page grouped by agent and project: only the time.
+    var compact = false
 
     var body: some View {
         HStack(spacing: 10) {
@@ -175,6 +177,7 @@ struct SessionRow: View {
     }
 
     private var subtitle: String {
+        if compact { return RelativeTime.text(session.updatedAt) }
         var parts: [String] = []
         if let deviceName { parts.append(deviceName) }
         parts.append(AgentStyle.name(session.agent))

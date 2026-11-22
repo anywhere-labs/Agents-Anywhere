@@ -101,19 +101,13 @@ struct DeviceView: View {
                 }
             }
         }
-        // Agent → project → conversation; a level with a single entry is not shown.
+        // Agent → project → conversation, one section per agent and project.
         ForEach(groups) { group in
-            Section {
-                ForEach(group.projects) { project in
-                    if group.projects.count > 1 {
-                        Text(project.name)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .listRowSeparator(.hidden)
-                    }
+            ForEach(group.projects) { project in
+                Section {
                     ForEach(project.sessions) { session in
                         NavigationLink(value: Route.conversation(deviceID: deviceID, sessionID: session.id)) {
-                            SessionRow(session: session)
+                            SessionRow(session: session, compact: true)
                         }
                         .swipeActions {
                             Button(role: .destructive) {
@@ -121,16 +115,13 @@ struct DeviceView: View {
                             } label: { Label("删除", systemImage: "trash") }
                         }
                     }
-                }
-            } header: {
-                if groups.count > 1 || group.projects.count == 1 {
+                } header: {
                     HStack(spacing: 6) {
                         Image(systemName: AgentStyle.symbol(group.agent))
                         Text(AgentStyle.name(group.agent))
-                        if group.projects.count == 1, let project = group.projects.first {
-                            Text("· \(project.name)").foregroundStyle(.secondary)
-                        }
+                        Text("· \(project.name)").foregroundStyle(.secondary)
                     }
+                    .accessibilityElement(children: .combine)
                 }
             }
         }

@@ -136,22 +136,35 @@
   }
 
   // ── terminal ──
-  const KEYS = { Escape: "\x1b", Tab: "\t", Enter: "\r", Backspace: "\x7f", ArrowUp: "\x1b[A", ArrowDown: "\x1b[B", ArrowRight: "\x1b[C",
-                 ArrowLeft: "\x1b[D", Home: "\x1b[H", End: "\x1b[F", PageUp: "\x1b[5~", PageDown: "\x1b[6~", Delete: "\x1b[3~", Insert: "\x1b[2~" };
+  // Same names as the web-v3 bundle (embed/src/terminal-channel.ts): escape, tab, up, …, page_up, or one character.
+  const KEYS = { escape: "\x1b", esc: "\x1b", tab: "\t", enter: "\r", return: "\r", backspace: "\x7f", up: "\x1b[A", arrowup: "\x1b[A",
+                 down: "\x1b[B", arrowdown: "\x1b[B", right: "\x1b[C", arrowright: "\x1b[C", left: "\x1b[D", arrowleft: "\x1b[D",
+                 home: "\x1b[H", end: "\x1b[F", pageup: "\x1b[5~", pgup: "\x1b[5~", pagedown: "\x1b[6~", pgdn: "\x1b[6~",
+                 delete: "\x1b[3~", insert: "\x1b[2~", space: " " };
+  const keyName = (key) => (key.length > 1 ? key.toLowerCase().replace(/[_\-\s]/g, "") : key);
+  let ctrlLatched = false;
+  let generation = 0;
+  const applyCtrl = (seq) => {
+    if (seq.length !== 1) return seq;
+    const c = seq.toUpperCase().charCodeAt(0);
+    return c >= 64 && c <= 95 ? String.fromCharCode(c - 64) : seq;
+  };
   function keySequence(k) {
-    let seq = KEYS[k.key];
+    const name = keyName(k.key || "");
+    let seq = KEYS[name];
     if (seq == null) {
-      seq = k.key.length === 1 ? k.key : "";
-      if (k.ctrl && seq.length === 1) {
-        const c = seq.toUpperCase().charCodeAt(0);
-        if (c >= 64 && c <= 95) seq = String.fromCharCode(c - 64);
-      }
+      seq = [...(k.key || "")].length === 1 ? k.key : "";
+      if (k.ctrl) seq = applyCtrl(seq);
     }
-    if (k.shift && k.key === "Tab") seq = "\x1b[Z";
+    if (k.shift && name === "tab") seq = "\x1b[Z";
     if (k.alt && seq) seq = "\x1b" + seq;
     return seq;
   }
-  const sendInput = (text) => { if (terminalId && text) post({ type: "term.input", terminal_id: terminalId, data: b64encode(encoder.encode(text)) }); };
+  const sendInput = (text) => {
+    if (!terminalId || !text) return;
+    if (ctrlLatched) { ctrlLatched = false; text = applyCtrl(text.slice(0, 1)) + text.slice(1); }
+    post({ type: "term.input", terminal_id: terminalId, data: b64encode(encoder.encode(text)), generation });
+  };
   const ANSI = /\x1b\[[0-9;?]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b[()][0-9A-B]|\x1b[=>78]/g;
   function termWrite(bytes) {
     let text = decoder.decode(bytes, { stream: true }).replace(ANSI, "").replace(/\r\n/g, "\n");
@@ -173,10 +186,15 @@
   }
   termInput.addEventListener("input", () => { sendInput(termInput.value.replace(/\n/g, "\r")); termInput.value = ""; });
   termInput.addEventListener("keydown", (e) => {
-    if (KEYS[e.key]) { e.preventDefault(); sendInput(keySequence({ key: e.key, ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey })); }
+    if (e.key.length > 1 && KEYS[keyName(e.key)]) {
+      e.preventDefault();
+      sendInput(keySequence({ key: e.key, ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey }));
+    }
   });
   term.addEventListener("click", () => termInput.focus());
-  window.addEventListener("resize", () => { if (terminalId) post(Object.assign({ type: "term.resize", terminal_id: terminalId }, termSize())); });
+  window.addEventListener("resize", () => { if (terminalId) post(Object.assign({ type: "term.resize", terminal_id: terminalId, generation }, termSize())); });
+  let attachMode = "control";
+  const attach = () => post(Object.assign({ type: "term.attach", terminal_id: terminalId, mode: attachMode, label: "iOS" }, termSize()));
 
   // ── native → web ──
   function receive(msg) {
@@ -209,13 +227,25 @@
       case "view.terminal":
         mode = "terminal"; scroller.style.display = "none"; term.style.display = "block"; termOut.textContent = "";
         terminalId = msg.terminal_id;
-        requestAnimationFrame(() => post(Object.assign({ type: "term.attach", terminal_id: terminalId, mode: "control" }, termSize())));
+        attachMode = msg.attach_mode || "control";
+        requestAnimationFrame(attach);
         return;
       case "term.snapshot": termOut.textContent = ""; if (msg.data) termWrite(b64decode(msg.data)); return;
       case "term.output": if (msg.data) termWrite(b64decode(msg.data)); return;
+      case "term.control":
+        generation = msg.generation || 0;
+        // The placeholder only types into terminals it controls: take control when attached as a viewer.
+        if (!msg.you && attachMode === "control") post({ type: "term.claim", terminal_id: terminalId });
+        return;
       case "term.exit": termWrite(encoder.encode("\n[进程已退出" + (msg.exit_code != null ? "，退出码 " + msg.exit_code : "") + "]\n")); return;
-      case "term.closed": termWrite(encoder.encode("\n[终端已关闭]\n")); return;
-      case "term.key": sendInput(keySequence(msg)); return;
+      case "term.closed":
+        if (msg.fatal) termWrite(encoder.encode("\n[终端已关闭]\n"));
+        else if (terminalId) setTimeout(attach, 1000);
+        return;
+      case "term.key":
+        if (keyName(msg.key || "") === "ctrl") { ctrlLatched = !ctrlLatched; return; }
+        sendInput(keySequence(msg));
+        return;
     }
   }
 
@@ -237,7 +267,7 @@
   window.aa = { receive, placeholder: true };
   // Browser debugging: the host posts native → web messages to this window.
   window.addEventListener("message", (e) => { if (e.source === window || e.source === window.parent) receive(e.data); });
-  post({ type: "ready", version: "placeholder-1", capabilities: ["conversation", "terminal"] });
+  post({ type: "ready", version: "placeholder-1", protocol: "aa.render/2", capabilities: ["batch", "theme", "conversation", "conversation.cached", "load_older", "answer", "scroll", "scroll_state", "terminal", "term.key", "open_link"] });
 })();
 </script>
 </body>

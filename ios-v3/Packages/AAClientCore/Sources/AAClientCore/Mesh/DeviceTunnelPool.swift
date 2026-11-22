@@ -330,11 +330,15 @@ public actor DeviceTunnelPool {
         let _: OkResponse = try await unary(deviceID, terminalsService, "close", ["id": terminalID])
     }
 
-    /// Attach to a terminal: input frames (`{type: input, data}`, `{type: resize, cols, rows}`, …) go in, output
-    /// frames (`output`, `exit`, and `snapshot` / `control` / … on Connectors that send them) come out unchanged.
-    public func attachTerminal(_ deviceID: String, terminalID: String, mode: String? = nil) async throws -> DuplexCall<JSONValue, JSONValue> {
+    /// Attach to a terminal. `options` are the page's `term.attach` fields (`mode`, `cols`, `rows`, `resume_seq`,
+    /// `label`); only those are passed (the Connector's attach request is strict). Input frames (`input`, `resize`,
+    /// `claim`, `release`) go in and output frames (`snapshot`, `output`, `control`, `rejected`, `exit`) come out
+    /// unchanged.
+    public func attachTerminal(_ deviceID: String, terminalID: String, options: [String: JSONValue] = [:]) async throws
+        -> DuplexCall<JSONValue, JSONValue>
+    {
         var request: [String: JSONValue] = ["id": .string(terminalID)]
-        if let mode { request["mode"] = .string(mode) }
+        for key in ["mode", "cols", "rows", "resume_seq", "label"] { if let value = options[key], !value.isNull { request[key] = value } }
         do {
             return try await tunnel(deviceID).mesh.duplex(terminalsService, "attach", JSONValue.object(request), input: JSONValue.self, output: JSONValue.self)
         } catch where isUnauthenticated(error) {
