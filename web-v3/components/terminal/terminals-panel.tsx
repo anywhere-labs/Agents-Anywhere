@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { PlusIcon, RefreshCwIcon, TerminalIcon, Trash2Icon } from "lucide-react"
 import { toast } from "sonner"
 
@@ -55,6 +55,42 @@ export function TerminalsPanel({
       active = false
     }
   }, [load, online])
+
+  // Controllers, viewers and exits change while the list is open: refresh it every 10 s while the page is visible
+  // (quietly; a failed poll keeps the last list).
+  useEffect(() => {
+    if (!online || !tunnelManager || !device) return
+    const poll = () => {
+      if (document.visibilityState !== "visible") return
+      void tunnelManager
+        .listTerminals(device)
+        .then((res) => setTerminals(res.terminals))
+        .catch(() => undefined)
+    }
+    const timer = window.setInterval(poll, 10_000)
+    document.addEventListener("visibilitychange", poll)
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener("visibilitychange", poll)
+    }
+  }, [device, online, tunnelManager])
+
+  // The attached view's live control frames are the truth for its own row; a new generation (someone claimed or
+  // released) also refreshes the whole list, since viewer counts and other rows may have moved with it.
+  const lastGeneration = useRef(new Map<string, number>())
+  const handleControl = useCallback(
+    (id: string, control: { controller: TerminalInfo["controller"]; generation: number }) => {
+      setTerminals((prev) =>
+        prev.map((term) =>
+          term.id === id ? { ...term, controller: control.controller, generation: control.generation } : term
+        )
+      )
+      const seen = lastGeneration.current.get(id)
+      lastGeneration.current.set(id, control.generation)
+      if (seen !== undefined && seen !== control.generation) void load()
+    },
+    [load]
+  )
 
   const transport = useMemo(
     () => (tunnelManager && device ? createMeshTerminalTransport(tunnelManager, device) : null),
@@ -159,6 +195,7 @@ export function TerminalsPanel({
                 transport={transport}
                 initialMode={active.id === createdId ? "control" : "view"}
                 label={label}
+                onControl={(control) => handleControl(active.id, control)}
               />
             ) : (
               <p className="py-16 text-center text-sm text-muted-foreground">{t("terminal.selectToAttach")}</p>
