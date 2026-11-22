@@ -6,7 +6,8 @@ v3 的工作设备进程（TypeScript，Node ≥ 22）。它在本机运行任�
 
 - [v3 架构提案](../docs/v3/architecture-proposal.md)
 - [设备级端到端加密准入方案](../docs/v3/e2ee-admission-proposal.md)
-- 契约：[`contracts/aa-v3/1.0/control.schema.json`](../contracts/aa-v3/1.0/control.schema.json)、[`pairing.schema.json`](../contracts/aa-v3/1.0/pairing.schema.json)
+- [终端方案](../docs/v3/terminal-proposal.md)（控制权、屏幕快照、断线续传）
+- 契约：[`contracts/aa-v3/1.0/control.schema.json`](../contracts/aa-v3/1.0/control.schema.json)、[`pairing.schema.json`](../contracts/aa-v3/1.0/pairing.schema.json)、[`terminals.schema.json`](../contracts/aa-v3/1.0/terminals.schema.json)
 - 会话数据模型：[`v3poc/protocol/timeline.ts`](../v3poc/protocol/timeline.ts)、[`services.ts`](../v3poc/protocol/services.ts)
 
 ## 架构
@@ -22,13 +23,13 @@ src/
   runtime/              Node 侧实现
     state-store.ts      数据目录里的 identity / settings / paired-clients / sessions（原子写入，0600）
     device-ops.ts       文件、目录、git、附件（有上限、不走 shell）
-    terminal-manager.ts 无原生依赖的终端
+    terminal-manager.ts 终端：PTY（可选原生依赖）或管道、无界面屏幕模拟器、输出序号、控制权
     acp-host.ts         通用 ACP 宿主：每个会话一个 Agent 进程，stdio 行分隔 JSON-RPC 2.0
   rpc/                  MeshCall 服务（targeted，instance = 设备 id）
     device-admin-service.ts  aa.v3.DeviceAdmin：ping / close_tunnel_sessions / check_update / rename
     sessions-service.ts      aa.v3.Sessions
     device-service.ts        aa.v3.Device
-    terminals-service.ts     aa.v3.Terminals（attach 为 duplex）
+    terminals-service.ts     aa.v3.Terminals（attach 为 duplex，按调用方身份判定控制者）
   host/
     control-client.ts   控制面 HTTP（register / router-token）、presence 流、推送
     connector-host.ts   ConnectorHost：装配上面所有部分，负责挂载、模式切换、重连
@@ -67,6 +68,18 @@ src/
 可选字段都接受 `null`（Python 控制面把缺省值发成 `null`）；`list` 和 `DeviceAdmin/ping` 的返回值与 `server-v3` 的 `extra="forbid"` 模型完全一致。
 
 会话忙时，新消息进入 `control.queued`，本轮结束后自动发送；`delivery: "steer"` 或 `steer_queued` 会中断当前轮次并让该消息排到下一个（ACP 没有原生的轮内插话）。
+
+### 终端（`aa.v3.Terminals`）
+
+设计见[终端方案](../docs/v3/terminal-proposal.md)，帧格式见 [`terminals.schema.json`](../contracts/aa-v3/1.0/terminals.schema.json)。
+
+- **PTY**：默认用可选依赖 `@lydell/node-pty`（各平台预编译包）启动 shell，`TERM=xterm-256color`，改尺寸会真正下发到 PTY。它在第一次创建终端时才加载；加载或启动失败时退回 `script`（Linux 且装有 util-linux `script`）或 `pipe`（`TERM=dumb`），实际模式写在 `TerminalInfo.mode` 里。`pipe` 模式的输出是裸 `\n`，客户端渲染实时输出时应打开 xterm.js 的 `convertEol`（快照里已经是 `\r\n`）。
+- **第一帧是屏幕快照**：每个终端有一个 `@xterm/headless` 模拟器，接收全部输出，保留 1000 行历史。`attach` 的第一帧是序列化的屏幕（含全屏程序的备用屏、光标位置和终端模式），快照带上它已包含到的 `seq`，之后是快照之后缓冲的输出和实时输出，不重不漏。
+- **序号与续传**：输出块从 1 开始编号，保留最近约 1 MiB。`attach` 带 `resume_seq` 且后面的输出都还在缓冲区里时只补发缺的块，不发快照；否则发快照。积压超过 4 MiB 的连接会被断开，重连后从快照开始。
+- **控制者**：每个终端最多一个控制者，其他连接只读。`claim` 帧立即接管，控制代数 `generation` 加一；`attach` 的 `mode: "control"` 不抢控制权，只在没有控制者、或当前控制者（在线或在宽限期内）的 `client_id` 与调用方相同时才成为控制者（这时才应用 `attach` 的 `cols/rows`），否则按旁观者加入；`input` / `resize` 必须来自控制者的这条连接并带上当前代数，否则丢弃并回一次 `rejected`（每条连接每代最多一次）。控制者的连接断开后保留 10 秒（`connected: false`），期间重新接管会恢复控制；超时后清空控制者（代数加一），尺寸保持不变。每次控制者、代数或尺寸变化都会给所有连接发 `control` 帧（`you` 表示这条连接是不是控制者）。
+- **调用方身份**（`client_id`）：端到端加密的调用是 `e2e:<客户端公钥>`，名称取本机配对记录；普通隧道是隧道 `principal`，名称取 `attach` 里的 `label`；临时 token 的调用取 token principal，其余（控制面、MCP）是 `control`。
+- **一元 `resize`**：没有连接可以带代数，所以只在调用方身份等于当前控制者的 `client_id` 时执行，否则返回 `failed_precondition`（`details.reason = "not_controller"`）。正常客户端应在 `attach` 流里发 `resize` 帧。
+- `owner` 目前都是 `user`；`agent`（ACP `terminal/create` 创建的终端，所有人只读）已预留，对它的 `claim`、`input`、`resize` 都会被拒（`agent_owned`）。
 
 ## 运行
 
@@ -182,7 +195,7 @@ yarn typecheck
 yarn test
 ```
 
-`tests/connector-router-e2e.test.ts` 会启动真实的 Go `meshcall-router`（v0.4.0）和一个用 Node 写的 stdio ACP 模拟 Agent，覆盖：控制面直接调用、MCP 开关、普通隧道上的创建/发送/审批/排队/文件读取/终端 attach、`close_tunnel_sessions`、presence 与推送的契约形状、普通 → 加密的安全切换，以及加密模式下的配对（IKpsk2）、陌生客户端被拒、重连（IK）和撤销。Router 二进制按以下顺序查找：`MESHCALL_ROUTER_BINARY`、`../../meshcall/meshcall-router/bin/meshcall-router`、`findRouterBinary()`；都找不到时跳过该测试文件。
+`tests/connector-router-e2e.test.ts` 会启动真实的 Go `meshcall-router`（v0.4.0）和一个用 Node 写的 stdio ACP 模拟 Agent，覆盖：控制面直接调用、MCP 开关、普通隧道上的创建/发送/审批/排队/文件读取/终端 attach、两台客户端共用一个终端时的控制权（旁观者输入被拒、接管后旧控制者的输入被丢弃、只有控制者能改尺寸）和 `resume_seq` 续传（终端的帧都按 `terminals.schema.json` 校验）、`close_tunnel_sessions`、presence 与推送的契约形状、普通 → 加密的安全切换，以及加密模式下的配对（IKpsk2）、陌生客户端被拒、重连（IK）和撤销。Router 二进制按以下顺序查找：`MESHCALL_ROUTER_BINARY`、`../../meshcall/meshcall-router/bin/meshcall-router`、`findRouterBinary()`；都找不到时跳过该测试文件。
 
 ## 已知限制
 
@@ -190,4 +203,5 @@ yarn test
 - `compact` 只在 Agent 通过 `available_commands_update` 提供 `compact` 命令时可用。
 - Router token 过期被拒后会重新获取 token 并重新挂载，期间该 Router 上的隧道会断开，客户端需要重连。
 - MeshCall 的契约检查（W002）只把 `idempotent/readOnly/destructive: true` 当作声明；`create`、`send` 等方法确实不幂等，已显式标 `idempotent: false`，启动时仍会打印 5 条 W002 警告。
+- 终端：Windows 上的 ConPTY 只按 node-pty 的接口实现，尚未在真实 Windows 设备上验证；`script` 和 `pipe` 模式不能改变程序看到的窗口尺寸。
 - 尚未与真实的 `server-v3` 实例和真实的 Claude Code / Codex ACP 适配器联调；兼容性目前由契约 schema 校验和 Router 端到端测试保证。
