@@ -6,6 +6,7 @@
 
 | 端 / 部位 | 参考 | 约束 |
 | --- | --- | --- |
+| Web、Desktop 的功能、流程与交互逻辑 | AA v2 Web（本仓库 `web-next/`）：会话列表与侧栏、新建会话、对话页、输入框行为（运行中排队 / 插话、附件、斜杠命令、模型与权限选择）、审批、计划审阅、文件 / diff / 终端面板、设备与 Runtime 管理、设置 | v2 依赖服务端时间线等 v3 已不存在的能力时，改用 v3 对应的接口；没有对应接口的列为缺口，不另造后端 |
 | Web、Desktop 的输入框（composer） | Effi：`effi-evo/web`（`src/components/ai-elements/prompt-input.tsx` 及其用法），以及 Effi Cloud 的 `cloud/web/src/ai/composer.tsx`、`attachments.tsx` | 必须遵守 anywhere-ui 设计系统（语义色板、两级圆角、胶囊控件、无边框），不照搬 Effi 的颜色和字体 |
 | Web、Desktop 的对话界面（消息样式、工具 / 思考 / 子 Agent 展示、对话选项）与右侧栏 | Effi Cloud 的 dev 设备对话页：`effi-evo/cloud/web/src/ai/`（`conversation.tsx`、`parts.tsx`、`tools.tsx`、`panel.tsx`、`file-preview.tsx`、`subagents.tsx`、`config.tsx` 等），截图在 `cloud/web/screenshots/` | 同上，一律以 anywhere-ui 为准 |
 | iOS、Android | 暂以 v2 iOS（本仓库 `ios/`）的结构和交互为准 | 新版 iOS 与 Android 视觉对齐，以 Apple 设计规范（Human Interface Guidelines、Liquid Glass）为准；Android 照 iOS 的视觉实现 |
