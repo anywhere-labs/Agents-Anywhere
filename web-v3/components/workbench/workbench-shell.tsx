@@ -1,8 +1,8 @@
 "use client"
 
 import { usePathname, useRouter } from "next/navigation"
-import { useEffect, useState, type ReactNode } from "react"
-import { SparklesIcon } from "lucide-react"
+import { useEffect, useMemo, useState, type ReactNode } from "react"
+import { SearchIcon, SparklesIcon } from "lucide-react"
 
 import { CollapsedNavBar } from "@/components/console/collapsed-nav-bar"
 import { PageTransition } from "@/components/console/page-transition"
@@ -24,14 +24,26 @@ import { AssistantPanel } from "@/components/workbench/assistant-panel"
 import { PairDeviceDialog } from "@/components/workbench/pair-device-dialog"
 import { RegisterDeviceDialog } from "@/components/workbench/register-device-dialog"
 import { WorkbenchSidebar } from "@/components/workbench/workbench-sidebar"
+import { WorkbenchUiContext, type WorkbenchUi } from "@/components/workbench/workbench-ui"
+import { CommandPalette } from "@/components/workbench/command-palette"
+import { useIsMobile } from "@/hooks/use-mobile"
+import { cn } from "@/lib/utils"
 import { useAssistant } from "@/lib/state/assistant-context"
 import { useWorkbench } from "@/lib/state/workbench-context"
 
-export function WorkbenchShell({ children }: { children: ReactNode }) {
+export function WorkbenchShell({
+  children,
+  hideMobileBar = false,
+}: {
+  children: ReactNode
+  /** The page draws its own top bar on phones (with a sidebar trigger), e.g. the conversation page. */
+  hideMobileBar?: boolean
+}) {
   const { t } = useI18n()
   const router = useRouter()
   const pathname = usePathname()
-  const { ready, activeAccount, preferences } = useWorkbench()
+  const { ready, activeAccount } = useWorkbench()
+  const isMobile = useIsMobile()
   const {
     drawerOpen,
     setDrawerOpen,
@@ -44,12 +56,36 @@ export function WorkbenchShell({ children }: { children: ReactNode }) {
 
   const [registerOpen, setRegisterOpen] = useState(false)
   const [pairOpen, setPairOpen] = useState(false)
+  const [paletteOpen, setPaletteOpen] = useState(false)
 
   useEffect(() => {
     if (ready && !activeAccount) {
       router.replace("/sign-in")
     }
   }, [ready, activeAccount, router])
+
+  // ⌘K / Ctrl+K: the search palette, from anywhere in the workbench (not while typing in a terminal).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "k") {
+        const target = e.target as HTMLElement | null
+        if (target?.closest(".xterm")) return
+        e.preventDefault()
+        setPaletteOpen((v) => !v)
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [])
+
+  const ui = useMemo<WorkbenchUi>(
+    () => ({
+      openPalette: () => setPaletteOpen(true),
+      openRegisterDevice: () => setRegisterOpen(true),
+      openPairDevice: () => setPairOpen(true),
+    }),
+    []
+  )
 
   const revealed = useRevealInTransition(Boolean(ready && activeAccount))
 
@@ -58,59 +94,62 @@ export function WorkbenchShell({ children }: { children: ReactNode }) {
   }
 
   return (
+    <WorkbenchUiContext.Provider value={ui}>
     <SidebarProvider className="h-svh overflow-hidden">
-      <WorkbenchSidebar
-        onOpenRegisterDevice={() => setRegisterOpen(true)}
-        onOpenPairDevice={() => setPairOpen(true)}
-      />
+      <WorkbenchSidebar />
 
       <SidebarInset className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
-        <div className="flex shrink-0 items-center justify-between border-b md:hidden">
-          <CollapsedNavBar openLabel={t("shell.openNavigation")} />
-          <div className="pr-3">
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label={t("shell.quickAssistant")}
-              onClick={() => setDrawerOpen(true)}
-            >
-              <SparklesIcon className="size-4" />
-            </Button>
+        {!hideMobileBar && (
+          <div className="flex shrink-0 items-center justify-between border-b md:hidden">
+            <CollapsedNavBar openLabel={t("shell.openNavigation")} />
+            <div className="flex items-center gap-1 pr-3">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t("wb.search")}
+                onClick={() => setPaletteOpen(true)}
+              >
+                <SearchIcon className="size-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t("shell.quickAssistant")}
+                onClick={() => setDrawerOpen(true)}
+              >
+                <SparklesIcon className="size-4" />
+              </Button>
+            </div>
           </div>
-        </div>
+        )}
 
         <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
           <PageTransition key={pathname} arrival="rise">
             {children}
           </PageTransition>
-
-          {/* Subtle floating Quick Assistant button on desktop when AssistantPanel is not already main view */}
-          {pathname !== "/assistant" && !(pathname === "/" && preferences.assistantPrimary) && (
-            <div className="pointer-events-none fixed right-5 bottom-5 z-30 hidden md:block">
-              <Button
-                variant="outline"
-                size="sm"
-                className="pointer-events-auto gap-2 bg-popover shadow-md"
-                onClick={() => setDrawerOpen(true)}
-              >
-                <SparklesIcon className="size-3.5" />
-                <span>{t("shell.quickAssistant")}</span>
-                <kbd className="rounded bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-                  ⌘J
-                </kbd>
-              </Button>
-            </div>
-          )}
         </div>
       </SidebarInset>
 
-      {/* Global Right-Hand Portable Assistant Drawer */}
+      {/* Global Portable Assistant drawer (⌘J): right side on wide screens, a bottom sheet on phones */}
       <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
-        <SheetContent side="right" className="flex w-full flex-col p-0 sm:max-w-lg">
+        <SheetContent
+          side={isMobile ? "bottom" : "right"}
+          className={cn(
+            "flex flex-col p-0",
+            isMobile ? "h-[88svh] rounded-t-card" : "w-full sm:max-w-lg"
+          )}
+        >
           <SheetTitle className="sr-only">{t("assistant.title")}</SheetTitle>
           <AssistantPanel compact />
         </SheetContent>
       </Sheet>
+
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        onRegisterDevice={() => setRegisterOpen(true)}
+        onPairDevice={() => setPairOpen(true)}
+      />
 
       {/* Global Pi Lite `beforeToolCall` High-Risk Confirmation Dialog */}
       <Dialog
@@ -178,5 +217,6 @@ export function WorkbenchShell({ children }: { children: ReactNode }) {
       <RegisterDeviceDialog open={registerOpen} onOpenChange={setRegisterOpen} />
       <PairDeviceDialog open={pairOpen} onOpenChange={setPairOpen} />
     </SidebarProvider>
+    </WorkbenchUiContext.Provider>
   )
 }
