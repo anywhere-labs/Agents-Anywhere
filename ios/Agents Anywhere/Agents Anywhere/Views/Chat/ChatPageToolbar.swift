@@ -103,10 +103,10 @@ struct ChatPageToolbar: ViewModifier {
     var overflowActions: [ChatOverflowAction] = []
 
     /// 抽屉形态下不要隐藏导航栏：隐藏会让 NavigationStack 内容区扩展，
-    /// 页面整体上移、抽屉收起再落回（2026-11-21 实测约 80pt）。保持渲染后
-    /// 导航栏随卡片位移，抽屉打开时在露出的卡片窄条内可见但不可交互。
-    /// 旧「卡片位移中导航栏被重画」的处理已由保持渲染取代，细节见
-    /// `.specrune/spec/ios/duo-layout.md`「合盖外屏外壳 = 原版抽屉」。
+    /// 页面整体上移、抽屉收起再落回（2026-11-21 实测约 80pt）。抽屉动效
+    /// 已改为卡片固定、侧栏滑出（导航栏不随卡片位移），保持渲染即可让
+    /// 内容位置稳定。细节见 `.specrune/spec/ios/duo-layout.md`
+    /// 「合盖外屏外壳 = 原版抽屉」。
 
     // 位置交给系统分派，不调 toolbarVerticalBehavior：Duo 外屏（合盖）的
     // toolbar 本来就该在侧边竖排，且该开关必须当稳定选择、禁止随方向或
