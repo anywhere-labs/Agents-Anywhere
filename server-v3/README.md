@@ -6,6 +6,7 @@ Agents Anywhere v3 的轻控制面后端，实现定稿架构文档中定义的 
 
 - 总体架构（控制面、隧道、聚合 RPC 与 MCP）：[docs/v3/architecture-proposal.md](../docs/v3/architecture-proposal.md)
 - 加密设备准入与端到端加密：[docs/v3/e2ee-admission-proposal.md](../docs/v3/e2ee-admission-proposal.md)
+- 随身助手（Pi Lite）与限额大文件云盘：[docs/v3/assistant-and-files-proposal.md](../docs/v3/assistant-and-files-proposal.md)
 - 跨端契约（1.0）：[contracts/aa-v3/1.0/README.md](../contracts/aa-v3/1.0/README.md)
 - 2.x → 3.0 数据清理迁移与短停服指南：[docs/v3/migration-3.0.md](../docs/v3/migration-3.0.md)
 
@@ -37,8 +38,12 @@ Agents Anywhere v3 的轻控制面后端，实现定稿架构文档中定义的 
   - 默认 RPC 直传阈值 8 MiB（与 `connector-v3` 对齐），默认总配额 512 MiB、单文件上限 100 MiB、默认过期 7 天（上限 30 天）；配额与 TTL 按「管理员单账号策略覆盖 > OIDC/默认权益声明（`aa.drive_quota_mb`、`aa.drive_ttl_days`、`aa.drive_max_file_mb`）> 服务默认值」三层生效；
   - 双模式鉴权（用户 Bearer JWT 与 Connector `X-AA-Device-Id` / `X-AA-Device-Secret` 均可上传下载，且 Connector 自动继承用户 Redis 缓存的 OIDC 权益）；
   - 支持普通文件、助手云端 VFS（`assistant_vfs`，按 `vfs_path` 覆写并自动回收旧版本、`account_dek` 端侧加密剥离明文文件名）与加密设备大文件单次密钥中转（`ephemeral_key`，服务端绝不接收或存储 `file_key`）；内置后台定时清理过期文件与超时未完成预占。
-- **3.0 数据库迁移（`migrations/versions/v3_0.py`、`v3_1.py`）**：
-  - `v3_0` 支持空库全新初始化与 2.x 原地升级（保留 `users` / `oauth_accounts`，清理旧会话表）；`v3_1` 新增 `drive_files` 与 `drive_user_policies`。
+- **随身助手整包同步、KEK/DEK 密钥信封与 Tokens Anywhere 托管 Key 复用（`/assistant/*`）**：
+  - **对话级整包同步**：`GET /assistant/conversations`（仅返回列表元数据，按更新时间倒序）、`GET /assistant/conversations/{id}`、`PUT /assistant/conversations/{id}`（默认单条上限 20 MiB 返回 413、单账号保留最新 100 条自动淘汰旧对话）、`DELETE /assistant/conversations/{id}`；服务端不做新旧裁决，原样存储并通过 Redis Pub/Sub（`GET /assistant/events` SSE 流）向同账号其他在线端实时广播变更（按用户隔离）；
+  - **账号级任意密码 KEK/DEK 密钥信封（`/assistant/encryption`、`/assistant/encryption/reset`）**：保存版本化 KDF（`pbkdf2-sha256` / `argon2id`）、`salt` 与 `AES-256-GCM` 包裹的 `wrapped_dek`，服务端永远接触不到用户密码与明文 DEK；改密码使用 `expected_version` 乐观锁递增 `key_version` 且保持 `dek_epoch` 不变（无需重加密历史对话）；开启加密后拒绝明文对话上传并校验 `dek_epoch`；忘密码重置要求显式 `confirm_wipe=true`，原子清空旧密文对话与 `account_dek` 云盘 VFS 文件并递增 `dek_epoch`；
+  - **Tokens Anywhere 单账号托管 Key 加密复用（`/assistant/tokens`）**：每个账号仅存一份经服务端密钥 Fernet 加密的托管 Key 与 refresh token；首端连接写入、并发后续端自动复用已有 Key（返回 `kept: true` 供客户端撤销多余授权）；每 30 天在 Redis 分布式锁保护下自动续期 refresh token（`invalid_grant` 自动清除）；断开支持 `?key_hash=` 条件清理并尽力调用 Tokens RFC 7009 `/api/v1/oauth/revoke` 撤销授权；**严格仅允许本人一等登录会话访问，拒绝 MCP OAuth Token 与第三方 OIDC 应用**（响应均带 `Cache-Control: no-store`）。
+- **3.0 数据库迁移（`migrations/versions/v3_0.py`、`v3_1.py`、`v3_2.py`）**：
+  - `v3_0` 支持空库全新初始化与 2.x 原地升级（保留 `users` / `oauth_accounts`，清理旧会话表）；`v3_1` 新增 `drive_files` 与 `drive_user_policies`；`v3_2` 新增 `assistant_conversations`、`assistant_key_envelopes` 与 `assistant_tokens_connections`。
 
 ## 目录分层
 
@@ -83,6 +88,10 @@ Agents Anywhere v3 的轻控制面后端，实现定稿架构文档中定义的 
 | `AA_CONTROL_DRIVE_DEFAULT_QUOTA_MB` / `AA_CONTROL_DRIVE_MAX_FILE_MB` | 可选：云盘默认账号配额（默认 `512`，`-1` 不限）与单文件上限（默认 `100`） | `512` / `100` |
 | `AA_CONTROL_DRIVE_DEFAULT_TTL_DAYS` / `AA_CONTROL_DRIVE_MAX_TTL_DAYS` | 可选：云盘文件默认过期天数（默认 `7`）与最大可调天数（默认 `30`） | `7` / `30` |
 | `AA_CONTROL_DRIVE_RPC_MAX_BYTES` | 可选：向客户端通告的 RPC 直传文件大小阈值（默认 8 MiB） | `8388608` |
+| `AA_CONTROL_ASSISTANT_MAX_BYTES` / `AA_CONTROL_ASSISTANT_MAX_CONVERSATIONS` | 可选：助手单条对话体积上限（默认 20 MiB）与单账号保留条数上限（默认 `100`） | `20971520` / `100` |
+| `AA_CONTROL_ASSISTANT_ALLOWED_TOKENS_CLIENT_IDS` | 可选：OIDC 模式下允许读取 Tokens Anywhere 托管 Key 的一等客户端 ID（逗号分隔，默认回退到 `AA_CONTROL_OIDC_CLIENT_ID`） | `aa-v3` |
+| `AA_CONTROL_TOKENS_URL` / `AA_CONTROL_TOKENS_CLIENT_ID` | 可选：Tokens Anywhere 站点地址（默认 `https://tokens-anywhere.com`）与 OAuth Client ID（默认 `agents-anywhere`） | `https://tokens-anywhere.com` / `agents-anywhere` |
+| `AA_CONTROL_TOKENS_REFRESH_INTERVAL_DAYS` / `AA_CONTROL_TOKENS_ENCRYPTION_SECRET` | 可选：Tokens refresh token 自动续期周期（默认 `30` 天）与独立加密密钥（默认从 `AA_CONTROL_SECRET` 派生） | `30` / — |
 | `AA_CONTROL_REGISTRATION_OPEN` | `local` 模式：是否开放自助注册（首账号始终为 admin） | `true` / `false` |
 | `AA_CONTROL_SETUP_TOKEN` | `local` 模式可选：限制首次管理员注册所需的一次性 token | — |
 

@@ -142,6 +142,58 @@ class DriveUsageSnapshot:
     file_count: int
 
 
+@dataclass(frozen=True)
+class AssistantConversationMetaRow:
+    user_id: str
+    conversation_id: str
+    encrypted: bool
+    title: str | None
+    updated_at: int
+    content_hash: str
+    device: str
+    size_bytes: int
+    key_version: int | None
+    dek_epoch: int | None
+    encrypted_meta: str | None
+    meta_nonce: str | None
+    server_updated_at: str
+
+
+@dataclass(frozen=True)
+class AssistantConversationRow(AssistantConversationMetaRow):
+    messages_json: str | None
+    settings_json: str | None
+    nonce: str | None
+    ciphertext: str | None
+
+
+@dataclass(frozen=True)
+class AssistantKeyEnvelopeRow:
+    user_id: str
+    kdf: str
+    kdf_params: dict[str, Any]
+    salt: str
+    wrap_alg: str
+    wrap_nonce: str | None
+    wrapped_dek: str
+    key_version: int
+    dek_epoch: int
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class AssistantTokensConnectionRow:
+    user_id: str
+    key_enc: str
+    key_hash: str
+    key_prefix: str
+    refresh_enc: str | None
+    refreshed_at: int
+    created_at: str
+    updated_at: str
+
+
 class ControlRepository:
     """Async PostgreSQL repository for the AA v3 lightweight control plane."""
 
@@ -1118,6 +1170,495 @@ class ControlRepository:
             ).mappings().all()
             return [_to_drive_file(r) for r in rows]
 
+    async def list_account_dek_drive_files(self, user_id: str) -> list[DriveFileRow]:
+        async with self._engine.connect() as conn:
+            rows = (
+                await conn.execute(
+                    select(schema.drive_files).where(
+                        schema.drive_files.c.user_id == user_id,
+                        schema.drive_files.c.encryption_mode == "account_dek",
+                    )
+                )
+            ).mappings().all()
+            return [_to_drive_file(r) for r in rows]
+
+    # ------------------------------------------------------------------
+    # Portable assistant conversation sync (T516)
+    # ------------------------------------------------------------------
+
+    async def list_assistant_conversations(self, user_id: str) -> list[AssistantConversationMetaRow]:
+        tbl = schema.assistant_conversations
+        async with self._engine.connect() as conn:
+            rows = (
+                await conn.execute(
+                    select(
+                        tbl.c.user_id,
+                        tbl.c.conversation_id,
+                        tbl.c.encrypted,
+                        tbl.c.title,
+                        tbl.c.updated_at,
+                        tbl.c.content_hash,
+                        tbl.c.device,
+                        tbl.c.size_bytes,
+                        tbl.c.key_version,
+                        tbl.c.dek_epoch,
+                        tbl.c.encrypted_meta,
+                        tbl.c.meta_nonce,
+                        tbl.c.server_updated_at,
+                    )
+                    .where(tbl.c.user_id == user_id)
+                    .order_by(tbl.c.updated_at.desc(), tbl.c.conversation_id.desc())
+                )
+            ).mappings().all()
+            return [_to_assistant_conversation_meta(r) for r in rows]
+
+    async def get_assistant_conversation(
+        self,
+        *,
+        user_id: str,
+        conversation_id: str,
+    ) -> AssistantConversationRow | None:
+        tbl = schema.assistant_conversations
+        async with self._engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    select(tbl).where(
+                        tbl.c.user_id == user_id,
+                        tbl.c.conversation_id == conversation_id,
+                    )
+                )
+            ).mappings().first()
+            return _to_assistant_conversation(row) if row else None
+
+    async def upsert_assistant_conversation_and_trim(
+        self,
+        *,
+        user_id: str,
+        conversation_id: str,
+        encrypted: bool,
+        title: str | None,
+        updated_at: int,
+        content_hash: str,
+        device: str,
+        size_bytes: int,
+        messages_json: str | None,
+        settings_json: str | None,
+        key_version: int | None,
+        dek_epoch: int | None,
+        nonce: str | None,
+        ciphertext: str | None,
+        encrypted_meta: str | None,
+        meta_nonce: str | None,
+        max_conversations: int,
+    ) -> AssistantConversationMetaRow:
+        tbl = schema.assistant_conversations
+        now = utc_now_iso()
+        values = {
+            "encrypted": 1 if encrypted else 0,
+            "title": title,
+            "updated_at": updated_at,
+            "content_hash": content_hash,
+            "device": device,
+            "size_bytes": size_bytes,
+            "messages_json": messages_json,
+            "settings_json": settings_json,
+            "key_version": key_version,
+            "dek_epoch": dek_epoch,
+            "nonce": nonce,
+            "ciphertext": ciphertext,
+            "encrypted_meta": encrypted_meta,
+            "meta_nonce": meta_nonce,
+            "server_updated_at": now,
+        }
+        async with self._engine.begin() as conn:
+            res = await conn.execute(
+                update(tbl)
+                .where(tbl.c.user_id == user_id, tbl.c.conversation_id == conversation_id)
+                .values(**values)
+            )
+            if res.rowcount == 0:
+                try:
+                    async with conn.begin_nested():
+                        await conn.execute(
+                            insert(tbl).values(
+                                user_id=user_id,
+                                conversation_id=conversation_id,
+                                **values,
+                            )
+                        )
+                except IntegrityError:
+                    await conn.execute(
+                        update(tbl)
+                        .where(tbl.c.user_id == user_id, tbl.c.conversation_id == conversation_id)
+                        .values(**values)
+                    )
+
+            stale_ids = list(
+                (
+                    await conn.execute(
+                        select(tbl.c.conversation_id)
+                        .where(tbl.c.user_id == user_id)
+                        .order_by(tbl.c.updated_at.desc(), tbl.c.conversation_id.desc())
+                        .offset(max_conversations)
+                    )
+                ).scalars().all()
+            )
+            if stale_ids:
+                await conn.execute(
+                    delete(tbl).where(
+                        tbl.c.user_id == user_id,
+                        tbl.c.conversation_id.in_(stale_ids),
+                    )
+                )
+
+        return AssistantConversationMetaRow(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            encrypted=encrypted,
+            title=title,
+            updated_at=updated_at,
+            content_hash=content_hash,
+            device=device,
+            size_bytes=size_bytes,
+            key_version=key_version,
+            dek_epoch=dek_epoch,
+            encrypted_meta=encrypted_meta,
+            meta_nonce=meta_nonce,
+            server_updated_at=now,
+        )
+
+    async def delete_assistant_conversation(self, *, user_id: str, conversation_id: str) -> bool:
+        tbl = schema.assistant_conversations
+        async with self._engine.begin() as conn:
+            res = await conn.execute(
+                delete(tbl).where(
+                    tbl.c.user_id == user_id,
+                    tbl.c.conversation_id == conversation_id,
+                )
+            )
+            return res.rowcount > 0
+
+    async def count_encrypted_assistant_conversations(self, user_id: str) -> int:
+        tbl = schema.assistant_conversations
+        async with self._engine.connect() as conn:
+            res = await conn.execute(
+                select(func.count()).select_from(tbl).where(
+                    tbl.c.user_id == user_id,
+                    tbl.c.encrypted == 1,
+                )
+            )
+            return int(res.scalar_one())
+
+    async def delete_encrypted_assistant_conversations(self, user_id: str) -> int:
+        tbl = schema.assistant_conversations
+        async with self._engine.begin() as conn:
+            res = await conn.execute(
+                delete(tbl).where(
+                    tbl.c.user_id == user_id,
+                    tbl.c.encrypted == 1,
+                )
+            )
+            return int(res.rowcount or 0)
+
+    # ------------------------------------------------------------------
+    # Account-level KEK/DEK key envelope (T516)
+    # ------------------------------------------------------------------
+
+    async def get_assistant_key_envelope(self, user_id: str) -> AssistantKeyEnvelopeRow | None:
+        tbl = schema.assistant_key_envelopes
+        async with self._engine.connect() as conn:
+            row = (
+                await conn.execute(select(tbl).where(tbl.c.user_id == user_id))
+            ).mappings().first()
+            return _to_assistant_key_envelope(row) if row else None
+
+    async def create_assistant_key_envelope_if_absent(
+        self,
+        *,
+        user_id: str,
+        kdf: str,
+        kdf_params: dict[str, Any],
+        salt: str,
+        wrap_alg: str,
+        wrap_nonce: str | None,
+        wrapped_dek: str,
+    ) -> tuple[AssistantKeyEnvelopeRow, bool]:
+        tbl = schema.assistant_key_envelopes
+        now = utc_now_iso()
+        async with self._engine.begin() as conn:
+            try:
+                async with conn.begin_nested():
+                    await conn.execute(
+                        insert(tbl).values(
+                            user_id=user_id,
+                            kdf=kdf,
+                            kdf_params_json=json.dumps(kdf_params, separators=(",", ":"), sort_keys=True),
+                            salt=salt,
+                            wrap_alg=wrap_alg,
+                            wrap_nonce=wrap_nonce,
+                            wrapped_dek=wrapped_dek,
+                            key_version=1,
+                            dek_epoch=1,
+                            created_at=now,
+                            updated_at=now,
+                        )
+                    )
+                    created = True
+            except IntegrityError:
+                created = False
+            row = (
+                await conn.execute(select(tbl).where(tbl.c.user_id == user_id))
+            ).mappings().one()
+            return _to_assistant_key_envelope(row), created
+
+    async def rotate_assistant_key_envelope(
+        self,
+        *,
+        user_id: str,
+        expected_version: int,
+        kdf: str,
+        kdf_params: dict[str, Any],
+        salt: str,
+        wrap_alg: str,
+        wrap_nonce: str | None,
+        wrapped_dek: str,
+    ) -> AssistantKeyEnvelopeRow | None:
+        """Optimistically update envelope for password change (increments key_version, keeps dek_epoch)."""
+        tbl = schema.assistant_key_envelopes
+        now = utc_now_iso()
+        async with self._engine.begin() as conn:
+            res = await conn.execute(
+                update(tbl)
+                .where(
+                    tbl.c.user_id == user_id,
+                    tbl.c.key_version == expected_version,
+                )
+                .values(
+                    kdf=kdf,
+                    kdf_params_json=json.dumps(kdf_params, separators=(",", ":"), sort_keys=True),
+                    salt=salt,
+                    wrap_alg=wrap_alg,
+                    wrap_nonce=wrap_nonce,
+                    wrapped_dek=wrapped_dek,
+                    key_version=expected_version + 1,
+                    updated_at=now,
+                )
+            )
+            if res.rowcount == 0:
+                return None
+            row = (
+                await conn.execute(select(tbl).where(tbl.c.user_id == user_id))
+            ).mappings().one()
+            return _to_assistant_key_envelope(row)
+
+    async def reset_assistant_encryption(
+        self,
+        *,
+        user_id: str,
+        new_envelope: dict[str, Any] | None,
+    ) -> tuple[AssistantKeyEnvelopeRow | None, int]:
+        """Destructively wipe encrypted conversations and either install a fresh DEK envelope or disable encryption."""
+        conv_tbl = schema.assistant_conversations
+        env_tbl = schema.assistant_key_envelopes
+        now = utc_now_iso()
+        async with self._engine.begin() as conn:
+            del_res = await conn.execute(
+                delete(conv_tbl).where(
+                    conv_tbl.c.user_id == user_id,
+                    conv_tbl.c.encrypted == 1,
+                )
+            )
+            wiped = int(del_res.rowcount or 0)
+            existing = (
+                await conn.execute(select(env_tbl).where(env_tbl.c.user_id == user_id))
+            ).mappings().first()
+
+            if new_envelope is None:
+                if existing is not None:
+                    await conn.execute(delete(env_tbl).where(env_tbl.c.user_id == user_id))
+                return None, wiped
+
+            next_version = int(existing["key_version"]) + 1 if existing is not None else 1
+            next_epoch = int(existing["dek_epoch"]) + 1 if existing is not None else 1
+            params_json = json.dumps(new_envelope["kdf_params"], separators=(",", ":"), sort_keys=True)
+            if existing is None:
+                await conn.execute(
+                    insert(env_tbl).values(
+                        user_id=user_id,
+                        kdf=new_envelope["kdf"],
+                        kdf_params_json=params_json,
+                        salt=new_envelope["salt"],
+                        wrap_alg=new_envelope["wrap_alg"],
+                        wrap_nonce=new_envelope["wrap_nonce"],
+                        wrapped_dek=new_envelope["wrapped_dek"],
+                        key_version=next_version,
+                        dek_epoch=next_epoch,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+            else:
+                await conn.execute(
+                    update(env_tbl)
+                    .where(env_tbl.c.user_id == user_id)
+                    .values(
+                        kdf=new_envelope["kdf"],
+                        kdf_params_json=params_json,
+                        salt=new_envelope["salt"],
+                        wrap_alg=new_envelope["wrap_alg"],
+                        wrap_nonce=new_envelope["wrap_nonce"],
+                        wrapped_dek=new_envelope["wrapped_dek"],
+                        key_version=next_version,
+                        dek_epoch=next_epoch,
+                        updated_at=now,
+                    )
+                )
+            row = (
+                await conn.execute(select(env_tbl).where(env_tbl.c.user_id == user_id))
+            ).mappings().one()
+            return _to_assistant_key_envelope(row), wiped
+
+    async def delete_assistant_key_envelope(self, user_id: str) -> bool:
+        tbl = schema.assistant_key_envelopes
+        async with self._engine.begin() as conn:
+            res = await conn.execute(delete(tbl).where(tbl.c.user_id == user_id))
+            return res.rowcount > 0
+
+    # ------------------------------------------------------------------
+    # Tokens Anywhere managed key connections (T516)
+    # ------------------------------------------------------------------
+
+    async def get_assistant_tokens(self, user_id: str) -> AssistantTokensConnectionRow | None:
+        tbl = schema.assistant_tokens_connections
+        async with self._engine.connect() as conn:
+            row = (
+                await conn.execute(select(tbl).where(tbl.c.user_id == user_id))
+            ).mappings().first()
+            return _to_assistant_tokens(row) if row else None
+
+    async def insert_assistant_tokens_if_absent(
+        self,
+        *,
+        user_id: str,
+        key_enc: str,
+        key_hash: str,
+        key_prefix: str,
+        refresh_enc: str | None,
+        refreshed_at: int,
+    ) -> tuple[AssistantTokensConnectionRow, bool]:
+        tbl = schema.assistant_tokens_connections
+        now = utc_now_iso()
+        async with self._engine.begin() as conn:
+            try:
+                async with conn.begin_nested():
+                    await conn.execute(
+                        insert(tbl).values(
+                            user_id=user_id,
+                            key_enc=key_enc,
+                            key_hash=key_hash,
+                            key_prefix=key_prefix,
+                            refresh_enc=refresh_enc,
+                            refreshed_at=refreshed_at,
+                            created_at=now,
+                            updated_at=now,
+                        )
+                    )
+                    created = True
+            except IntegrityError:
+                created = False
+            row = (
+                await conn.execute(select(tbl).where(tbl.c.user_id == user_id))
+            ).mappings().one()
+            return _to_assistant_tokens(row), created
+
+    async def replace_assistant_tokens(
+        self,
+        *,
+        user_id: str,
+        key_enc: str,
+        key_hash: str,
+        key_prefix: str,
+        refresh_enc: str | None,
+        refreshed_at: int,
+    ) -> AssistantTokensConnectionRow:
+        tbl = schema.assistant_tokens_connections
+        now = utc_now_iso()
+        async with self._engine.begin() as conn:
+            res = await conn.execute(
+                update(tbl)
+                .where(tbl.c.user_id == user_id)
+                .values(
+                    key_enc=key_enc,
+                    key_hash=key_hash,
+                    key_prefix=key_prefix,
+                    refresh_enc=refresh_enc,
+                    refreshed_at=refreshed_at,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            if res.rowcount == 0:
+                await conn.execute(
+                    insert(tbl).values(
+                        user_id=user_id,
+                        key_enc=key_enc,
+                        key_hash=key_hash,
+                        key_prefix=key_prefix,
+                        refresh_enc=refresh_enc,
+                        refreshed_at=refreshed_at,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+            row = (
+                await conn.execute(select(tbl).where(tbl.c.user_id == user_id))
+            ).mappings().one()
+            return _to_assistant_tokens(row)
+
+    async def update_assistant_tokens_refresh(
+        self,
+        *,
+        user_id: str,
+        refresh_enc: str | None,
+        refreshed_at: int | None = None,
+    ) -> bool:
+        tbl = schema.assistant_tokens_connections
+        values: dict[str, Any] = {
+            "refresh_enc": refresh_enc,
+            "updated_at": utc_now_iso(),
+        }
+        if refreshed_at is not None:
+            values["refreshed_at"] = refreshed_at
+        async with self._engine.begin() as conn:
+            res = await conn.execute(
+                update(tbl).where(tbl.c.user_id == user_id).values(**values)
+            )
+            return res.rowcount > 0
+
+    async def delete_assistant_tokens(
+        self,
+        *,
+        user_id: str,
+        expected_key_hash: str | None = None,
+    ) -> tuple[AssistantTokensConnectionRow | None, bool]:
+        tbl = schema.assistant_tokens_connections
+        async with self._engine.begin() as conn:
+            row = (
+                await conn.execute(select(tbl).where(tbl.c.user_id == user_id))
+            ).mappings().first()
+            if row is None:
+                return None, False
+            current = _to_assistant_tokens(row)
+            if expected_key_hash is not None and current.key_hash != expected_key_hash:
+                return current, False
+            res = await conn.execute(
+                delete(tbl).where(
+                    tbl.c.user_id == user_id,
+                    tbl.c.key_hash == current.key_hash,
+                )
+            )
+            return current, res.rowcount > 0
+
 
 def _to_user(row: Any) -> UserRow:
     return UserRow(
@@ -1232,5 +1773,74 @@ def _to_drive_file(row: Any) -> DriveFileRow:
         expires_at=int(row["expires_at"]),
         created_at=str(row["created_at"]),
         completed_at=row["completed_at"],
+        updated_at=str(row["updated_at"]),
+    )
+
+
+def _to_assistant_conversation_meta(row: Any) -> AssistantConversationMetaRow:
+    return AssistantConversationMetaRow(
+        user_id=str(row["user_id"]),
+        conversation_id=str(row["conversation_id"]),
+        encrypted=bool(row["encrypted"]),
+        title=row["title"],
+        updated_at=int(row["updated_at"]),
+        content_hash=str(row["content_hash"]),
+        device=str(row["device"]),
+        size_bytes=int(row["size_bytes"]),
+        key_version=int(row["key_version"]) if row["key_version"] is not None else None,
+        dek_epoch=int(row["dek_epoch"]) if row["dek_epoch"] is not None else None,
+        encrypted_meta=row["encrypted_meta"],
+        meta_nonce=row["meta_nonce"],
+        server_updated_at=str(row["server_updated_at"]),
+    )
+
+
+def _to_assistant_conversation(row: Any) -> AssistantConversationRow:
+    return AssistantConversationRow(
+        user_id=str(row["user_id"]),
+        conversation_id=str(row["conversation_id"]),
+        encrypted=bool(row["encrypted"]),
+        title=row["title"],
+        updated_at=int(row["updated_at"]),
+        content_hash=str(row["content_hash"]),
+        device=str(row["device"]),
+        size_bytes=int(row["size_bytes"]),
+        key_version=int(row["key_version"]) if row["key_version"] is not None else None,
+        dek_epoch=int(row["dek_epoch"]) if row["dek_epoch"] is not None else None,
+        encrypted_meta=row["encrypted_meta"],
+        meta_nonce=row["meta_nonce"],
+        server_updated_at=str(row["server_updated_at"]),
+        messages_json=row["messages_json"],
+        settings_json=row["settings_json"],
+        nonce=row["nonce"],
+        ciphertext=row["ciphertext"],
+    )
+
+
+def _to_assistant_key_envelope(row: Any) -> AssistantKeyEnvelopeRow:
+    return AssistantKeyEnvelopeRow(
+        user_id=str(row["user_id"]),
+        kdf=str(row["kdf"]),
+        kdf_params=dict(json.loads(row["kdf_params_json"])),
+        salt=str(row["salt"]),
+        wrap_alg=str(row["wrap_alg"]),
+        wrap_nonce=row["wrap_nonce"],
+        wrapped_dek=str(row["wrapped_dek"]),
+        key_version=int(row["key_version"]),
+        dek_epoch=int(row["dek_epoch"]),
+        created_at=str(row["created_at"]),
+        updated_at=str(row["updated_at"]),
+    )
+
+
+def _to_assistant_tokens(row: Any) -> AssistantTokensConnectionRow:
+    return AssistantTokensConnectionRow(
+        user_id=str(row["user_id"]),
+        key_enc=str(row["key_enc"]),
+        key_hash=str(row["key_hash"]),
+        key_prefix=str(row["key_prefix"]),
+        refresh_enc=row["refresh_enc"],
+        refreshed_at=int(row["refreshed_at"]),
+        created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"]),
     )

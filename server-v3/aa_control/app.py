@@ -12,6 +12,7 @@ from loguru import logger
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from aa_control.api import assistant as assistant_api
 from aa_control.api import auth as auth_api
 from aa_control.api import drive as drive_api
 from aa_control.api import health as health_api
@@ -25,7 +26,9 @@ from aa_control.infra.oidc import OidcJwksVerifier, OidcVerifierPort
 from aa_control.infra.push import LoggingPushProvider, PushProvider, PushRetryWorker
 from aa_control.infra.redis_store import RedisControlStore
 from aa_control.infra.router_pool import MeshCallRouterPool, RouterPoolPort
+from aa_control.infra.tokens_client import HttpTokensAnywhereClient, TokensAnywhereClientPort
 from aa_control.rpc.control_service import ControlRpcService
+from aa_control.services.assistant_service import AssistantService
 from aa_control.services.auth_service import AuthService
 from aa_control.services.device_service import DeviceService
 from aa_control.services.drive_service import DriveService
@@ -44,6 +47,7 @@ def create_app(
     push_provider: PushProvider | None = None,
     oidc_verifier: OidcVerifierPort | None = None,
     object_store: ObjectStorePort | None = None,
+    tokens_client: TokensAnywhereClientPort | None = None,
     start_push_worker: bool = True,
     start_drive_cleanup_worker: bool | None = None,
 ) -> FastAPI:
@@ -53,6 +57,7 @@ def create_app(
     owns_router_pool = router_pool is None
     owns_oidc_verifier = False
     owns_object_store = False
+    owns_tokens_client = tokens_client is None
 
     verifier: OidcVerifierPort | None = oidc_verifier
     if cfg.auth_mode == "oidc" and verifier is None:
@@ -67,6 +72,8 @@ def create_app(
     if store is None and cfg.drive.s3 is not None:
         store = S3ObjectStore(cfg.drive.s3)
         owns_object_store = True
+
+    tc: TokensAnywhereClientPort = tokens_client or HttpTokensAnywhereClient(cfg.assistant.tokens)
 
     db_engine = engine or create_engine(cfg.database_url)
     redis_conn = redis_client or Redis.from_url(cfg.redis_url, decode_responses=False)
@@ -88,6 +95,13 @@ def create_app(
         repo=repo,
         redis_store=redis_store,
         object_store=store,
+    )
+    assistant_service = AssistantService(
+        settings=cfg,
+        repo=repo,
+        redis_store=redis_store,
+        tokens_client=tc,
+        drive_service=drive_service,
     )
     tunnel_service = TunnelService(settings=cfg, repo=repo, redis_store=redis_store, router_pool=pool)
     fanout_service = FanoutService(settings=cfg, repo=repo, redis_store=redis_store, router_pool=pool)
@@ -148,6 +162,8 @@ def create_app(
                 await verifier.close()
             if owns_object_store and store is not None:
                 await store.close()
+            if owns_tokens_client:
+                await tc.close()
             if owns_redis:
                 await redis_store.close()
             if owns_engine:
@@ -176,9 +192,11 @@ def create_app(
     app.state.router_pool = pool
     app.state.oidc_verifier = verifier
     app.state.object_store = store
+    app.state.tokens_client = tc
     app.state.auth_service = auth_service
     app.state.device_service = device_service
     app.state.drive_service = drive_service
+    app.state.assistant_service = assistant_service
     app.state.tunnel_service = tunnel_service
     app.state.fanout_service = fanout_service
     app.state.push_service = push_service
@@ -190,5 +208,6 @@ def create_app(
     app.include_router(health_api.router)
     app.include_router(auth_api.router)
     app.include_router(drive_api.router)
+    app.include_router(assistant_api.router)
     app.include_router(mcp_api.router)
     return app

@@ -418,6 +418,26 @@ class DriveService:
                 removed += 1
         return removed
 
+    async def purge_account_dek_files(self, *, user_id: str, actor: str) -> int:
+        """Delete all drive files encrypted under the account's assistant DEK (used during encryption reset)."""
+        files = await self._repo.list_account_dek_drive_files(user_id)
+        if not files:
+            return 0
+        purged = 0
+        for item in files:
+            if self._objects is not None:
+                await self._safe_delete_object(self._objects, item.object_key)
+            if await self._repo.delete_drive_file(item.id):
+                purged += 1
+        if purged:
+            await self._repo.record_audit(
+                user_id=user_id,
+                actor=actor,
+                action="drive.purge_account_dek",
+                metadata={"purged_files": purged},
+            )
+        return purged
+
     # ------------------------------------------------------------------
     # Admin per-account policy overrides
     # ------------------------------------------------------------------

@@ -6,6 +6,7 @@ from fastapi import Depends, Header, Request
 
 from aa_control.core.errors import ForbiddenError, UnauthenticatedError
 from aa_control.core.models import UserView
+from aa_control.services.assistant_service import AssistantService
 from aa_control.services.auth_service import AuthService
 from aa_control.services.device_service import DeviceService
 from aa_control.services.drive_service import DriveCaller, DriveService
@@ -28,6 +29,10 @@ def get_drive_service(request: Request) -> DriveService:
     return request.app.state.drive_service
 
 
+def get_assistant_service(request: Request) -> AssistantService:
+    return request.app.state.assistant_service
+
+
 def _bearer_token(authorization: str | None) -> str:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise UnauthenticatedError("missing Bearer authorization header")
@@ -42,6 +47,26 @@ async def current_user(
     authorization: str | None = Header(default=None),
 ) -> UserView:
     return await auth.authenticate_access_token(_bearer_token(authorization))
+
+
+async def current_own_session_user(
+    auth: Annotated[AuthService, Depends(get_auth_service)],
+    authorization: str | None = Header(default=None),
+) -> UserView:
+    """Require the user's own first-party login session (rejects MCP / third-party OAuth apps)."""
+    token = _bearer_token(authorization)
+    if token.startswith("aamcp_"):
+        raise ForbiddenError(
+            "Tokens Anywhere managed key is not accessible to OAuth/MCP apps",
+            code="oauth_app_forbidden",
+        )
+    session = await auth.authenticate_access_token_session(token)
+    if not session.is_first_party_session:
+        raise ForbiddenError(
+            "Tokens Anywhere managed key is only available to first-party user sessions",
+            code="own_session_required",
+        )
+    return session.user
 
 
 async def require_admin_user(

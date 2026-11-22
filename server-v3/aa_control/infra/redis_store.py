@@ -1,22 +1,67 @@
 from __future__ import annotations
 
 import json
+import secrets
 import time
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
 from redis.asyncio import Redis
 
-from aa_control.core.models import NormalDeviceSummary, WatchDevicesEvent
+from aa_control.core.models import AssistantStreamEvent, NormalDeviceSummary, WatchDevicesEvent
 
 PRESENCE_PREFIX = "aa:v3:presence:"
 WATCH_CHANNEL_PREFIX = "aa:v3:user:"
 RATE_LIMIT_PREFIX = "aa:v3:rl:"
+LOCK_PREFIX = "aa:v3:lock:"
 PUSH_READY_KEY = "aa:v3:push:ready"
 PUSH_DELAYED_KEY = "aa:v3:push:delayed"
 PUSH_DEAD_KEY = "aa:v3:push:dead"
 USER_ENTITLEMENTS_PREFIX = "aa:v3:entitlements:"
+
+_RELEASE_LOCK_LUA = """
+if redis.call("get", KEYS[1]) == ARGV[1] then
+    return redis.call("del", KEYS[1])
+else
+    return 0
+end
+"""
+
+
+class AssistantEventSubscription:
+    """Subscribed Redis Pub/Sub handle for one user's cross-device assistant events."""
+
+    def __init__(self, pubsub: Any, channel: str) -> None:
+        self._pubsub = pubsub
+        self._channel = channel
+
+    async def next_event(self, *, timeout: float = 1.0) -> AssistantStreamEvent | None:
+        deadline = time.monotonic() + max(0.0, timeout)
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            message = await self._pubsub.get_message(ignore_subscribe_messages=False, timeout=remaining)
+            if not message:
+                return None
+            if message.get("type") != "message":
+                continue
+            data = message.get("data")
+            if isinstance(data, bytes):
+                data = data.decode("utf-8")
+            if not isinstance(data, str):
+                continue
+            try:
+                parsed = json.loads(data)
+                return AssistantStreamEvent.model_validate(parsed)
+            except (ValueError, TypeError):
+                continue
+
+    async def close(self) -> None:
+        await self._pubsub.unsubscribe(self._channel)
+        await self._pubsub.aclose()
 
 
 @dataclass(frozen=True)
@@ -217,6 +262,51 @@ class RedisControlStore:
             return data if isinstance(data, dict) else None
         except (ValueError, TypeError):
             return None
+
+    # ------------------------------------------------------------------
+    # Multi-instance assistant cross-device Pub/Sub & distributed locks
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _assistant_channel(user_id: str) -> str:
+        return f"{WATCH_CHANNEL_PREFIX}{user_id}:assistant"
+
+    async def publish_assistant_event(self, user_id: str, event: AssistantStreamEvent) -> None:
+        await self._redis.publish(
+            self._assistant_channel(user_id),
+            json.dumps(event.model_dump(), ensure_ascii=False),
+        )
+
+    @asynccontextmanager
+    async def open_assistant_events(self, user_id: str) -> AsyncIterator[AssistantEventSubscription]:
+        pubsub = self._redis.pubsub()
+        channel = self._assistant_channel(user_id)
+        await pubsub.subscribe(channel)
+        sub = AssistantEventSubscription(pubsub, channel)
+        try:
+            yield sub
+        finally:
+            await sub.close()
+
+    async def subscribe_assistant_events(self, user_id: str) -> AsyncIterator[AssistantStreamEvent]:
+        async with self.open_assistant_events(user_id) as sub:
+            while True:
+                event = await sub.next_event(timeout=1.0)
+                if event is not None:
+                    yield event
+
+    async def acquire_lock(self, name: str, *, ttl_seconds: int = 30) -> str | None:
+        token = secrets.token_urlsafe(16)
+        acquired = await self._redis.set(
+            f"{LOCK_PREFIX}{name}",
+            token,
+            nx=True,
+            ex=max(1, ttl_seconds),
+        )
+        return token if acquired else None
+
+    async def release_lock(self, name: str, token: str) -> None:
+        await self._redis.eval(_RELEASE_LOCK_LUA, 1, f"{LOCK_PREFIX}{name}", token)
 
 
 def _decode_presence(raw: Any) -> PresenceSnapshot | None:

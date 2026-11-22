@@ -5,6 +5,15 @@ import os
 from dataclasses import dataclass, field
 from typing import Literal
 
+from aa_control.core.assistant import (
+    DEFAULT_MAX_CONVERSATION_BYTES,
+    DEFAULT_MAX_CONVERSATIONS,
+    DEFAULT_MAX_ENCRYPTED_META_BYTES,
+    DEFAULT_SSE_HEARTBEAT_SECONDS,
+    DEFAULT_TOKENS_CLIENT_ID,
+    DEFAULT_TOKENS_REFRESH_INTERVAL_SECONDS,
+    DEFAULT_TOKENS_URL,
+)
 from aa_control.core.drive import DAY_SECONDS, MIB, DrivePolicyDefaults
 from aa_control.core.entitlements import EntitlementMap, sanitize_entitlements
 from aa_control.core.oidc import ALLOWED_OIDC_ALGORITHMS, DEFAULT_OIDC_ALGORITHMS
@@ -162,6 +171,55 @@ class DriveConfig:
 
 
 @dataclass(frozen=True)
+class TokensAnywhereConfig:
+    """Tokens Anywhere managed API key reuse & auto-refresh configuration."""
+
+    base_url: str = DEFAULT_TOKENS_URL
+    client_id: str = DEFAULT_TOKENS_CLIENT_ID
+    client_secret: str | None = field(default=None, repr=False)
+    refresh_interval_seconds: int = DEFAULT_TOKENS_REFRESH_INTERVAL_SECONDS
+    encryption_secret: str | None = field(default=None, repr=False)
+    request_timeout_seconds: float = 15.0
+    refresh_lock_ttl_seconds: int = 30
+
+    def __post_init__(self) -> None:
+        cleaned_url = self.base_url.strip().rstrip("/")
+        if not cleaned_url:
+            raise ValueError("Tokens Anywhere base_url must be non-empty")
+        object.__setattr__(self, "base_url", cleaned_url)
+        cleaned_client = self.client_id.strip()
+        if not cleaned_client:
+            raise ValueError("Tokens Anywhere client_id must be non-empty")
+        object.__setattr__(self, "client_id", cleaned_client)
+        if self.refresh_interval_seconds < 60:
+            raise ValueError("Tokens Anywhere refresh_interval_seconds must be >= 60")
+
+
+@dataclass(frozen=True)
+class AssistantConfig:
+    """Portable assistant (Pi Lite) sync, KEK/DEK envelope, and Tokens Anywhere settings."""
+
+    max_conversation_bytes: int = DEFAULT_MAX_CONVERSATION_BYTES
+    max_conversations: int = DEFAULT_MAX_CONVERSATIONS
+    max_encrypted_meta_bytes: int = DEFAULT_MAX_ENCRYPTED_META_BYTES
+    sse_heartbeat_seconds: float = DEFAULT_SSE_HEARTBEAT_SECONDS
+    allowed_tokens_client_ids: tuple[str, ...] = ()
+    tokens: TokensAnywhereConfig = field(default_factory=TokensAnywhereConfig)
+
+    def __post_init__(self) -> None:
+        if self.max_conversation_bytes < 1024:
+            raise ValueError("max_conversation_bytes must be >= 1024")
+        if self.max_conversations < 1:
+            raise ValueError("max_conversations must be >= 1")
+        if self.max_encrypted_meta_bytes < 256:
+            raise ValueError("max_encrypted_meta_bytes must be >= 256")
+        if self.sse_heartbeat_seconds <= 0:
+            raise ValueError("sse_heartbeat_seconds must be > 0")
+        cleaned_ids = tuple(cid.strip() for cid in self.allowed_tokens_client_ids if cid.strip())
+        object.__setattr__(self, "allowed_tokens_client_ids", cleaned_ids)
+
+
+@dataclass(frozen=True)
 class ControlSettings:
     database_url: str
     redis_url: str
@@ -172,6 +230,7 @@ class ControlSettings:
     oidc_auth: OidcAuthConfig | None = None
     default_entitlements: EntitlementMap = field(default_factory=dict)
     drive: DriveConfig = field(default_factory=DriveConfig)
+    assistant: AssistantConfig = field(default_factory=AssistantConfig)
     registration_open: bool = True
     bootstrap_setup_token: str | None = field(default=None, repr=False)
     access_token_ttl_seconds: int = 3600
@@ -224,6 +283,7 @@ class ControlSettings:
         oidc_auth = _parse_oidc_auth_env(required=auth_mode == "oidc")
         default_entitlements = _parse_default_entitlements_env()
         drive = _parse_drive_env()
+        assistant = _parse_assistant_env()
         registration_open = _env_bool("AA_CONTROL_REGISTRATION_OPEN", default=True)
         password_iterations = int(
             os.environ.get(
@@ -244,6 +304,7 @@ class ControlSettings:
             oidc_auth=oidc_auth,
             default_entitlements=default_entitlements,
             drive=drive,
+            assistant=assistant,
             registration_open=registration_open,
             bootstrap_setup_token=os.environ.get("AA_CONTROL_SETUP_TOKEN") or None,
             access_token_ttl_seconds=int(os.environ.get("AA_CONTROL_ACCESS_TOKEN_TTL", "3600")),
@@ -315,6 +376,34 @@ def _parse_drive_env() -> DriveConfig:
         download_url_ttl_seconds=max(30, int(os.environ.get("AA_CONTROL_DRIVE_DOWNLOAD_URL_TTL", "300"))),
         cleanup_interval_seconds=max(5.0, float(os.environ.get("AA_CONTROL_DRIVE_CLEANUP_INTERVAL", "300"))),
         s3=s3,
+    )
+
+
+def _parse_assistant_env() -> AssistantConfig:
+    refresh_days = int(os.environ.get("AA_CONTROL_TOKENS_REFRESH_INTERVAL_DAYS", "30"))
+    tokens = TokensAnywhereConfig(
+        base_url=os.environ.get("AA_CONTROL_TOKENS_URL", DEFAULT_TOKENS_URL),
+        client_id=os.environ.get("AA_CONTROL_TOKENS_CLIENT_ID", DEFAULT_TOKENS_CLIENT_ID),
+        client_secret=os.environ.get("AA_CONTROL_TOKENS_CLIENT_SECRET") or None,
+        refresh_interval_seconds=max(60, refresh_days * DAY_SECONDS),
+        encryption_secret=os.environ.get("AA_CONTROL_TOKENS_ENCRYPTION_SECRET") or None,
+        request_timeout_seconds=max(1.0, float(os.environ.get("AA_CONTROL_TOKENS_TIMEOUT", "15"))),
+    )
+    return AssistantConfig(
+        max_conversation_bytes=int(
+            os.environ.get("AA_CONTROL_ASSISTANT_MAX_BYTES", str(DEFAULT_MAX_CONVERSATION_BYTES))
+        ),
+        max_conversations=int(
+            os.environ.get("AA_CONTROL_ASSISTANT_MAX_CONVERSATIONS", str(DEFAULT_MAX_CONVERSATIONS))
+        ),
+        max_encrypted_meta_bytes=int(
+            os.environ.get("AA_CONTROL_ASSISTANT_MAX_META_BYTES", str(DEFAULT_MAX_ENCRYPTED_META_BYTES))
+        ),
+        sse_heartbeat_seconds=float(
+            os.environ.get("AA_CONTROL_ASSISTANT_SSE_HEARTBEAT", str(DEFAULT_SSE_HEARTBEAT_SECONDS))
+        ),
+        allowed_tokens_client_ids=_env_csv("AA_CONTROL_ASSISTANT_ALLOWED_TOKENS_CLIENT_IDS"),
+        tokens=tokens,
     )
 
 
