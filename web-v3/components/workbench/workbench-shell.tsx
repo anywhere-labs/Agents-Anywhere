@@ -2,7 +2,7 @@
 
 import { usePathname, useRouter } from "next/navigation"
 import { useEffect, useMemo, useState, type ReactNode } from "react"
-import { SearchIcon, SparklesIcon } from "lucide-react"
+import { PanelLeftIcon, SearchIcon, SparklesIcon } from "lucide-react"
 
 import { CollapsedNavBar } from "@/components/console/collapsed-nav-bar"
 import { PageTransition } from "@/components/console/page-transition"
@@ -19,7 +19,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
-import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
+import { SidebarInset, SidebarProvider, useSidebar } from "@/components/ui/sidebar"
 import { AssistantPanel } from "@/components/workbench/assistant-panel"
 import { PairDeviceDialog } from "@/components/workbench/pair-device-dialog"
 import { RegisterDeviceDialog } from "@/components/workbench/register-device-dialog"
@@ -30,6 +30,23 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
 import { useAssistant } from "@/lib/state/assistant-context"
 import { useWorkbench } from "@/lib/state/workbench-context"
+
+/** On wide screens with the sidebar folded away (⌘B or the rail): a quiet button to bring it back. */
+function ExpandSidebarButton({ label }: { label: string }) {
+  const { state, isMobile, toggleSidebar } = useSidebar()
+  if (isMobile || state !== "collapsed") return null
+  return (
+    <Button
+      variant="ghost"
+      size="icon-sm"
+      aria-label={label}
+      onClick={toggleSidebar}
+      className="absolute top-3 left-3 z-30 bg-background/80 backdrop-blur"
+    >
+      <PanelLeftIcon className="size-4" />
+    </Button>
+  )
+}
 
 export function WorkbenchShell({
   children,
@@ -124,6 +141,7 @@ export function WorkbenchShell({
         )}
 
         <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+          {!hideMobileBar && <ExpandSidebarButton label={t("shell.openNavigation")} />}
           <PageTransition key={pathname} arrival="rise">
             {children}
           </PageTransition>

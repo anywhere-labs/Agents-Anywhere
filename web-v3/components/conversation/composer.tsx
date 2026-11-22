@@ -144,14 +144,20 @@ export function Composer({
 
   useEffect(() => {
     if (!draftKey) return
-    const timer = window.setTimeout(() => {
+    const save = () => {
       try {
         if (text) window.localStorage.setItem(draftStorageKey(draftKey), text)
         else window.localStorage.removeItem(draftStorageKey(draftKey))
       } catch {
         // Storage unavailable: the draft lives for this page only.
       }
-    }, 300)
+    }
+    // A cleared input (sent) is forgotten at once: the page may navigate away before a debounce fires.
+    if (!text) {
+      save()
+      return
+    }
+    const timer = window.setTimeout(save, 300)
     return () => window.clearTimeout(timer)
   }, [draftKey, text])
 
@@ -191,7 +197,16 @@ export function Composer({
         return
       }
       const ok = await onSubmit(text.trim(), delivery)
-      if (ok) setText("")
+      if (ok) {
+        setText("")
+        if (draftKey) {
+          try {
+            window.localStorage.removeItem(draftStorageKey(draftKey))
+          } catch {
+            // ignore
+          }
+        }
+      }
     } finally {
       setSending(false)
     }

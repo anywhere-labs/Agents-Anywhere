@@ -218,7 +218,7 @@ export function WorkbenchSidebar() {
   const rowMenu = (s: SessionSummary) => (
     <DropdownMenu>
       <DropdownMenuTrigger
-        render={<SidebarMenuAction showOnHover className="top-1/2 -translate-y-1/2" aria-label={t("conv.more")} />}
+        render={<SidebarMenuAction showOnHover className="top-1/2! -translate-y-1/2" aria-label={t("conv.more")} />}
       >
         <EllipsisIcon />
       </DropdownMenuTrigger>
@@ -286,7 +286,7 @@ export function WorkbenchSidebar() {
           </span>
         </SidebarMenuButton>
         {hasIndicator(s) ? (
-          <SidebarMenuBadge className="top-1/2 -translate-y-1/2">
+          <SidebarMenuBadge className="top-1/2! -translate-y-1/2">
             <SessionStatus state={s.state} unread={s.unread} />
           </SidebarMenuBadge>
         ) : (

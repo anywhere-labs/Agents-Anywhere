@@ -85,7 +85,7 @@ export function ConversationHeader({
   actions: HeaderActions
 }) {
   const { t } = useI18n()
-  const { toggleSidebar, isMobile } = useSidebar()
+  const { toggleSidebar, isMobile, state: sidebarState } = useSidebar()
   const [editing, setEditing] = useState<string | null>(null)
 
   const commitRename = async () => {
@@ -96,7 +96,7 @@ export function ConversationHeader({
 
   return (
     <header className="flex h-14 shrink-0 items-center gap-2 px-3 sm:px-4">
-      {isMobile && (
+      {(isMobile || sidebarState === "collapsed") && (
         <Button
           variant="ghost"
           size="icon-sm"
