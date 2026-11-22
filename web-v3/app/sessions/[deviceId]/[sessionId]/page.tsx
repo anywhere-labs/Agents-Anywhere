@@ -369,12 +369,20 @@ export default function SessionWorkspacePage() {
   // ── Side panel ──
   const wide = useMediaQuery("(min-width: 1280px)")
   const isMobile = useIsMobile()
-  const panelOpen = prefs.panel.open
+  // Wide screens remember whether the panel is open; on phones it is a sheet opened on demand only.
+  const [sheetOpen, setSheetOpen] = useState(false)
+  const panelOpen = isMobile ? sheetOpen : prefs.panel.open
   const panelTab = (prefs.panel.tab as PanelTab) || "files"
   const setPanel = useCallback(
-    (open: boolean, tab?: PanelTab) =>
-      setPrefs((p) => ({ panel: { open, tab: tab ?? p.panel.tab } })),
-    [setPrefs]
+    (open: boolean, tab?: PanelTab) => {
+      if (isMobile) {
+        setSheetOpen(open)
+        if (tab) setPrefs((p) => ({ panel: { open: p.panel.open, tab } }))
+        return
+      }
+      setPrefs((p) => ({ panel: { open, tab: tab ?? p.panel.tab } }))
+    },
+    [isMobile, setPrefs]
   )
 
   const myName = activeAccount?.user.display_name ?? ""
@@ -635,7 +643,7 @@ export default function SessionWorkspacePage() {
 
       {isMobile && (
         <Sheet open={panelOpen} onOpenChange={(open) => setPanel(open)}>
-          <SheetContent side="bottom" showCloseButton={false} className="h-[85svh] rounded-t-card p-0">
+          <SheetContent side="bottom" showCloseButton={false} className="data-[side=bottom]:h-[85svh] rounded-t-card p-0">
             <SheetTitle className="sr-only">{t("conv.togglePanel")}</SheetTitle>
             {panel}
           </SheetContent>

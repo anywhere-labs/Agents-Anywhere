@@ -136,7 +136,7 @@ export function WorkbenchShell({
           side={isMobile ? "bottom" : "right"}
           className={cn(
             "flex flex-col p-0",
-            isMobile ? "h-[88svh] rounded-t-card" : "w-full sm:max-w-lg"
+            isMobile ? "data-[side=bottom]:h-[88svh] rounded-t-card" : "w-full sm:max-w-lg"
           )}
         >
           <SheetTitle className="sr-only">{t("assistant.title")}</SheetTitle>

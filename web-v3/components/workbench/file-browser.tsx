@@ -281,7 +281,10 @@ export function FileBrowser({
       setError(null)
       try {
         const res = await tunnelManager.listDirs(device, dir || undefined)
-        res.entries.sort((a, b) => Number(b.is_dir) - Number(a.is_dir) || a.name.localeCompare(b.name))
+        const dot = (n: string) => Number(n.startsWith("."))
+        res.entries.sort(
+          (a, b) => Number(b.is_dir) - Number(a.is_dir) || dot(a.name) - dot(b.name) || a.name.localeCompare(b.name)
+        )
         setListing(res)
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err))

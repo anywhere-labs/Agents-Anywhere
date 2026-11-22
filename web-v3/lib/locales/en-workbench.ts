@@ -184,4 +184,7 @@ export const enWorkbench = {
   "device.manage": "Manage",
   "device.offlineCached": "Offline · showing cached data",
   "device.pickFile": "Pick a file to preview it.",
+  "device.agentNotReported": "no longer reported by the device",
+  "device.removePin": "Remove local pin",
+  "device.pairingLinkExpires": "One-time pairing link (expires {time})",
 } as const

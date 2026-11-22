@@ -184,4 +184,7 @@ export const zhCNWorkbench: Record<keyof typeof enWorkbench, string> = {
   "device.manage": "管理",
   "device.offlineCached": "离线 · 显示缓存数据",
   "device.pickFile": "选一个文件来预览。",
+  "device.agentNotReported": "设备已不再上报",
+  "device.removePin": "移除本地钉扎",
+  "device.pairingLinkExpires": "一次性配对链接（{time} 过期）",
 }
