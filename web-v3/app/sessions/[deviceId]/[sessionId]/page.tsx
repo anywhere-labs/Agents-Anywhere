@@ -411,11 +411,21 @@ export default function SessionWorkspacePage() {
         )
       },
       open: (target) => {
+        let path: string
         if (target.kind === "url") {
-          window.open(target.url, "_blank", "noopener,noreferrer")
-          return
+          // Web links open in a new tab; a path the agent linked (absolute, ~/…, relative to the conversation's
+          // directory, or file://) opens in the side panel (client-experience-proposal §3.3).
+          const url = target.url
+          if (/^[a-z][a-z0-9+.-]*:/i.test(url) && !url.startsWith("file:")) {
+            window.open(url, "_blank", "noopener,noreferrer")
+            return
+          }
+          const local = decodeURIComponent(url.replace(/^file:\/\//, "")).split("#")[0]
+          path = local.startsWith("/") || local.startsWith("~") || !cwd ? local : `${cwd}/${local.replace(/^\.\//, "")}`
+        } else {
+          path = target.path
         }
-        setOpenFile((prev) => ({ path: target.path, nonce: (prev?.nonce ?? 0) + 1 }))
+        setOpenFile((prev) => ({ path, nonce: (prev?.nonce ?? 0) + 1 }))
         setPanel(true, "files")
       },
       copy,
@@ -425,7 +435,7 @@ export default function SessionWorkspacePage() {
       },
       fork: forkAt,
     }),
-    [call, copy, forkAt, myId, myName, myPub, pairedClientLabel, sessionId, setPanel, tunnelDevice, tunnelManager]
+    [call, copy, cwd, forkAt, myId, myName, myPub, pairedClientLabel, sessionId, setPanel, tunnelDevice, tunnelManager]
   )
 
   const commands = useMemo<ComposerCommand[]>(() => {
