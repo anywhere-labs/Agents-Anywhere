@@ -236,9 +236,9 @@ const FLUSH = 'ml-0 border-l-0 pl-0 pr-0'
 function ReasoningStep({ message, part }: { message: AssistantMessage; part: ThinkingPart }) {
   const running = !message.done
   const state = useOpen(running)
+  // Text only, as ChatGPT's "Thought for …": while it runs the line shimmers, which says enough.
   const line = (
     <TraceLine status={running ? 'running' : undefined}>
-      <TraceIcon>{running ? <LoaderCircleIcon className="animate-spin" /> : <BrainIcon />}</TraceIcon>
       <TraceTitle>{running ? '正在思考' : '想了一下'}</TraceTitle>
     </TraceLine>
   )
