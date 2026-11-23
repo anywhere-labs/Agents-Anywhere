@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 
+import { outputText } from "@/components/conversation/text"
 import { bytesToBase64Url, isUnimplemented, planTransfer, rpcCap } from "@/lib/attachments/transfer"
 import type { ConfigOption, DriveQuotaView, SessionSummary } from "@/lib/types/v3"
 import { rememberStart, toggleIn } from "@/lib/workbench/local-prefs"
@@ -215,5 +216,25 @@ describe("agent arguments as one line (splitArgs / joinArgs)", () => {
     for (const args of [["-y", "pkg"], ["two words", "it's", "", "a\\b", 'say "hi"']]) {
       expect(splitArgs(joinArgs(args))).toEqual(args)
     }
+  })
+})
+
+describe("tool output as text (outputText)", () => {
+  it("shows an MCP tool result's text blocks instead of its JSON", () => {
+    const result = {
+      content: [
+        { type: "text", text: "# Title" },
+        { type: "image", data: "aGVsbG8=", mimeType: "image/png" },
+        { type: "text", text: "body" },
+      ],
+      structuredContent: "# Title",
+    }
+    expect(outputText(result)).toBe("# Title\nbody")
+  })
+
+  it("keeps the other shapes as before", () => {
+    expect(outputText({ stdout: "ok" })).toBe("ok")
+    expect(outputText({ exit_code: 0 })).toBe("")
+    expect(outputText({ content: [] })).toBe('{\n  "content": []\n}')
   })
 })

@@ -338,7 +338,9 @@ function ToolDetail({ part, output }: { part: ToolPart; output: string }) {
   const env = useThreadEnv()
   const diffs = part.diffs ?? []
   const command = part.kind === 'execute' ? commandOf(part) : undefined
-  const shown = new Set(diffs.map((d) => d.path))
+  // A read's excerpt and a diff name their file in their header: the location line would say it again.
+  const excerpt = !command && !!output && !diffs.length && part.kind === 'read'
+  const shown = new Set([...diffs.map((d) => d.path), ...(excerpt ? [fileOf(part) ?? ''] : [])])
   const locations = (part.locations ?? []).filter((l) => !shown.has(l.path))
   const tail = useLines(output, 'tail')
   return (
@@ -385,7 +387,7 @@ function ToolDetail({ part, output }: { part: ToolPart; output: string }) {
       {diffs.map((d, i) => (
         <DiffBlock key={i} path={d.path} oldText={d.old_text ?? ''} newText={d.new_text} />
       ))}
-      {!command && output && !diffs.length && (part.kind === 'read' ? <FileExcerpt part={part} text={output} /> : <OutputBlock text={output} />)}
+      {!command && output && !diffs.length && (excerpt ? <FileExcerpt part={part} text={output} /> : <OutputBlock text={output} />)}
     </>
   )
 }
