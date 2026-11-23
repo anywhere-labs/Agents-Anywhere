@@ -16,7 +16,7 @@
 账号
 ├── 随身助手（Pi Lite）：对话历史、云端工作区（与设备无关）
 └── 设备（工作电脑，普通 / 加密）
-    ├── Agent（Claude Code、Codex、Antigravity、Pi、Gemini …，按设备上报的 runtimes）
+    ├── Agent（Claude Code、Codex、Antigravity、Pi …，按设备上报的 runtimes）
     │   └── 项目（工作目录 cwd，可选分组）
     │       └── 对话
     ├── 终端
@@ -90,13 +90,14 @@
 - 端到端加密的文件不能在网页下载，也不能改名（名字在加密时就定了），但可以移动；服务端不知道名字的加密文件以文件 id 显示。
 - 空文件夹显示空状态和上传入口；服务端没有配置对象存储时，整页显示云盘未开启的说明。
 - 侧栏入口与设置页里的云盘卡片指向这个页面。
+- 回复里的 `drive:/…` 引用链接到 `/drive?ref=…`：页面先解析引用，再打开文件夹，或打开文件所在的文件夹并选中文件（地址变成 `/drive?path=…&file=<文件 id>`）。
 
 接口见 [assistant-and-files-proposal.md](assistant-and-files-proposal.md) 6.2，引用格式见 6.3。
 
 ### 2.7 全局
 
 - ⌘K 搜索：设备、Agent、项目、对话、助手对话、设置项。
-- 新对话：先选设备 → Agent → 目录（记住上次的选择），然后直接进入输入框。
+- 新对话：先选设备 → Agent → 目录（记住上次的选择），然后直接进入输入框。选好 Agent 和目录时，客户端调用 `aa.v3.Sessions/prepare` 预先启动这个 Agent：输入框旁直接显示它的模型、模式（权限）、推理强度等选项，第一次下载 Agent 也发生在用户打字的时候；启动失败（例如 Agent 未登录，`agent_auth_required`）在用户打字前就提示。发送第一条消息时 `create` 带上 `prepared_id` 接管这个 Agent，用户选的选项随 `config` 一起提交（接口见 [Connector README](../../connector-v3/README.md#新对话预先启动-agentprepare)）。
 - 空状态：没有设备时引导安装 Connector 或 Desktop；设备没有可用 Agent 时说明缺什么。
 
 ## 3. 附件

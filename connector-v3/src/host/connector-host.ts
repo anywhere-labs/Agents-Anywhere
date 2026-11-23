@@ -22,7 +22,7 @@ import { randomBytes } from "node:crypto";
 
 import { generateE2EKey, Mesh, Router, type RunningServer } from "meshcall";
 
-import type { AcpRuntimePreset } from "../core/config.js";
+import type { AcpRuntimePreset, AgentUpdate } from "../core/config.js";
 import { DeviceGate, type DeviceGateOptions, type PairingHint, type PairingPayload } from "../core/gate.js";
 import { SessionStore } from "../core/session-store.js";
 import { AcpRuntimeHost, type PushEvent } from "../runtime/acp-host.js";
@@ -30,7 +30,7 @@ import { devicePlatform, removeSessionAttachments, type DriveDownload } from "..
 import { StateStore, type ConnectorSettings, type DeviceIdentity, type DeviceMode, type PairedClientEntry } from "../runtime/state-store.js";
 import { TerminalManager } from "../runtime/terminal-manager.js";
 import { DeviceAdminService, TunnelStreamTracker } from "../rpc/device-admin-service.js";
-import { DeviceService } from "../rpc/device-service.js";
+import { DeviceService, type AgentStatus } from "../rpc/device-service.js";
 import { SessionsService } from "../rpc/sessions-service.js";
 import { TerminalsService } from "../rpc/terminals-service.js";
 import {
@@ -77,6 +77,16 @@ export interface ConnectorHostOptions {
   presets?: AcpRuntimePreset[];
   /** Add the built-in agent presets that are installed here (see `defaultAcpPresets`). Default true. */
   includeDefaultPresets?: boolean;
+  /** The Connector's own presets (`builtin` in `Device/agents`); default the built-in agents installed here. */
+  defaultPresets?: AcpRuntimePreset[];
+  /** `Sessions/prepare`: how long an unused prepared agent waits (default 10 min) and how many are kept (default 4). */
+  preparedTtlMs?: number;
+  maxPrepared?: number;
+  /**
+   * Close a session's agent after this long with nothing in flight, when the agent can restore its context (its
+   * next message starts it again and restores it). Default 15 min; 0 or null: never.
+   */
+  idleTtlMs?: number | null;
   connectorVersion?: string;
   presenceIntervalMs?: number;
   /** `send({ wait: true })` cap. */
@@ -160,6 +170,9 @@ export class ConnectorHost {
   }
   get sessionsService(): SessionsService {
     return this.#need(this.#services, "services").sessions;
+  }
+  get deviceService(): DeviceService {
+    return this.#need(this.#services, "services").device;
   }
   get settings(): ConnectorSettings {
     return { ...this.#need(this.#settings, "settings") };
@@ -258,12 +271,27 @@ export class ConnectorHost {
       store,
       presets: this.options.presets ?? [],
       includeDefaultPresets: this.options.includeDefaultPresets ?? true,
+      ...(this.options.defaultPresets !== undefined ? { defaultPresets: this.options.defaultPresets } : {}),
+      agentSettings: await state.loadAgentSettings(),
+      onAgentSettingsChange: (agents) => state.saveAgentSettings(agents),
+      ...(this.options.preparedTtlMs !== undefined ? { preparedTtlMs: this.options.preparedTtlMs } : {}),
+      ...(this.options.maxPrepared !== undefined ? { maxPrepared: this.options.maxPrepared } : {}),
+      ...(this.options.idleTtlMs !== undefined ? { idleTtlMs: this.options.idleTtlMs } : {}),
       maxFileBytes: () => this.#settings?.max_rpc_file_bytes ?? settings.max_rpc_file_bytes,
       onPushEvent: (event) => this.#onPush(event),
       clientInfo: { name: "agents-anywhere-connector", version: this.connectorVersion },
+      logger: { info: (message) => this.#logger.info(message), warn: (message) => this.#logger.warn(message) },
     });
 
     const host = this;
+    const sessions = new SessionsService({
+      gate,
+      store,
+      runtimes: this.#runtimes,
+      streams: this.streams,
+      onSessionDeleted: (session) => removeSessionAttachments(state.dataDir, { sessionId: session.id, projectDir: session.cwd }),
+      ...(this.options.waitTimeoutMs !== undefined ? { waitTimeoutMs: this.options.waitTimeoutMs } : {}),
+    });
     this.#services = {
       admin: new DeviceAdminService({
         closeTunnelSessions: (tunnelId) => {
@@ -272,14 +300,7 @@ export class ConnectorHost {
         rename: (name) => this.rename(name),
         checkUpdate: (channel) => this.options.onCheckUpdate?.(channel),
       }),
-      sessions: new SessionsService({
-        gate,
-        store,
-        runtimes: this.#runtimes,
-        streams: this.streams,
-        onSessionDeleted: (session) => removeSessionAttachments(state.dataDir, { sessionId: session.id, projectDir: session.cwd }),
-        ...(this.options.waitTimeoutMs !== undefined ? { waitTimeoutMs: this.options.waitTimeoutMs } : {}),
-      }),
+      sessions,
       device: new DeviceService({
         gate,
         get deviceId() {
@@ -291,6 +312,9 @@ export class ConnectorHost {
         settings: () => this.settings,
         updateSettings: (patch) => this.updateSettings(patch, { deferModeSwitch: true }),
         runtimes: () => this.runtimes.list(),
+        agents: () => this.agents(),
+        updateAgent: (id, update) => this.updateAgent(id, update),
+        stopAgent: (id, options) => this.stopAgent(id, options),
         sessionCwd: (sessionId) => (store.has(sessionId) ? store.get(sessionId)?.cwd : undefined),
         get driveDownload() {
           return host.driveDownloader();
@@ -441,6 +465,39 @@ export class ConnectorHost {
     const trimmed = name.trim();
     if (!trimmed) throw new TypeError("a device name cannot be empty");
     await this.updateSettings({ device_name: trimmed.slice(0, 128) });
+  }
+
+  // ── Agents ──
+
+  /** Every agent of this device, turned-off ones included, with its settings and running processes and turns. */
+  agents(): AgentStatus[] {
+    const sessions = this.sessionsService;
+    return this.runtimes.agents().map((agent) => ({ ...agent, busy: sessions.busyCount(agent.id) }));
+  }
+
+  /**
+   * Change an agent (see `AgentUpdate`): saved in `agents.json` (0600) first, then applied to agent processes
+   * started from now on. The values of its environment variables are never logged or sent anywhere.
+   */
+  async updateAgent(id: string, update: AgentUpdate): Promise<AgentStatus> {
+    await this.init();
+    const wasEnabled = !this.runtimes.isDisabled(id);
+    const agent = await this.runtimes.updateAgent(id, update);
+    // Which fields, never their values.
+    const fields: string[] = (["enabled", "command", "args", "env"] as const).filter((field) => update[field] != null);
+    if (update.reset) fields.unshift("reset");
+    this.#logger.info(`agent ${id} updated (${fields.join(", ") || "nothing"})`);
+    // The control plane offers only the agents in presence: tell it now rather than at the next report.
+    if (agent.enabled !== wasEnabled) this.#presence?.reportNow();
+    return { ...agent, busy: this.sessionsService.busyCount(id) };
+  }
+
+  /** Stop an agent's processes; with `force` its running turns are cancelled first (see `SessionsService.stopAgent`). */
+  async stopAgent(id: string, options: { force?: boolean } = {}): Promise<number> {
+    await this.init();
+    const stopped = await this.sessionsService.stopAgent(id, options);
+    this.#logger.info(`agent ${id}: stopped ${stopped} process(es)`);
+    return stopped;
   }
 
   // ── Pairing ──

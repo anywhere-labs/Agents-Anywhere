@@ -2,9 +2,9 @@
 // `session/update` stream into aa.v3 timeline items in a `SessionStore`.
 //
 // Only the parts of ACP the Connector uses are typed here (https://agentclientprotocol.com): initialize,
-// session/new, session/load, session/prompt, session/cancel, session/set_config_option, session/set_mode, the
-// `session/update` notification and the agent → client `session/request_permission` / `fs/*` requests. Unknown
-// fields and update kinds are tolerated: agents add them faster than the spec moves.
+// session/new, session/resume, session/load, session/prompt, session/cancel, session/set_config_option,
+// session/set_mode, the `session/update` notification and the agent → client `session/request_permission` / `fs/*`
+// requests. Unknown fields and update kinds are tolerated: agents add them faster than the spec moves.
 //
 // Portable: no Node built-ins. Spawning the agent and framing stdio is `src/runtime/*`'s job.
 
@@ -218,9 +218,16 @@ export interface AcpClientCapabilities {
 }
 
 export interface AcpAgentCapabilities {
+  /** `session/load`: the agent reopens a session and replays it as `session/update`s before it answers. */
   loadSession?: boolean;
   promptCapabilities?: { image?: boolean; audio?: boolean; embeddedContext?: boolean };
   mcpCapabilities?: { http?: boolean; sse?: boolean };
+  /** Session methods beyond new / load / prompt; each is supported when present (`{}`), not when absent or null. */
+  sessionCapabilities?: {
+    /** `session/resume`: reopen a session without replaying it. */
+    resume?: Record<string, unknown> | null;
+    close?: Record<string, unknown> | null;
+  } | null;
 }
 
 export interface AcpInitializeParams {
@@ -261,6 +268,15 @@ export interface AcpLoadSessionResult {
   modes?: AcpSessionModeState | null;
   configOptions?: AcpSessionConfigOption[] | null;
 }
+
+/** `session/resume` (agents with `sessionCapabilities.resume`): like `session/load`, without the replay. */
+export interface AcpResumeSessionParams {
+  sessionId: string;
+  cwd: string;
+  mcpServers?: AcpMcpServer[];
+}
+
+export type AcpResumeSessionResult = AcpLoadSessionResult;
 
 export interface AcpPromptParams {
   sessionId: string;
@@ -333,6 +349,7 @@ export interface AcpAgentMethods {
   initialize: { params: AcpInitializeParams; result: AcpInitializeResult };
   "session/new": { params: AcpNewSessionParams; result: AcpNewSessionResult };
   "session/load": { params: AcpLoadSessionParams; result: AcpLoadSessionResult | null };
+  "session/resume": { params: AcpResumeSessionParams; result: AcpResumeSessionResult | null };
   "session/prompt": { params: AcpPromptParams; result: AcpPromptResult };
   "session/set_config_option": { params: AcpSetConfigOptionParams; result: AcpSetConfigOptionResult };
   "session/set_mode": { params: AcpSetModeParams; result: Record<string, never> | null };
@@ -435,12 +452,17 @@ export function configOptionFromModes(modes: AcpSessionModeState): ConfigOption 
   };
 }
 
-/** Config options of a `session/new` / `session/load` result. */
+/** Config options of a `session/new` / `session/resume` / `session/load` result. */
 export function configFromSessionResult(result: AcpNewSessionResult | AcpLoadSessionResult | null | undefined): ConfigOption[] {
   if (result == null) return [];
   if (result.configOptions) return configOptionsFromAcp(result.configOptions);
   if (result.modes) return [configOptionFromModes(result.modes)];
   return [];
+}
+
+/** `current_mode_update`: the mode setting (the `mode` option, or any option of the `mode` category) now reads `modeId`. */
+export function configWithMode(config: readonly ConfigOption[], modeId: string): ConfigOption[] {
+  return config.map((option) => (option.id === MODE_CONFIG_ID || option.category === "mode" ? { ...option, current: modeId } : option));
 }
 
 function planEntries(entries: readonly AcpPlanEntry[]): PlanEntry[] {
@@ -558,6 +580,11 @@ export class AcpTimelineProjector {
 
   private turnId: string | undefined;
   private autonomous = false;
+  /**
+   * The turn's latest item (highest seq). A cancelled turn marks it interrupted even when the agent already closed
+   * every item itself (Pi fails its running tool call on cancel), so the thread still shows the turn was stopped.
+   */
+  private turnLast: AssistantMessage | undefined;
   private stretch: OpenStretch | undefined;
   private planId: string | undefined;
   private plan: PlanEntry[] = [];
@@ -595,6 +622,7 @@ export class AcpTimelineProjector {
     this.flushReplayUser();
     if (this.turnId !== undefined) this.closeTurnItems(false);
     this.turnId = turnId;
+    this.turnLast = undefined;
     this.autonomous = false;
     // Text is matched by prefix; links and images by URI (agents echo them with their own names).
     const text = prompt?.filter((block) => block.type === "text").map((block) => contentBlockText(block)).join("") ?? "";
@@ -609,6 +637,12 @@ export class AcpTimelineProjector {
     this.flushReplayUser();
     const interrupted = stopReason === "cancelled" || stopReason === "error";
     this.closeTurnItems(interrupted);
+    const last = this.turnLast;
+    this.turnLast = undefined;
+    if (interrupted && last !== undefined) {
+      const current = this.store.getMessage(this.sessionId, last.id);
+      if (current?.role === "assistant" && !current.interrupted) this.markInterrupted(current);
+    }
     this.cancelPermissions();
     this.turnId = undefined;
     this.autonomous = false;
@@ -701,7 +735,9 @@ export class AcpTimelineProjector {
     const turnId = this.ensureTurn(id);
     const item: AssistantItemInput = { id, turn_id: turnId, done, parts: [part] };
     if (this.autonomous) item.autonomous = true;
-    return this.store.upsertAssistantItem(this.sessionId, item);
+    const message = this.store.upsertAssistantItem(this.sessionId, item);
+    if (this.turnLast === undefined || message.seq >= this.turnLast.seq) this.turnLast = message;
+    return message;
   }
 
   private appendStretch(kind: OpenStretch["kind"], text: string): void {
@@ -754,10 +790,7 @@ export class AcpTimelineProjector {
   private setMode(modeId: string): void {
     const session = this.store.get(this.sessionId);
     if (session === undefined) return;
-    const config = session.config.map((option) =>
-      option.id === MODE_CONFIG_ID || option.category === "mode" ? { ...option, current: modeId } : option,
-    );
-    this.store.updateSession(this.sessionId, { config });
+    this.store.updateSession(this.sessionId, { config: configWithMode(session.config, modeId) });
   }
 
   /** `session/load` replays history: user chunks become one user message that opens the next turn. */

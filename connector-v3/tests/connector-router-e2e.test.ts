@@ -426,6 +426,41 @@ describe("ConnectorHost against a real meshcall-router", { skip: SKIP, timeout: 
     const configured = await client.unary<object, Session>("aa.v3.Sessions", "set_config", { id: created.id, config_id: "model", value: "smart" }, { instance: deviceId });
     assert.equal(configured.config[0]?.current, "smart");
 
+    // prepare → create({ prepared_id }): the agent starts before the first message and reports its settings; create
+    // takes it over and the first turn runs on it. Then the extra session goes again (later steps count sessions).
+    const prepared = await client.unary<object, { prepared_id: string; agent: string; cwd: string; config: Session["config"]; expires_at: string }>(
+      "aa.v3.Sessions", "prepare", { agent: "mock", cwd: workDir }, { instance: deviceId });
+    assert.deepEqual([prepared.agent, prepared.cwd, prepared.config[0]?.id, prepared.config[0]?.current], ["mock", workDir, "model", "fast"]);
+    assert.ok(Date.parse(prepared.expires_at) > Date.now());
+    assert.equal(reasonOf(await rejection(client.unary("aa.v3.Sessions", "prepare", { agent: "nope" }, { instance: deviceId }))), "unknown_agent");
+    const adopted = await client.unary<object, Session>(
+      "aa.v3.Sessions", "create", { agent: "mock", cwd: workDir, prepared_id: prepared.prepared_id, config: { model: "smart" } }, { instance: deviceId });
+    assert.equal(adopted.config[0]?.current, "smart");
+    assert.deepEqual(host.runtimes.listPrepared(), []);
+    const firstTurn = await client.unary<object, { reply_text?: string }>(
+      "aa.v3.Sessions", "send", { id: adopted.id, client_msg_id: "p1", content: "prepared", wait: true }, { instance: deviceId, timeoutMs: 15_000 });
+    assert.equal(firstTurn.reply_text, "echo: prepared");
+    await client.unary("aa.v3.Sessions", "delete", { id: adopted.id }, { instance: deviceId });
+
+    // Agent management through MeshCall: anyone allowed may list; changing and stopping only through a tunnel; the
+    // request and the answer pass the schemas, and an environment value never comes back.
+    type Agent = { id: string; name: string; builtin: boolean; enabled: boolean; command: string; env_keys: string[]; customized: boolean; running: number; busy: number };
+    const agents = await client.unary<object, { agents: Agent[] }>("aa.v3.Device", "agents", {}, { instance: deviceId });
+    assert.deepEqual(agents.agents.map((a) => [a.id, a.name, a.builtin, a.enabled, a.running]), [["mock", "Mock ACP", false, true, 1]]);
+    assert.equal((await control.unary<object, { agents: Agent[] }>("aa.v3.Device", "agents", {}, direct("client"))).agents.length, 1);
+    assert.equal(reasonOf(await rejection(control.unary("aa.v3.Device", "update_agent", { id: "mock", command: "/bin/false" }, direct("client")))), "tunnel_required");
+    assert.equal(reasonOf(await rejection(control.unary("aa.v3.Device", "stop_agent", { id: "mock" }, direct("mcp", { "aa-mcp-client": "Claude" })))), "mcp_not_allowed");
+    const badEnv = await rejection(client.unary("aa.v3.Device", "update_agent", { id: "mock", env: { "NOT-A-NAME": "x" } }, { instance: deviceId }));
+    assert.ok(badEnv instanceof MeshCallError && badEnv.code === "invalid_argument", String(badEnv));
+    // The name is not a setting: a `name` in the request is dropped like any field the schema does not have.
+    const changed = await client.unary<object, Agent>("aa.v3.Device", "update_agent", { id: "mock", name: "Mock (mine)", env: { MOCK_TOKEN: "s3cret-value" } }, { instance: deviceId });
+    assert.deepEqual([changed.name, changed.env_keys, changed.customized], ["Mock ACP", ["MOCK_TOKEN"], true]);
+    assert.ok(!JSON.stringify(changed).includes("s3cret-value"));
+    const reset = await client.unary<object, Agent>("aa.v3.Device", "update_agent", { id: "mock", reset: true, enabled: null }, { instance: deviceId });
+    assert.deepEqual([reset.name, reset.env_keys, reset.customized], ["Mock ACP", [], false]);
+    // Stops the first session's agent; its next message below starts it again.
+    assert.deepEqual(await client.unary("aa.v3.Device", "stop_agent", { id: "mock" }, { instance: deviceId }), { stopped: 1 });
+
     const view = new SessionView(client.serverStream<object, WatchEvent>("aa.v3.Sessions", "watch", { id: created.id }, { instance: deviceId }));
     await view.until((v) => v.session !== undefined, "watch snapshot");
 

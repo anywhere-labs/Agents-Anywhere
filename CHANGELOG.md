@@ -15,6 +15,11 @@
 - 在工作设备安装并配置对应 CLI 后，可以在 Web、Desktop、Android 和 iOS 选择 Command Code、OpenCode、Google Antigravity、MiniMax Code、CodeBuddy Code 和 MiMo Code 新建会话，并按 Agent 支持的能力发送消息、处理审批、中断和恢复 AA 会话。（[#629](https://github.com/anywhere-labs/Agents-Anywhere/pull/629)）
 - Pi 会话现在支持 `/plan`，可以从首条任务开始规划、审阅和修改计划，并在同意后按原有工具权限继续执行。（[#631](https://github.com/anywhere-labs/Agents-Anywhere/pull/631)）
 
+### DSH 同步
+
+- DSH 0.2.3 在回复末尾附带的操作卡片（例如推荐启用某个插件）不再以一段 JSON 代码块出现在 Agents Anywhere 的会话里；卡片本身仍要在 DSH 中查看和操作。（[#829](https://github.com/anywhere-labs/Agents-Anywhere/pull/829)）
+- 修复 DSH 0.2.3 中「远程控制」弹窗被压窄的问题：标签、说明文字和底部按钮不再挤得换行，运行日志页恢复原来的宽度，自建服务的地址输入框恢复原来的高度；在 DSH 0.2.3 里更新 AA 插件后，面板不用刷新页面也会用上新版样式。（[#829](https://github.com/anywhere-labs/Agents-Anywhere/pull/829)、[#830](https://github.com/anywhere-labs/Agents-Anywhere/pull/830)）
+
 ### Desktop
 
 - Desktop 安装包自带 Pi 运行环境，第一次启动只需在本地复制，不再下载 Node 和 npm 依赖；准备失败时也不再停在启动页、点「重试」也进不去，Pi 会在第一次使用时再次准备并在会话里提示错误。（[#657](https://github.com/anywhere-labs/Agents-Anywhere/pull/657)）

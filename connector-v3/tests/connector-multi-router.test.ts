@@ -193,7 +193,7 @@ describe("ConnectorHost on several meshcall-routers", { skip: SKIP, timeout: 120
     for (const mesh of meshes.reverse()) await mesh.close().catch(() => undefined);
     for (const host of hosts) await host.stop().catch(() => undefined);
     for (const router of routers) await router.close().catch(() => undefined);
-    if (tmp) await rm(tmp, { recursive: true, force: true });
+    if (tmp) await rm(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   it("serves one shared device state behind every Router, and survives losing one of them", async () => {

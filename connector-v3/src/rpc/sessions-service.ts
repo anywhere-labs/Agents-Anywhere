@@ -11,9 +11,17 @@
  * So most requests accept both spellings (`id` or `session_id`, `content` or `text`, …). Optional fields accept
  * `null`, which is how the Python control plane sends an absent value.
  *
+ * New conversations: `prepare({ agent, cwd? })` starts the agent as soon as the user picks it and reports its
+ * settings (model, mode, …) in the shape of `Session.config`, so they can be chosen before the first message;
+ * `create({ …, prepared_id })` takes that agent over instead of starting another.
+ *
  * Turns: an idle session starts a turn at once; a busy one queues the message (`control.queued`) and starts it when
  * the turn ends. `delivery: "steer"` (and `steer_queued`) interrupts the running turn and sends the message next:
  * ACP has no native mid-turn steering.
+ *
+ * Agents turned off on this device (`aa.v3.Device/update_agent`) take no new turn: `create`, `prepare`, `send`,
+ * `compact`, `steer_queued` and `rewind` with content answer `failed_precondition` / `agent_disabled`, and queued
+ * messages wait. `stopAgent` (for `aa.v3.Device/stop_agent`) stops an agent's processes, cancelling its turns first.
  */
 
 import { stat } from "node:fs/promises";
@@ -26,10 +34,12 @@ import type { AcpContentBlock } from "../core/acp-protocol.js";
 import type { DeviceGate, GateDecision } from "../core/gate.js";
 import { SessionStoreError, type SessionStore } from "../core/session-store.js";
 import {
+  ConfigOptionSchema,
   MessageSchema,
   SessionListEventSchema,
   SessionListSchema,
   SessionSchema,
+  TimelineInstantSchema,
   WatchEventSchema,
   type FilePart,
   type ImagePart,
@@ -70,6 +80,23 @@ const CreateRequestSchema = z.object({
   cwd: z.string().min(1).nullish(),
   /** `config_id → value`, applied once the agent reports its options. */
   config: z.record(z.string(), z.string()).nullish(),
+  /** `prepare`'s id: take that agent over when it was prepared for this agent and folder and has not expired; else start one. */
+  prepared_id: z.string().min(1).max(128).nullish(),
+});
+
+const PrepareRequestSchema = z.object({
+  agent: z.string().min(1).max(64),
+  cwd: z.string().min(1).nullish(),
+});
+const PrepareResponseSchema = z.object({
+  prepared_id: z.string(),
+  agent: z.string(),
+  /** Resolved, as `create` would store it. */
+  cwd: z.string(),
+  /** Same shape as `Session.config`. */
+  config: z.array(ConfigOptionSchema),
+  /** Closed after this unless `create` takes it over or `prepare` is called again. */
+  expires_at: TimelineInstantSchema,
 });
 
 const RenameRequestSchema = z.object({ id: z.string().min(1), title: z.string().max(256) });
@@ -138,6 +165,12 @@ type Delivered = "started" | "steered" | "queued";
 const ALLOW_KINDS: PermissionOptionKind[] = ["allow_once", "allow_always"];
 const REJECT_KINDS: PermissionOptionKind[] = ["reject_once", "reject_always"];
 const DEFAULT_WAIT_MS = 28_000;
+/** `stopAgent` with `force`: how long cancelled turns get to end before their agents are stopped anyway. */
+const STOP_GRACE_MS = 3_000;
+/** …and how long their ends are awaited once the agents are gone. */
+const STOP_SETTLE_MS = 5_000;
+/** `compact`: how long an agent that has reported no commands yet (it just started) gets to report them. */
+const COMMANDS_WAIT_MS = 3_000;
 
 function sessionRef(request: { id?: string | null; session_id?: string | null }): string {
   const id = request.id ?? request.session_id;
@@ -167,6 +200,8 @@ export class SessionsService {
   readonly #waiters = new Map<string, Waiter>();
   /** Stopped sessions: the queue waits for the next send instead of draining. */
   readonly #held = new Set<string>();
+  /** Sessions whose turn `stopAgent` is cancelling: a start it cuts short ends `cancelled`, not failed. */
+  readonly #stopping = new Set<string>();
 
   constructor(deps: SessionsServiceDeps) {
     this.#gate = deps.gate;
@@ -181,6 +216,57 @@ export class SessionsService {
   /** Whether a turn is in flight (diagnostics / tests). */
   isBusy(sessionId: string): boolean {
     return this.#turns.has(sessionId);
+  }
+
+  // ── Agents (for aa.v3.Device) ──
+
+  /** How many sessions of `agentId` have a turn in flight, its agent still starting included (`agents().busy`). */
+  busyCount(agentId: string): number {
+    return this.#turnsOf(agentId).length;
+  }
+
+  /**
+   * `aa.v3.Device/stop_agent`: stop every process of `agentId`, prepared ones included. Its sessions stay and start
+   * the agent again on their next message. While some of them run a turn this is refused (`failed_precondition` /
+   * `turns_running`, `details.count`) unless `force`: those turns are cancelled as `stop` does (queued messages wait
+   * for the next send), get a moment to end, and whatever still runs ends `cancelled` when its agent goes. Resolves
+   * with how many processes were stopped.
+   */
+  async stopAgent(agentId: string, options: { force?: boolean } = {}): Promise<number> {
+    const runtime = this.#runtimes.runtime(agentId); // invalid_argument / unknown_agent
+    const busy = this.#turnsOf(agentId);
+    if (busy.length === 0) return this.#runtimes.stopAgent(agentId);
+    if (!options.force) {
+      const what = busy.length === 1 ? "a conversation is" : `${busy.length} conversations are`;
+      throw new MeshCallError("failed_precondition", `${what} running a turn with ${runtime.name}; stop it first, or stop the agent with force`, {
+        details: { reason: "turns_running", count: busy.length, agent: agentId },
+      });
+    }
+    for (const id of busy) {
+      this.#held.add(id);
+      this.#stopping.add(id);
+    }
+    try {
+      // Only agents already running can end a turn on `session/cancel`; one still starting is just stopped.
+      const live = busy.filter((id) => this.#runtimes.isLive(id));
+      await Promise.all(live.map((id) => this.#runtimes.cancel(id).catch(() => undefined)));
+      if (live.length > 0) await settle(live.map((id) => this.#turns.get(id)), STOP_GRACE_MS);
+      const stopped = await this.#runtimes.stopAgent(agentId);
+      await settle(busy.map((id) => this.#turns.get(id)), STOP_SETTLE_MS);
+      return stopped;
+    } finally {
+      for (const id of busy) this.#stopping.delete(id);
+    }
+  }
+
+  #turnsOf(agentId: string): string[] {
+    return [...this.#turns.keys()].filter((id) => this.#store.get(id)?.agent === agentId);
+  }
+
+  /** New turns need the session's agent switched on (unknown sessions fail later, as before). */
+  #assertAgentEnabled(sessionId: string): void {
+    const agent = this.#store.get(sessionId)?.agent;
+    if (agent !== undefined) this.#runtimes.assertEnabled(agent);
   }
 
   // ── Listing ──
@@ -206,22 +292,35 @@ export class SessionsService {
 
   // ── Lifecycle ──
 
+  @method({
+    description:
+      "Start an agent ahead of a new conversation and report its settings (model, mode, …) so they can be picked before the first message; pass prepared_id to create. Again for the same agent and folder: the same agent, kept longer.",
+    idempotent: true,
+    request: PrepareRequestSchema,
+    response: PrepareResponseSchema,
+  })
+  async prepare(request: z.output<typeof PrepareRequestSchema>, ctx: RpcContext) {
+    this.#gate.assertBusinessCallAllowed(ctx);
+    const cwd = await this.#agentFolder(request.agent, request.cwd);
+    const prepared = await this.#runtimes.prepare({ agent: request.agent, cwd });
+    return {
+      prepared_id: prepared.id,
+      agent: prepared.agent,
+      cwd: prepared.cwd,
+      config: prepared.config,
+      expires_at: new Date(prepared.expiresAt).toISOString(),
+    };
+  }
+
   @method({ description: "Start a conversation with an agent runtime of this device.", idempotent: false, request: CreateRequestSchema, response: SessionSchema })
   async create(request: z.output<typeof CreateRequestSchema>, ctx: RpcContext) {
     this.#gate.assertBusinessCallAllowed(ctx);
     const runtimes = this.#runtimes;
-    if (!runtimes.has(request.agent)) {
-      throw new InvalidArgumentError(`no agent runtime "${request.agent}" on this device (have: ${runtimes.list().map((r) => r.id).join(", ") || "none"})`, {
-        details: { reason: "unknown_agent" },
-      });
-    }
-    const cwd = await rpcGuard(() => resolveUserPath(request.cwd ?? "~"));
-    const info = await stat(cwd).catch(() => undefined);
-    if (!info?.isDirectory()) throw new InvalidArgumentError(`${cwd} is not a directory on this device`, { details: { reason: "invalid_cwd" } });
+    const cwd = await this.#agentFolder(request.agent, request.cwd);
 
     const session = this.#store.create({ agent: request.agent, title: request.title ?? "", cwd, steer: "interrupt" });
     try {
-      await runtimes.ensureSession(session.id);
+      await runtimes.ensureSession(session.id, { preparedId: request.prepared_id ?? undefined });
     } catch (error) {
       this.#store.delete(session.id);
       throw error;
@@ -309,6 +408,7 @@ export class SessionsService {
     const author = this.#authorOf(decision, ctx);
     const attachments = (request.attachments ?? []).map(toAttachmentPart);
     if (content.length === 0 && attachments.length === 0) throw new InvalidArgumentError("a message needs content (or text) or attachments");
+    this.#assertAgentEnabled(id);
     this.#held.delete(id);
 
     const control = this.#store.getControl(id); // not_found for an unknown session
@@ -408,6 +508,7 @@ export class SessionsService {
     const decision = this.#gate.assertBusinessCallAllowed(ctx);
     const id = request.id;
     if (this.#store.getMessage(id, request.message_id) === undefined) throw SessionStoreError.messageNotFound(request.message_id);
+    if (request.content) this.#assertAgentEnabled(id);
     await this.#settleTurn(id);
     this.#store.rewind(id, request.message_id);
     await this.#runtimes.closeSession(id);
@@ -432,8 +533,12 @@ export class SessionsService {
     this.#gate.assertBusinessCallAllowed(ctx);
     const id = request.id;
     if (this.#turns.has(id)) throw new MeshCallError("failed_precondition", "wait for the running turn to finish", { details: { reason: "turn_running" } });
+    this.#assertAgentEnabled(id);
     await this.#runtimes.ensureSession(id);
-    if (!this.#runtimes.availableCommands(id).some((c) => c.name === "compact")) {
+    // A just-started agent (a restart, an idle close) reports its commands a moment after it answers: wait for them.
+    const commands = () => this.#runtimes.availableCommands(id);
+    for (const deadline = Date.now() + COMMANDS_WAIT_MS; commands().length === 0 && Date.now() < deadline; ) await delay(50);
+    if (!commands().some((c) => c.name === "compact")) {
       throw new MeshCallError("failed_precondition", "this agent does not offer compaction", { details: { reason: "compact_unsupported" } });
     }
     const itemId = this.#newId();
@@ -455,6 +560,7 @@ export class SessionsService {
     const control = this.#store.getControl(request.id);
     const item = control.queued.find((q) => q.client_msg_id === request.client_msg_id);
     if (item === undefined) throw queuedNotFound(request.client_msg_id);
+    this.#assertAgentEnabled(request.id);
     this.#store.updateControl(request.id, { queued: [item, ...control.queued.filter((q) => q !== item)] });
     this.#held.delete(request.id);
     if (this.#turns.has(request.id)) await this.#runtimes.cancel(request.id);
@@ -482,6 +588,11 @@ export class SessionsService {
     const done = this.#runtimes
       .prompt(sessionId, turnId, prompt)
       .catch((error: unknown): TurnResult => {
+        if (this.#stopping.has(sessionId)) {
+          // `stopAgent` stopped the agent while it started for this turn: cancelled, not failed.
+          if (this.#store.has(sessionId)) this.#store.updateControl(sessionId, { state: "idle", error: undefined });
+          return "cancelled";
+        }
         // The agent did not even start: show why on the session.
         if (this.#store.has(sessionId)) {
           this.#store.updateControl(sessionId, { state: "error", error: error instanceof Error ? error.message : String(error) });
@@ -508,6 +619,9 @@ export class SessionsService {
   #drainQueue(sessionId: string): void {
     if (this.#turns.has(sessionId) || !this.#store.has(sessionId)) return;
     if (this.#held.has(sessionId)) return;
+    // A turned-off agent takes no new turn: the queue waits until it is on again and the next send or steer.
+    const agent = this.#store.get(sessionId)?.agent;
+    if (agent !== undefined && this.#runtimes.isDisabled(agent)) return;
     const control = this.#store.getControl(sessionId);
     const [next, ...rest] = control.queued;
     if (next === undefined) return;
@@ -572,6 +686,21 @@ export class SessionsService {
     return undefined;
   }
 
+  /** `create` / `prepare`: the agent must be one of this device's and switched on, and `cwd` (default home) a directory here. */
+  async #agentFolder(agent: string, requested: string | null | undefined): Promise<string> {
+    const runtimes = this.#runtimes;
+    if (!runtimes.has(agent)) {
+      throw new InvalidArgumentError(`no agent runtime "${agent}" on this device (have: ${runtimes.list().map((r) => r.id).join(", ") || "none"})`, {
+        details: { reason: "unknown_agent" },
+      });
+    }
+    runtimes.assertEnabled(agent);
+    const cwd = await rpcGuard(() => resolveUserPath(requested ?? "~"));
+    const info = await stat(cwd).catch(() => undefined);
+    if (!info?.isDirectory()) throw new InvalidArgumentError(`${cwd} is not a directory on this device`, { details: { reason: "invalid_cwd" } });
+    return cwd;
+  }
+
   /** Who sent this, for `author` / `answered.by`: other clients see an MCP origin as `mcp:<client>`. */
   #authorOf(decision: GateDecision, ctx: RpcContext): string {
     if (decision.via === "mcp") return `mcp:${decision.mcpClient ?? "external"}`;
@@ -595,6 +724,12 @@ function delay(ms: number): Promise<void> {
     const timer = setTimeout(resolve, ms);
     timer.unref?.();
   });
+}
+
+/** Wait for every promise given (undefined ones are skipped), at most `ms`. */
+async function settle(promises: readonly (Promise<unknown> | undefined)[], ms: number): Promise<void> {
+  const pending = promises.filter((p): p is Promise<unknown> => p !== undefined);
+  if (pending.length > 0) await Promise.race([Promise.all(pending), delay(ms)]);
 }
 
 function queuedNotFound(clientMsgId: string): MeshCallError {

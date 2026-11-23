@@ -211,6 +211,30 @@ describe("AcpTimelineProjector", () => {
     assert.equal(tool?.interrupted, true);
   });
 
+  it("marks a stopped turn's last item interrupted even when the agent closed its items itself (Pi)", () => {
+    const { projector, send, assistant } = setup();
+    projector.beginTurn(send("go").id);
+    projector.handleUpdate(thought("Run it."));
+    projector.handleUpdate({ sessionUpdate: "tool_call", toolCallId: "call_1", title: "sleep 45", kind: "execute", status: "in_progress" });
+    // On cancel Pi fails the running tool call before session/prompt answers "cancelled".
+    projector.handleUpdate({ sessionUpdate: "tool_call_update", toolCallId: "call_1", status: "failed" });
+    projector.endTurn("cancelled");
+    const items = assistant();
+    assert.deepEqual(items.map((m) => [m.parts[0].type, m.done, m.interrupted]), [
+      ["thinking", true, undefined],
+      ["tool", true, true],
+    ]);
+  });
+
+  it("leaves a turn that ended normally unmarked", () => {
+    const { projector, send, assistant } = setup();
+    projector.beginTurn(send("go").id);
+    projector.handleUpdate({ sessionUpdate: "tool_call", toolCallId: "call_1", title: "ls", kind: "execute", status: "completed" });
+    projector.handleUpdate(text("Done."));
+    projector.endTurn("end_turn");
+    assert.deepEqual(assistant().map((m) => m.interrupted), [undefined, undefined]);
+  });
+
   it("drops an agent's echo of the prompt it was just sent (Antigravity)", () => {
     const { projector, send, all, assistant } = setup();
     const user = send("Reply with PONG");

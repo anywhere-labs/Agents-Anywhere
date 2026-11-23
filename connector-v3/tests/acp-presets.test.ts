@@ -12,6 +12,13 @@ describe("built-in ACP presets", () => {
     );
   });
 
+  it("are Claude Code, Codex, Antigravity and Pi (Gemini CLI is no longer one)", () => {
+    assert.deepEqual(
+      defaultAcpPresets(() => true).map((p) => p.id),
+      ["claude", "codex", "antigravity", "pi"],
+    );
+  });
+
   it("start Pi without its startup banner, which would otherwise show up as a reply", () => {
     const pi = defaultAcpPresets(() => true).find((p) => p.id === "pi");
     assert.ok(pi?.args?.includes("--quiet-startup"), JSON.stringify(pi));
