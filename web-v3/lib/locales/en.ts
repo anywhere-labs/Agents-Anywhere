@@ -59,6 +59,7 @@ export const en = {
   "shell.backToAssistantList": "Back to assistant",
 
   // Sign-in (AA v3: simple password login in local mode, or OIDC client in oidc mode)
+  "signIn.sessionExpired": "Your session has expired. Please sign in again.",
   "signIn.title": "Sign in",
   "signIn.registerTitle": "Create account",
   "signIn.bootstrapTitle": "Initialize workspace",
