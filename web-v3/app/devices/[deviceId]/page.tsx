@@ -118,7 +118,8 @@ function DeviceWorkbenchPageInner() {
   const [fingerprintState, setFingerprintState] = useState<{ pub: string; fp: string } | null>(null)
   const [pairedClients, setPairedClients] = useState<PairedClientEntry[]>([])
   const [generatedPairing, setGeneratedPairing] = useState<{
-    uri: string
+    code: string
+    fingerprint: string
     expires_at: string
   } | null>(null)
 
@@ -310,8 +311,8 @@ function DeviceWorkbenchPageInner() {
   const handleGeneratePairing = async () => {
     if (!tunnelManager || !device) return
     try {
-      const res = await tunnelManager.createPairing(device, { platform: "web" })
-      setGeneratedPairing({ uri: res.uri, expires_at: res.expires_at })
+      const res = await tunnelManager.createPairing(device, { kind: "code" })
+      setGeneratedPairing({ code: res.code ?? "", fingerprint: res.fingerprint ?? "", expires_at: res.expires_at })
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
     }
@@ -727,12 +728,21 @@ function DeviceWorkbenchPageInner() {
                       </div>
 
                       {generatedPairing && (
-                        <CopyableValue
-                          label={`aa-pair://v1/... (expires ${generatedPairing.expires_at})`}
-                          value={generatedPairing.uri}
-                          copyLabel={t("common.copy")}
-                          copyFailedLabel={t("common.copyFailed")}
-                        />
+                        <div className="space-y-2">
+                          <CopyableValue
+                            label={t("devices.generatedCodeLabel", {
+                              time: new Date(generatedPairing.expires_at).toLocaleTimeString(),
+                            })}
+                            value={generatedPairing.code}
+                            copyLabel={t("common.copy")}
+                            copyFailedLabel={t("common.copyFailed")}
+                          />
+                          {generatedPairing.fingerprint && (
+                            <p className="text-xs text-muted-foreground">
+                              {t("devices.pairFingerprint")}: <span className="font-mono">{generatedPairing.fingerprint}</span>
+                            </p>
+                          )}
+                        </div>
                       )}
 
                       {pairedClients.length === 0 ? (
@@ -788,6 +798,7 @@ function DeviceWorkbenchPageInner() {
           if (!open) void loadDeviceRuntime()
         }}
         deviceNameHint={device?.name}
+        deviceId={device?.id}
       />
 
       <ConfirmDialog

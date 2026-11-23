@@ -15,6 +15,10 @@
  */
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
+import { readFile as readFileBytes, stat } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import * as path from "node:path";
 
 import { InvalidArgumentError, MeshCallError, UnavailableError } from "meshcall";
 
@@ -52,6 +56,8 @@ export type { AcpRuntimePreset } from "../core/config.js";
 const IS_WINDOWS = process.platform === "win32";
 const STDERR_TAIL_BYTES = 4096;
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
+/** `initialize` / `session/new`: the first start of an `npx` agent downloads it, which can take minutes. */
+const STARTUP_TIMEOUT_MS = 300_000;
 const DEFAULT_KILL_GRACE_MS = 2_000;
 
 // ── Public types ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -93,11 +99,34 @@ export interface AgentRuntime {
   dispose(): Promise<void>;
 }
 
-export function defaultAcpPresets(): AcpRuntimePreset[] {
-  return [
-    { id: "claude", name: "Claude Code (ACP)", command: "npx", args: ["-y", "@zed-industries/claude-agent-acp"] },
-    { id: "codex", name: "Codex (ACP)", command: "codex-acp", args: [] },
-  ];
+/**
+ * Built-in ACP agents. Each is offered only when the program it needs is installed on this machine
+ * (`requires`), so a device never advertises an agent that cannot start.
+ */
+const BUILTIN_PRESETS: (AcpRuntimePreset & { requires: string })[] = [
+  { id: "claude", name: "Claude Code", command: "npx", args: ["-y", "@agentclientprotocol/claude-agent-acp"], requires: "claude" },
+  { id: "codex", name: "Codex", command: "npx", args: ["-y", "@agentclientprotocol/codex-acp"], requires: "codex" },
+  { id: "antigravity", name: "Antigravity", command: "agy", args: ["acp"], requires: "agy" },
+  // Pi prints a banner (version, skills, model) as plain agent text right after session/new; it has no marker, so it
+  // would land in the conversation as a reply. The model is already in the session's config options.
+  { id: "pi", name: "Pi", command: "npx", args: ["-y", "@openma/pi-acp", "--quiet-startup"], requires: "pi" },
+];
+
+export function defaultAcpPresets(isInstalled: (program: string) => boolean = commandOnPath): AcpRuntimePreset[] {
+  return BUILTIN_PRESETS.filter((p) => isInstalled(p.requires) && isInstalled(p.command)).map(
+    ({ requires: _requires, ...preset }) => preset,
+  );
+}
+
+/** Whether `program` resolves on PATH (or is an existing absolute path). */
+export function commandOnPath(program: string): boolean {
+  if (path.isAbsolute(program)) return existsSync(program);
+  const exts = process.platform === "win32" ? (process.env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";") : [""];
+  for (const dir of (process.env.PATH ?? "").split(path.delimiter)) {
+    if (!dir) continue;
+    for (const ext of exts) if (existsSync(path.join(dir, program + ext))) return true;
+  }
+  return false;
 }
 
 /** A JSON-RPC error answered by the agent. */
@@ -354,6 +383,30 @@ interface LiveSession {
   /** Waiting `session/request_permission` calls, answered `cancelled` on cancel. */
   permissions: Map<string, (result: AcpRequestPermissionResult) => void>;
   supportsConfigOptions: boolean;
+  /** The agent accepts image content blocks (`promptCapabilities.image`). */
+  promptImages: boolean;
+}
+
+/** Images up to this size are sent to agents that take images inline; bigger ones stay file links. */
+const INLINE_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+
+/** Replace `file://` links to images with inline image blocks the agent can see directly. */
+async function inlineImages(prompt: AcpContentBlock[]): Promise<AcpContentBlock[]> {
+  return Promise.all(
+    prompt.map(async (block) => {
+      if (block.type !== "resource_link" || !block.mimeType?.startsWith("image/") || !block.uri.startsWith("file:")) return block;
+      if (typeof block.size === "number" && block.size > INLINE_IMAGE_MAX_BYTES) return block;
+      try {
+        const file = fileURLToPath(block.uri);
+        const info = await stat(file);
+        if (!info.isFile() || info.size > INLINE_IMAGE_MAX_BYTES) return block;
+        const data = (await readFileBytes(file)).toString("base64");
+        return { type: "image", data, mimeType: block.mimeType, uri: block.uri } as AcpContentBlock;
+      } catch {
+        return block;
+      }
+    }),
+  );
 }
 
 export interface AcpRuntimeOptions {
@@ -363,6 +416,8 @@ export interface AcpRuntimeOptions {
   /** Current RPC file cap (settings may change at runtime). */
   maxFileBytes?: () => number;
   requestTimeoutMs?: number;
+  /** Timeout for `initialize` and `session/new` (default 5 min: the first `npx` start downloads the agent). */
+  startupTimeoutMs?: number;
   killGraceMs?: number;
   clientInfo?: { name: string; version: string };
 }
@@ -419,9 +474,9 @@ export class AcpRuntime implements AgentRuntime {
         protocolVersion: ACP_PROTOCOL_VERSION,
         clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: false },
         clientInfo: this.#options.clientInfo ?? { name: "agents-anywhere-connector", version: "3" },
-      })) as AcpInitializeResult;
+      }, this.#options.startupTimeoutMs ?? STARTUP_TIMEOUT_MS)) as AcpInitializeResult;
       if (typeof init?.protocolVersion !== "number") throw new UnavailableError("the agent answered initialize without a protocolVersion");
-      const result = await conn.request("session/new", { cwd: input.cwd, mcpServers: [] });
+      const result = await conn.request("session/new", { cwd: input.cwd, mcpServers: [] }, this.#options.startupTimeoutMs ?? STARTUP_TIMEOUT_MS);
       if (typeof result?.sessionId !== "string" || result.sessionId.length === 0) {
         throw new UnavailableError("the agent answered session/new without a sessionId");
       }
@@ -439,6 +494,7 @@ export class AcpRuntime implements AgentRuntime {
         turn: undefined,
         permissions: new Map(),
         supportsConfigOptions: Array.isArray(result.configOptions),
+        promptImages: init.agentCapabilities?.promptCapabilities?.image === true,
       };
       conn.onNotification = (method, params) => {
         if (method !== "session/update") return;
@@ -464,12 +520,13 @@ export class AcpRuntime implements AgentRuntime {
   sendPrompt(sessionId: string, input: { turnId: string; prompt: AcpContentBlock[] }): Promise<TurnResult> {
     const live = this.#require(sessionId);
     if (live.turn !== undefined) return Promise.reject(new MeshCallError("failed_precondition", "a turn is already running", { details: { reason: "turn_running" } }));
-    live.projector.beginTurn(input.turnId);
+    live.projector.beginTurn(input.turnId, input.prompt);
     const turn = (async (): Promise<TurnResult> => {
       let outcome: TurnResult;
       let failure: string | undefined;
       try {
-        const result = await live.conn.request("session/prompt", { sessionId: live.acpSessionId, prompt: input.prompt }, null);
+        const prompt = live.promptImages ? await inlineImages(input.prompt) : input.prompt;
+        const result = await live.conn.request("session/prompt", { sessionId: live.acpSessionId, prompt }, null);
         outcome = result?.stopReason ?? "end_turn";
       } catch (error) {
         outcome = "error";

@@ -13,6 +13,7 @@
 import { Mesh, MeshCallError, Router, UnauthenticatedError } from "meshcall";
 
 import type { DeviceMode, DevicePlatform } from "../core/config.js";
+import type { DriveDownload } from "../runtime/device-ops.js";
 
 const CONTROL_SERVICE = "aa.v3.Control";
 
@@ -128,6 +129,40 @@ export async function fetchDeviceRouterTokens(options: FetchRouterTokensOptions)
   return result;
 }
 
+// ── Cloud drive (large attachments) ─────────────────────────────────────────────────────────────────────────────
+
+export interface DriveDownloadOptions {
+  controlUrl: string;
+  deviceId: string;
+  deviceSecret: string;
+  fileId: string;
+  fetch?: FetchLike;
+}
+
+/** `GET /drive/files/{id}/download-url` as this device (`X-AA-Device-Id` / `X-AA-Device-Secret`). */
+export async function fetchDriveDownload(options: DriveDownloadOptions): Promise<DriveDownload> {
+  const fetchImpl = options.fetch ?? fetch;
+  const url = endpoint(options.controlUrl, `/drive/files/${encodeURIComponent(options.fileId)}/download-url`);
+  const response = await fetchImpl(url, {
+    method: "GET",
+    headers: { accept: "application/json", "X-AA-Device-Id": options.deviceId, "X-AA-Device-Secret": options.deviceSecret },
+  });
+  const text = await response.text();
+  let parsed: unknown;
+  try {
+    parsed = text ? JSON.parse(text) : undefined;
+  } catch {
+    parsed = text;
+  }
+  if (!response.ok) {
+    const detail = typeof parsed === "object" && parsed !== null && "detail" in parsed ? String((parsed as { detail: unknown }).detail) : text.slice(0, 200);
+    throw new ControlHttpError(response.status, `${url} answered ${response.status}: ${detail}`, parsed);
+  }
+  const result = parsed as DriveDownload;
+  if (!result?.file || !result.download?.url) throw new ControlHttpError(502, "the control plane answered download-url without a link", parsed);
+  return result;
+}
+
 // ── Presence and push ───────────────────────────────────────────────────────────────────────────────────────────
 
 export interface PresenceSummary {
@@ -180,7 +215,8 @@ export interface ControlPresenceOptions {
 
 const DEFAULT_PRESENCE_INTERVAL_MS = 20_000;
 
-function isUnauthenticated(error: unknown): boolean {
+/** The Router or the control plane refused the credential (`401` / `4401`). */
+export function isUnauthenticated(error: unknown): boolean {
   if (error instanceof UnauthenticatedError) return true;
   if (error instanceof MeshCallError && error.code === "unauthenticated") return true;
   const text = String(error);

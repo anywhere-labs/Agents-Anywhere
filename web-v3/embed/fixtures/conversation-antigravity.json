@@ -1,0 +1,2245 @@
+{
+ "name": "conversation-antigravity",
+ "description": "Real aa.v3.Sessions/watch events of a antigravity session (two turns: reading files, then an edit), recorded 2026-11-22 from the local v3 stack.",
+ "steps": [
+  {
+   "at": 0,
+   "message": {
+    "v": 2,
+    "type": "view.conversation",
+    "device_id": "dev_615df603d8b28f5fbd67ebaf",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "agent": "antigravity",
+    "readonly": false,
+    "encrypted": false
+   }
+  },
+  {
+   "at": 50,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "snapshot",
+     "session": {
+      "id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+      "title": "embed fixture antigravity",
+      "agent": "antigravity",
+      "device": {
+       "id": "dev_615df603d8b28f5fbd67ebaf",
+       "name": "Dev Laptop"
+      },
+      "cwd": "/Users/dev/demo",
+      "created_at": "2026-11-22T16:34:36.522Z",
+      "updated_at": "2026-11-22T16:34:39.023Z",
+      "message_count": 0,
+      "config": [
+       {
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "current": "gemini-4-neon",
+        "options": [
+         {
+          "value": "gemini-4-neon",
+          "name": "Gemini 4 Neon"
+         },
+         {
+          "value": "gemini-4-argon",
+          "name": "Gemini 4 Argon"
+         },
+         {
+          "value": "gemini-4-hydrogen",
+          "name": "Gemini 4 Hydrogen"
+         },
+         {
+          "value": "gemini-pro-orchestrator-neon",
+          "name": "Orchestrator (Neon)"
+         },
+         {
+          "value": "gemini-pro-orchestrator-g1-pro",
+          "name": "Orchestrator (Argon)"
+         },
+         {
+          "value": "gemini-3.8-flash",
+          "name": "Gemini 3.8 Flash"
+         },
+         {
+          "value": "claude-opus-5-5",
+          "name": "Claude Opus 5.5"
+         },
+         {
+          "value": "claude-sonnet-5-5",
+          "name": "Claude Sonnet 5.5"
+         },
+         {
+          "value": "gpt-oss-120b-medium",
+          "name": "GPT-OSS 120B (Medium)"
+         }
+        ]
+       },
+       {
+        "id": "thought_level",
+        "name": "Thinking Level",
+        "category": "thought_level",
+        "current": "high",
+        "options": [
+         {
+          "value": "low",
+          "name": "Low"
+         },
+         {
+          "value": "medium",
+          "name": "Medium"
+         },
+         {
+          "value": "high",
+          "name": "High"
+         },
+         {
+          "value": "xhigh",
+          "name": "Extra"
+         }
+        ]
+       },
+       {
+        "id": "mode",
+        "name": "Mode",
+        "category": "mode",
+        "current": "default",
+        "options": [
+         {
+          "value": "default",
+          "name": "Default",
+          "description": "Ask before edits and commands, per your permission settings."
+         },
+         {
+          "value": "accept-edits",
+          "name": "Accept edits",
+          "description": "Approve file edits in the workspace without asking."
+         },
+         {
+          "value": "auto",
+          "name": "Auto",
+          "description": "Approve edits and safe commands; ask before irreversible actions."
+         },
+         {
+          "value": "plan",
+          "name": "Plan",
+          "description": "Plan carefully before executing a task."
+         }
+        ]
+       }
+      ]
+     },
+     "messages": [],
+     "has_more": false,
+     "control": {
+      "state": "idle",
+      "steer": "interrupt",
+      "pending": [],
+      "queued": []
+     }
+    }
+   }
+  },
+  {
+   "at": 50,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "68ebdcc9-3a6a-4e2b-9337-fed6b65f6282",
+      "created_at": "2026-11-22T16:34:39.025Z",
+      "seq": 0,
+      "done": true,
+      "role": "user",
+      "client_msg_id": "rec_1795365279024",
+      "author": "user:usr_dev/client:embed-fixture-recorder",
+      "rewindable": true,
+      "parts": [
+       {
+        "type": "text",
+        "text": "Look at the files in the current directory (use your tools to list them and read README.md and math.ts), then explain in two short bullet points what the project does and show the add function in a fenced ts code block."
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 50,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "session",
+     "session": {
+      "id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+      "title": "embed fixture antigravity",
+      "agent": "antigravity",
+      "device": {
+       "id": "dev_615df603d8b28f5fbd67ebaf",
+       "name": "Dev Laptop"
+      },
+      "cwd": "/Users/dev/demo",
+      "created_at": "2026-11-22T16:34:36.522Z",
+      "updated_at": "2026-11-22T16:34:39.025Z",
+      "message_count": 1,
+      "config": [
+       {
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "current": "gemini-4-neon",
+        "options": [
+         {
+          "value": "gemini-4-neon",
+          "name": "Gemini 4 Neon"
+         },
+         {
+          "value": "gemini-4-argon",
+          "name": "Gemini 4 Argon"
+         },
+         {
+          "value": "gemini-4-hydrogen",
+          "name": "Gemini 4 Hydrogen"
+         },
+         {
+          "value": "gemini-pro-orchestrator-neon",
+          "name": "Orchestrator (Neon)"
+         },
+         {
+          "value": "gemini-pro-orchestrator-g1-pro",
+          "name": "Orchestrator (Argon)"
+         },
+         {
+          "value": "gemini-3.8-flash",
+          "name": "Gemini 3.8 Flash"
+         },
+         {
+          "value": "claude-opus-5-5",
+          "name": "Claude Opus 5.5"
+         },
+         {
+          "value": "claude-sonnet-5-5",
+          "name": "Claude Sonnet 5.5"
+         },
+         {
+          "value": "gpt-oss-120b-medium",
+          "name": "GPT-OSS 120B (Medium)"
+         }
+        ]
+       },
+       {
+        "id": "thought_level",
+        "name": "Thinking Level",
+        "category": "thought_level",
+        "current": "high",
+        "options": [
+         {
+          "value": "low",
+          "name": "Low"
+         },
+         {
+          "value": "medium",
+          "name": "Medium"
+         },
+         {
+          "value": "high",
+          "name": "High"
+         },
+         {
+          "value": "xhigh",
+          "name": "Extra"
+         }
+        ]
+       },
+       {
+        "id": "mode",
+        "name": "Mode",
+        "category": "mode",
+        "current": "default",
+        "options": [
+         {
+          "value": "default",
+          "name": "Default",
+          "description": "Ask before edits and commands, per your permission settings."
+         },
+         {
+          "value": "accept-edits",
+          "name": "Accept edits",
+          "description": "Approve file edits in the workspace without asking."
+         },
+         {
+          "value": "auto",
+          "name": "Auto",
+          "description": "Approve edits and safe commands; ask before irreversible actions."
+         },
+         {
+          "value": "plan",
+          "name": "Plan",
+          "description": "Plan carefully before executing a task."
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 50,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "control",
+     "control": {
+      "state": "running",
+      "steer": "interrupt",
+      "pending": [],
+      "queued": []
+     }
+    }
+   }
+  },
+  {
+   "at": 1250,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "1db954ea-6f09-4f21-804a-c6fb0514169d",
+      "created_at": "2026-11-22T16:34:42.715Z",
+      "seq": 1,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "68ebdcc9-3a6a-4e2b-9337-fed6b65f6282",
+      "parts": [
+       {
+        "type": "thinking",
+        "text": "Files in the current directory are being listed and the contents of `README.md` and `math.ts` are being examined. The project's purpose and functionality will be summarized concisely. The code for the `add` function will be extracted and presented.\n\n\n"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 1250,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "session",
+     "session": {
+      "id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+      "title": "embed fixture antigravity",
+      "agent": "antigravity",
+      "device": {
+       "id": "dev_615df603d8b28f5fbd67ebaf",
+       "name": "Dev Laptop"
+      },
+      "cwd": "/Users/dev/demo",
+      "created_at": "2026-11-22T16:34:36.522Z",
+      "updated_at": "2026-11-22T16:34:42.715Z",
+      "message_count": 2,
+      "config": [
+       {
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "current": "gemini-4-neon",
+        "options": [
+         {
+          "value": "gemini-4-neon",
+          "name": "Gemini 4 Neon"
+         },
+         {
+          "value": "gemini-4-argon",
+          "name": "Gemini 4 Argon"
+         },
+         {
+          "value": "gemini-4-hydrogen",
+          "name": "Gemini 4 Hydrogen"
+         },
+         {
+          "value": "gemini-pro-orchestrator-neon",
+          "name": "Orchestrator (Neon)"
+         },
+         {
+          "value": "gemini-pro-orchestrator-g1-pro",
+          "name": "Orchestrator (Argon)"
+         },
+         {
+          "value": "gemini-3.8-flash",
+          "name": "Gemini 3.8 Flash"
+         },
+         {
+          "value": "claude-opus-5-5",
+          "name": "Claude Opus 5.5"
+         },
+         {
+          "value": "claude-sonnet-5-5",
+          "name": "Claude Sonnet 5.5"
+         },
+         {
+          "value": "gpt-oss-120b-medium",
+          "name": "GPT-OSS 120B (Medium)"
+         }
+        ]
+       },
+       {
+        "id": "thought_level",
+        "name": "Thinking Level",
+        "category": "thought_level",
+        "current": "high",
+        "options": [
+         {
+          "value": "low",
+          "name": "Low"
+         },
+         {
+          "value": "medium",
+          "name": "Medium"
+         },
+         {
+          "value": "high",
+          "name": "High"
+         },
+         {
+          "value": "xhigh",
+          "name": "Extra"
+         }
+        ]
+       },
+       {
+        "id": "mode",
+        "name": "Mode",
+        "category": "mode",
+        "current": "default",
+        "options": [
+         {
+          "value": "default",
+          "name": "Default",
+          "description": "Ask before edits and commands, per your permission settings."
+         },
+         {
+          "value": "accept-edits",
+          "name": "Accept edits",
+          "description": "Approve file edits in the workspace without asking."
+         },
+         {
+          "value": "auto",
+          "name": "Auto",
+          "description": "Approve edits and safe commands; ask before irreversible actions."
+         },
+         {
+          "value": "plan",
+          "name": "Plan",
+          "description": "Plan carefully before executing a task."
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2450,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "1db954ea-6f09-4f21-804a-c6fb0514169d",
+      "created_at": "2026-11-22T16:34:42.715Z",
+      "seq": 1,
+      "done": true,
+      "role": "assistant",
+      "turn_id": "68ebdcc9-3a6a-4e2b-9337-fed6b65f6282",
+      "parts": [
+       {
+        "type": "thinking",
+        "text": "Files in the current directory are being listed and the contents of `README.md` and `math.ts` are being examined. The project's purpose and functionality will be summarized concisely. The code for the `add` function will be extracted and presented.\n\n\n"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2450,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "31684544-d645-41a5-8d18-91e0e7b0fb93",
+      "created_at": "2026-11-22T16:34:44.017Z",
+      "seq": 2,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "68ebdcc9-3a6a-4e2b-9337-fed6b65f6282",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_8586087362052189863",
+        "title": "ls -la",
+        "kind": "execute",
+        "status": "in_progress",
+        "input": {
+         "CommandLine": "ls -la",
+         "WaitMsBeforeAsync": 5000,
+         "toolSummary": "List directory contents"
+        }
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2450,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "session",
+     "session": {
+      "id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+      "title": "embed fixture antigravity",
+      "agent": "antigravity",
+      "device": {
+       "id": "dev_615df603d8b28f5fbd67ebaf",
+       "name": "Dev Laptop"
+      },
+      "cwd": "/Users/dev/demo",
+      "created_at": "2026-11-22T16:34:36.522Z",
+      "updated_at": "2026-11-22T16:34:44.018Z",
+      "message_count": 3,
+      "config": [
+       {
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "current": "gemini-4-neon",
+        "options": [
+         {
+          "value": "gemini-4-neon",
+          "name": "Gemini 4 Neon"
+         },
+         {
+          "value": "gemini-4-argon",
+          "name": "Gemini 4 Argon"
+         },
+         {
+          "value": "gemini-4-hydrogen",
+          "name": "Gemini 4 Hydrogen"
+         },
+         {
+          "value": "gemini-pro-orchestrator-neon",
+          "name": "Orchestrator (Neon)"
+         },
+         {
+          "value": "gemini-pro-orchestrator-g1-pro",
+          "name": "Orchestrator (Argon)"
+         },
+         {
+          "value": "gemini-3.8-flash",
+          "name": "Gemini 3.8 Flash"
+         },
+         {
+          "value": "claude-opus-5-5",
+          "name": "Claude Opus 5.5"
+         },
+         {
+          "value": "claude-sonnet-5-5",
+          "name": "Claude Sonnet 5.5"
+         },
+         {
+          "value": "gpt-oss-120b-medium",
+          "name": "GPT-OSS 120B (Medium)"
+         }
+        ]
+       },
+       {
+        "id": "thought_level",
+        "name": "Thinking Level",
+        "category": "thought_level",
+        "current": "high",
+        "options": [
+         {
+          "value": "low",
+          "name": "Low"
+         },
+         {
+          "value": "medium",
+          "name": "Medium"
+         },
+         {
+          "value": "high",
+          "name": "High"
+         },
+         {
+          "value": "xhigh",
+          "name": "Extra"
+         }
+        ]
+       },
+       {
+        "id": "mode",
+        "name": "Mode",
+        "category": "mode",
+        "current": "default",
+        "options": [
+         {
+          "value": "default",
+          "name": "Default",
+          "description": "Ask before edits and commands, per your permission settings."
+         },
+         {
+          "value": "accept-edits",
+          "name": "Accept edits",
+          "description": "Approve file edits in the workspace without asking."
+         },
+         {
+          "value": "auto",
+          "name": "Auto",
+          "description": "Approve edits and safe commands; ask before irreversible actions."
+         },
+         {
+          "value": "plan",
+          "name": "Plan",
+          "description": "Plan carefully before executing a task."
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2465,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "31684544-d645-41a5-8d18-91e0e7b0fb93",
+      "created_at": "2026-11-22T16:34:44.017Z",
+      "seq": 2,
+      "done": true,
+      "role": "assistant",
+      "turn_id": "68ebdcc9-3a6a-4e2b-9337-fed6b65f6282",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_8586087362052189863",
+        "title": "ls -la",
+        "kind": "execute",
+        "status": "completed",
+        "input": {
+         "CommandLine": "ls -la",
+         "WaitMsBeforeAsync": 5000,
+         "toolSummary": "List directory contents"
+        },
+        "output": {
+         "output": "Created At: 2026-11-23T00:34:43+08:00\nCompleted At: 2026-11-23T00:34:44+08:00\nCommand exited with code 0.\n\nCommand output:\ntotal 16\r\ndrwx------@   4 dev  staff    128 Nov 23 00:34 .\r\ndrwx------@ 699 dev  staff  22368 Nov 23 00:34 ..\r\n-rw-r--r--@   1 dev  staff     86 Nov 23 00:34 README.md\r\n-rw-r--r--@   1 dev  staff     61 Nov 23 00:34 math.ts\r\n",
+         "exit_code": 0
+        }
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2466,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "6591ce95-a0e1-4ff4-bc0f-b96e150a51e7",
+      "created_at": "2026-11-22T16:34:44.034Z",
+      "seq": 3,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "68ebdcc9-3a6a-4e2b-9337-fed6b65f6282",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_8586087362052188466",
+        "title": "File README.md",
+        "kind": "read",
+        "status": "in_progress",
+        "input": {
+         "Path": "/Users/dev/demo/README.md"
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/README.md"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2466,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "session",
+     "session": {
+      "id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+      "title": "embed fixture antigravity",
+      "agent": "antigravity",
+      "device": {
+       "id": "dev_615df603d8b28f5fbd67ebaf",
+       "name": "Dev Laptop"
+      },
+      "cwd": "/Users/dev/demo",
+      "created_at": "2026-11-22T16:34:36.522Z",
+      "updated_at": "2026-11-22T16:34:44.034Z",
+      "message_count": 4,
+      "config": [
+       {
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "current": "gemini-4-neon",
+        "options": [
+         {
+          "value": "gemini-4-neon",
+          "name": "Gemini 4 Neon"
+         },
+         {
+          "value": "gemini-4-argon",
+          "name": "Gemini 4 Argon"
+         },
+         {
+          "value": "gemini-4-hydrogen",
+          "name": "Gemini 4 Hydrogen"
+         },
+         {
+          "value": "gemini-pro-orchestrator-neon",
+          "name": "Orchestrator (Neon)"
+         },
+         {
+          "value": "gemini-pro-orchestrator-g1-pro",
+          "name": "Orchestrator (Argon)"
+         },
+         {
+          "value": "gemini-3.8-flash",
+          "name": "Gemini 3.8 Flash"
+         },
+         {
+          "value": "claude-opus-5-5",
+          "name": "Claude Opus 5.5"
+         },
+         {
+          "value": "claude-sonnet-5-5",
+          "name": "Claude Sonnet 5.5"
+         },
+         {
+          "value": "gpt-oss-120b-medium",
+          "name": "GPT-OSS 120B (Medium)"
+         }
+        ]
+       },
+       {
+        "id": "thought_level",
+        "name": "Thinking Level",
+        "category": "thought_level",
+        "current": "high",
+        "options": [
+         {
+          "value": "low",
+          "name": "Low"
+         },
+         {
+          "value": "medium",
+          "name": "Medium"
+         },
+         {
+          "value": "high",
+          "name": "High"
+         },
+         {
+          "value": "xhigh",
+          "name": "Extra"
+         }
+        ]
+       },
+       {
+        "id": "mode",
+        "name": "Mode",
+        "category": "mode",
+        "current": "default",
+        "options": [
+         {
+          "value": "default",
+          "name": "Default",
+          "description": "Ask before edits and commands, per your permission settings."
+         },
+         {
+          "value": "accept-edits",
+          "name": "Accept edits",
+          "description": "Approve file edits in the workspace without asking."
+         },
+         {
+          "value": "auto",
+          "name": "Auto",
+          "description": "Approve edits and safe commands; ask before irreversible actions."
+         },
+         {
+          "value": "plan",
+          "name": "Plan",
+          "description": "Plan carefully before executing a task."
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2467,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "6591ce95-a0e1-4ff4-bc0f-b96e150a51e7",
+      "created_at": "2026-11-22T16:34:44.034Z",
+      "seq": 3,
+      "done": true,
+      "role": "assistant",
+      "turn_id": "68ebdcc9-3a6a-4e2b-9337-fed6b65f6282",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_8586087362052188466",
+        "title": "File README.md",
+        "kind": "read",
+        "status": "completed",
+        "input": {
+         "Path": "/Users/dev/demo/README.md"
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/README.md"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2468,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "514f7259-e3c2-4e8c-90c1-c25c95854a09",
+      "created_at": "2026-11-22T16:34:44.036Z",
+      "seq": 4,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "68ebdcc9-3a6a-4e2b-9337-fed6b65f6282",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_8586087362052187069",
+        "title": "File math.ts",
+        "kind": "read",
+        "status": "in_progress",
+        "input": {
+         "Path": "/Users/dev/demo/math.ts"
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2468,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "session",
+     "session": {
+      "id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+      "title": "embed fixture antigravity",
+      "agent": "antigravity",
+      "device": {
+       "id": "dev_615df603d8b28f5fbd67ebaf",
+       "name": "Dev Laptop"
+      },
+      "cwd": "/Users/dev/demo",
+      "created_at": "2026-11-22T16:34:36.522Z",
+      "updated_at": "2026-11-22T16:34:44.036Z",
+      "message_count": 5,
+      "config": [
+       {
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "current": "gemini-4-neon",
+        "options": [
+         {
+          "value": "gemini-4-neon",
+          "name": "Gemini 4 Neon"
+         },
+         {
+          "value": "gemini-4-argon",
+          "name": "Gemini 4 Argon"
+         },
+         {
+          "value": "gemini-4-hydrogen",
+          "name": "Gemini 4 Hydrogen"
+         },
+         {
+          "value": "gemini-pro-orchestrator-neon",
+          "name": "Orchestrator (Neon)"
+         },
+         {
+          "value": "gemini-pro-orchestrator-g1-pro",
+          "name": "Orchestrator (Argon)"
+         },
+         {
+          "value": "gemini-3.8-flash",
+          "name": "Gemini 3.8 Flash"
+         },
+         {
+          "value": "claude-opus-5-5",
+          "name": "Claude Opus 5.5"
+         },
+         {
+          "value": "claude-sonnet-5-5",
+          "name": "Claude Sonnet 5.5"
+         },
+         {
+          "value": "gpt-oss-120b-medium",
+          "name": "GPT-OSS 120B (Medium)"
+         }
+        ]
+       },
+       {
+        "id": "thought_level",
+        "name": "Thinking Level",
+        "category": "thought_level",
+        "current": "high",
+        "options": [
+         {
+          "value": "low",
+          "name": "Low"
+         },
+         {
+          "value": "medium",
+          "name": "Medium"
+         },
+         {
+          "value": "high",
+          "name": "High"
+         },
+         {
+          "value": "xhigh",
+          "name": "Extra"
+         }
+        ]
+       },
+       {
+        "id": "mode",
+        "name": "Mode",
+        "category": "mode",
+        "current": "default",
+        "options": [
+         {
+          "value": "default",
+          "name": "Default",
+          "description": "Ask before edits and commands, per your permission settings."
+         },
+         {
+          "value": "accept-edits",
+          "name": "Accept edits",
+          "description": "Approve file edits in the workspace without asking."
+         },
+         {
+          "value": "auto",
+          "name": "Auto",
+          "description": "Approve edits and safe commands; ask before irreversible actions."
+         },
+         {
+          "value": "plan",
+          "name": "Plan",
+          "description": "Plan carefully before executing a task."
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2469,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "514f7259-e3c2-4e8c-90c1-c25c95854a09",
+      "created_at": "2026-11-22T16:34:44.036Z",
+      "seq": 4,
+      "done": true,
+      "role": "assistant",
+      "turn_id": "68ebdcc9-3a6a-4e2b-9337-fed6b65f6282",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_8586087362052187069",
+        "title": "File math.ts",
+        "kind": "read",
+        "status": "completed",
+        "input": {
+         "Path": "/Users/dev/demo/math.ts"
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 3669,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "48daf483-e1ce-401a-baad-8955518980db",
+      "created_at": "2026-11-22T16:35:07.234Z",
+      "seq": 5,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "68ebdcc9-3a6a-4e2b-9337-fed6b65f6282",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- Provides a tiny demo project used"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 3670,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "session",
+     "session": {
+      "id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+      "title": "embed fixture antigravity",
+      "agent": "antigravity",
+      "device": {
+       "id": "dev_615df603d8b28f5fbd67ebaf",
+       "name": "Dev Laptop"
+      },
+      "cwd": "/Users/dev/demo",
+      "created_at": "2026-11-22T16:34:36.522Z",
+      "updated_at": "2026-11-22T16:35:07.234Z",
+      "message_count": 6,
+      "config": [
+       {
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "current": "gemini-4-neon",
+        "options": [
+         {
+          "value": "gemini-4-neon",
+          "name": "Gemini 4 Neon"
+         },
+         {
+          "value": "gemini-4-argon",
+          "name": "Gemini 4 Argon"
+         },
+         {
+          "value": "gemini-4-hydrogen",
+          "name": "Gemini 4 Hydrogen"
+         },
+         {
+          "value": "gemini-pro-orchestrator-neon",
+          "name": "Orchestrator (Neon)"
+         },
+         {
+          "value": "gemini-pro-orchestrator-g1-pro",
+          "name": "Orchestrator (Argon)"
+         },
+         {
+          "value": "gemini-3.8-flash",
+          "name": "Gemini 3.8 Flash"
+         },
+         {
+          "value": "claude-opus-5-5",
+          "name": "Claude Opus 5.5"
+         },
+         {
+          "value": "claude-sonnet-5-5",
+          "name": "Claude Sonnet 5.5"
+         },
+         {
+          "value": "gpt-oss-120b-medium",
+          "name": "GPT-OSS 120B (Medium)"
+         }
+        ]
+       },
+       {
+        "id": "thought_level",
+        "name": "Thinking Level",
+        "category": "thought_level",
+        "current": "high",
+        "options": [
+         {
+          "value": "low",
+          "name": "Low"
+         },
+         {
+          "value": "medium",
+          "name": "Medium"
+         },
+         {
+          "value": "high",
+          "name": "High"
+         },
+         {
+          "value": "xhigh",
+          "name": "Extra"
+         }
+        ]
+       },
+       {
+        "id": "mode",
+        "name": "Mode",
+        "category": "mode",
+        "current": "default",
+        "options": [
+         {
+          "value": "default",
+          "name": "Default",
+          "description": "Ask before edits and commands, per your permission settings."
+         },
+         {
+          "value": "accept-edits",
+          "name": "Accept edits",
+          "description": "Approve file edits in the workspace without asking."
+         },
+         {
+          "value": "auto",
+          "name": "Auto",
+          "description": "Approve edits and safe commands; ask before irreversible actions."
+         },
+         {
+          "value": "plan",
+          "name": "Plan",
+          "description": "Plan carefully before executing a task."
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 3670,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "48daf483-e1ce-401a-baad-8955518980db",
+      "created_at": "2026-11-22T16:35:07.234Z",
+      "seq": 5,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "68ebdcc9-3a6a-4e2b-9337-fed6b65f6282",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- Provides a tiny demo project used for recording renderer fixtures (described in [README.md](file:///Users/dev/demo"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 3670,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "48daf483-e1ce-401a-baad-8955518980db",
+      "created_at": "2026-11-22T16:35:07.234Z",
+      "seq": 5,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "68ebdcc9-3a6a-4e2b-9337-fed6b65f6282",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- Provides a tiny demo project used for recording renderer fixtures (described in [README.md](file:///Users/dev/demo"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 3734,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "48daf483-e1ce-401a-baad-8955518980db",
+      "created_at": "2026-11-22T16:35:07.234Z",
+      "seq": 5,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "68ebdcc9-3a6a-4e2b-9337-fed6b65f6282",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- Provides a tiny demo project used for recording renderer fixtures (described in [README.md](file:///Users/dev/demo/README.md)).\n- Exports an `add(a, b)` utility in [math.ts](file:///private"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 3749,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "48daf483-e1ce-401a-baad-8955518980db",
+      "created_at": "2026-11-22T16:35:07.234Z",
+      "seq": 5,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "68ebdcc9-3a6a-4e2b-9337-fed6b65f6282",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- Provides a tiny demo project used for recording renderer fixtures (described in [README.md](file:///Users/dev/demo/README.md)).\n- Exports an `add(a, b)` utility in [math.ts](file:///Users/dev/demo"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 3864,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "48daf483-e1ce-401a-baad-8955518980db",
+      "created_at": "2026-11-22T16:35:07.234Z",
+      "seq": 5,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "68ebdcc9-3a6a-4e2b-9337-fed6b65f6282",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- Provides a tiny demo project used for recording renderer fixtures (described in [README.md](file:///Users/dev/demo/README.md)).\n- Exports an `add(a, b)` utility in [math.ts](file:///Users/dev/demo/math.ts#L"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 3999,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "48daf483-e1ce-401a-baad-8955518980db",
+      "created_at": "2026-11-22T16:35:07.234Z",
+      "seq": 5,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "68ebdcc9-3a6a-4e2b-9337-fed6b65f6282",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- Provides a tiny demo project used for recording renderer fixtures (described in [README.md](file:///Users/dev/demo/README.md)).\n- Exports an `add(a, b)` utility in [math.ts](file:///Users/dev/demo/math.ts#L1-L3) that returns the sum of two numbers.\n\n```ts\nexport function add(a: number"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4129,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "48daf483-e1ce-401a-baad-8955518980db",
+      "created_at": "2026-11-22T16:35:07.234Z",
+      "seq": 5,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "68ebdcc9-3a6a-4e2b-9337-fed6b65f6282",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- Provides a tiny demo project used for recording renderer fixtures (described in [README.md](file:///Users/dev/demo/README.md)).\n- Exports an `add(a, b)` utility in [math.ts](file:///Users/dev/demo/math.ts#L1-L3) that returns the sum of two numbers.\n\n```ts\nexport function add(a: number, b: number) {\n  return a + b\n}\n```"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4310,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "48daf483-e1ce-401a-baad-8955518980db",
+      "created_at": "2026-11-22T16:35:07.234Z",
+      "seq": 5,
+      "done": true,
+      "role": "assistant",
+      "turn_id": "68ebdcc9-3a6a-4e2b-9337-fed6b65f6282",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- Provides a tiny demo project used for recording renderer fixtures (described in [README.md](file:///Users/dev/demo/README.md)).\n- Exports an `add(a, b)` utility in [math.ts](file:///Users/dev/demo/math.ts#L1-L3) that returns the sum of two numbers.\n\n```ts\nexport function add(a: number, b: number) {\n  return a + b\n}\n```"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4310,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "control",
+     "control": {
+      "state": "idle",
+      "steer": "interrupt",
+      "pending": [],
+      "queued": []
+     }
+    }
+   }
+  },
+  {
+   "at": 5510,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "b84b3f6f-0d14-415e-b32c-54cdcec1c82e",
+      "created_at": "2026-11-22T16:35:09.535Z",
+      "seq": 6,
+      "done": true,
+      "role": "user",
+      "client_msg_id": "rec_1795365309532",
+      "author": "user:usr_dev/client:embed-fixture-recorder",
+      "rewindable": true,
+      "parts": [
+       {
+        "type": "text",
+        "text": "Now add a `sub(a, b)` function to math.ts next to add, then reply with one sentence."
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 5510,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "session",
+     "session": {
+      "id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+      "title": "embed fixture antigravity",
+      "agent": "antigravity",
+      "device": {
+       "id": "dev_615df603d8b28f5fbd67ebaf",
+       "name": "Dev Laptop"
+      },
+      "cwd": "/Users/dev/demo",
+      "created_at": "2026-11-22T16:34:36.522Z",
+      "updated_at": "2026-11-22T16:35:09.535Z",
+      "message_count": 7,
+      "config": [
+       {
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "current": "gemini-4-neon",
+        "options": [
+         {
+          "value": "gemini-4-neon",
+          "name": "Gemini 4 Neon"
+         },
+         {
+          "value": "gemini-4-argon",
+          "name": "Gemini 4 Argon"
+         },
+         {
+          "value": "gemini-4-hydrogen",
+          "name": "Gemini 4 Hydrogen"
+         },
+         {
+          "value": "gemini-pro-orchestrator-neon",
+          "name": "Orchestrator (Neon)"
+         },
+         {
+          "value": "gemini-pro-orchestrator-g1-pro",
+          "name": "Orchestrator (Argon)"
+         },
+         {
+          "value": "gemini-3.8-flash",
+          "name": "Gemini 3.8 Flash"
+         },
+         {
+          "value": "claude-opus-5-5",
+          "name": "Claude Opus 5.5"
+         },
+         {
+          "value": "claude-sonnet-5-5",
+          "name": "Claude Sonnet 5.5"
+         },
+         {
+          "value": "gpt-oss-120b-medium",
+          "name": "GPT-OSS 120B (Medium)"
+         }
+        ]
+       },
+       {
+        "id": "thought_level",
+        "name": "Thinking Level",
+        "category": "thought_level",
+        "current": "high",
+        "options": [
+         {
+          "value": "low",
+          "name": "Low"
+         },
+         {
+          "value": "medium",
+          "name": "Medium"
+         },
+         {
+          "value": "high",
+          "name": "High"
+         },
+         {
+          "value": "xhigh",
+          "name": "Extra"
+         }
+        ]
+       },
+       {
+        "id": "mode",
+        "name": "Mode",
+        "category": "mode",
+        "current": "default",
+        "options": [
+         {
+          "value": "default",
+          "name": "Default",
+          "description": "Ask before edits and commands, per your permission settings."
+         },
+         {
+          "value": "accept-edits",
+          "name": "Accept edits",
+          "description": "Approve file edits in the workspace without asking."
+         },
+         {
+          "value": "auto",
+          "name": "Auto",
+          "description": "Approve edits and safe commands; ask before irreversible actions."
+         },
+         {
+          "value": "plan",
+          "name": "Plan",
+          "description": "Plan carefully before executing a task."
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 5510,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "control",
+     "control": {
+      "state": "running",
+      "steer": "interrupt",
+      "pending": [],
+      "queued": []
+     }
+    }
+   }
+  },
+  {
+   "at": 6710,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0ee927ab-4099-4873-a93e-99fbdec6fdc4",
+      "created_at": "2026-11-22T16:35:13.790Z",
+      "seq": 7,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "b84b3f6f-0d14-415e-b32c-54cdcec1c82e",
+      "parts": [
+       {
+        "type": "thinking",
+        "text": "Adding the `sub` function to `math.ts` seems straightforward. Will now attempt to insert the new function definition next to the existing `add` function in the specified file path. The next step is to test that this modification was successful.\n\n\n"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6710,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "session",
+     "session": {
+      "id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+      "title": "embed fixture antigravity",
+      "agent": "antigravity",
+      "device": {
+       "id": "dev_615df603d8b28f5fbd67ebaf",
+       "name": "Dev Laptop"
+      },
+      "cwd": "/Users/dev/demo",
+      "created_at": "2026-11-22T16:34:36.522Z",
+      "updated_at": "2026-11-22T16:35:13.790Z",
+      "message_count": 8,
+      "config": [
+       {
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "current": "gemini-4-neon",
+        "options": [
+         {
+          "value": "gemini-4-neon",
+          "name": "Gemini 4 Neon"
+         },
+         {
+          "value": "gemini-4-argon",
+          "name": "Gemini 4 Argon"
+         },
+         {
+          "value": "gemini-4-hydrogen",
+          "name": "Gemini 4 Hydrogen"
+         },
+         {
+          "value": "gemini-pro-orchestrator-neon",
+          "name": "Orchestrator (Neon)"
+         },
+         {
+          "value": "gemini-pro-orchestrator-g1-pro",
+          "name": "Orchestrator (Argon)"
+         },
+         {
+          "value": "gemini-3.8-flash",
+          "name": "Gemini 3.8 Flash"
+         },
+         {
+          "value": "claude-opus-5-5",
+          "name": "Claude Opus 5.5"
+         },
+         {
+          "value": "claude-sonnet-5-5",
+          "name": "Claude Sonnet 5.5"
+         },
+         {
+          "value": "gpt-oss-120b-medium",
+          "name": "GPT-OSS 120B (Medium)"
+         }
+        ]
+       },
+       {
+        "id": "thought_level",
+        "name": "Thinking Level",
+        "category": "thought_level",
+        "current": "high",
+        "options": [
+         {
+          "value": "low",
+          "name": "Low"
+         },
+         {
+          "value": "medium",
+          "name": "Medium"
+         },
+         {
+          "value": "high",
+          "name": "High"
+         },
+         {
+          "value": "xhigh",
+          "name": "Extra"
+         }
+        ]
+       },
+       {
+        "id": "mode",
+        "name": "Mode",
+        "category": "mode",
+        "current": "default",
+        "options": [
+         {
+          "value": "default",
+          "name": "Default",
+          "description": "Ask before edits and commands, per your permission settings."
+         },
+         {
+          "value": "accept-edits",
+          "name": "Accept edits",
+          "description": "Approve file edits in the workspace without asking."
+         },
+         {
+          "value": "auto",
+          "name": "Auto",
+          "description": "Approve edits and safe commands; ask before irreversible actions."
+         },
+         {
+          "value": "plan",
+          "name": "Plan",
+          "description": "Plan carefully before executing a task."
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7507,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0ee927ab-4099-4873-a93e-99fbdec6fdc4",
+      "created_at": "2026-11-22T16:35:13.790Z",
+      "seq": 7,
+      "done": true,
+      "role": "assistant",
+      "turn_id": "b84b3f6f-0d14-415e-b32c-54cdcec1c82e",
+      "parts": [
+       {
+        "type": "thinking",
+        "text": "Adding the `sub` function to `math.ts` seems straightforward. Will now attempt to insert the new function definition next to the existing `add` function in the specified file path. The next step is to test that this modification was successful.\n\n\n"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7507,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "44bc4fed-d7fe-49d2-af2e-0941b3e5e187",
+      "created_at": "2026-11-22T16:35:14.588Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "b84b3f6f-0d14-415e-b32c-54cdcec1c82e",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_2207804942945147781",
+        "title": "File math.ts",
+        "kind": "edit",
+        "status": "in_progress",
+        "input": {
+         "Path": "/Users/dev/demo/math.ts",
+         "Replacement": "export function add(a: number, b: number) {\n  return a + b\n}\n\nexport function sub(a: number, b: number) {\n  return a - b\n}",
+         "Target": "export function add(a: number, b: number) {\n  return a + b\n}"
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7507,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "session",
+     "session": {
+      "id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+      "title": "embed fixture antigravity",
+      "agent": "antigravity",
+      "device": {
+       "id": "dev_615df603d8b28f5fbd67ebaf",
+       "name": "Dev Laptop"
+      },
+      "cwd": "/Users/dev/demo",
+      "created_at": "2026-11-22T16:34:36.522Z",
+      "updated_at": "2026-11-22T16:35:14.588Z",
+      "message_count": 9,
+      "config": [
+       {
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "current": "gemini-4-neon",
+        "options": [
+         {
+          "value": "gemini-4-neon",
+          "name": "Gemini 4 Neon"
+         },
+         {
+          "value": "gemini-4-argon",
+          "name": "Gemini 4 Argon"
+         },
+         {
+          "value": "gemini-4-hydrogen",
+          "name": "Gemini 4 Hydrogen"
+         },
+         {
+          "value": "gemini-pro-orchestrator-neon",
+          "name": "Orchestrator (Neon)"
+         },
+         {
+          "value": "gemini-pro-orchestrator-g1-pro",
+          "name": "Orchestrator (Argon)"
+         },
+         {
+          "value": "gemini-3.8-flash",
+          "name": "Gemini 3.8 Flash"
+         },
+         {
+          "value": "claude-opus-5-5",
+          "name": "Claude Opus 5.5"
+         },
+         {
+          "value": "claude-sonnet-5-5",
+          "name": "Claude Sonnet 5.5"
+         },
+         {
+          "value": "gpt-oss-120b-medium",
+          "name": "GPT-OSS 120B (Medium)"
+         }
+        ]
+       },
+       {
+        "id": "thought_level",
+        "name": "Thinking Level",
+        "category": "thought_level",
+        "current": "high",
+        "options": [
+         {
+          "value": "low",
+          "name": "Low"
+         },
+         {
+          "value": "medium",
+          "name": "Medium"
+         },
+         {
+          "value": "high",
+          "name": "High"
+         },
+         {
+          "value": "xhigh",
+          "name": "Extra"
+         }
+        ]
+       },
+       {
+        "id": "mode",
+        "name": "Mode",
+        "category": "mode",
+        "current": "default",
+        "options": [
+         {
+          "value": "default",
+          "name": "Default",
+          "description": "Ask before edits and commands, per your permission settings."
+         },
+         {
+          "value": "accept-edits",
+          "name": "Accept edits",
+          "description": "Approve file edits in the workspace without asking."
+         },
+         {
+          "value": "auto",
+          "name": "Auto",
+          "description": "Approve edits and safe commands; ask before irreversible actions."
+         },
+         {
+          "value": "plan",
+          "name": "Plan",
+          "description": "Plan carefully before executing a task."
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 8616,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "44bc4fed-d7fe-49d2-af2e-0941b3e5e187",
+      "created_at": "2026-11-22T16:35:14.588Z",
+      "seq": 8,
+      "done": true,
+      "role": "assistant",
+      "turn_id": "b84b3f6f-0d14-415e-b32c-54cdcec1c82e",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_2207804942945147781",
+        "title": "File math.ts",
+        "kind": "edit",
+        "status": "completed",
+        "input": {
+         "Path": "/Users/dev/demo/math.ts",
+         "Replacement": "export function add(a: number, b: number) {\n  return a + b\n}\n\nexport function sub(a: number, b: number) {\n  return a - b\n}",
+         "Target": "export function add(a: number, b: number) {\n  return a + b\n}"
+        },
+        "output": {},
+        "diffs": [
+         {
+          "path": "/Users/dev/demo/math.ts",
+          "old_text": "export function add(a: number, b: number) {\n  return a + b\n}\n\n",
+          "new_text": "export function add(a: number, b: number) {\n  return a + b\n}\n\nexport function sub(a: number, b: number) {\n  return a - b\n}\n\n"
+         }
+        ],
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 9816,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "5028d208-95e9-4134-ad22-4d872db90826",
+      "created_at": "2026-11-22T16:35:19.461Z",
+      "seq": 9,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "b84b3f6f-0d14-415e-b32c-54cdcec1c82e",
+      "parts": [
+       {
+        "type": "text",
+        "text": "Added the `sub(a, b)` function to [math.ts](file:///Users/dev/demo"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 9816,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "session",
+     "session": {
+      "id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+      "title": "embed fixture antigravity",
+      "agent": "antigravity",
+      "device": {
+       "id": "dev_615df603d8b28f5fbd67ebaf",
+       "name": "Dev Laptop"
+      },
+      "cwd": "/Users/dev/demo",
+      "created_at": "2026-11-22T16:34:36.522Z",
+      "updated_at": "2026-11-22T16:35:19.461Z",
+      "message_count": 10,
+      "config": [
+       {
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "current": "gemini-4-neon",
+        "options": [
+         {
+          "value": "gemini-4-neon",
+          "name": "Gemini 4 Neon"
+         },
+         {
+          "value": "gemini-4-argon",
+          "name": "Gemini 4 Argon"
+         },
+         {
+          "value": "gemini-4-hydrogen",
+          "name": "Gemini 4 Hydrogen"
+         },
+         {
+          "value": "gemini-pro-orchestrator-neon",
+          "name": "Orchestrator (Neon)"
+         },
+         {
+          "value": "gemini-pro-orchestrator-g1-pro",
+          "name": "Orchestrator (Argon)"
+         },
+         {
+          "value": "gemini-3.8-flash",
+          "name": "Gemini 3.8 Flash"
+         },
+         {
+          "value": "claude-opus-5-5",
+          "name": "Claude Opus 5.5"
+         },
+         {
+          "value": "claude-sonnet-5-5",
+          "name": "Claude Sonnet 5.5"
+         },
+         {
+          "value": "gpt-oss-120b-medium",
+          "name": "GPT-OSS 120B (Medium)"
+         }
+        ]
+       },
+       {
+        "id": "thought_level",
+        "name": "Thinking Level",
+        "category": "thought_level",
+        "current": "high",
+        "options": [
+         {
+          "value": "low",
+          "name": "Low"
+         },
+         {
+          "value": "medium",
+          "name": "Medium"
+         },
+         {
+          "value": "high",
+          "name": "High"
+         },
+         {
+          "value": "xhigh",
+          "name": "Extra"
+         }
+        ]
+       },
+       {
+        "id": "mode",
+        "name": "Mode",
+        "category": "mode",
+        "current": "default",
+        "options": [
+         {
+          "value": "default",
+          "name": "Default",
+          "description": "Ask before edits and commands, per your permission settings."
+         },
+         {
+          "value": "accept-edits",
+          "name": "Accept edits",
+          "description": "Approve file edits in the workspace without asking."
+         },
+         {
+          "value": "auto",
+          "name": "Auto",
+          "description": "Approve edits and safe commands; ask before irreversible actions."
+         },
+         {
+          "value": "plan",
+          "name": "Plan",
+          "description": "Plan carefully before executing a task."
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 9860,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "5028d208-95e9-4134-ad22-4d872db90826",
+      "created_at": "2026-11-22T16:35:19.461Z",
+      "seq": 9,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "b84b3f6f-0d14-415e-b32c-54cdcec1c82e",
+      "parts": [
+       {
+        "type": "text",
+        "text": "Added the `sub(a, b)` function to [math.ts](file:///Users/dev/demo"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 9978,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "5028d208-95e9-4134-ad22-4d872db90826",
+      "created_at": "2026-11-22T16:35:19.461Z",
+      "seq": 9,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "b84b3f6f-0d14-415e-b32c-54cdcec1c82e",
+      "parts": [
+       {
+        "type": "text",
+        "text": "Added the `sub(a, b)` function to [math.ts](file:///Users/dev/demo/math.ts#L5-L7) to return the"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 10018,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "5028d208-95e9-4134-ad22-4d872db90826",
+      "created_at": "2026-11-22T16:35:19.461Z",
+      "seq": 9,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "b84b3f6f-0d14-415e-b32c-54cdcec1c82e",
+      "parts": [
+       {
+        "type": "text",
+        "text": "Added the `sub(a, b)` function to [math.ts](file:///Users/dev/demo/math.ts#L5-L7) to return the difference of two numbers."
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 10228,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "5028d208-95e9-4134-ad22-4d872db90826",
+      "created_at": "2026-11-22T16:35:19.461Z",
+      "seq": 9,
+      "done": true,
+      "role": "assistant",
+      "turn_id": "b84b3f6f-0d14-415e-b32c-54cdcec1c82e",
+      "parts": [
+       {
+        "type": "text",
+        "text": "Added the `sub(a, b)` function to [math.ts](file:///Users/dev/demo/math.ts#L5-L7) to return the difference of two numbers."
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 10228,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "596a3da9-3c56-40a0-8b37-42ee74fcb4bb",
+    "event": {
+     "type": "control",
+     "control": {
+      "state": "idle",
+      "steer": "interrupt",
+      "pending": [],
+      "queued": []
+     }
+    }
+   }
+  }
+ ],
+ "responders": {
+  "older": {
+   "messages": [],
+   "page_size": 0
+  },
+  "files": {}
+ }
+}

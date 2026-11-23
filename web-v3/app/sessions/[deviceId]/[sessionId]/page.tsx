@@ -623,6 +623,7 @@ export default function SessionWorkspacePage() {
           if (!open) setRetryNonce((n) => n + 1)
         }}
         deviceNameHint={device?.name}
+        deviceId={device?.id}
       />
     </WorkbenchShell>
   )

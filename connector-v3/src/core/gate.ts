@@ -1,8 +1,9 @@
 // The device gate: the device half of AA v3 admission (docs/v3/e2ee-admission-proposal.md §2, §4, §5, §7).
 //
-// - Pairing: a one-time `pairing_id` + 32-byte PSK, shown only on this device as `aa-pair://v1/<base64url(json)>`.
-//   MeshCall asks `getPairingPsk` for the PSK (read only) and then `authorizePeer`, which spends the pairing
-//   atomically and adds the client's static key to the allowlist (Noise_IKpsk2).
+// - Pairing: a one-time `pairing_id` + 32-byte PSK, shown only on this device as `aa-pair://v1/<base64url(json)>`,
+//   or a short pairing code to type in (the PSK is derived from it with PBKDF2; `pairing_id` is fixed).
+//   MeshCall asks `getPairingPsk` for the PSK and then `authorizePeer`, which spends the pairing atomically and
+//   adds the client's static key to the allowlist (Noise_IKpsk2).
 // - Later connections (Noise_IK): `authorizePeer` accepts only keys on the allowlist.
 // - Business calls: `assertBusinessCallAllowed` decides per call from `ctx.e2e`, `ctx.tunnel` and `ctx.metadata`.
 //   Encrypted devices serve only authenticated, paired E2E sessions; normal devices trust the control plane and
@@ -49,6 +50,7 @@ export interface PairingPayload {
 
 export const PairingErrorCodeSchema = z.enum([
   "invalid_pairing_uri",
+  "invalid_pairing_code",
   "pairing_expired",
   "pairing_used",
   "e2e_handshake_failed",
@@ -108,6 +110,8 @@ export interface PendingPairing {
   psk: string;
   expiresAtMs: number;
   used: boolean;
+  /** Pairing codes only: handshakes still allowed. A wrong guess does not spend a pairing, so a short code needs a cap. */
+  attemptsLeft?: number;
   /** Recorded on the allowlist entry when the client pairs; editable later with `updatePairedClient`. */
   label?: string;
   platform?: ClientPlatform;
@@ -214,6 +218,36 @@ export class DeviceGate {
     return { uri: encodePairingUri(payload), payload };
   }
 
+  /**
+   * A one-time pairing code to type into a client, valid for `ttlMs`; it replaces any earlier code. Show it only on
+   * this device. The client takes the device key from the control plane and the PSK from the code, so a server that
+   * hands out a wrong key still cannot finish the handshake (docs/v3/e2ee-admission-proposal.md §4.1).
+   */
+  async createPairingCode(
+    ttlMs = DEFAULT_PAIRING_CODE_TTL_MS,
+    hint: PairingHint = {},
+  ): Promise<{ code: string; expires_at: string; fingerprint: string }> {
+    if (!(ttlMs > 0)) throw new RangeError("pairing ttl must be positive");
+    this.sweepExpired();
+    const code = generatePairingCode();
+    const psk = await derivePairingCodePsk(code, this.instanceId);
+    const expiresAtMs = this.now() + ttlMs;
+    this.pairings.set(PAIRING_CODE_ID, {
+      pairingId: PAIRING_CODE_ID,
+      psk,
+      expiresAtMs,
+      used: false,
+      attemptsLeft: PAIRING_CODE_MAX_ATTEMPTS,
+      ...hint,
+    });
+    return { code: formatPairingCode(code), expires_at: new Date(expiresAtMs).toISOString(), fingerprint: await keyFingerprint(this.e2ePublicKey) };
+  }
+
+  /** The device key fingerprint clients show after pairing (`keyFingerprint`). */
+  fingerprint(): Promise<string> {
+    return keyFingerprint(this.e2ePublicKey);
+  }
+
   /** Decode and validate an `aa-pair://v1/…` URI. Does not check expiry (see `isPairingExpired`). */
   static parsePairingUri(uri: string): PairingPayload {
     return parsePairingUri(uri);
@@ -231,8 +265,9 @@ export class DeviceGate {
   }
 
   /**
-   * MeshCall's `e2ePairingPsk` hook: the PSK of a live, unused pairing. Read only: spending happens in
-   * `authorizePeer`, so a handshake that fails to decrypt does not burn the pairing.
+   * MeshCall's `e2ePairingPsk` hook: the PSK of a live, unused pairing. Spending happens in `authorizePeer`, so a
+   * handshake that fails to decrypt does not burn a pairing link; a pairing code counts every lookup as an attempt
+   * and is dropped after `PAIRING_CODE_MAX_ATTEMPTS`.
    */
   getPairingPsk(pairingId: string): string | undefined {
     const pairing = this.pairings.get(pairingId);
@@ -240,6 +275,13 @@ export class DeviceGate {
     if (this.now() >= pairing.expiresAtMs) {
       this.pairings.delete(pairingId);
       return undefined;
+    }
+    if (pairing.attemptsLeft !== undefined) {
+      if (pairing.attemptsLeft <= 0) {
+        this.pairings.delete(pairingId);
+        return undefined;
+      }
+      pairing.attemptsLeft -= 1;
     }
     return pairing.psk;
   }
@@ -363,7 +405,7 @@ export class DeviceGate {
         throw deny("e2e_peer_required", "this device is encrypted: calls are accepted only in an authenticated end-to-end session");
       }
       if (!this.paired.has(peerKey)) {
-        throw deny("e2e_not_paired", "this client is not paired with the device (or was revoked); scan the device's QR code again");
+        throw deny("e2e_not_paired", "this client is not paired with the device (or was revoked); pair again with a pairing code or link from the device");
       }
       if (via === "mcp") {
         throw deny("e2e_peer_required", "an encrypted device never accepts MCP control");
@@ -439,6 +481,61 @@ export function parsePairingUri(uri: string): PairingPayload {
 
 export function isPairingExpired(payload: PairingPayload, nowMs: number = Date.now()): boolean {
   return nowMs >= Date.parse(payload.expires_at);
+}
+
+// ── Pairing codes ───────────────────────────────────────────────────────────────────────────────────────────────
+// `PairingCode` of `contracts/aa-v3/1.0/pairing.schema.json`: 10 Crockford base32 characters (50 bits), shown as
+// XXXXX-XXXXX. PSK = PBKDF2-HMAC-SHA256(code, "aa-v3/pairing-code/v1:" + instance_id, 200 000 iterations, 32 bytes).
+
+/** The `pairing_id` of every pairing code: the device keeps one live code at a time. */
+export const PAIRING_CODE_ID = "pairing-code";
+export const PAIRING_CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+export const PAIRING_CODE_LENGTH = 10;
+export const PAIRING_CODE_KDF_ITERATIONS = 200_000;
+export const PAIRING_CODE_MAX_ATTEMPTS = 8;
+export const DEFAULT_PAIRING_CODE_TTL_MS = 10 * 60 * 1000;
+const PAIRING_CODE_SALT_PREFIX = "aa-v3/pairing-code/v1:";
+
+/** A fresh code (uniform: 32 divides 256). */
+export function generatePairingCode(): string {
+  return Array.from(randomBytes(PAIRING_CODE_LENGTH), (byte) => PAIRING_CODE_ALPHABET[byte & 31]).join("");
+}
+
+/** Upper-case, drop spaces and dashes, read O as 0 and I / L as 1. `undefined` when it is not a code. */
+export function normalizePairingCode(input: string): string | undefined {
+  const value = input.toUpperCase().replace(/[\s-]/gu, "").replaceAll("O", "0").replace(/[IL]/gu, "1");
+  return value.length === PAIRING_CODE_LENGTH && [...value].every((c) => PAIRING_CODE_ALPHABET.includes(c)) ? value : undefined;
+}
+
+export function formatPairingCode(code: string): string {
+  const value = normalizePairingCode(code);
+  if (value === undefined) throw new PairingError("invalid_pairing_code", "a pairing code is 10 letters and digits");
+  return `${value.slice(0, 5)}-${value.slice(5)}`;
+}
+
+/** The pairing PSK (base64url, 32 bytes) a code stands for on the device `instanceId`. */
+export async function derivePairingCodePsk(code: string, instanceId: string): Promise<string> {
+  const value = normalizePairingCode(code);
+  if (value === undefined) throw new PairingError("invalid_pairing_code", "a pairing code is 10 letters and digits");
+  const subtle = globalThis.crypto?.subtle;
+  if (subtle === undefined) throw new Error("pairing codes need WebCrypto (crypto.subtle)");
+  const encoder = new TextEncoder();
+  const key = await subtle.importKey("raw", encoder.encode(value), "PBKDF2", false, ["deriveBits"]);
+  const bits = await subtle.deriveBits(
+    { name: "PBKDF2", hash: "SHA-256", salt: encoder.encode(PAIRING_CODE_SALT_PREFIX + instanceId), iterations: PAIRING_CODE_KDF_ITERATIONS },
+    key,
+    256,
+  );
+  return base64UrlEncode(new Uint8Array(bits));
+}
+
+/** First 16 bytes of SHA-256 over the raw X25519 key, upper-case hex in groups of four (as clients show it). */
+export async function keyFingerprint(publicKey: string): Promise<string> {
+  const subtle = globalThis.crypto?.subtle;
+  if (subtle === undefined) throw new Error("fingerprints need WebCrypto (crypto.subtle)");
+  const digest = new Uint8Array(await subtle.digest("SHA-256", new Uint8Array(base64UrlDecode(publicKey))));
+  const hex = Array.from(digest.slice(0, 16), (byte) => byte.toString(16).padStart(2, "0").toUpperCase()).join("");
+  return hex.match(/.{4}/gu)?.join(" ") ?? hex;
 }
 
 // ── Bytes ───────────────────────────────────────────────────────────────────────────────────────────────────────

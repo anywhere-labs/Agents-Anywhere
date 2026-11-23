@@ -31,6 +31,7 @@ Agents Anywhere v3 的轻控制面后端，实现定稿架构文档中定义的 
   - Redis 队列 + 指数退避重试与死信队列；可插拔 `PushProvider` 接口（真实 APNs / FCM 发货客户端在 T513 联调补齐）。
 - **MCP（`/mcp` Streamable HTTP）**：
   - OAuth 2.1 发现元数据、RFC 7591 动态客户端注册、PKCE S256 授权码、授权预览（`approvals:answer` 默认不勾选、加密设备不可选）、授权查询与撤销；
+  - 浏览器授权：配置 `AA_CONTROL_WEB_ORIGIN` 后，元数据里的 `authorization_endpoint` 指向 Web 的 `/oauth/authorize` 授权页；不带 `Authorization` 头访问控制面 `/oauth/authorize`（浏览器跳转）会 302 到该页面并原样保留查询参数，带 Bearer 的调用仍返回 JSON 预览 / 批准结果；未配置时 Claude、Cursor 等外部 MCP 客户端无法在浏览器里完成授权；
   - 7 个工具：`list_devices`、`list_sessions`、`read_session`、`create_session`、`send_message`、`stop_session`、`answer_approval`，严格过滤加密设备，透传 `aa-via: mcp`，审计日志只记元数据不存对话内容。
 - **限额大文件云盘与对象存储中转（`/drive/*`、`/admin/drive/policies/*`）**：
   - 纯 Python 异步 S3 SigV4 预签名直传/下载（兼容 AWS S3、Cloudflare R2、MinIO、阿里云 OSS / 七牛云 Kodo 等 S3 兼容存储，支持内网 `AA_CONTROL_S3_ENDPOINT` 与客户端直连 `AA_CONTROL_S3_PUBLIC_ENDPOINT` 分离，流量不经控制面）；
@@ -69,6 +70,7 @@ Agents Anywhere v3 的轻控制面后端，实现定稿架构文档中定义的 
 | `AA_CONTROL_REDIS_URL` | Redis 连接串 | `redis://127.0.0.1:56379/0` |
 | `AA_CONTROL_SECRET` | JWT 与签名密钥（生产至少 32 字符） | `change-me-in-production` |
 | `AA_CONTROL_PUBLIC_ORIGIN` | 对外可访问地址（OAuth/MCP 元数据） | `https://aa.example.com` |
+| `AA_CONTROL_WEB_ORIGIN` | 可选：`web-v3` 的对外地址；设置后 MCP OAuth 的 `authorization_endpoint` 指向 `<Web 地址>/oauth/authorize` 授权页，浏览器访问控制面 `/oauth/authorize` 时 302 跳转过去（外部 MCP 客户端需要） | `https://app.aa.example.com` |
 | `AA_CONTROL_ROUTER_URL` | 单个 MeshCall Router WS 地址（多实例用 `AA_CONTROL_ROUTERS_JSON`） | `ws://127.0.0.1:8765` |
 | `AA_CONTROL_ROUTER_PUBLIC_URL` | 返回给客户端连接的 Router 公网地址 | `wss://router.example.com` |
 | `AA_CONTROL_ROUTER_USERNAME` / `AA_CONTROL_ROUTER_PASSWORD` | Router `auth.json` 中控制面账号凭据 | `control` / `...` |

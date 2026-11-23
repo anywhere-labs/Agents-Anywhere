@@ -1,5 +1,56 @@
 # DSH Bridge Next 验证记录
 
+## DSH 0.2.3 官方组件样式顺序（2026-11-23）
+
+在 DSH Desktop Beta/Next（0.2.3-alpha.2）中，「远程控制」弹窗变窄：「登录和连接」折成两行，底部两个按钮从并排变成上下排。原因是 0.2.3 改由渲染器在页面挂载时插入官方组件库（`@deepseek-ai/dsh-client-ui-primitives`）的样式（DSH 仓库 `docs/upgrade-guide/v0.2.2-rc.2/client-module-metadata/`），插入位置在插件自行插入的样式之后；0.2.2 及以前组件库样式在页面 CSS 文件里，最先加载。于是插件里只用一个类名、覆盖官方组件同名属性的规则，在 0.2.3 上输给了组件库：
+
+- 弹窗宽度：Modal 自己的 `.dialog { width: min(380px, 100%) }` 盖掉了插件的 560px（未登录）、480px（已登录）和 820px（运行日志）。
+- 自建服务地址输入框：Input 的 `.wrap`（32px 高、`0 8px` 内边距）盖掉了插件的 44px 高、12px 内边距和圆角。
+
+#829 只在 jsdom 里检查插件前端：那里没有组件库样式，也不做布局，所以当时没有发现。
+
+修复：传给官方组件的类名一律用两个类名的选择器覆盖（`.dialog.accountDialog`、`.dialog .dialogContent`、`.section .input`、`.status .stateDot`、`.panel .recover`、`.panel .input`），优先级高于组件库的单类名规则，与插入顺序无关，在 0.2.2 及更早版本上效果不变。真正冲突的只有弹窗宽度和地址输入框两处，其余几处一并改写是为了满足下面的检查。`check:build` 新增检查：扫描 `src/client` 中传给官方组件的 `className`，对应 CSS 模块里如果有只由这个类名组成的选择器就失败；拿修复前的源码运行，9 处都被报出。
+
+验证：
+
+- 在无头 Chrome 中按 0.2.3 的顺序摆放样式（插件样式在前，用 alpha.2 组件库的 `Modal.module.css`、`Input.module.css` 编译出的样式在后）并量尺寸：修复前三种弹窗都是 380px、输入框 32px 高，与实机一致；修复后为 560、480、820px，输入框 44px 高、`0 12px` 内边距、12px 圆角。
+- Node 24.22.3 与 Node 22.23.3 上 `corepack yarn check` 都通过，259 项测试全部通过。
+
+未做：在 DSH Desktop 和 DSH 网页版中实际打开弹窗确认。
+
+## DSH 0.2.3-alpha.2 测试基线与适配（2026-11-23）
+
+`@deepseek-ai/dsh-*` 开发依赖从 `0.2.2-rc.5` 升到 `0.2.3-alpha.2`。alpha 版从 DSH master 切出：alpha.1 比 rc.5 多 2343 个提交，alpha.2 再加 5 个，rc.3 以来本记录列为「master 上尚未发布」的三项变化都在其中。alpha.2 用新版本号发布了 Cordis 家族，开发依赖随之改为 `cordis` 4.2.0-alpha.1，`cordis-plugin-group`、`cordis-plugin-include`、`cordis-plugin-loader` 1.2.0-alpha.1，`schemastery` 3.20.0-alpha.1（`resolutions` 同步）。Cordis 与 Schemastery 的 peer 加上 `~4.2.0-alpha.1`、`~3.20.0-alpha.1`。DSH 判断插件兼容性时预发布版本参与范围匹配，Typert peer `>=0.2.0-rc.1 <0.3.0-0` 已经包含 `0.2.3-alpha.2`，不变。
+
+只升依赖时，类型检查、构建和产物检查都通过，集成测试有 11 项失败：0.2.3 的 SessionQuery 新增注入 `sessionProjections`，测试夹具在挂载 SessionQuery 前没有挂载会话投影，SessionQuery 和插件 Host 都没有启动。夹具改为先挂会话投影后全部恢复。官方组合本来就带会话投影，插件 `src/**` 不需要为此改动。
+
+需要适配的两项行为：
+
+- **action-card 代码块。** 0.2.3 的个性化推荐（推荐官方插件、个性化页面，web-app 与 sdk-app 组合默认挂载）改由模型在最终回答末尾写一个语言为 `action-card` 的代码块提出卡片（DSH 仓库 `docs/upgrade-guide/v0.2.2-rc.3/action-card-blocks/`）。DSH 聊天界面隐藏这个代码块，在回答下方显示卡片；插件原先把它当正文同步，AA 会显示里面的 JSON。现在历史投影去掉助手回复中的这类代码块，判定规则照搬 DSH Host 读取卡片的 `actionCardFences`（`@deepseek-ai/dsh-action-cards`）；用 DSH 的实现对拍 20 万条随机拼出的文本，去掉与否和 DSH 的判定完全一致。流式输出中未闭合的代码块同样去掉，只含卡片代码块的文本块不生成消息；用户消息和思考内容不处理。AA 不显示卡片本身，启用等操作仍在 DSH 中完成。投影版本不变，以免所有会话重新完整同步：已经同步到 AA 的旧回复不会主动重发，等该会话下次完整同步时才更新。
+- **插件样式。** 0.2.3 的模块系统不再删除旧预设构建的插件自己插入的样式标签（`docs/upgrade-guide/v0.2.2-rc.2/client-module-metadata/`）。插件的 factory 被替换（HMR，或在插件页更新版本）后，新 factory 看到同名标签就跳过，页面一直用旧样式，直到刷新。现在同名标签已存在时原地改写内容，`check:build` 增加了对应检查。插件仍自己插入样式，不改用 `meta.stylesheets`：0.2.2 及更早版本会忽略 `meta`，插件就没有样式。停用插件后样式保留到刷新页面，这些样式都限定在插件自己的类名下。
+
+结果：
+
+- 本机 Node 24.22.3（0.2.3 的最低版本）与 Node 22.23.3（CI 为 22.23.2）上 `corepack yarn check`（check:deps、typecheck、build、check:build、test）都 exit 0，259 项全部通过，没有跳过，包括需要 PostgreSQL 的探针。Node 24.22.3 第一次全量运行时机器负载约 24，`local-ownership` 的两项因 Python Connector 没在时限内启动而失败；这两项只启动 Python Connector，不涉及 DSH 的包，单独重跑 3 次、全量重跑 1 次都通过。
+- 在全新临时 `DSH_HOME` 中，用官方 `@deepseek-ai/dsh@0.2.3-alpha.2` 安装 `npm pack` 打出的插件包，profile 的 `bundles` 包含插件，`--dump-config` 包含 `agents-anywhere-bridge-next` 配置行且没有诊断输出。PATH 上的 pnpm 是 11 时，安装会因 `@dataiku/uv` 的安装脚本被拦下而失败（`ERR_PNPM_IGNORED_BUILDS`，rc.5 同样如此，另行修复）；这次在 profile 的 `pnpm-workspace.yaml` 中拒绝这个脚本后再安装。
+
+对照 alpha.2 比 rc.5 新增的 56 份升级指南（另有 2 份修改）和 7 份会话持久化变更记录，核对过、无需改动的部分：
+
+- Cordis 4.0.0-rc.12（`cordis-root-and-intercept-metadata`）：插件不读 `ctx.root`、`Service.config`，也不用 `isolate` 或拦截元数据。Loader 1.0.0-rc.9 的条目校验（`cordis-loader-entry-validation`）接受插件的 `cordis.patch.yml`。
+- Connection 移除 `authenticatedUrl`、`requestRejection`，默认 Token 登录迁入 Provider 插件，WebServer 路由默认要求认证（`connection-page-peer`）：插件不注册路由；交互流使用的 `browserPeer`、`createSharedFetchHandler` 和五个参数的 `wireStream.open` 仍然可用，审批和提问的集成测试通过。
+- Client 模块元信息：旧预设构建的 bundle 照常加载，`dsh.client.inject` 仍然有效，插件不匹配 primitives 生成的类名；样式见上文。
+- 设置里的「内置插件」和 `settings.plugins.tab` 插槽被删除（`settings-section-plugins-page`），会话面板与会话状态迁移（`session-panel-entries`、`session-status-package`）：插件只用 `sidebar.footer.action`、`plugins.bundle.config`、`plugins.detail.actions`，三个插槽都在。
+- `sessionQuery.inspectSession` 被删除（`session-query-inspect-session-removed`）：插件不用它，Host 日志仍通过 `observeSession` 读取。
+- 模型工具 `working_directory` 被删除，会话目录只由 Host 移动并记为 `workspace-root/change`（`working-directory-tool-removed`、持久化记录 `2026-11-13-workspace-root-change`）：AA 新建会话时传入的目录照常是会话的原始目录；会话被 Host 移到别的目录后，插件仍上报原始目录，与 rc.5 时一样。
+- 系统消息改为按章节更新并标注通知来源（`system-prompt-integrations`），以及 SDK prompt 时区、紧急优先级通知、Computer Use 活动与输入提醒的持久化变化：这些写在 `system/message`、`developer/message` 和 `agent/inbox/spliced`，插件不同步；SDK 发出的消息来源仍是 `kind: 'user'`，照常同步为用户消息。
+- 新事件 `action-cards/decision` 与 `workspace-root/change` 不生成时间线条目。压缩摘要改从 `compaction/summary` 事件读取（`compaction-summary-preview`），只影响 DSH 自己的聊天视图。
+- Computer Use 新增的系统输入授权（`cua-system-input`）同样用 `approval` 意图提问，形状与应用授权相同并带中文文案，插件照旧显示为单选题。
+- 子智能体初始任务改为来自父智能体的消息、`list_agents` 返回容量（`subagent-initial-task-source`、`list-agents-capacity`）：子智能体会话本来就不同步，`list_agents` 仍显示为普通工具调用。
+- DSH 0.2.3 要求 Node.js 24.22.3 或 26.13.1 及以上（`node-24-22-3`）：插件 `engines` 仍包含 Node 22，供 0.2.0、0.2.1 使用；CI 继续在 Node 22 上检查，0.2.3 的下限由本机检查覆盖。
+- 其余指南涉及 PTC、Computer Use 提供方、代码审阅（forge）、工作树、DeepSeek 鉴权和各工具的错误码，插件没有用到相关接口，工具失败照常显示为失败。
+
+未做：在 DSH 网页版和 DSH Desktop 中实际加载插件、Windows、手机端实机验收；action-card 代码块和系统输入授权没有在真实模型对话中验证；样式原地更新只在 jsdom 中验证。
+
 ## DSH 0.2.2-rc.5 测试基线（2026-11-18）
 
 `@deepseek-ai/dsh-*` 开发依赖从 `0.2.2-rc.4` 升到 `0.2.2-rc.5`。rc.4 到 rc.5 各包的 `package.json` 只改了版本号：Cordis 4.1.0、Schemastery 3.19.0 不变，不需要新增开发依赖，peer 范围不变。只升依赖、不改其他文件，检查全部通过，测试和插件 `src/**` 都无需改动。

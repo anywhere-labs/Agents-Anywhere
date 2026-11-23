@@ -47,6 +47,8 @@ export interface SessionsServiceDeps {
   store: SessionStore;
   runtimes: AcpRuntimeHost;
   streams: TunnelStreamTracker;
+  /** Called after a conversation is deleted (e.g. to remove its attachment folder). Errors are ignored. */
+  onSessionDeleted?: (session: { id: string; cwd: string }) => unknown;
   /** Longest `send({ wait: true })` waits for the reply (the control plane gives MCP sends 30 s). Default 28 s. */
   waitTimeoutMs?: number;
   newId?: () => string;
@@ -106,6 +108,10 @@ const SendResponseSchema = z.object({
   session_id: z.string(),
   delivered: z.enum(["started", "steered", "queued"]),
   reply_text: z.string().optional(),
+  /** With `wait`: how the turn ended (`end_turn`, `cancelled`, `error`, …); absent if it is still running. */
+  turn_result: z.string().optional(),
+  /** With `wait` and `turn_result: "error"`: what the agent reported (for example "Authentication required"). */
+  error: z.string().optional(),
 });
 
 const AnswerRequestSchema = z.object({
@@ -154,6 +160,7 @@ export class SessionsService {
   readonly #streams: TunnelStreamTracker;
   readonly #waitTimeoutMs: number;
   readonly #newId: () => string;
+  readonly #onSessionDeleted: SessionsServiceDeps["onSessionDeleted"];
   /** Sessions with a turn in flight (set before the agent is even started, so concurrent sends queue). */
   readonly #turns = new Map<string, Promise<void>>();
   /** `sessionId\0client_msg_id` → the end of that message's turn. */
@@ -168,6 +175,7 @@ export class SessionsService {
     this.#streams = deps.streams;
     this.#waitTimeoutMs = deps.waitTimeoutMs ?? DEFAULT_WAIT_MS;
     this.#newId = deps.newId ?? (() => globalThis.crypto.randomUUID());
+    this.#onSessionDeleted = deps.onSessionDeleted;
   }
 
   /** Whether a turn is in flight (diagnostics / tests). */
@@ -238,9 +246,17 @@ export class SessionsService {
   async delete(request: z.output<typeof IdSchema>, ctx: RpcContext) {
     this.#gate.assertBusinessCallAllowed(ctx);
     await this.#runtimes.closeSession(request.id);
+    const session = this.#store.has(request.id) ? this.#store.get(request.id) : undefined;
     this.#store.delete(request.id);
     this.#turns.delete(request.id);
     this.#held.delete(request.id);
+    if (session) {
+      try {
+        await this.#onSessionDeleted?.({ id: session.id, cwd: session.cwd });
+      } catch {
+        // Cleanup is best effort.
+      }
+    }
     return { ok: true as const };
   }
 
@@ -539,7 +555,11 @@ export class SessionsService {
     const budget = Math.max(0, Math.min(this.#waitTimeoutMs, remaining === null ? Infinity : remaining - 1000));
     const ended = await Promise.race([waiter.promise, delay(budget).then(() => undefined)]);
     const messageId = ended?.messageId ?? knownMessageId;
-    if (ended !== undefined) response.message_id = ended.messageId;
+    if (ended !== undefined) {
+      response.message_id = ended.messageId;
+      response.turn_result = ended.result;
+      if (ended.result === "error") response.error = (this.#store.has(sessionId) ? this.#store.getControl(sessionId).error : undefined) ?? "the agent failed";
+    }
     if (messageId !== undefined && this.#store.has(sessionId)) response.reply_text = turnReplyText(this.#store, sessionId, messageId);
   }
 

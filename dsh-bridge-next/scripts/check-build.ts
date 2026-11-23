@@ -3,6 +3,7 @@ import { access, readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
 import { checkClient } from './check-client.ts'
+import { checkComponentStyles } from './check-component-styles.ts'
 
 interface Manifest {
   name: string
@@ -62,6 +63,7 @@ assert.ok(host && typeof host === 'object' && 'apply' in host && typeof host.app
 
 const clientSource = await readFile(new URL(clientEntry.default, root), 'utf8')
 await checkClient(clientSource, manifest.name)
+await checkComponentStyles(root)
 await access(new URL('lib/bundled-connector/pyproject.toml', root))
 await access(new URL('lib/bundled-connector/connector/cli.py', root))
 
@@ -70,4 +72,4 @@ for (const match of clientSource.matchAll(/\brequire\(["']([^"']+)["']\)/g)) {
   assert.ok(allowedClientImports.has(match[1]!), `Unexpected client runtime import: ${match[1]}`)
 }
 
-console.log('构建产物检查通过：Host、侧边栏入口与官方弹窗交互、注册与释放、CSS 热更新契约、类型声明和内部 Connector 源码。')
+console.log('构建产物检查通过：Host、侧边栏入口与官方弹窗交互、注册与释放、CSS 热更新契约、官方组件样式覆盖、类型声明和内部 Connector 源码。')
