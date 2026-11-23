@@ -14,13 +14,18 @@ import {
   ChevronRightIcon,
   EllipsisIcon,
   FolderIcon,
+  InfoIcon,
   KeyRoundIcon,
   LaptopIcon,
+  LoaderCircleIcon,
   LockIcon,
   PencilIcon,
+  PlayIcon,
   PlusIcon,
   RefreshCwIcon,
   SearchIcon,
+  SettingsIcon,
+  SquareIcon,
   Trash2Icon,
   XIcon,
 } from "lucide-react"
@@ -34,6 +39,7 @@ import { useI18n } from "@/components/i18n-provider"
 import { FullPageSpinner } from "@/components/spinner"
 import { TerminalsPanel } from "@/components/terminal/terminals-panel"
 import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -42,9 +48,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
+import { useHeaderFit } from "@/hooks/use-header-fit"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { AgentIcon } from "@/components/workbench/agent-icon"
+import { useAgentProcesses } from "@/components/workbench/agent-processes"
 import { AgentSettingsDialog } from "@/components/workbench/agent-settings-dialog"
 import { E2eeLockBadge } from "@/components/workbench/e2ee-lock-badge"
 import { FileBrowser } from "@/components/workbench/file-browser"
@@ -153,8 +161,19 @@ function DeviceWorkbenchPageInner() {
 
   // The name as the page title: click to rename in place (Enter saves, Esc or leaving cancels).
   const [editingName, setEditingName] = useState<string | null>(null)
+  const {
+    containerRef: headerRef,
+    titleRef: headerTitleRef,
+    nameRef: headerNameRef,
+    actionsRef: headerActionsRef,
+    mainActionRef: headerMainActionRef,
+    compact: headerCompact,
+  } = useHeaderFit(
+    [device?.name ?? "", device?.presence ?? "", encrypted ? "e2e" : "", trust ? "paired" : "", editingName !== null ? "editing" : "", locale].join("|")
+  )
   const [allProjects, setAllProjects] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
+  const [infoOpen, setInfoOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [pairOpen, setPairOpen] = useState(false)
   const [unpinOpen, setUnpinOpen] = useState(false)
@@ -257,6 +276,7 @@ function DeviceWorkbenchPageInner() {
       cur && cur.deviceId === deviceId ? { ...cur, entries: cur.entries.map((e) => (e.id === entry.id ? entry : e)) } : cur
     )
   const [settingsAgent, setSettingsAgent] = useState<{ id: string; name: string } | null>(null)
+  const processes = useAgentProcesses({ tunnelManager, device: tunnelDevice, onChanged: () => void loadAgents() })
 
   // Agents: the device's (with the turned-off ones when it manages them), plus agents it has conversations with
   // (an agent may have been removed since).
@@ -364,7 +384,8 @@ function DeviceWorkbenchPageInner() {
     <div className="flex-1 overflow-y-auto">
       <PageContainer className="max-w-4xl gap-6 py-8">
         {/* Header (v2): the name is the title — click to rename — with its presence and lock beside it. */}
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <div ref={headerRef} className="flex min-w-0 items-center gap-3">
+          <div ref={headerTitleRef} className={cn("flex min-w-0 items-center gap-3", editingName !== null && "flex-1")}>
           {editingName !== null ? (
             <input
               autoFocus
@@ -385,12 +406,13 @@ function DeviceWorkbenchPageInner() {
               className="h-10 max-w-sm min-w-0 flex-1 rounded-lg bg-card px-2 font-heading text-2xl font-semibold tracking-tight text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
             />
           ) : (
-            <h1 className="min-w-0">
+            <h1 className="flex min-w-0">
               <button
+                ref={headerNameRef as React.RefObject<HTMLButtonElement | null>}
                 type="button"
-                title={t("devices.rename")}
+                title={device.name}
                 onClick={() => setEditingName(device.name)}
-                className="max-w-full truncate text-left font-heading text-2xl font-semibold tracking-tight underline-offset-4 hover:underline"
+                className="min-w-0 truncate text-left font-heading text-2xl font-semibold tracking-tight underline-offset-4 hover:underline"
               >
                 {device.name}
               </button>
@@ -401,16 +423,29 @@ function DeviceWorkbenchPageInner() {
             {online ? t("devices.online") : t("device.offlineCached")}
           </span>
           {encrypted && <E2eeLockBadge paired={Boolean(trust)} compact className="shrink-0" />}
-          <div className="ml-auto flex shrink-0 items-center gap-1.5">
-            <Button size="sm" disabled={!online} render={<Link href={newHref({})} />} nativeButton={false}>
-              <PlusIcon className="size-3.5" />
-              {t("wb.newConversation")}
+          </div>
+          <div ref={headerActionsRef} className="ml-auto flex shrink-0 items-center gap-1.5">
+            <Button
+              ref={headerMainActionRef as React.RefObject<HTMLButtonElement | null>}
+              size={headerCompact ? "icon-sm" : "sm"}
+              disabled={!online}
+              aria-label={t("wb.newConversation")}
+              title={headerCompact ? t("wb.newConversation") : undefined}
+              render={<Link href={newHref({})} />}
+              nativeButton={false}
+            >
+              <PlusIcon className={headerCompact ? "size-4" : "size-3.5"} />
+              {!headerCompact && t("wb.newConversation")}
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={t("conv.more")} />}>
                 <EllipsisIcon className="size-4" />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-48">
+                <DropdownMenuItem onClick={() => setInfoOpen(true)}>
+                  <InfoIcon />
+                  {t("device.info")}
+                </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setEditingName(device.name)}>
                   <PencilIcon />
                   {t("devices.rename")}
@@ -486,11 +521,12 @@ function DeviceWorkbenchPageInner() {
                 <ul className="flex flex-col">
                   {agents.map((a) => {
                     const entry = entryOf(a.id)
-                    const startable = online && a.reported && a.enabled
+                    const pending = processes.pending(a.id)
                     const meta = [
                       t("device.agentConversations", { count: a.count }),
                       ...(a.running > 0 ? [t("device.agentRunning", { count: a.running })] : []),
                       ...(!a.enabled ? [t("device.agentOff")] : []),
+                      ...(entry?.customized ? [t("agent.customized")] : []),
                       ...(!a.reported ? [t("device.agentNotReported")] : []),
                     ].join(" · ")
                     return (
@@ -502,7 +538,6 @@ function DeviceWorkbenchPageInner() {
                           type="button"
                           disabled={!a.reported}
                           onClick={() => setSettingsAgent({ id: a.id, name: a.name })}
-                          aria-label={t("device.agentSettings", { agent: a.name })}
                           className={cn(
                             "flex min-w-0 flex-1 items-center gap-3 rounded-lg py-2 pl-2 text-left",
                             !a.enabled && "opacity-60"
@@ -514,19 +549,53 @@ function DeviceWorkbenchPageInner() {
                             <span className="block truncate text-xs text-muted-foreground">{meta}</span>
                           </span>
                         </button>
-                        {startable && (
+                        <div className="flex shrink-0 items-center gap-0.5">
+                          {entry &&
+                            (entry.running > 0 || pending === "stopping" ? (
+                              <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                disabled={!online || pending !== null}
+                                onClick={() => processes.stop({ id: a.id, name: a.name })}
+                                aria-label={t("agent.stopTitle", { agent: a.name, count: entry.running })}
+                                title={t("agent.stopTitle", { agent: a.name, count: entry.running })}
+                                className="text-muted-foreground hover:text-foreground"
+                              >
+                                {pending === "stopping" ? (
+                                  <LoaderCircleIcon className="size-4 animate-spin" />
+                                ) : (
+                                  <SquareIcon className="size-3.5" />
+                                )}
+                              </Button>
+                            ) : (
+                              <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                disabled={!online || !entry.enabled || pending !== null}
+                                onClick={() => processes.start({ id: a.id, name: a.name })}
+                                aria-label={t("agent.startTitle", { agent: a.name })}
+                                title={t("agent.startTitle", { agent: a.name })}
+                                className="text-muted-foreground hover:text-foreground"
+                              >
+                                {pending === "starting" ? (
+                                  <LoaderCircleIcon className="size-4 animate-spin" />
+                                ) : (
+                                  <PlayIcon className="size-4" />
+                                )}
+                              </Button>
+                            ))}
                           <Button
                             variant="ghost"
                             size="icon-sm"
-                            aria-label={t("device.agentNewConversation", { agent: a.name })}
-                            title={t("device.agentNewConversation", { agent: a.name })}
-                            className="shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-                            render={<Link href={newHref({ agent: a.id })} />}
-                            nativeButton={false}
+                            disabled={!a.reported}
+                            onClick={() => setSettingsAgent({ id: a.id, name: a.name })}
+                            aria-label={t("device.agentSettings", { agent: a.name })}
+                            title={t("device.agentSettings", { agent: a.name })}
+                            className="text-muted-foreground hover:text-foreground"
                           >
-                            <PlusIcon className="size-4" />
+                            <SettingsIcon className="size-4" />
                           </Button>
-                        )}
+                        </div>
                         {entry && (
                           <Switch
                             checked={entry.enabled}
@@ -622,12 +691,6 @@ function DeviceWorkbenchPageInner() {
               )}
             </section>
 
-            <section>
-              <SectionLabel>{t("device.info")}</SectionLabel>
-              <div className="rounded-2xl bg-card p-4">
-                <DetailList items={details} />
-              </div>
-            </section>
           </TabsContent>
 
           {/* Conversations */}
@@ -817,6 +880,15 @@ function DeviceWorkbenchPageInner() {
         </Tabs>
       </PageContainer>
 
+      {processes.dialogs}
+      <Dialog open={infoOpen} onOpenChange={setInfoOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t("device.info")}</DialogTitle>
+          </DialogHeader>
+          <DetailList items={details} />
+        </DialogContent>
+      </Dialog>
       {settingsAgent && (
         <AgentSettingsDialog
           open={Boolean(settingsAgent)}
