@@ -1,0 +1,46 @@
+/* The render bundle's styles: web-v3's Anywhere UI tokens and base layer (app/globals.css) as they are, plus what a
+ * WebView under native glass needs. No web fonts are bundled: the HarmonyOS Sans SC subsets stay a web-app asset and
+ * the stack falls back to the system faces (SF Pro / PingFang on iOS, Roboto / Noto on Android). */
+@import "../../app/globals.css";
+
+@source "../../components/conversation";
+@source "../../components/terminal";
+@source "../../components/ui";
+@source "../../hooks";
+@source "../../lib";
+@source "../src";
+
+html {
+  /* The page never zooms or adjusts text on rotation. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+  /* The document scroller keeps the reader's place itself (iOS has no scroll anchoring). */
+  overflow-anchor: none;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  overscroll-behavior-x: none;
+}
+
+html[data-view="terminal"],
+html[data-view="terminal"] body {
+  height: 100%;
+  overflow: hidden;
+}
+
+html[data-reduce-motion] *,
+html[data-reduce-motion] *::before,
+html[data-reduce-motion] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+html[data-high-contrast] {
+  --muted-foreground: var(--foreground);
+  --border: var(--border-strong);
+}
