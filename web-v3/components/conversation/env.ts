@@ -1,7 +1,8 @@
 // What the thread needs from whoever hosts it (the web app, or the native app through the bridge). The thread itself
 // never talks to a network: answering, opening, copying, rewinding and forking all go out through here.
 import { createContext, useContext } from 'react'
-export type OpenTarget = { kind: 'url'; url: string } | { kind: 'file'; path: string; line?: number }
+/** `drive`: a `drive:/…` reference from a reply (assistant-and-files-proposal §6.3); the web app opens its drive page. */
+export type OpenTarget = { kind: 'url'; url: string } | { kind: 'file'; path: string; line?: number } | { kind: 'drive'; ref: string }
 import type { ControlsConfig } from 'streamdown'
 
 export interface ThreadEnv {

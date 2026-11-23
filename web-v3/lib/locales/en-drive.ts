@@ -39,6 +39,8 @@ export const enDrive = {
   "drive.expired": "Expired",
   "drive.moreFiles": "Showing {shown} of {total} files.",
   "drive.showMore": "Show more",
+  "drive.refNotFound": "Couldn't find {ref} in the drive",
+  "drive.refFailed": "Couldn't open {ref}: {error}",
 
   // Empty, missing and unavailable
   "drive.emptyTitle": "This folder is empty",

@@ -1,5 +1,6 @@
 "use client"
 
+import { useCallback } from "react"
 import {
   DownloadIcon,
   EllipsisIcon,
@@ -124,14 +125,24 @@ function RowMenu({ row, label, handlers }: { row: DriveRow; label: string; handl
 export function DriveEntryTable({
   rows,
   now,
+  highlight = null,
   handlers,
 }: {
   rows: readonly DriveRow[]
   /** When the listing was loaded; expiries read relative to it. */
   now: number
+  /** A file to point out (by id): selected and scrolled into view. */
+  highlight?: string | null
   handlers: DriveRowHandlers
 }) {
   const { t, locale } = useI18n()
+  // Stable per file, so the row scrolls into view when it appears, not on every render after.
+  const scrollIntoView = useCallback(
+    (row: HTMLTableRowElement | null) => {
+      if (highlight) row?.scrollIntoView({ block: "center" })
+    },
+    [highlight]
+  )
   return (
     <Table>
       <TableHeader>
@@ -158,9 +169,12 @@ export function DriveEntryTable({
           const expiry = row.kind === "file" ? driveExpiry(row.expiresAt, locale, now) : null
           const expiryLabel = expiry ? (expiry.expired ? t("drive.expired") : expiry.label) : "—"
           const actions = driveRowActions(row)
+          const highlighted = row.kind === "file" && row.id === highlight
           return (
             <TableRow
               key={`${row.kind}:${row.id}`}
+              ref={highlighted ? scrollIntoView : undefined}
+              data-state={highlighted ? "selected" : undefined}
               className={cn("h-14", row.kind === "folder" && "cursor-pointer")}
               onClick={row.kind === "folder" ? () => handlers.onOpen(row) : undefined}
             >
