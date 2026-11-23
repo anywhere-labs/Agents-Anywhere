@@ -1,0 +1,187 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agents-anywhere.dev/contracts/aa-v3/1.0/terminals.schema.json",
+  "title": "AA v3 Terminals (aa.v3.Terminals)",
+  "description": "Terminal info, attach request and the attach duplex frames: one controller per terminal, any number of viewers, a serialized-screen snapshot as the first frame, seq-based resume. Design: docs/v3/terminal-proposal.md. Bytes travel base64-encoded.",
+  "$defs": {
+    "Instant": { "type": "string", "format": "date-time" },
+    "Base64": { "type": "string", "description": "Standard base64 (RFC 4648 §4) of raw terminal bytes." },
+    "Dimension": { "type": "integer", "minimum": 1, "maximum": 1000 },
+    "Generation": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Control generation. Bumped every time the controller changes (claim, release, grace expiry). 0 = never controlled."
+    },
+    "Seq": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Output sequence number: 1 for the first output chunk of a terminal, +1 per chunk. 0 = nothing yet."
+    },
+    "TerminalMode": {
+      "type": "string",
+      "enum": ["pty", "pipe", "script"],
+      "description": "pty = real pseudo-terminal (full-screen programs and resize work). pipe / script = fallback when no PTY is available on the device; clients should warn that full-screen programs will not work."
+    },
+    "TerminalController": {
+      "type": "object",
+      "required": ["client_id", "label", "connected", "since"],
+      "additionalProperties": false,
+      "properties": {
+        "client_id": {
+          "type": "string",
+          "description": "Who holds control: `e2e:<peer_key>` on encrypted devices, the tunnel principal on normal devices. Used to match a reconnect within the grace period; not a secret."
+        },
+        "label": { "type": "string", "description": "Display name (paired-client label, or the label the client sent in attach)." },
+        "connected": { "type": "boolean", "description": "false while the controller's attach is gone but its 10 s grace period has not ended." },
+        "since": { "$ref": "#/$defs/Instant" }
+      }
+    },
+    "TerminalInfo": {
+      "type": "object",
+      "required": ["id", "cwd", "shell", "cols", "rows", "created_at", "running", "exit_code", "exit_signal", "exited_at", "pid", "mode", "owner", "controller", "generation", "viewers"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "cwd": { "type": "string" },
+        "shell": { "type": "string" },
+        "cols": { "$ref": "#/$defs/Dimension" },
+        "rows": { "$ref": "#/$defs/Dimension" },
+        "created_at": { "$ref": "#/$defs/Instant" },
+        "running": { "type": "boolean" },
+        "exit_code": { "type": ["integer", "null"] },
+        "exit_signal": { "type": ["string", "null"] },
+        "exited_at": { "anyOf": [{ "$ref": "#/$defs/Instant" }, { "type": "null" }] },
+        "pid": { "type": ["integer", "null"] },
+        "mode": { "$ref": "#/$defs/TerminalMode" },
+        "owner": { "type": "string", "enum": ["user", "agent"], "description": "agent = created by an agent through ACP; read-only for every client (reserved)." },
+        "controller": { "anyOf": [{ "$ref": "#/$defs/TerminalController" }, { "type": "null" }] },
+        "generation": { "$ref": "#/$defs/Generation" },
+        "viewers": { "type": "integer", "minimum": 0, "description": "Live attach streams, controller included." }
+      }
+    },
+    "AttachRequest": {
+      "type": "object",
+      "required": ["id"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "mode": {
+          "type": "string",
+          "enum": ["view", "control"],
+          "default": "view",
+          "description": "control = take control, but only when nobody holds it or the current controller (connected or within its grace period) has this caller's client_id: the device that created the terminal, or a reconnect of the controller. Otherwise the stream joins as a viewer (its control frame says you=false) and must send an explicit claim frame to take over; only claim is an unconditional takeover."
+        },
+        "cols": { "$ref": "#/$defs/Dimension", "description": "With mode=control: the size to apply, only if control is actually taken." },
+        "rows": { "$ref": "#/$defs/Dimension" },
+        "resume_seq": { "$ref": "#/$defs/Seq", "description": "Last seq this client rendered. If everything after it is still buffered, the stream starts with those chunks instead of a snapshot." },
+        "label": { "type": "string", "maxLength": 80, "description": "Display name of this client (\"iPhone\", \"Chrome · macOS\"). Ignored on encrypted devices, which use the paired-client label." }
+      }
+    },
+    "TerminalInputFrame": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["type", "data", "generation"],
+          "additionalProperties": false,
+          "properties": {
+            "type": { "const": "input" },
+            "data": { "$ref": "#/$defs/Base64" },
+            "generation": { "$ref": "#/$defs/Generation" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["type", "cols", "rows", "generation"],
+          "additionalProperties": false,
+          "properties": {
+            "type": { "const": "resize" },
+            "cols": { "$ref": "#/$defs/Dimension" },
+            "rows": { "$ref": "#/$defs/Dimension" },
+            "generation": { "$ref": "#/$defs/Generation" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["type"],
+          "additionalProperties": false,
+          "description": "Take control now (immediate takeover). With keep_size the terminal keeps its current size; otherwise cols/rows (if given) are applied.",
+          "properties": {
+            "type": { "const": "claim" },
+            "cols": { "$ref": "#/$defs/Dimension" },
+            "rows": { "$ref": "#/$defs/Dimension" },
+            "keep_size": { "type": "boolean" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["type"],
+          "additionalProperties": false,
+          "description": "Give up control (only honoured from the current controller).",
+          "properties": { "type": { "const": "release" } }
+        }
+      ]
+    },
+    "TerminalOutputFrame": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["type", "data", "seq", "cols", "rows"],
+          "additionalProperties": false,
+          "description": "First frame unless resume succeeded: the serialized screen (scrollback, alternate screen, cursor, terminal modes) as of `seq`. Write it into a fresh xterm.js instance of cols x rows.",
+          "properties": {
+            "type": { "const": "snapshot" },
+            "data": { "$ref": "#/$defs/Base64" },
+            "seq": { "$ref": "#/$defs/Seq" },
+            "cols": { "$ref": "#/$defs/Dimension" },
+            "rows": { "$ref": "#/$defs/Dimension" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["type", "data", "seq"],
+          "additionalProperties": false,
+          "properties": {
+            "type": { "const": "output" },
+            "data": { "$ref": "#/$defs/Base64" },
+            "seq": { "$ref": "#/$defs/Seq" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["type", "controller", "generation", "you", "cols", "rows"],
+          "additionalProperties": false,
+          "description": "Sent right after the snapshot (or resumed chunks) and to every stream whenever the controller, generation or size changes.",
+          "properties": {
+            "type": { "const": "control" },
+            "controller": { "anyOf": [{ "$ref": "#/$defs/TerminalController" }, { "type": "null" }] },
+            "generation": { "$ref": "#/$defs/Generation" },
+            "you": { "type": "boolean", "description": "true when this stream is the controller." },
+            "cols": { "$ref": "#/$defs/Dimension" },
+            "rows": { "$ref": "#/$defs/Dimension" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["type", "reason", "generation"],
+          "additionalProperties": false,
+          "description": "An input/resize/release from this stream was dropped. Sent at most once per generation per stream.",
+          "properties": {
+            "type": { "const": "rejected" },
+            "reason": { "type": "string", "enum": ["not_controller", "stale_generation", "agent_owned"] },
+            "generation": { "$ref": "#/$defs/Generation" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["type", "exit_code"],
+          "additionalProperties": false,
+          "properties": {
+            "type": { "const": "exit" },
+            "exit_code": { "type": ["integer", "null"] },
+            "exit_signal": { "type": ["string", "null"] }
+          }
+        }
+      ]
+    }
+  }
+}

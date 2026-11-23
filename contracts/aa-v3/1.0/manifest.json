@@ -6,7 +6,8 @@
   "design_docs": [
     "docs/v3/architecture-proposal.md",
     "docs/v3/e2ee-admission-proposal.md",
-    "docs/v3/v3poc-alignment.md"
+    "docs/v3/v3poc-alignment.md",
+    "docs/v3/terminal-proposal.md"
   ],
   "meshcall_requirements": {
     "token_principal_metadata": "meshcall-token-principal",
@@ -15,7 +16,13 @@
       "paired": "Noise_IK_25519_AESGCM_SHA256"
     },
     "require_e2e_peer_mount": true,
-    "sdks": ["go", "python", "typescript", "swift", "jvm"]
+    "sdks": [
+      "go",
+      "python",
+      "typescript",
+      "swift",
+      "jvm"
+    ]
   },
   "services": {
     "control_plane": [
@@ -32,7 +39,8 @@
   },
   "schemas": [
     "control.schema.json",
-    "pairing.schema.json"
+    "pairing.schema.json",
+    "terminals.schema.json"
   ],
   "fixtures": [
     "fixtures/session-merge.json"
