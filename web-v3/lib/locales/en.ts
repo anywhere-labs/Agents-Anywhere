@@ -1,3 +1,5 @@
+import { enWorkbench } from "./en-workbench"
+
 export const en = {
   // Common
   "common.save": "Save",
@@ -359,4 +361,6 @@ export const en = {
   "notFound.title": "Page not found",
   "notFound.description": "The page you requested does not exist or has moved.",
   "notFound.action": "Back to workbench",
+
+  ...enWorkbench,
 } as const

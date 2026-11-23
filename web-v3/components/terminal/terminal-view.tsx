@@ -124,6 +124,11 @@ export interface TerminalViewProps {
   extraKeys?: boolean
   /** Fill the parent's height instead of the fixed terminal height (the mobile bundle's full-screen terminal). */
   fill?: boolean
+  /**
+   * Live `control` frames for this terminal (controller, generation): the list beside the view fetched its rows
+   * once, so it updates the attached row from here instead of showing a stale "controlled by".
+   */
+  onControl?: (control: { controller: TerminalInfo["controller"]; generation: number; you: boolean }) => void
 }
 
 export interface TerminalViewHandle {
@@ -134,7 +139,17 @@ export interface TerminalViewHandle {
   toggleCtrl(): void
 }
 
-export function TerminalView({ info, transport, initialMode, label, className, handle, extraKeys = true, fill = false }: TerminalViewProps) {
+export function TerminalView({
+  info,
+  transport,
+  initialMode,
+  label,
+  className,
+  handle,
+  extraKeys = true,
+  fill = false,
+  onControl,
+}: TerminalViewProps) {
   const { t } = useI18n()
   const hostRef = useRef<HTMLDivElement>(null)
   const termElRef = useRef<HTMLDivElement>(null)
@@ -145,6 +160,21 @@ export function TerminalView({ info, transport, initialMode, label, className, h
   const initialSizeRef = useRef({ cols: info.cols, rows: info.rows })
   const [slot] = useState(() => new SessionSlot())
   const state = useSyncExternalStore(slot.subscribe, slot.getState, getServerState)
+  const onControlRef = useRef(onControl)
+  useEffect(() => {
+    onControlRef.current = onControl
+  }, [onControl])
+  // Report control changes once the attach is live (before that the state is the empty initial one).
+  const controller = state?.controller ?? null
+  const controllerKey = controller ? `${controller.client_id}:${controller.connected ? 1 : 0}` : "none"
+  const live = state?.status === "live"
+  const generation = state?.generation ?? 0
+  const you = state?.you ?? false
+  useEffect(() => {
+    if (!live) return
+    onControlRef.current?.({ controller, generation, you })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [controllerKey, generation, you, live])
   const coarse = useSyncExternalStore(
     (onChange) => {
       const mql = window.matchMedia("(pointer: coarse)")

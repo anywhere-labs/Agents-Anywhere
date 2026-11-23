@@ -449,14 +449,27 @@ export class DeviceTunnelManager {
     })
   }
 
+  /** Remove a queued message (`aa.v3.Sessions/unqueue`). */
   cancelQueued(
     device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">,
     id: string,
     clientMsgId: string
   ): Promise<{ ok: true }> {
-    return this.callUnary(device, SESSIONS_SVC, "cancel_queued", {
+    return this.callUnary(device, SESSIONS_SVC, "unqueue", {
       id,
       client_msg_id: clientMsgId,
+    })
+  }
+
+  /** Ask the agent to compact its context (agents that offer `/compact`). */
+  compactSession(
+    device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">,
+    id: string,
+    instructions?: string
+  ): Promise<{ message_id: string }> {
+    return this.callUnary(device, SESSIONS_SVC, "compact", {
+      id,
+      ...(instructions ? { instructions } : {}),
     })
   }
 
@@ -530,11 +543,34 @@ export class DeviceTunnelManager {
     })
   }
 
+  /**
+   * Store an attachment (≤ the device's `max_rpc_file_bytes`) on the device. With `session_id` the device files it
+   * under the conversation's project (`.agents-anywhere/attachments/<id>/`, client-experience-proposal §3.1).
+   */
   saveAttachment(
     device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">,
-    payload: { name: string; base64: string; mime?: string }
+    payload: { name: string; base64: string; mime?: string; session_id?: string }
   ): Promise<{ id: string; path: string; name: string; mime: string; size: number }> {
     return this.callUnary(device, DEVICE_SVC, "save_attachment", payload)
+  }
+
+  /**
+   * Have the device download a Cloud Drive transfer into the conversation's attachment folder (verifying `sha256`,
+   * decrypting with `file_key` when the file was encrypted for an E2EE device). Older Connectors answer
+   * `method_not_found`.
+   */
+  fetchDriveFile(
+    device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">,
+    payload: {
+      session_id: string
+      file_id: string
+      name: string
+      mime?: string
+      sha256?: string
+      file_key?: string
+    }
+  ): Promise<{ path: string; name: string; mime: string; size: number }> {
+    return this.callUnary(device, DEVICE_SVC, "fetch_drive_file", payload)
   }
 
   listPairedClients(

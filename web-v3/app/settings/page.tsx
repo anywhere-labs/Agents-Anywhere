@@ -272,7 +272,7 @@ export default function SettingsPage() {
           />
 
           {/* 1. Appearance & Sidebar Mode */}
-          <section className="space-y-6 rounded-card bg-card p-6">
+          <section id="appearance" className="scroll-mt-6 space-y-6 rounded-card bg-card p-6">
             <div className="space-y-1">
               <h2 className="text-lg font-semibold tracking-tight">
                 {t("settings.appearanceTitle")}
@@ -365,7 +365,7 @@ export default function SettingsPage() {
           )}
 
           {/* 3. Cloud Drive */}
-          <section className="space-y-4 rounded-card bg-card p-6">
+          <section id="drive" className="scroll-mt-6 space-y-4 rounded-card bg-card p-6">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="space-y-1">
                 <h2 className="flex items-center gap-2 text-lg font-semibold tracking-tight">
@@ -426,7 +426,7 @@ export default function SettingsPage() {
 
           {/* 4. Admin-only Per-Account Cloud Drive Policy Override */}
           {activeAccount?.user.role === "admin" && (
-            <section className="space-y-4 rounded-card bg-card p-6">
+            <section id="admin-drive" className="scroll-mt-6 space-y-4 rounded-card bg-card p-6">
               <div className="space-y-1">
                 <h2 className="flex items-center gap-2 text-lg font-semibold tracking-tight">
                   <ShieldIcon className="size-4" />
@@ -484,7 +484,7 @@ export default function SettingsPage() {
           )}
 
           {/* 5. Authorized MCP Connections (/mcp/grants) */}
-          <section className="space-y-4 rounded-card bg-card p-6">
+          <section id="mcp" className="scroll-mt-6 space-y-4 rounded-card bg-card p-6">
             <div className="space-y-1">
               <h2 className="flex items-center gap-2 text-lg font-semibold tracking-tight">
                 <KeyRoundIcon className="size-4" />
@@ -527,7 +527,7 @@ export default function SettingsPage() {
           </section>
 
           {/* 6. Local Browser E2EE Vault */}
-          <section className="space-y-5 rounded-card bg-card p-6">
+          <section id="vault" className="scroll-mt-6 space-y-5 rounded-card bg-card p-6">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="space-y-1">
                 <h2 className="flex items-center gap-2 text-lg font-semibold tracking-tight">

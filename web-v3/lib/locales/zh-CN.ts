@@ -1,4 +1,5 @@
 import type { Messages } from "../i18n"
+import { zhCNWorkbench } from "./zh-CN-workbench"
 
 export const zhCN: Messages = {
   // Common
@@ -361,4 +362,6 @@ export const zhCN: Messages = {
   "notFound.title": "页面不存在",
   "notFound.description": "你访问的页面可能已删除或已移动。",
   "notFound.action": "返回工作台",
+
+  ...zhCNWorkbench,
 }

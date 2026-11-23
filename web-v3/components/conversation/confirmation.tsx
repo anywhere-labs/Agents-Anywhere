@@ -21,7 +21,7 @@ export function Confirmation({ request, tool }: { request: PendingRequest; tool:
   // Reject on the left, the plain "allow" last (the primary button), as in the pattern.
   const options = [...request.options].sort((a, b) => ORDER[a.kind] - ORDER[b.kind])
   return (
-    <Item variant="outline" size="sm" className="flex-wrap">
+    <Item variant="outline" size="sm" className="flex-wrap" data-request-id={request.request_id}>
       <ItemMedia variant="icon">{command ? <TerminalIcon /> : <ShieldQuestionIcon />}</ItemMedia>
       <ItemContent className="min-w-48">
         <ItemTitle className="block">
@@ -54,7 +54,7 @@ export function Answered({ request, by, device, option_id }: { request: PendingR
   const env = useThreadEnv()
   const option = request.options.find((o) => o.id === option_id)
   const allowed = option ? option.kind.startsWith('allow') : true
-  const who = by === env.me ? '你' : by
+  const who = (env.whoIs ? env.whoIs(by) === null : by === env.me) ? '你' : (env.whoIs?.(by) ?? by)
   return (
     <Marker>
       <MarkerIcon>{allowed ? <CheckIcon /> : <XIcon />}</MarkerIcon>
