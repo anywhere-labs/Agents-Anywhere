@@ -12,6 +12,7 @@ import {
 } from "react"
 
 import {
+  ControlApiError,
   fetchMe,
   loginWithPassword,
   logoutLocalSession,
@@ -20,6 +21,7 @@ import {
   registerWithPassword,
 } from "@/lib/api/control-http"
 import { refreshOidcSession } from "@/lib/auth/oidc"
+import { SESSION_EXPIRED_FLAG, SessionExpiredError } from "@/lib/auth/session"
 import { ControlPlaneClient } from "@/lib/mesh/control-client"
 import { DeviceTunnelManager } from "@/lib/mesh/device-tunnel"
 import { PairingError } from "@/lib/mesh/pairing"
@@ -151,10 +153,28 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   // One refresh per account at a time. server-v3 (local mode) and most OIDC providers rotate refresh tokens, so
   // two refreshes with the same token make all but the first fail.
   const refreshInFlightRef = useRef(new Map<string, Promise<string>>())
+  // Accounts whose refresh token the server refused: they are signed out, and every later call fails at once
+  // instead of asking the server again (a watch loop or panel retrying would otherwise flood /auth/refresh).
+  const expiredAccountsRef = useRef(new Set<string>())
+
+  /** The refresh token is dead: drop the session so the shell sends the user to sign in again. */
+  const expireSession = useCallback(async (session: StoredAccountSession) => {
+    expiredAccountsRef.current.add(session.accountId)
+    await vault.removeAccountSession(session.accountId)
+    try {
+      sessionStorage.setItem(SESSION_EXPIRED_FLAG, session.user?.email ?? "")
+    } catch {
+      // Private mode without sessionStorage: the sign-in page just shows no notice.
+    }
+    const rest = await vault.listAccounts()
+    setAccounts(rest)
+    setActiveAccountId((prev) => (prev === session.accountId ? (rest[0]?.accountId ?? null) : prev))
+  }, [])
 
   const getFreshAccessToken = useCallback(async (): Promise<string> => {
     const current = activeAccountRef.current
     if (!current) throw new Error("Not signed in")
+    if (expiredAccountsRef.current.has(current.accountId)) throw new SessionExpiredError()
     if (current.expiresAt - Date.now() > 60_000) {
       return current.accessToken
     }
@@ -174,17 +194,28 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
         next = stored
       } else if (!stored.refreshToken) {
         return stored.accessToken
-      } else if (stored.authMode === "oidc") {
-        next = await refreshOidcSession(stored)
       } else {
-        const refreshed = await refreshLocalSession(stored.serverUrl, stored.refreshToken)
-        next = {
-          ...stored,
-          accessToken: refreshed.access_token,
-          refreshToken: refreshed.refresh_token,
-          expiresAt: Date.now() + refreshed.expires_in * 1000,
-          user: refreshed.user,
-          lastUsedAt: Date.now(),
+        try {
+          if (stored.authMode === "oidc") {
+            next = await refreshOidcSession(stored)
+          } else {
+            const refreshed = await refreshLocalSession(stored.serverUrl, stored.refreshToken)
+            next = {
+              ...stored,
+              accessToken: refreshed.access_token,
+              refreshToken: refreshed.refresh_token,
+              expiresAt: Date.now() + refreshed.expires_in * 1000,
+              user: refreshed.user,
+              lastUsedAt: Date.now(),
+            }
+          }
+        } catch (err) {
+          // Only a refusal of the refresh token signs the user out; network errors and 5xx are retried later.
+          if (err instanceof SessionExpiredError || (err instanceof ControlApiError && err.status === 401)) {
+            await expireSession(stored)
+            throw new SessionExpiredError()
+          }
+          throw err
         }
       }
       if (next !== stored) await vault.saveAccountSession(next)
@@ -201,7 +232,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
         refreshInFlightRef.current.delete(current.accountId)
       }
     }
-  }, [])
+  }, [expireSession])
 
   // Refresh /auth/me + hydrate pinned trusts & session cache + bind ControlPlaneClient & TunnelManager
   const refreshSessionsInternal = useCallback(
@@ -359,9 +390,15 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
         const tok = await getFreshAccessToken()
         const freshUser = await fetchMe(acct.serverUrl, tok)
         if (!abort.signal.aborted) {
-          const updated: StoredAccountSession = { ...acct, user: freshUser }
-          await vault.saveAccountSession(updated)
-          setAccounts((prev) => prev.map((a) => (a.accountId === updated.accountId ? updated : a)))
+          // Merge only the profile, into the newest stored session and under the refresh lock: the token call above
+          // may just have rotated the tokens, and `acct` still holds the old refresh token, which is now revoked.
+          await withCrossTabLock(`aa-v3-token-refresh:${acct.accountId}`, async () => {
+            const latest = (await vault.listAccounts()).find((a) => a.accountId === acct.accountId)
+            if (latest) await vault.saveAccountSession({ ...latest, user: freshUser })
+          })
+          const live = activeAccountRef.current
+          if (live?.accountId === acct.accountId) activeAccountRef.current = { ...live, user: freshUser }
+          setAccounts((prev) => prev.map((a) => (a.accountId === acct.accountId ? { ...a, user: freshUser } : a)))
         }
       } catch {
         // Keep cached user snapshot if control plane temporarily unreachable
@@ -470,7 +507,8 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
         user: res.user,
         lastUsedAt: Date.now(),
       }
-      await vault.saveAccountSession(session)
+      expiredAccountsRef.current.delete(session.accountId)
+    await vault.saveAccountSession(session)
       await vault.updatePreferences({ defaultServerUrl: serverUrl })
       const all = await vault.listAccounts()
       setAccounts(all)
@@ -506,7 +544,8 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
         user: res.user,
         lastUsedAt: Date.now(),
       }
-      await vault.saveAccountSession(session)
+      expiredAccountsRef.current.delete(session.accountId)
+    await vault.saveAccountSession(session)
       await vault.updatePreferences({ defaultServerUrl: serverUrl })
       const all = await vault.listAccounts()
       setAccounts(all)
@@ -516,6 +555,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   )
 
   const saveOidcAccount = useCallback(async (session: StoredAccountSession) => {
+    expiredAccountsRef.current.delete(session.accountId)
     await vault.saveAccountSession(session)
     await vault.updatePreferences({ defaultServerUrl: session.serverUrl })
     const all = await vault.listAccounts()
