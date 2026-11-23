@@ -25,6 +25,7 @@ import { ConnectorHost, type ConnectorHostOptions } from "../src/host/connector-
 //   --slow-exit       ignores SIGTERM and exits that long after its stdin closed
 //   --tick=<ms>       every that long, a usage report (metadata) to each of its sessions
 //   --busy=<ms>       every that long, a line of text of its own (as an agent working between turns)
+//   --late-commands=<ms>  reports its slash commands that long after answering session/new / resume / load
 const FAKE_AGENT = String.raw`
 const fs = require("node:fs");
 const path = require("node:path");
@@ -45,7 +46,12 @@ const config = (s) => [
   { id: "model", name: "Model", category: "model", type: "select", currentValue: s.model, options: [{ value: "fast", name: "Fast" }, { value: "smart", name: "Smart" }] },
   { id: "mode", name: "Mode", category: "mode", type: "select", currentValue: s.mode, options: [{ value: "ask", name: "Ask" }, { value: "auto", name: "Auto" }] },
 ];
-const commands = (id) => update(id, { sessionUpdate: "available_commands_update", availableCommands: [{ name: "compact", description: "Compact the context" }] });
+const commands = (id) => {
+  const late = flag("--late-commands");
+  const send = () => update(id, { sessionUpdate: "available_commands_update", availableCommands: [{ name: "compact", description: "Compact the context" }] });
+  if (late) setTimeout(send, Number(late.split("=")[1]));
+  else send();
+};
 async function handle(msg) {
   if (msg.method === undefined) return;
   const { id, method, params } = msg;
@@ -578,6 +584,22 @@ describe("idle agents", () => {
     await busy.send(two.id, "one");
     await sleep(1_000);
     assert.equal(busy.running(), 1, "working on its own: kept");
+  });
+
+  it("compact on a stopped agent waits for the restarted agent to report its commands", async () => {
+    // Real agents report their commands a moment after answering session/resume: compact must not miss them.
+    const f = await setup({ flags: ["--caps=resume", "--late-commands=300"] });
+    const { sessionsService: sessions, store } = f.host;
+    const session = await sessions.create({ agent: "fake", cwd: f.cwd }, TUNNEL);
+    await f.send(session.id, "one");
+    await f.host.stopAgent("fake"); // as an idle close does
+
+    const { message_id } = await sessions.compact({ id: session.id }, TUNNEL);
+    await eventually(() => !sessions.isBusy(session.id), "the compaction ended");
+    const item = store.getMessage(session.id, message_id);
+    assert.equal(item?.role === "assistant" ? item.parts[0].type === "compaction" && item.parts[0].status : undefined, "completed");
+    assert.deepEqual((await f.lines("prompt")).map((line) => line.split(" ").slice(1).join(" ")), ["one", "/compact"]);
+    assert.equal((await f.lines("resume")).length, 1);
   });
 
   it("a message sent while the idle agent is closing waits for it to exit, then restores", async () => {

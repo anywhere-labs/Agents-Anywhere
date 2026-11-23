@@ -285,7 +285,7 @@ yarn test
 
 `tests/acp-prepare.test.ts` 不需要 Router：用一个记录每次进程启动、`session/new` 和配置修改的模拟 Agent 覆盖 `prepare` 与 `create({ prepared_id })`——配置项的形状、并发共用一次启动、接管同一个进程（没有第二次 `session/new`）并回放预热期间的通知、不匹配 / 过期 / 已退出时退回原流程、TTL 与续期、上限淘汰、启动错误，以及停止时关闭。
 
-`tests/acp-restore.test.ts` 也不需要 Router：模拟 Agent 把会话存成文件，新进程可以重新打开，每次回复都说出它记得的内容。覆盖 `session/resume`、只有 `session/load`（重放的历史不进对话）、Agent 不按规范在 resume 时也重放、两种都不支持（新开会话、记 warn、不回收）、恢复被拒（先 resume 再 load，都失败时新开会话并记 warn）、resume 被拒但 load 成功、Agent 崩溃后恢复、Connector 重启后恢复（`sessions.json` 里的 id）、恢复后把设置改回对话里的值、接管预热 Agent 后记下它的会话 id、`rewind` 后不再恢复、空闲回收（轮次比 TTL 长时不回收、回收后下一条消息恢复、两轮之间自己的输出算有动静而用量报告不算、预热 Agent 不受影响、`0` / `null` 关闭、回收中的进程退出前不启动新进程），以及没有这个字段的旧 `sessions.json`。
+`tests/acp-restore.test.ts` 也不需要 Router：模拟 Agent 把会话存成文件，新进程可以重新打开，每次回复都说出它记得的内容。覆盖 `session/resume`、只有 `session/load`（重放的历史不进对话）、Agent 不按规范在 resume 时也重放、两种都不支持（新开会话、记 warn、不回收）、恢复被拒（先 resume 再 load，都失败时新开会话并记 warn）、resume 被拒但 load 成功、Agent 崩溃后恢复、Connector 重启后恢复（`sessions.json` 里的 id）、恢复后把设置改回对话里的值、接管预热 Agent 后记下它的会话 id、`rewind` 后不再恢复、空闲回收（轮次比 TTL 长时不回收、回收后下一条消息恢复、两轮之间自己的输出算有动静而用量报告不算、Agent 重启后稍晚才报告命令时 `compact` 会等它、预热 Agent 不受影响、`0` / `null` 关闭、回收中的进程退出前不启动新进程），以及没有这个字段的旧 `sessions.json`。
 
 `tests/agent-settings.test.ts` 也不需要 Router：在初始化好的 `ConnectorHost` 上直接调用服务，模拟 Agent 记下每次启动时拿到的命令（argv0）、参数和一个环境变量。覆盖 `agents` 的形状与计数、开关（`status.runtimes`、`prepare` / `create` / 已有会话的新一轮被拒、预热 Agent 被关闭）、设置写入 `agents.json`（0600）并在重启后用于下一次启动、正在运行的进程保持旧设置、环境变量的值不出现在任何返回 / 日志 / 推送里、恢复默认、字段校验、设置变了时关闭预热 Agent（没变时保留）、带旧字段的 `agents.json` 照常加载、`stop_agent` 的计数与会话恢复、有轮次在跑时的 `turns_running` 与 `force`（含 Agent 还在启动、Agent 不理会取消的情况），以及控制面、MCP 和加密设备上的调用限制。
 
@@ -294,7 +294,7 @@ yarn test
 - ACP 没有截断上下文的接口：`rewind` 会重启该会话的 Agent，新的 Agent 不带之前的上下文（设置保持对话里的值）；fork 出来的对话也从新的 Agent 会话开始。
 - Agent 不支持恢复或恢复失败时，Connector 重启、`stop_agent` 之后的下一条消息会新开 ACP 会话，不带之前的上下文。这只记在 Connector 日志里，对话里没有提示：时间线还没有这种提示的条目类型，要显示需要先改跨端契约。
 - 预热的 Agent 已经执行过 `session/new`：如果某个 Agent 在 `session/new` 时就写入自己的会话记录，没被接管的预热会话会在它自己的历史里留下一条空会话（Pi 要到第一条消息才写入，不受影响）。
-- `compact` 只在 Agent 通过 `available_commands_update` 提供 `compact` 命令时可用。
+- `compact` 只在 Agent 通过 `available_commands_update` 提供 `compact` 命令时可用。Agent 刚启动（包括重启、空闲回收之后）还没报告任何命令时，`compact` 最多等 3 秒。
 - Router token 过期被拒后会重新获取 token 并重新挂载，期间该 Router 上的隧道会断开，客户端需要重连。
 - MeshCall 的契约检查（W002）只把 `idempotent/readOnly/destructive: true` 当作声明；`create`、`send` 等方法确实不幂等，已显式标 `idempotent: false`，启动时仍会打印 5 条 W002 警告。
 - 尚未与真实的 `server-v3` 实例和真实的 Claude Code / Codex ACP 适配器联调；兼容性目前由契约 schema 校验和 Router 端到端测试保证。
