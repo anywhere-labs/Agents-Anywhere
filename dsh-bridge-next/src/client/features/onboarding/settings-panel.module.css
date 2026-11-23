@@ -11,7 +11,7 @@
 .details dd { margin: 0; overflow-wrap: anywhere; }
 .form { display: flex; flex-direction: column; gap: 24px; }
 .hint { margin: 4px 0 0; color: var(--dsw-alias-label-tertiary); font: var(--dsw-font-xs-13); overflow-wrap: anywhere; }
-.input { width: 100%; box-sizing: border-box; }
+.panel .input { width: 100%; box-sizing: border-box; }
 .field { font: var(--dsw-font-xs-13); color: var(--dsw-alias-label-secondary); }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .save { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 12px; }

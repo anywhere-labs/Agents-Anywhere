@@ -70,6 +70,14 @@ export async function checkClient(source: string, packageId: string): Promise<vo
       'The wordmark font must be embedded in the published factory without a static asset server')
     registration.factory(require)
     assert.equal(ownedStyles().length, styleCount, 'Re-evaluating the factory must not duplicate styles')
+    // DSH 0.2.3 keeps these tags when it replaces the factory (HMR or a plugin update); the new factory rewrites them.
+    const kept = ownedStyles()
+    const texts = kept.map(style => style.textContent)
+    for (const style of kept) style.textContent = '/* stale */'
+    registration.factory(require)
+    assert.ok(ownedStyles().length === kept.length && ownedStyles().every((style, index) => style === kept[index]),
+      'A replaced factory must reuse its existing style tags')
+    assert.deepEqual(ownedStyles().map(style => style.textContent), texts, 'A replaced factory must rewrite stale stylesheet text in place')
     const foreignStyle = document.createElement('style')
     foreignStyle.dataset.plugin = 'another-plugin'
     document.head.appendChild(foreignStyle)

@@ -1,0 +1,4 @@
+dist/
+.artifacts/
+# Raw recordings hold the recording machine's names and paths; build-fixtures.mjs writes the sanitised fixtures.
+fixtures/raw/

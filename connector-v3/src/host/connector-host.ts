@@ -26,14 +26,22 @@ import type { AcpRuntimePreset } from "../core/config.js";
 import { DeviceGate, type DeviceGateOptions, type PairingHint, type PairingPayload } from "../core/gate.js";
 import { SessionStore } from "../core/session-store.js";
 import { AcpRuntimeHost, type PushEvent } from "../runtime/acp-host.js";
-import { devicePlatform } from "../runtime/device-ops.js";
+import { devicePlatform, removeSessionAttachments, type DriveDownload } from "../runtime/device-ops.js";
 import { StateStore, type ConnectorSettings, type DeviceIdentity, type DeviceMode, type PairedClientEntry } from "../runtime/state-store.js";
 import { TerminalManager } from "../runtime/terminal-manager.js";
 import { DeviceAdminService, TunnelStreamTracker } from "../rpc/device-admin-service.js";
 import { DeviceService } from "../rpc/device-service.js";
 import { SessionsService } from "../rpc/sessions-service.js";
 import { TerminalsService } from "../rpc/terminals-service.js";
-import { backoffDelay, ControlPresenceClient, fetchDeviceRouterTokens, type PresenceSummary, type RouterTokenEntry } from "./control-client.js";
+import {
+  backoffDelay,
+  ControlPresenceClient,
+  fetchDeviceRouterTokens,
+  fetchDriveDownload,
+  isUnauthenticated,
+  type PresenceSummary,
+  type RouterTokenEntry,
+} from "./control-client.js";
 import { LocalRouterHost, type LocalRouterDescriptor, type LocalRouterHostOptions } from "./local-router.js";
 
 export const CONNECTOR_VERSION = "3.0.0-alpha.1";
@@ -67,7 +75,7 @@ export interface ConnectorHostOptions {
   controlUrl?: string;
   deviceSecret?: string;
   presets?: AcpRuntimePreset[];
-  /** Add the built-in `claude` / `codex` presets. Default true. */
+  /** Add the built-in agent presets that are installed here (see `defaultAcpPresets`). Default true. */
   includeDefaultPresets?: boolean;
   connectorVersion?: string;
   presenceIntervalMs?: number;
@@ -121,6 +129,10 @@ export class ConnectorHost {
   #persistTimer: NodeJS.Timeout | undefined;
   #persisting: Promise<void> = Promise.resolve();
   #restartAttempts = new Map<string, number>();
+  /** Bumped whenever serving stops, so retries scheduled for an earlier round give up. */
+  #generation = 0;
+  /** Background retries of Routers that could not be served on (unreachable at startup, or a failed restart). */
+  #retryTimers = new Map<string, NodeJS.Timeout>();
 
   constructor(options: ConnectorHostOptions = {}) {
     this.options = options;
@@ -157,6 +169,15 @@ export class ConnectorHost {
   }
   get identity(): DeviceIdentity {
     return { ...this.#need(this.#identity, "identity") };
+  }
+
+  /** Cloud-drive download links as this device, or undefined without a control plane (local/direct mode). */
+  driveDownloader(): ((fileId: string) => Promise<DriveDownload>) | undefined {
+    const identity = this.#identity;
+    const controlUrl = this.options.controlUrl ?? identity?.control_url;
+    if (!identity || !controlUrl || !identity.device_secret) return undefined;
+    return (fileId) =>
+      fetchDriveDownload({ controlUrl, deviceId: identity.device_id, deviceSecret: identity.device_secret, fileId });
   }
   get isServing(): boolean {
     return this.#serving.length > 0;
@@ -256,6 +277,7 @@ export class ConnectorHost {
         store,
         runtimes: this.#runtimes,
         streams: this.streams,
+        onSessionDeleted: (session) => removeSessionAttachments(state.dataDir, { sessionId: session.id, projectDir: session.cwd }),
         ...(this.options.waitTimeoutMs !== undefined ? { waitTimeoutMs: this.options.waitTimeoutMs } : {}),
       }),
       device: new DeviceService({
@@ -269,6 +291,10 @@ export class ConnectorHost {
         settings: () => this.settings,
         updateSettings: (patch) => this.updateSettings(patch, { deferModeSwitch: true }),
         runtimes: () => this.runtimes.list(),
+        sessionCwd: (sessionId) => (store.has(sessionId) ? store.get(sessionId)?.cwd : undefined),
+        get driveDownload() {
+          return host.driveDownloader();
+        },
         revokePairedClient: (clientPub) => this.revokePairedClient(clientPub),
       }),
       terminals: new TerminalsService({ gate, terminals: this.#terminals, streams: this.streams }),
@@ -458,16 +484,77 @@ export class ConnectorHost {
 
   // ── Serving ──
 
+  /**
+   * Serve on every target. Succeeds once any Router accepts; the others keep being retried in the background, so a
+   * Router that is restarting while the Connector starts gets the device once it is back.
+   */
   async #serveAll(): Promise<void> {
-    const results = await Promise.allSettled(this.#targets.map((target) => this.#serveOne(target)));
-    const failures = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
-    for (const failure of failures) this.#logger.warn(`could not serve on a Router: ${String(failure.reason)}`);
+    const generation = this.#generation;
+    const targets = this.#targets;
+    const results = await Promise.allSettled(targets.map((target) => this.#serveOne(target, generation)));
+    const failures: unknown[] = [];
+    results.forEach((result, i) => {
+      if (result.status === "fulfilled") return;
+      failures.push(result.reason);
+      const target = targets[i] as RouterTarget;
+      this.#logger.warn(`could not serve on ${target.url}: ${String(result.reason)}`);
+    });
+    if (failures.length < results.length) {
+      results.forEach((result, i) => {
+        if (result.status === "rejected") this.#scheduleRetry(targets[i] as RouterTarget, generation, result.reason);
+      });
+    }
+    // Every target failed: start() throws, so there is nothing to keep retrying.
     if (failures.length === results.length && results.length > 0) {
-      throw failures[0]?.reason instanceof Error ? failures[0].reason : new Error(String(failures[0]?.reason));
+      throw failures[0] instanceof Error ? failures[0] : new Error(String(failures[0]));
     }
   }
 
-  async #serveOne(target: RouterTarget): Promise<void> {
+  #targetKey(target: RouterTarget): string {
+    return target.id ?? target.url;
+  }
+
+  /** Retry one Router with jittered backoff until it accepts, serving stops, or the host stops. */
+  #scheduleRetry(target: RouterTarget, generation: number, lastError: unknown): void {
+    const key = this.#targetKey(target);
+    if (this.#stopping || generation !== this.#generation || this.#retryTimers.has(key)) return;
+    const attempt = (this.#restartAttempts.get(key) ?? 0) + 1;
+    this.#restartAttempts.set(key, attempt);
+    const wait = backoffDelay(attempt, 1000, 60_000);
+    const timer = setTimeout(() => {
+      this.#retryTimers.delete(key);
+      void (async () => {
+        if (this.#stopping || generation !== this.#generation) return;
+        let current = this.#targets.find((t) => this.#targetKey(t) === key) ?? target;
+        if (this.#controlMode && isUnauthenticated(lastError)) {
+          // The token may have expired while the Router was away: take fresh ones from the control plane.
+          const tokens = await this.#fetchTokens();
+          if (this.#stopping || generation !== this.#generation) return;
+          this.#targets = tokens.map(toTarget);
+          this.#presence?.updateTokens(tokens);
+          const fresh = this.#targets.find((t) => this.#targetKey(t) === key);
+          if (fresh === undefined) return; // The control plane no longer lists this Router.
+          current = fresh;
+        }
+        await this.#serveOne(current, generation);
+        this.#restartAttempts.delete(key);
+        this.#logger.info(`serving again on ${current.url}`);
+      })().catch((error: unknown) => {
+        this.#logger.warn(`still cannot serve on ${target.url}: ${String(error)}`);
+        this.#scheduleRetry(target, generation, error);
+      });
+    }, wait);
+    timer.unref();
+    this.#retryTimers.set(key, timer);
+  }
+
+  #cancelRetries(): void {
+    for (const timer of this.#retryTimers.values()) clearTimeout(timer);
+    this.#retryTimers.clear();
+    this.#restartAttempts.clear();
+  }
+
+  async #serveOne(target: RouterTarget, generation = this.#generation): Promise<void> {
     const services = this.#need(this.#services, "services");
     const gate = this.gate;
     const instanceId = this.deviceId;
@@ -499,6 +586,12 @@ export class ConnectorHost {
       await mesh.close().catch(() => undefined);
       throw error;
     }
+    if (this.#stopping || generation !== this.#generation) {
+      // Serving stopped (host stop or mode switch) while this Router was connecting: don't serve under a stale policy.
+      await running.close({ drain: false }).catch(() => undefined);
+      await mesh.close().catch(() => undefined);
+      return;
+    }
     const entry: ServingRouter = { target, mesh, running };
     this.#serving.push(entry);
     void running.server.refused.then((error) => this.#onRefused(entry, error));
@@ -506,6 +599,8 @@ export class ConnectorHost {
   }
 
   async #stopServing(): Promise<void> {
+    this.#generation++;
+    this.#cancelRetries();
     const serving = this.#serving;
     this.#serving = [];
     // Streams first: a drain would otherwise wait for every watch to end.
@@ -523,10 +618,11 @@ export class ConnectorHost {
     if (!this.#serving.includes(entry) || this.#stopping) return;
     this.#logger.warn(`${entry.target.url} refused this device: ${String(error)}`);
     if (!this.#controlMode) return;
-    const key = entry.target.id ?? entry.target.url;
+    const key = this.#targetKey(entry.target);
     const attempt = (this.#restartAttempts.get(key) ?? 0) + 1;
     this.#restartAttempts.set(key, attempt);
     const wait = backoffDelay(attempt, 1000, 60_000);
+    const generation = this.#generation;
     setTimeout(() => {
       void this.#serialize(async () => {
         if (!this.#serving.includes(entry) || this.#stopping) return;
@@ -536,13 +632,19 @@ export class ConnectorHost {
         const tokens = await this.#fetchTokens();
         this.#targets = tokens.map(toTarget);
         this.#presence?.updateTokens(tokens);
-        const target = this.#targets.find((t) => t.id === entry.target.id) ?? this.#targets[0];
-        if (target === undefined) return;
-        await this.#serveOne(target);
+        const target = this.#targets.find((t) => this.#targetKey(t) === key);
+        if (target === undefined) {
+          // Serving on another Router instead would register the device there twice.
+          this.#logger.warn(`the control plane no longer lists ${entry.target.url}; not serving there`);
+          return;
+        }
+        await this.#serveOne(target, generation);
         this.#restartAttempts.delete(key);
       }).catch((err: unknown) => {
+        // The entry is out of `#serving` by now, so hand the Router to the background retry.
         this.#logger.error(`could not reconnect to ${entry.target.url}: ${String(err)}`);
-        this.#onRefused(entry, err);
+        const target = this.#targets.find((t) => this.#targetKey(t) === key) ?? entry.target;
+        this.#scheduleRetry(target, generation, err);
       });
     }, wait).unref();
   }
