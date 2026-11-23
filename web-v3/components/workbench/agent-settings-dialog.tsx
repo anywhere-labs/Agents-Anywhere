@@ -1,7 +1,7 @@
 "use client"
 
-// An agent's settings on one device (from its row on the device page; v2's runtime settings): on or off, its name,
-// whether its processes are running (stop them, or start it to check it can be used and see its options), the options
+// An agent's settings on one device (from its row on the device page; v2's runtime settings): on or off (it keeps its
+// product name: agents are not renamed), whether its processes are running (stop them, or start it to check it can be used and see its options), the options
 // new conversations with it start with, and how it is started (command, arguments, environment variables) with a way
 // back to the Connector's defaults. Changes apply the next time the agent starts. A Connector that does not manage
 // agents yet offers only the check and the options for new conversations.
@@ -104,7 +104,6 @@ function AgentSettingsBody({
 
   // How it is started: edited here, saved together.
   const [form, setForm] = useState(() => ({
-    name: entry?.name ?? "",
     command: entry?.command ?? "",
     args: entry ? joinArgs(entry.args) : "",
   }))
@@ -119,8 +118,7 @@ function AgentSettingsBody({
 
   const dirty =
     entry !== null &&
-    (form.name.trim() !== entry.name ||
-      form.command.trim() !== entry.command ||
+    (form.command.trim() !== entry.command ||
       joinArgs(splitArgs(form.args)) !== joinArgs(entry.args) ||
       Object.keys(envSet).length > 0 ||
       envRemoved.length > 0)
@@ -148,14 +146,13 @@ function AgentSettingsBody({
     const env: Record<string, string | null> = { ...envSet }
     for (const key of envRemoved) env[key] = null
     const next = await update({
-      ...(form.name.trim() && form.name.trim() !== entry.name ? { name: form.name.trim() } : {}),
       ...(command !== entry.command ? { command } : {}),
       ...(joinArgs(splitArgs(form.args)) !== joinArgs(entry.args) ? { args: splitArgs(form.args) } : {}),
       ...(Object.keys(env).length ? { env } : {}),
     })
     setSaving(false)
     if (!next) return
-    setForm({ name: next.name, command: next.command, args: joinArgs(next.args) })
+    setForm({ command: next.command, args: joinArgs(next.args) })
     setEnvSet({})
     setEnvRemoved([])
     toast.success(next.running > 0 ? t("agent.savedRestart") : t("common.saved"))
@@ -165,7 +162,7 @@ function AgentSettingsBody({
     setConfirmReset(false)
     const next = await update({ reset: true })
     if (!next) return
-    setForm({ name: next.name, command: next.command, args: joinArgs(next.args) })
+    setForm({ command: next.command, args: joinArgs(next.args) })
     setEnvSet({})
     setEnvRemoved([])
     toast.success(t("common.saved"))
@@ -275,15 +272,6 @@ function AgentSettingsBody({
                   disabled={!entry || !online}
                   onCheckedChange={(v) => void update({ enabled: Boolean(v) })}
                   aria-label={t("agent.enabled")}
-                />
-              </Row>
-              <Row label={t("agent.name")}>
-                <Input
-                  value={form.name}
-                  disabled={!entry}
-                  onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                  aria-label={t("agent.name")}
-                  className="h-8 w-56"
                 />
               </Row>
             </Card>
