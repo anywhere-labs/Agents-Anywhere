@@ -10,6 +10,7 @@ from sqlalchemy import (
     PrimaryKeyConstraint,
     Table,
     Text,
+    text,
 )
 
 metadata = MetaData()
@@ -179,6 +180,7 @@ drive_files = Table(
     Column("id", Text, primary_key=True),
     Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
     Column("purpose", Text, nullable=False),
+    # pending (upload reserved) | ready | deleted (soft-deleted; the cleanup worker removes object and row)
     Column("status", Text, nullable=False),
     Column("object_key", Text, nullable=False, unique=True),
     Column("size_bytes", BigInteger, nullable=False),
@@ -187,6 +189,11 @@ drive_files = Table(
     Column("filename", Text),
     Column("mime_type", Text),
     Column("vfs_path", Text),
+    # Normalized absolute path (v3_3). Unique per account among ready files; a pending upload holds its target
+    # path and settles it on completion according to on_conflict (rename | fail | replace).
+    Column("path", Text, nullable=False),
+    Column("parent_path", Text, nullable=False),
+    Column("on_conflict", Text),
     Column("encryption_mode", Text, nullable=False, server_default="none"),
     Column("encryption_nonce", Text),
     Column("encryption_key_version", Integer),
@@ -202,6 +209,29 @@ drive_files = Table(
     Index("idx_drive_files_user_vfs", "user_id", "purpose", "vfs_path"),
     Index("idx_drive_files_status_exp", "status", "expires_at"),
     Index("idx_drive_files_status_upload_exp", "status", "upload_expires_at"),
+    Index("idx_drive_files_user_parent", "user_id", "parent_path", "status"),
+    Index(
+        "uq_drive_files_user_path_ready",
+        "user_id",
+        "path",
+        unique=True,
+        postgresql_where=text("status = 'ready'"),
+        sqlite_where=text("status = 'ready'"),
+    ),
+)
+
+# Explicit folders (v3_3): empty folders exist too; the root "/" is implicit and has no row.
+drive_folders = Table(
+    "drive_folders",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("path", Text, nullable=False),
+    Column("parent_path", Text, nullable=False),
+    Column("created_at", Text, nullable=False),
+    Column("updated_at", Text, nullable=False),
+    Index("uq_drive_folders_user_path", "user_id", "path", unique=True),
+    Index("idx_drive_folders_user_parent", "user_id", "parent_path"),
 )
 
 # ---------------------------------------------------------------------------
