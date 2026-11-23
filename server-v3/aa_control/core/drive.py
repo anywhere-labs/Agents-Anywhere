@@ -171,7 +171,8 @@ _COMPOUND_EXTENSIONS = (".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst", ".tar.lz",
 # Characters percent-encoded in a canonical `drive:` reference (besides whitespace and control/format characters):
 # `%` is the escape itself, `?` and `#` are reserved for later use, the rest commonly ends a reference in prose,
 # Markdown links or tables.
-_REF_ESCAPED = frozenset("%?#()[]<>\"'`|\\")
+# Full-width sentence punctuation too: Chinese text runs on right after it, so a reader ends a reference there.
+_REF_ESCAPED = frozenset("%?#()[]<>\"'`|\\。，、；：！？")
 _PERCENT_HEX = re.compile(r"%[0-9A-Fa-f]{2}")
 
 
@@ -339,8 +340,8 @@ def format_drive_ref(path: str) -> str:
     """Canonical text reference of a drive path: ``drive:/报告/2026/q3.pdf``.
 
     Names stay readable (non-ASCII letters are kept as they are); whitespace, control and format characters,
-    ``%``, the reserved ``?`` / ``#`` and characters that usually end a reference in text (``()[]<>"'`|``) are
-    percent-encoded as UTF-8, e.g. ``drive:/Transfers/q3%20%281%29.pdf``.
+    ``%``, the reserved ``?`` / ``#`` and characters that usually end a reference in text (``()[]<>"'`|`` and the
+    full-width ``。，、；：！？``) are percent-encoded as UTF-8, e.g. ``drive:/Transfers/q3%20%281%29.pdf``.
     """
     normalized = normalize_drive_path(path)
     out: list[str] = []
