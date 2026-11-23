@@ -74,7 +74,7 @@ export interface ConnectorHostOptions {
   controlUrl?: string;
   deviceSecret?: string;
   presets?: AcpRuntimePreset[];
-  /** Add the built-in `claude` / `codex` presets. Default true. */
+  /** Add the built-in agent presets that are installed here (see `defaultAcpPresets`). Default true. */
   includeDefaultPresets?: boolean;
   connectorVersion?: string;
   presenceIntervalMs?: number;
