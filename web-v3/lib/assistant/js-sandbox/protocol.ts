@@ -8,7 +8,7 @@
 export interface SandboxLimits {
   /** Wall-clock budget for the whole run, enforced inside QuickJS (interrupt handler) and again by the host. */
   timeoutMs: number
-  /** QuickJS heap limit. */
+  /** About how much memory the script may use; enforced by capping the instance's WASM memory (loadSandboxQuickJs). */
   memoryLimitBytes: number
   /** QuickJS stack limit (deep recursion fails instead of crashing the WASM instance). */
   maxStackBytes: number

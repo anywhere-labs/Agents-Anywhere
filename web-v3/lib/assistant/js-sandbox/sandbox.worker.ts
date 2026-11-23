@@ -72,12 +72,11 @@ scope.addEventListener("message", (event: MessageEvent<HostToWorkerMessage>) => 
 async function run(msg: Extract<HostToWorkerMessage, { type: "run" }>): Promise<void> {
   let result: SandboxRunResult
   try {
-    const [{ newQuickJSWASMModuleFromVariant }, variantModule, { runScriptInQuickJs }] = await Promise.all([
-      import("quickjs-emscripten-core"),
-      import("@jitl/quickjs-singlefile-browser-release-sync"),
+    const [{ loadSandboxQuickJs }, { runScriptInQuickJs }] = await Promise.all([
+      import("@/lib/assistant/js-sandbox/quickjs"),
       import("@/lib/assistant/js-sandbox/engine"),
     ])
-    const quickjs = await newQuickJSWASMModuleFromVariant(variantModule.default)
+    const quickjs = await loadSandboxQuickJs(msg.limits.memoryLimitBytes)
     lockDown()
     result = await runScriptInQuickJs(quickjs, {
       code: msg.code,
