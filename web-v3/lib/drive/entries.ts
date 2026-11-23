@@ -190,3 +190,12 @@ export function planDriveUpload(size: number, quota: DriveQuotaView | null, rese
   }
   return { ok: true }
 }
+
+/**
+ * A folder's listing with the next page of its files added (`GET /drive/entries` pages files only; every page lists
+ * all the subfolders). The newer page's folders, total and quota win; a file already shown is not added twice.
+ */
+export function appendDrivePage(shown: DriveEntriesResponse, next: DriveEntriesResponse): DriveEntriesResponse {
+  const ids = new Set(shown.files.map((f) => f.id))
+  return { ...next, files: [...shown.files, ...next.files.filter((f) => !ids.has(f.id))] }
+}

@@ -38,6 +38,7 @@ export const enDrive = {
   "drive.encryptedFile": "Encrypted file",
   "drive.expired": "Expired",
   "drive.moreFiles": "Showing {shown} of {total} files.",
+  "drive.showMore": "Show more",
 
   // Empty, missing and unavailable
   "drive.emptyTitle": "This folder is empty",

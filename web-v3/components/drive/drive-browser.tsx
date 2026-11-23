@@ -14,6 +14,7 @@ import {
   FolderSyncIcon,
   FolderXIcon,
   LinkIcon,
+  LoaderCircleIcon,
   RefreshCwIcon,
   UploadIcon,
 } from "lucide-react"
@@ -41,14 +42,21 @@ import {
   moveDriveFile,
   moveDriveFolder,
 } from "@/lib/api/control-http"
-import { canWriteInto, driveRows, formatDriveDuration, planDriveUpload, type DriveRow } from "@/lib/drive/entries"
+import {
+  appendDrivePage,
+  canWriteInto,
+  driveRows,
+  formatDriveDuration,
+  planDriveUpload,
+  type DriveRow,
+} from "@/lib/drive/entries"
 import { DRIVE_ROOT, driveBasename, driveJoin, driveParent, isOrchesPath } from "@/lib/drive/paths"
 import { useWorkbench } from "@/lib/state/workbench-context"
 import type { DriveEntriesResponse, DriveQuotaView } from "@/lib/types/v3"
 import { cn } from "@/lib/utils"
 import { formatSize } from "@/lib/workbench/time"
 
-/** Files listed per folder (the server's maximum); the rest is counted ("showing 1000 of 1200"). */
+/** Files fetched per page (the server's maximum); "show more" fetches the next page. */
 const PAGE_SIZE = 1000
 
 /** Listing errors that mean "this folder is not there" rather than "something went wrong". */
@@ -89,6 +97,10 @@ export function DriveBrowser({ path, onNavigate }: { path: string; onNavigate: (
   const deleteDialog = useDialogSubject<DriveRow>()
   const fileInput = useRef<HTMLInputElement>(null)
   const loadSeq = useRef(0)
+  // How many files of the folder are shown: a reload (after an upload or a delete) fetches as many again, so "show
+  // more" is not undone by the next change.
+  const shown = useRef<{ path: string; count: number }>({ path: "", count: 0 })
+  const [loadingMore, setLoadingMore] = useState(false)
 
   const load = useCallback(async () => {
     if (!serverUrl) return
@@ -96,8 +108,15 @@ export function DriveBrowser({ path, onNavigate }: { path: string; onNavigate: (
     setLoading(true)
     try {
       const tok = await getFreshAccessToken()
-      const listing = await listDriveEntries(serverUrl, tok, path, { limit: PAGE_SIZE })
+      const want = shown.current.path === path ? shown.current.count : 0
+      let listing = await listDriveEntries(serverUrl, tok, path, { limit: PAGE_SIZE })
+      while (listing.files.length < Math.min(want, listing.total_files)) {
+        const next = await listDriveEntries(serverUrl, tok, path, { limit: PAGE_SIZE, offset: listing.files.length })
+        if (next.files.length === 0) break
+        listing = appendDrivePage(listing, next)
+      }
       if (seq !== loadSeq.current) return
+      shown.current = { path, count: listing.files.length }
       setLoaded({ path, listing, at: Date.now() })
       setQuota(listing.quota)
     } catch (error) {
@@ -121,6 +140,26 @@ export function DriveBrowser({ path, onNavigate }: { path: string; onNavigate: (
   // A listing of another folder (the one just left) is never shown for this one.
   const current = loaded?.path === path ? loaded : null
   const listing = current?.listing
+
+  const loadMore = async () => {
+    if (!serverUrl || !listing || loadingMore) return
+    const seq = loadSeq.current
+    setLoadingMore(true)
+    try {
+      const tok = await getFreshAccessToken()
+      const next = await listDriveEntries(serverUrl, tok, path, { limit: PAGE_SIZE, offset: listing.files.length })
+      // A reload or another folder since: its listing stands.
+      if (seq !== loadSeq.current) return
+      const merged = appendDrivePage(listing, next)
+      shown.current = { path, count: merged.files.length }
+      setLoaded({ path, listing: merged, at: Date.now() })
+      setQuota(next.quota)
+    } catch (error) {
+      toast.error(driveErrorMessage(error, t))
+    } finally {
+      setLoadingMore(false)
+    }
+  }
   const loadError = current?.error
   const rows = useMemo(() => (listing ? driveRows(listing, locale) : []), [listing, locale])
   const enabled = quota?.enabled ?? null
@@ -343,9 +382,15 @@ export function DriveBrowser({ path, onNavigate }: { path: string; onNavigate: (
       <div className="flex flex-col gap-3">
         <DriveEntryTable rows={rows} now={current?.at ?? 0} handlers={handlers} />
         {listing.files.length < listing.total_files && (
-          <p className="px-2 text-sm text-muted-foreground">
-            {t("drive.moreFiles", { shown: listing.files.length, total: listing.total_files })}
-          </p>
+          <div className="flex items-center gap-3 px-2">
+            <p className="text-sm text-muted-foreground">
+              {t("drive.moreFiles", { shown: listing.files.length, total: listing.total_files })}
+            </p>
+            <Button variant="ghost" size="sm" disabled={loadingMore} onClick={() => void loadMore()}>
+              {loadingMore && <LoaderCircleIcon className="size-3.5 animate-spin" />}
+              {t("drive.showMore")}
+            </Button>
+          </div>
         )}
       </div>
     )
