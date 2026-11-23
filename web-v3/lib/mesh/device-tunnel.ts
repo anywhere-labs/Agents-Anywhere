@@ -15,6 +15,8 @@ import type { ControlPlaneClient } from "@/lib/mesh/control-client"
 import { buildCodePairingPayload, buildWebTrustRecord, PairingError, parsePairingUri } from "@/lib/mesh/pairing"
 import { vault } from "@/lib/storage/idb"
 import type {
+  AgentEntry,
+  AgentUpdate,
   DeviceMode,
   DeviceRecord,
   PairingPayload,
@@ -516,6 +518,24 @@ export class DeviceTunnelManager {
     patch: Partial<DeviceSettings>
   ): Promise<DeviceSettings> {
     return this.callUnary(device, DEVICE_SVC, "update_settings", patch)
+  }
+
+  /** The device's agents with their settings and how many of their processes are running. */
+  listAgents(device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">): Promise<{ agents: AgentEntry[] }> {
+    return this.callUnary(device, DEVICE_SVC, "agents", {})
+  }
+
+  updateAgent(device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">, update: AgentUpdate): Promise<AgentEntry> {
+    return this.callUnary(device, DEVICE_SVC, "update_agent", update)
+  }
+
+  /** Stop an agent's processes; its conversations start it again with their next message. */
+  stopAgent(
+    device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">,
+    id: string,
+    force = false
+  ): Promise<{ stopped: number }> {
+    return this.callUnary(device, DEVICE_SVC, "stop_agent", force ? { id, force } : { id })
   }
 
   listDirs(

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 import { bytesToBase64Url, isUnimplemented, planTransfer, rpcCap } from "@/lib/attachments/transfer"
 import type { ConfigOption, DriveQuotaView, SessionSummary } from "@/lib/types/v3"
 import { rememberStart, toggleIn } from "@/lib/workbench/local-prefs"
+import { joinArgs, splitArgs } from "@/lib/workbench/args"
 import { changedPicks, withPicks } from "@/lib/workbench/prepared-agent"
 import { titleFromMessage } from "@/lib/workbench/title"
 import { agentLabel, buildDeviceTree, deviceProjects, matchesQuery, projectName, tildePath } from "@/lib/workbench/tree"
@@ -200,5 +201,19 @@ describe("options picked before the conversation exists (prepare)", () => {
   it("sends only what differs from the started agent", () => {
     expect(changedPicks(config, withPicks(config, { model: "b", thinking: "high" }))).toEqual({ model: "b" })
     expect(changedPicks(config, config)).toEqual({})
+  })
+})
+
+describe("agent arguments as one line (splitArgs / joinArgs)", () => {
+  it("splits like a shell", () => {
+    expect(splitArgs("-y @openma/pi-acp --quiet-startup")).toEqual(["-y", "@openma/pi-acp", "--quiet-startup"])
+    expect(splitArgs(`--name "two words" 'it''s' a\\ b ""`)).toEqual(["--name", "two words", "its", "a b", ""])
+    expect(splitArgs("   ")).toEqual([])
+  })
+
+  it("writes back what it reads", () => {
+    for (const args of [["-y", "pkg"], ["two words", "it's", "", "a\\b", 'say "hi"']]) {
+      expect(splitArgs(joinArgs(args))).toEqual(args)
+    }
   })
 })

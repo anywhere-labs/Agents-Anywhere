@@ -34,6 +34,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { AgentIcon } from "@/components/workbench/agent-icon"
 import { DirectoryOptions, FolderPickerDialog } from "@/components/workbench/folder-picker"
 import { DeviceStatusIcon } from "@/components/workbench/device-status"
 import { useWorkbenchUi } from "@/components/workbench/workbench-ui"
@@ -300,6 +301,8 @@ function NewConversationInner() {
             >
               {loadingAgents ? (
                 <LoaderCircleIcon className="size-4 shrink-0 animate-spin text-muted-foreground" />
+              ) : agent ? (
+                <AgentIcon agent={agent} name={agentName} />
               ) : (
                 <BotIcon className="size-4 shrink-0 text-muted-foreground" />
               )}
@@ -315,6 +318,7 @@ function NewConversationInner() {
                 >
                   {runtimes.map((r) => (
                     <DropdownMenuRadioItem key={r.id} value={r.id} closeOnClick>
+                      <AgentIcon agent={r.id} name={r.name} />
                       {agentLabel(r.id, runtimes)}
                     </DropdownMenuRadioItem>
                   ))}

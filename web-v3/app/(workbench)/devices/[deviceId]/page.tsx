@@ -9,8 +9,8 @@
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react"
+import { MeshCallError } from "meshcall/web"
 import {
-  BotIcon,
   ChevronRightIcon,
   EllipsisIcon,
   FolderIcon,
@@ -44,13 +44,15 @@ import {
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { AgentIcon } from "@/components/workbench/agent-icon"
+import { AgentSettingsDialog } from "@/components/workbench/agent-settings-dialog"
 import { E2eeLockBadge } from "@/components/workbench/e2ee-lock-badge"
 import { FileBrowser } from "@/components/workbench/file-browser"
 import { PairDeviceDialog } from "@/components/workbench/pair-device-dialog"
 import { useRouteParams } from "@/lib/platform/route-params"
 import { formatKeyFingerprint } from "@/lib/mesh/pairing"
 import { useWorkbench } from "@/lib/state/workbench-context"
-import type { PairedClientEntry, SessionSummary } from "@/lib/types/v3"
+import type { AgentEntry, PairedClientEntry, SessionSummary } from "@/lib/types/v3"
 import { cn } from "@/lib/utils"
 import { deviceInfoCache, useDevice } from "@/lib/workbench/device-info"
 import { formatSize, shortAgo } from "@/lib/workbench/time"
@@ -225,15 +227,68 @@ function DeviceWorkbenchPageInner() {
     }))
   }, [deviceSessions, t])
   // Agents: what the device reports, plus agents it has conversations with (an agent may have been removed since).
+  // The agents' settings (aa.v3.Device/agents), when the Connector manages them; `managed: false` for one that
+  // predates it (its agents are then the ones it reports, without switches or settings).
+  const [agentList, setAgentList] = useState<{ deviceId: string; managed: boolean; entries: AgentEntry[] } | null>(null)
+  const loadAgents = useCallback(async () => {
+    if (!tunnelManager || !tunnelDevice || tunnelDevice.presence !== "online") return
+    try {
+      const res = await tunnelManager.listAgents(tunnelDevice)
+      setAgentList({ deviceId: tunnelDevice.id, managed: true, entries: res.agents })
+    } catch (err) {
+      if (err instanceof MeshCallError && err.code === "method_not_found") {
+        setAgentList({ deviceId: tunnelDevice.id, managed: false, entries: [] })
+      }
+    }
+  }, [tunnelDevice, tunnelManager])
+  useEffect(() => {
+    let alive = true
+    queueMicrotask(() => {
+      if (alive) void loadAgents()
+    })
+    return () => {
+      alive = false
+    }
+  }, [loadAgents])
+  const agentState = agentList?.deviceId === deviceId ? agentList : null
+  const entryOf = (id: string) => agentState?.entries.find((e) => e.id === id) ?? null
+  const setEntry = (entry: AgentEntry) =>
+    setAgentList((cur) =>
+      cur && cur.deviceId === deviceId ? { ...cur, entries: cur.entries.map((e) => (e.id === entry.id ? entry : e)) } : cur
+    )
+  const [settingsAgent, setSettingsAgent] = useState<{ id: string; name: string } | null>(null)
+
+  // Agents: the device's (with the turned-off ones when it manages them), plus agents it has conversations with
+  // (an agent may have been removed since).
   const agents = useMemo(() => {
-    const ids = new Set([...(status?.runtimes ?? []).map((r) => r.id), ...tree.map((a) => a.agent)])
-    return [...ids].map((id) => ({
-      id,
-      name: agentLabel(id, status?.runtimes),
-      reported: Boolean(status?.runtimes.some((r) => r.id === id)),
-      count: tree.find((a) => a.agent === id)?.count ?? 0,
-    }))
-  }, [status?.runtimes, tree])
+    const managedEntries = agentState?.managed ? agentState.entries : []
+    const ids = new Set([
+      ...managedEntries.map((e) => e.id),
+      ...(status?.runtimes ?? []).map((r) => r.id),
+      ...tree.map((a) => a.agent),
+    ])
+    return [...ids].map((id) => {
+      const entry = managedEntries.find((e) => e.id === id)
+      return {
+        id,
+        name: entry?.name ?? agentLabel(id, status?.runtimes),
+        reported: Boolean(entry ?? status?.runtimes.some((r) => r.id === id)),
+        enabled: entry?.enabled ?? true,
+        running: entry?.running ?? 0,
+        count: tree.find((a) => a.agent === id)?.count ?? 0,
+      }
+    })
+  }, [agentState, status?.runtimes, tree])
+
+  const toggleAgent = (id: string, enabled: boolean) => {
+    if (!tunnelManager || !tunnelDevice) return
+    void call(async () => {
+      const entry = await tunnelManager.updateAgent(tunnelDevice, { id, enabled })
+      setEntry(entry)
+      // New conversations offer only the agents that are on: read the device's list again.
+      void deviceInfoCache.load(tunnelManager, tunnelDevice, true)
+    })
+  }
 
   const filtered = useMemo(
     () =>
@@ -430,36 +485,56 @@ function DeviceWorkbenchPageInner() {
               ) : (
                 <ul className="flex flex-col">
                   {agents.map((a) => {
-                    const startable = online && a.reported
-                    const body = (
-                      <>
-                        <BotIcon className="size-4 shrink-0 text-muted-foreground" />
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-medium text-foreground">{a.name}</span>
-                          <span className="block truncate text-xs text-muted-foreground">
-                            {t("device.agentConversations", { count: a.count })}
-                            {!a.reported && ` · ${t("device.agentNotReported")}`}
-                          </span>
-                        </span>
-                        {startable && (
-                          <span className="flex shrink-0 items-center gap-1 text-sm text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
-                            <PlusIcon className="size-4" />
-                            {t("device.agentStart")}
-                          </span>
-                        )}
-                      </>
-                    )
+                    const entry = entryOf(a.id)
+                    const startable = online && a.reported && a.enabled
+                    const meta = [
+                      t("device.agentConversations", { count: a.count }),
+                      ...(a.running > 0 ? [t("device.agentRunning", { count: a.running })] : []),
+                      ...(!a.enabled ? [t("device.agentOff")] : []),
+                      ...(!a.reported ? [t("device.agentNotReported")] : []),
+                    ].join(" · ")
                     return (
-                      <li key={a.id}>
-                        {startable ? (
-                          <Link
-                            href={newHref({ agent: a.id })}
-                            className="group flex min-h-12 items-center gap-3 rounded-lg px-2 py-2 transition-colors hover:bg-surface-hover"
+                      <li
+                        key={a.id}
+                        className="group flex min-h-12 items-center gap-1 rounded-lg pr-2 transition-colors hover:bg-surface-hover"
+                      >
+                        <button
+                          type="button"
+                          disabled={!a.reported}
+                          onClick={() => setSettingsAgent({ id: a.id, name: a.name })}
+                          aria-label={t("device.agentSettings", { agent: a.name })}
+                          className={cn(
+                            "flex min-w-0 flex-1 items-center gap-3 rounded-lg py-2 pl-2 text-left",
+                            !a.enabled && "opacity-60"
+                          )}
+                        >
+                          <AgentIcon agent={a.id} name={a.name} className="size-5 text-foreground" />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-medium text-foreground">{a.name}</span>
+                            <span className="block truncate text-xs text-muted-foreground">{meta}</span>
+                          </span>
+                        </button>
+                        {startable && (
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label={t("device.agentNewConversation", { agent: a.name })}
+                            title={t("device.agentNewConversation", { agent: a.name })}
+                            className="shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                            render={<Link href={newHref({ agent: a.id })} />}
+                            nativeButton={false}
                           >
-                            {body}
-                          </Link>
-                        ) : (
-                          <div className="flex min-h-12 items-center gap-3 px-2 py-2 opacity-60">{body}</div>
+                            <PlusIcon className="size-4" />
+                          </Button>
+                        )}
+                        {entry && (
+                          <Switch
+                            checked={entry.enabled}
+                            disabled={!online}
+                            onCheckedChange={(v) => toggleAgent(a.id, Boolean(v))}
+                            aria-label={`${t("agent.enabled")} · ${a.name}`}
+                            className="ml-1 shrink-0"
+                          />
                         )}
                       </li>
                     )
@@ -741,6 +816,25 @@ function DeviceWorkbenchPageInner() {
           </TabsContent>
         </Tabs>
       </PageContainer>
+
+      {settingsAgent && (
+        <AgentSettingsDialog
+          open={Boolean(settingsAgent)}
+          onOpenChange={(open) => {
+            if (!open) setSettingsAgent(null)
+          }}
+          tunnelManager={tunnelManager}
+          device={tunnelDevice}
+          agent={settingsAgent}
+          entry={entryOf(settingsAgent.id)}
+          managed={agentState?.managed ?? true}
+          onEntry={(entry) => {
+            setEntry(entry)
+            if (tunnelManager && tunnelDevice) void deviceInfoCache.load(tunnelManager, tunnelDevice, true)
+          }}
+          onStopped={() => void loadAgents()}
+        />
+      )}
 
       <PairDeviceDialog
         open={pairOpen}

@@ -220,6 +220,37 @@ export interface ConfigOption {
 }
 
 /**
+ * aa.v3.Device/agents: an agent on the device with its settings (connector-v3 README › Agent 管理). A disabled agent
+ * is not offered for new conversations; settings apply to agent processes started afterwards. Environment values never
+ * leave the device: only their names come back.
+ */
+export interface AgentEntry {
+  id: string
+  name: string
+  builtin: boolean
+  enabled: boolean
+  command: string
+  args: string[]
+  env_keys: string[]
+  customized: boolean
+  /** Live processes of this agent (conversations whose agent is up, and the one started for a new conversation). */
+  running: number
+  /** Conversations of this agent with a turn running now. */
+  busy: number
+}
+
+/** aa.v3.Device/update_agent: `reset` first drops every override; `env` values of null remove a variable. */
+export interface AgentUpdate {
+  id: string
+  enabled?: boolean
+  name?: string
+  command?: string
+  args?: string[]
+  env?: Record<string, string | null>
+  reset?: boolean
+}
+
+/**
  * aa.v3.Sessions/prepare: the agent started ahead of the conversation (as soon as the new-conversation page has an
  * agent and a directory), so its options can be chosen before the first message; `create({ prepared_id })` takes it
  * over. Preparing again before `expires_at` returns the same id and pushes the expiry back.
