@@ -13,6 +13,7 @@
 import { Mesh, MeshCallError, Router, UnauthenticatedError } from "meshcall";
 
 import type { DeviceMode, DevicePlatform } from "../core/config.js";
+import type { DriveDownload } from "../runtime/device-ops.js";
 
 const CONTROL_SERVICE = "aa.v3.Control";
 
@@ -125,6 +126,40 @@ export async function fetchDeviceRouterTokens(options: FetchRouterTokensOptions)
     device_secret: options.deviceSecret,
   });
   if (!result || !Array.isArray(result.tokens)) throw new ControlHttpError(502, "the control plane answered router-token without tokens", result);
+  return result;
+}
+
+// ── Cloud drive (large attachments) ─────────────────────────────────────────────────────────────────────────────
+
+export interface DriveDownloadOptions {
+  controlUrl: string;
+  deviceId: string;
+  deviceSecret: string;
+  fileId: string;
+  fetch?: FetchLike;
+}
+
+/** `GET /drive/files/{id}/download-url` as this device (`X-AA-Device-Id` / `X-AA-Device-Secret`). */
+export async function fetchDriveDownload(options: DriveDownloadOptions): Promise<DriveDownload> {
+  const fetchImpl = options.fetch ?? fetch;
+  const url = endpoint(options.controlUrl, `/drive/files/${encodeURIComponent(options.fileId)}/download-url`);
+  const response = await fetchImpl(url, {
+    method: "GET",
+    headers: { accept: "application/json", "X-AA-Device-Id": options.deviceId, "X-AA-Device-Secret": options.deviceSecret },
+  });
+  const text = await response.text();
+  let parsed: unknown;
+  try {
+    parsed = text ? JSON.parse(text) : undefined;
+  } catch {
+    parsed = text;
+  }
+  if (!response.ok) {
+    const detail = typeof parsed === "object" && parsed !== null && "detail" in parsed ? String((parsed as { detail: unknown }).detail) : text.slice(0, 200);
+    throw new ControlHttpError(response.status, `${url} answered ${response.status}: ${detail}`, parsed);
+  }
+  const result = parsed as DriveDownload;
+  if (!result?.file || !result.download?.url) throw new ControlHttpError(502, "the control plane answered download-url without a link", parsed);
   return result;
 }
 

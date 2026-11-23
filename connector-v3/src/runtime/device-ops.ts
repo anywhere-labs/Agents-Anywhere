@@ -8,7 +8,7 @@
  */
 
 import { execFile } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createDecipheriv, createHash, randomBytes } from "node:crypto";
 import type { Dirent, Stats } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
@@ -29,6 +29,9 @@ export type DeviceOpsErrorCode =
   | "not_a_regular_file"
   | "file_too_large_for_rpc"
   | "attachment_too_large"
+  | "drive_unavailable"
+  | "drive_failed"
+  | "integrity_failed"
   | "invalid_encoding"
   | "git_unavailable"
   | "git_failed";
@@ -660,6 +663,72 @@ export interface SaveAttachmentRequest {
   base64: string;
   mime?: string;
   maxBytes?: number;
+  /** Where the attachment belongs; see `attachmentDir`. */
+  location?: AttachmentLocation;
+}
+
+/** Which conversation (and its working directory) an attachment belongs to. */
+export interface AttachmentLocation {
+  sessionId?: string;
+  /** The conversation's working directory (`session.cwd`). */
+  projectDir?: string;
+}
+
+/** Folder inside a project that holds Agents Anywhere's files for it (never committed: it gets a `*` .gitignore). */
+export const PROJECT_STATE_DIR = ".agents-anywhere";
+const SESSION_DIR_RE = /^[\w.-]{1,128}$/;
+
+function sessionDirName(sessionId: string | undefined): string {
+  return sessionId !== undefined && SESSION_DIR_RE.test(sessionId) && !/^\.+$/.test(sessionId) ? sessionId : "unsorted";
+}
+
+async function isDirectory(dir: string): Promise<boolean> {
+  try {
+    return (await fs.stat(dir)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+async function ensureStateGitignore(root: string): Promise<void> {
+  try {
+    await fs.writeFile(path.join(root, ".gitignore"), "# Agents Anywhere: attachments and local state; never committed.\n*\n", { flag: "wx", mode: 0o644 });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+  }
+}
+
+/**
+ * Where a conversation's attachments live: `<projectDir>/.agents-anywhere/attachments/<sessionId>/` when the
+ * project directory exists and is writable (agents can read it without leaving their workspace), otherwise
+ * `<dataDir>/attachments/<sessionId>/`. Creates the folder (and the project's `.agents-anywhere/.gitignore`).
+ */
+export async function attachmentDir(dataDir: string, location: AttachmentLocation = {}): Promise<string> {
+  const session = sessionDirName(location.sessionId);
+  if (location.projectDir && path.isAbsolute(location.projectDir) && (await isDirectory(location.projectDir))) {
+    const root = path.join(path.resolve(location.projectDir), PROJECT_STATE_DIR);
+    const dir = path.join(root, "attachments", session);
+    try {
+      await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+      await ensureStateGitignore(root);
+      return dir;
+    } catch {
+      // Read-only or foreign-owned project: fall back to the Connector's data directory.
+    }
+  }
+  const dir = path.join(path.resolve(dataDir), "attachments", session);
+  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+  return dir;
+}
+
+/** Delete a conversation's attachment folders (project and fallback). Never touches anything else. */
+export async function removeSessionAttachments(dataDir: string, location: AttachmentLocation): Promise<void> {
+  if (location.sessionId === undefined || sessionDirName(location.sessionId) === "unsorted") return;
+  const dirs = [path.join(path.resolve(dataDir), "attachments", location.sessionId)];
+  if (location.projectDir && path.isAbsolute(location.projectDir)) {
+    dirs.push(path.join(path.resolve(location.projectDir), PROJECT_STATE_DIR, "attachments", location.sessionId));
+  }
+  await Promise.all(dirs.map((dir) => fs.rm(dir, { recursive: true, force: true }).catch(() => undefined)));
 }
 
 export interface SavedAttachment {
@@ -708,18 +777,125 @@ export async function saveAttachment(dataDir: string, req: SaveAttachmentRequest
     throw new DeviceOpsError("attachment_too_large", `attachment is ${data.byteLength} bytes, over the ${maxBytes}-byte cap`);
   }
   const name = sanitizeFileName(req.name);
-  const mime =
-    typeof req.mime === "string" && /^[\w.+-]+\/[\w.+-]+$/.test(req.mime) && req.mime.length <= 128
-      ? req.mime
-      : (MIME_BY_EXT[path.extname(name).toLowerCase()] ?? "application/octet-stream");
+  const mime = guessMime(name, req.mime);
+  return writeAttachment(dataDir, req.location, name, mime, data);
+}
+
+async function writeAttachment(
+  dataDir: string,
+  location: AttachmentLocation | undefined,
+  name: string,
+  mime: string,
+  data: Uint8Array,
+): Promise<SavedAttachment> {
   const id = `${Date.now().toString(36)}${randomBytes(6).toString("hex")}`;
-  const dir = path.join(path.resolve(dataDir), "attachments");
-  const target = path.join(dir, `${id}-${name}`);
+  let target = path.join(path.resolve(dataDir), "attachments", `${id}-${name}`);
   try {
-    await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+    const dir = await attachmentDir(dataDir, location);
+    target = path.join(dir, `${id}-${name}`);
     await atomicWriteFile(target, data, { mode: 0o600, exactMode: true });
   } catch (err) {
     throw mapFsError(err, target);
   }
   return { id, path: target, name, mime, size: data.byteLength };
+}
+
+function guessMime(name: string, given: string | null | undefined): string {
+  return typeof given === "string" && /^[\w.+-]+\/[\w.+-]+$/.test(given) && given.length <= 128
+    ? given
+    : (MIME_BY_EXT[path.extname(name).toLowerCase()] ?? "application/octet-stream");
+}
+
+// ── Large attachments through the cloud drive ───────────────────────────────────────────────────────────────────
+
+/** The parts of server-v3's `DriveDownloadUrlResponse` the Connector uses. */
+export interface DriveDownload {
+  file: {
+    id: string;
+    size_bytes: number;
+    sha256: string;
+    filename?: string | null;
+    mime_type?: string | null;
+    encryption_mode?: "none" | "account_dek" | "ephemeral_key";
+    encryption_nonce?: string | null;
+  };
+  download: { method: string; url: string; headers?: Record<string, string> };
+}
+
+export interface FetchDriveFileRequest {
+  fileId: string;
+  name?: string;
+  mime?: string;
+  /** Expected SHA-256 (hex) of the stored object; checked in addition to the drive's own record. */
+  sha256?: string;
+  /** base64url 32-byte AES-256-GCM key for `ephemeral_key` files (handed over through the E2E tunnel). */
+  fileKey?: string;
+  location?: AttachmentLocation;
+  /** Hard cap on what the device accepts. Default 1 GiB. */
+  maxBytes?: number;
+}
+
+export const DEFAULT_MAX_DRIVE_FILE_BYTES = 1024 * 1024 * 1024;
+
+/**
+ * Download a cloud-drive file into the conversation's attachment folder. The drive object is checked against its
+ * recorded size and SHA-256 (of the stored bytes); `ephemeral_key` files are AES-256-GCM (`nonce` = the file's
+ * `encryption_nonce`, ciphertext followed by the 16-byte tag, no AAD) and are decrypted with `fileKey`.
+ */
+export async function fetchDriveFile(
+  dataDir: string,
+  req: FetchDriveFileRequest,
+  getDownload: (fileId: string) => Promise<DriveDownload>,
+  fetchImpl: typeof fetch = fetch,
+): Promise<SavedAttachment> {
+  const maxBytes = requirePositiveInt(req.maxBytes ?? DEFAULT_MAX_DRIVE_FILE_BYTES, "maxBytes");
+  let info: DriveDownload;
+  try {
+    info = await getDownload(req.fileId);
+  } catch (err) {
+    if (err instanceof DeviceOpsError) throw err;
+    throw new DeviceOpsError("drive_failed", `could not get a download link: ${(err as Error).message}`, { cause: err });
+  }
+  const { file, download } = info;
+  if (file.size_bytes > maxBytes) throw new DeviceOpsError("attachment_too_large", `drive file is ${file.size_bytes} bytes, over the ${maxBytes}-byte cap`);
+  if (file.encryption_mode === "account_dek") throw new DeviceOpsError("invalid_argument", "assistant workspace files cannot be fetched by a device");
+  const expected = req.sha256?.toLowerCase();
+  if (expected !== undefined && expected !== file.sha256.toLowerCase()) throw new DeviceOpsError("integrity_failed", "sha256 does not match the drive record");
+
+  let res: Response;
+  try {
+    res = await fetchImpl(download.url, { method: download.method || "GET", headers: download.headers ?? {} });
+  } catch (err) {
+    throw new DeviceOpsError("drive_failed", `download failed: ${(err as Error).message}`, { cause: err });
+  }
+  if (!res.ok || !res.body) throw new DeviceOpsError("drive_failed", `download failed: HTTP ${res.status}`);
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  const hash = createHash("sha256");
+  for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+    total += chunk.byteLength;
+    if (total > file.size_bytes) throw new DeviceOpsError("integrity_failed", "download is larger than the drive record");
+    hash.update(chunk);
+    chunks.push(chunk);
+  }
+  if (total !== file.size_bytes) throw new DeviceOpsError("integrity_failed", `download is ${total} bytes, the drive record says ${file.size_bytes}`);
+  if (hash.digest("hex") !== file.sha256.toLowerCase()) throw new DeviceOpsError("integrity_failed", "sha256 mismatch");
+  let data: Uint8Array = Buffer.concat(chunks, total);
+
+  if (file.encryption_mode === "ephemeral_key") {
+    if (!req.fileKey) throw new DeviceOpsError("invalid_argument", "this drive file is encrypted: file_key is required");
+    const key = Buffer.from(req.fileKey, "base64url");
+    const nonce = Buffer.from(file.encryption_nonce ?? "", "base64url");
+    if (key.byteLength !== 32 || nonce.byteLength !== 12 || data.byteLength < 16) throw new DeviceOpsError("invalid_argument", "bad file_key, nonce or ciphertext");
+    try {
+      const decipher = createDecipheriv("aes-256-gcm", key, nonce);
+      decipher.setAuthTag(Buffer.from(data.subarray(data.byteLength - 16)));
+      data = Buffer.concat([decipher.update(data.subarray(0, data.byteLength - 16)), decipher.final()]);
+    } catch (err) {
+      throw new DeviceOpsError("integrity_failed", "could not decrypt the file (wrong key or corrupted)", { cause: err });
+    }
+  }
+
+  const name = sanitizeFileName(req.name ?? file.filename ?? "attachment");
+  return writeAttachment(dataDir, req.location, name, guessMime(name, req.mime ?? file.mime_type), data);
 }

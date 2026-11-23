@@ -405,7 +405,7 @@ describe("device-ops", () => {
     assert.equal(saved.name, "pass wd_x_.txt");
     assert.equal(saved.mime, "text/plain");
     assert.equal(saved.size, payload.byteLength);
-    assert.equal(path.dirname(saved.path), path.join(dataDir, "attachments"));
+    assert.equal(path.dirname(saved.path), path.join(dataDir, "attachments", "unsorted"));
     assert.ok(path.basename(saved.path).endsWith(`-${saved.name}`));
     assert.deepEqual(await fs.readFile(saved.path), payload);
     if (!IS_WINDOWS) assert.equal(await fileMode(saved.path), 0o600);

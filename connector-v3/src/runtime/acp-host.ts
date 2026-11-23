@@ -16,6 +16,8 @@
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
+import { readFile as readFileBytes, stat } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import * as path from "node:path";
 
 import { InvalidArgumentError, MeshCallError, UnavailableError } from "meshcall";
@@ -381,6 +383,30 @@ interface LiveSession {
   /** Waiting `session/request_permission` calls, answered `cancelled` on cancel. */
   permissions: Map<string, (result: AcpRequestPermissionResult) => void>;
   supportsConfigOptions: boolean;
+  /** The agent accepts image content blocks (`promptCapabilities.image`). */
+  promptImages: boolean;
+}
+
+/** Images up to this size are sent to agents that take images inline; bigger ones stay file links. */
+const INLINE_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+
+/** Replace `file://` links to images with inline image blocks the agent can see directly. */
+async function inlineImages(prompt: AcpContentBlock[]): Promise<AcpContentBlock[]> {
+  return Promise.all(
+    prompt.map(async (block) => {
+      if (block.type !== "resource_link" || !block.mimeType?.startsWith("image/") || !block.uri.startsWith("file:")) return block;
+      if (typeof block.size === "number" && block.size > INLINE_IMAGE_MAX_BYTES) return block;
+      try {
+        const file = fileURLToPath(block.uri);
+        const info = await stat(file);
+        if (!info.isFile() || info.size > INLINE_IMAGE_MAX_BYTES) return block;
+        const data = (await readFileBytes(file)).toString("base64");
+        return { type: "image", data, mimeType: block.mimeType, uri: block.uri } as AcpContentBlock;
+      } catch {
+        return block;
+      }
+    }),
+  );
 }
 
 export interface AcpRuntimeOptions {
@@ -468,6 +494,7 @@ export class AcpRuntime implements AgentRuntime {
         turn: undefined,
         permissions: new Map(),
         supportsConfigOptions: Array.isArray(result.configOptions),
+        promptImages: init.agentCapabilities?.promptCapabilities?.image === true,
       };
       conn.onNotification = (method, params) => {
         if (method !== "session/update") return;
@@ -498,7 +525,8 @@ export class AcpRuntime implements AgentRuntime {
       let outcome: TurnResult;
       let failure: string | undefined;
       try {
-        const result = await live.conn.request("session/prompt", { sessionId: live.acpSessionId, prompt: input.prompt }, null);
+        const prompt = live.promptImages ? await inlineImages(input.prompt) : input.prompt;
+        const result = await live.conn.request("session/prompt", { sessionId: live.acpSessionId, prompt }, null);
         outcome = result?.stopReason ?? "end_turn";
       } catch (error) {
         outcome = "error";

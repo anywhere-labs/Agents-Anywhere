@@ -47,6 +47,8 @@ export interface SessionsServiceDeps {
   store: SessionStore;
   runtimes: AcpRuntimeHost;
   streams: TunnelStreamTracker;
+  /** Called after a conversation is deleted (e.g. to remove its attachment folder). Errors are ignored. */
+  onSessionDeleted?: (session: { id: string; cwd: string }) => unknown;
   /** Longest `send({ wait: true })` waits for the reply (the control plane gives MCP sends 30 s). Default 28 s. */
   waitTimeoutMs?: number;
   newId?: () => string;
@@ -158,6 +160,7 @@ export class SessionsService {
   readonly #streams: TunnelStreamTracker;
   readonly #waitTimeoutMs: number;
   readonly #newId: () => string;
+  readonly #onSessionDeleted: SessionsServiceDeps["onSessionDeleted"];
   /** Sessions with a turn in flight (set before the agent is even started, so concurrent sends queue). */
   readonly #turns = new Map<string, Promise<void>>();
   /** `sessionId\0client_msg_id` → the end of that message's turn. */
@@ -172,6 +175,7 @@ export class SessionsService {
     this.#streams = deps.streams;
     this.#waitTimeoutMs = deps.waitTimeoutMs ?? DEFAULT_WAIT_MS;
     this.#newId = deps.newId ?? (() => globalThis.crypto.randomUUID());
+    this.#onSessionDeleted = deps.onSessionDeleted;
   }
 
   /** Whether a turn is in flight (diagnostics / tests). */
@@ -242,9 +246,17 @@ export class SessionsService {
   async delete(request: z.output<typeof IdSchema>, ctx: RpcContext) {
     this.#gate.assertBusinessCallAllowed(ctx);
     await this.#runtimes.closeSession(request.id);
+    const session = this.#store.has(request.id) ? this.#store.get(request.id) : undefined;
     this.#store.delete(request.id);
     this.#turns.delete(request.id);
     this.#held.delete(request.id);
+    if (session) {
+      try {
+        await this.#onSessionDeleted?.({ id: session.id, cwd: session.cwd });
+      } catch {
+        // Cleanup is best effort.
+      }
+    }
     return { ok: true as const };
   }
 
