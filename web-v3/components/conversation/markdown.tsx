@@ -118,7 +118,7 @@ function MarkdownCode(props: React.ComponentProps<'code'> & ExtraProps) {
   // Streamdown marks fenced code with data-block. Everything else is inline.
   if (!('data-block' in rest)) {
     return (
-      <code className="rounded-sm bg-muted px-1 py-0.5 font-mono text-[0.9em]" {...rest}>
+      <code className="rounded-sm bg-muted px-1 py-0.5 font-mono text-[0.875em]" {...rest}>
         {children}
       </code>
     )
@@ -149,12 +149,18 @@ function MarkdownLink({ href, children, node: _node, ...rest }: React.ComponentP
 
 const components = { code: MarkdownCode, a: MarkdownLink }
 
-function MarkdownImpl({ children, streaming = false, className }: { children: string; streaming?: boolean; className?: string }) {
+/**
+ * `reading` is the size of a conversation (15px, line height 1.7, headings only a step above the text);
+ * `compact` is for thinking, tool output and other secondary text (14px). See web-v3/AGENTS.md › 字号与层级.
+ */
+type MarkdownSize = 'reading' | 'compact'
+
+function MarkdownImpl({ children, streaming = false, className, size = 'reading' }: { children: string; streaming?: boolean; className?: string; size?: MarkdownSize }) {
   const env = useThreadEnv()
   const plugins = usePlugins(children)
   return (
     <Streamdown
-      className={cn('min-w-0 text-sm', className)}
+      className={cn('aa-md min-w-0', size === 'compact' && 'aa-md-compact', className)}
       plugins={plugins}
       components={components}
       translations={translations}
@@ -168,4 +174,4 @@ function MarkdownImpl({ children, streaming = false, className }: { children: st
   )
 }
 
-export const Markdown = memo(MarkdownImpl) as (props: { children: string; streaming?: boolean; className?: string }) => React.ReactElement
+export const Markdown = memo(MarkdownImpl) as (props: { children: string; streaming?: boolean; className?: string; size?: MarkdownSize }) => React.ReactElement

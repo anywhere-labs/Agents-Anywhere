@@ -3,11 +3,11 @@
 import { DesktopThisComputer } from "@/components/desktop/this-computer"
 import { AssistantPanel } from "@/components/workbench/assistant-panel"
 import { NewConversation } from "@/components/workbench/new-conversation"
-import { WorkbenchShell } from "@/components/workbench/workbench-shell"
 import { getDesktopBridge } from "@/lib/platform/desktop"
 import { useWorkbench } from "@/lib/state/workbench-context"
 
-function HomeContent() {
+/** The home view (`/`, and behind the settings dialog at `/settings`). */
+export function HomeContent() {
   const { preferences } = useWorkbench()
   // Assistant-first: the assistant is the main view (client-experience-proposal §2.2).
   if (preferences.assistantPrimary) return <AssistantPanel />
@@ -21,13 +21,5 @@ function HomeContent() {
       </div>
       <NewConversation />
     </div>
-  )
-}
-
-export default function HomePage() {
-  return (
-    <WorkbenchShell>
-      <HomeContent />
-    </WorkbenchShell>
   )
 }

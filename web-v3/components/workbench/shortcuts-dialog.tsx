@@ -1,7 +1,7 @@
 "use client"
 
 // The keyboard shortcuts, in one sheet (⌘/ as in ChatGPT and Claude.ai; also in ⌘K). Workbench-wide keys are bound in
-// workbench-shell.tsx (⌘K, ⌘⇧O, ⌘/), the sidebar (⌘B) and the assistant (⌘J); the composer owns its own keys.
+// workbench-shell.tsx (⌘K, ⌘⇧O, ⌘,, ⌘/), the sidebar (⌘B) and the assistant (⌘J); the composer owns its own keys.
 import { useI18n } from "@/components/i18n-provider"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 
@@ -14,7 +14,7 @@ function Keys({ keys }: { keys: string[] }) {
       {keys.map((k) => (
         <kbd
           key={k}
-          className="inline-flex h-6 min-w-6 items-center justify-center rounded-md bg-surface-raised px-1.5 font-sans text-[11px] font-medium text-muted-foreground"
+          className="inline-flex h-6 min-w-6 items-center justify-center rounded-md bg-surface-raised px-1.5 font-sans text-xs font-medium text-muted-foreground"
         >
           {k}
         </kbd>
@@ -35,6 +35,7 @@ export function ShortcutsDialog({ open, onOpenChange }: { open: boolean; onOpenC
         [t("shortcuts.newConversation"), [mod, shift, "O"]],
         [t("shortcuts.toggleSidebar"), [mod, "B"]],
         [t("shortcuts.assistant"), [mod, "J"]],
+        [t("shortcuts.settings"), [mod, ","]],
         [t("shortcuts.help"), [mod, "/"]],
       ],
     },

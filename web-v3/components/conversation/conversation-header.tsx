@@ -1,13 +1,13 @@
 "use client"
 
-// The conversation's top bar (client-experience-proposal §2.4; v2 session-view-header): on phones a sidebar trigger;
-// the breadcrumb device › agent › project; the title (click to rename in place: Enter saves, Esc cancels); state and
-// lock; then the side-panel toggle and the menu — rename, pin, fork, compact context, details, copy ID, export,
-// open device, delete.
+// The conversation's top bar (client-experience-proposal §2.4; v2 session-view-header): the sidebar button (on phones,
+// and with a new-conversation button while the sidebar is folded away);
+// the agent's icon and the title (click to rename in place: Enter saves, Esc cancels), its state and lock, then where it
+// runs (device · project) in quieter type; then the side-panel toggle and the menu — rename, pin, fork, compact context,
+// details, copy ID, export, open device, delete.
 import Link from "next/link"
 import { useState } from "react"
 import {
-  ChevronRightIcon,
   CopyIcon,
   DownloadIcon,
   EllipsisIcon,
@@ -15,7 +15,6 @@ import {
   InfoIcon,
   LaptopIcon,
   LoaderCircleIcon,
-  PanelLeftIcon,
   PanelRightIcon,
   PencilIcon,
   PinIcon,
@@ -33,9 +32,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { useSidebar } from "@/components/ui/sidebar"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { AgentIcon } from "@/components/workbench/agent-icon"
 import { E2eeLockBadge } from "@/components/workbench/e2ee-lock-badge"
+import { SidebarReopen } from "@/components/workbench/sidebar-reopen"
 import type { SessionState } from "@/lib/types/v3"
 import { cn } from "@/lib/utils"
 import { deviceHref, projectName, tildePath } from "@/lib/workbench/tree"
@@ -55,6 +55,7 @@ export function ConversationHeader({
   title,
   deviceId,
   deviceName,
+  agent,
   agentName,
   cwd,
   state,
@@ -71,6 +72,8 @@ export function ConversationHeader({
   title: string
   deviceId: string
   deviceName?: string
+  /** The agent's id, for its icon before the title; `agentName` names it (tooltip). */
+  agent?: string
   agentName?: string
   cwd?: string
   state?: SessionState
@@ -85,7 +88,6 @@ export function ConversationHeader({
   actions: HeaderActions
 }) {
   const { t } = useI18n()
-  const { toggleSidebar, isMobile, state: sidebarState } = useSidebar()
   const [editing, setEditing] = useState<string | null>(null)
 
   const commitRename = async () => {
@@ -96,51 +98,13 @@ export function ConversationHeader({
 
   return (
     <header className="flex h-14 shrink-0 items-center gap-2 px-3 sm:px-4">
-      {(isMobile || sidebarState === "collapsed") && (
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          data-sidebar="trigger"
-          aria-label={t("shell.openNavigation")}
-          onClick={toggleSidebar}
-        >
-          <PanelLeftIcon />
-        </Button>
-      )}
-      <nav aria-label={t("conv.details")} className="flex min-w-0 flex-1 items-center gap-1 text-[13px]">
-        <Link
-          href={deviceHref(deviceId)}
-          className="hidden max-w-40 shrink-0 items-center gap-1.5 truncate text-muted-foreground transition-colors hover:text-foreground lg:flex"
-        >
-          <LaptopIcon className="size-3.5 shrink-0" />
-          <span className="truncate">{deviceName ?? deviceId}</span>
-        </Link>
-        {agentName && (
-          <>
-            <ChevronRightIcon className="hidden size-3 shrink-0 text-muted-foreground/60 lg:block" />
-            <span className="hidden max-w-32 shrink-0 truncate text-muted-foreground md:block">{agentName}</span>
-          </>
-        )}
-        {cwd && (
-          <>
-            <ChevronRightIcon className="hidden size-3 shrink-0 text-muted-foreground/60 md:block" />
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Link
-                    href={`${deviceHref(deviceId, "conversations")}&cwd=${encodeURIComponent(cwd)}`}
-                    className="hidden max-w-36 shrink-0 truncate text-muted-foreground transition-colors hover:text-foreground md:block"
-                  />
-                }
-              >
-                {projectName(cwd)}
-              </TooltipTrigger>
-              <TooltipContent>
-                <span className="font-mono">{tildePath(cwd)}</span>
-              </TooltipContent>
-            </Tooltip>
-            <span className="hidden shrink-0 text-muted-foreground/60 md:block">/</span>
-          </>
+      <SidebarReopen />
+      <div className="flex min-w-0 flex-1 items-center gap-2">
+        {/* The conversation first, like any chat app, behind its agent's icon; where it runs follows in quieter type. */}
+        {agent && (
+          <span role="img" aria-label={agentName ?? agent} title={agentName ?? agent} className="-mr-1.5 flex shrink-0 pl-1">
+            <AgentIcon agent={agent} name={agentName} className="text-foreground" />
+          </span>
         )}
         {editing !== null ? (
           <input
@@ -160,7 +124,7 @@ export function ConversationHeader({
                 setEditing(null)
               }
             }}
-            className="h-8 min-w-0 flex-1 rounded-full bg-card px-3 text-sm font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+            className="h-8 max-w-md min-w-0 flex-1 rounded-full bg-card px-3 text-sm font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
           />
         ) : (
           <button
@@ -168,7 +132,7 @@ export function ConversationHeader({
             disabled={readOnly}
             title={t("conv.rename")}
             onClick={() => setEditing(title)}
-            className="h-8 min-w-0 truncate rounded-full px-2 text-left text-sm font-medium text-foreground hover:bg-surface-hover disabled:hover:bg-transparent"
+            className="h-8 max-w-md min-w-0 shrink truncate rounded-full px-2 text-left text-sm font-medium text-foreground hover:bg-surface-hover disabled:hover:bg-transparent"
           >
             {title}
           </button>
@@ -185,7 +149,35 @@ export function ConversationHeader({
           </Badge>
         )}
         {encrypted && <E2eeLockBadge paired={paired} compact className="shrink-0" />}
-      </nav>
+        <nav
+          aria-label={t("conv.details")}
+          className="hidden min-w-0 shrink-[2] items-center gap-1.5 text-sm text-muted-foreground md:flex"
+        >
+          <Link href={deviceHref(deviceId)} className="min-w-0 truncate transition-colors hover:text-foreground">
+            {deviceName ?? deviceId}
+          </Link>
+          {cwd && (
+            <>
+              <span aria-hidden className="hidden shrink-0 lg:inline">·</span>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Link
+                      href={`${deviceHref(deviceId, "conversations")}&cwd=${encodeURIComponent(cwd)}`}
+                      className="hidden max-w-48 min-w-0 truncate transition-colors hover:text-foreground lg:inline"
+                    />
+                  }
+                >
+                  {projectName(cwd)}
+                </TooltipTrigger>
+                <TooltipContent>
+                  <span className="font-mono">{tildePath(cwd)}</span>
+                </TooltipContent>
+              </Tooltip>
+            </>
+          )}
+        </nav>
+      </div>
 
       <Tooltip>
         <TooltipTrigger

@@ -48,7 +48,7 @@ function switchValues(o: ConfigOption) {
 }
 
 const TRIGGER =
-  "h-8 min-w-0 gap-1 rounded-full px-2.5 text-[13px] font-normal text-muted-foreground hover:text-foreground aria-expanded:bg-surface-hover aria-expanded:text-foreground"
+  "h-8 min-w-0 gap-1 rounded-full px-2.5 text-sm font-normal text-muted-foreground hover:text-foreground aria-expanded:bg-surface-hover aria-expanded:text-foreground"
 
 type Level = "read" | "plan" | "ask" | "auto" | "all"
 const LEVEL_ICON: Record<Level, React.ReactNode> = {
@@ -140,6 +140,13 @@ function Radio({
   onChange: (id: string, value: string) => void
   label?: string
 }) {
+  // Choices with a group (a model's provider) are listed under it, so the names keep the whole row.
+  const groups: { name: string | undefined; items: Choice[] }[] = []
+  for (const o of option.options) {
+    const last = groups[groups.length - 1]
+    if (last && last.name === o.group) last.items.push(o)
+    else groups.push({ name: o.group, items: [o] })
+  }
   return (
     <DropdownMenuGroup>
       {label && <DropdownMenuLabel>{label}</DropdownMenuLabel>}
@@ -147,11 +154,17 @@ function Radio({
         value={option.current}
         onValueChange={(v) => v !== option.current && onChange(option.id, String(v))}
       >
-        {option.options.map((o) => (
-          <DropdownMenuRadioItem key={o.value} value={o.value} closeOnClick title={o.description}>
-            <span className="min-w-0 truncate">{modelName(o)}</span>
-            {o.group && <span className="ml-auto pl-2 text-xs text-muted-foreground">{o.group}</span>}
-          </DropdownMenuRadioItem>
+        {groups.map((g, i) => (
+          <div key={`${g.name ?? ""}-${i}`} role="presentation">
+            {g.name && groups.length > 1 && (
+              <div className="truncate px-2 pt-2 pb-1 text-xs text-muted-foreground">{g.name}</div>
+            )}
+            {g.items.map((o) => (
+              <DropdownMenuRadioItem key={o.value} value={o.value} closeOnClick title={o.description}>
+                <span className="min-w-0 truncate">{modelName(o)}</span>
+              </DropdownMenuRadioItem>
+            ))}
+          </div>
         ))}
       </DropdownMenuRadioGroup>
     </DropdownMenuGroup>
@@ -188,14 +201,14 @@ export function ConfigPickers({
   }
   if (loading && !options.length) {
     return (
-      <span className="flex h-8 items-center gap-1.5 px-2 text-[13px] text-muted-foreground">
+      <span className="flex h-8 items-center gap-1.5 px-2 text-sm text-muted-foreground">
         <LoaderCircleIcon className="size-3 animate-spin" />
         {agent}
       </span>
     )
   }
   if (!model && !thought && !rest.length) {
-    return <span className="flex h-8 items-center px-2 text-[13px] text-muted-foreground">{agent}</span>
+    return <span className="flex h-8 items-center px-2 text-sm text-muted-foreground">{agent}</span>
   }
   const cur = model?.options.find((x) => x.value === model.current)
   const name = model ? (cur ? modelName(cur) : model.current || t("composer.defaultModel")) : agent
@@ -218,7 +231,7 @@ export function ConfigPickers({
         {levelText && <span className="shrink-0 opacity-70">{levelText}</span>}
         <ChevronDownIcon className="size-3.5! shrink-0 opacity-60" />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" side="top" className="max-h-[min(34rem,var(--available-height))] w-64">
+      <DropdownMenuContent align="start" side="top" className="max-h-[min(34rem,var(--available-height))] w-72">
         {model && <Radio option={model} onChange={onChange} label={`${agent} · ${t("composer.model")}`} />}
         {thought && (
           <>

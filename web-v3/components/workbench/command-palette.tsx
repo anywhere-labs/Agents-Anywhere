@@ -18,14 +18,17 @@ import {
   PlusIcon,
   SearchIcon,
   ShieldIcon,
-  SparklesIcon,
+  UserIcon,
   SquarePenIcon,
 } from "lucide-react"
 
 import { useI18n } from "@/components/i18n-provider"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { useAssistant } from "@/lib/state/assistant-context"
+import { settingsSectionFrom } from "@/components/workbench/settings-dialog"
 import { isMacPlatform } from "@/components/workbench/shortcuts-dialog"
+import { useWorkbenchUi } from "@/components/workbench/workbench-ui"
+import { OrchesIcon } from "@/components/workbench/orches-icon"
 import { useWorkbench } from "@/lib/state/workbench-context"
 import { cn } from "@/lib/utils"
 import { deviceInfoCache } from "@/lib/workbench/device-info"
@@ -70,6 +73,7 @@ export function CommandPalette({
   const router = useRouter()
   const { devices, deviceTrusts, sessions, tunnelManager, preferences } = useWorkbench()
   const { conversations, selectConversation, setDrawerOpen } = useAssistant()
+  const { openSettings } = useWorkbenchUi()
   const [query, setQuery] = useState("")
   const [index, setIndex] = useState(0)
 
@@ -104,10 +108,10 @@ export function CommandPalette({
       {
         key: "act:assistant",
         group: gActions,
-        icon: <SparklesIcon />,
+        icon: <OrchesIcon />,
         label: t("shell.quickAssistant"),
         hint: "⌘J",
-        haystack: `${t("shell.quickAssistant")} assistant pi`,
+        haystack: `${t("shell.quickAssistant")} orches assistant pi`,
         run: () => setDrawerOpen(true),
       },
       {
@@ -155,10 +159,10 @@ export function CommandPalette({
       out.push({
         key: `asst:${c.id}`,
         group: gAssistant,
-        icon: <SparklesIcon />,
+        icon: <OrchesIcon />,
         label: c.title || t("wb.untitled"),
         hint: shortAgo(c.updatedAt, locale),
-        haystack: `${c.title} assistant`,
+        haystack: `${c.title} orches assistant`,
         run: () => {
           selectConversation(c.id)
           if (preferences.assistantPrimary) router.push("/")
@@ -210,10 +214,11 @@ export function CommandPalette({
     }
 
     const settings: [string, ReactNode, string, string][] = [
-      ["appearance", <PaletteIcon key="i" />, t("settings.appearanceTitle"), "theme language appearance assistant-first"],
-      ["drive", <CloudIcon key="i" />, t("settings.driveTitle"), "drive storage quota"],
-      ["mcp", <ShieldIcon key="i" />, t("settings.mcpGrantsTitle"), "mcp grants oauth"],
-      ["vault", <LockIcon key="i" />, t("settings.vaultTitle"), "vault e2ee keys pairing"],
+      ["general", <PaletteIcon key="i" />, t("settings.nav.general"), "theme language appearance assistant-first"],
+      ["account", <UserIcon key="i" />, t("settings.nav.account"), "account role limits quota"],
+      ["drive", <CloudIcon key="i" />, t("settings.driveTitle"), "drive storage quota files"],
+      ["apps", <ShieldIcon key="i" />, t("settings.mcpGrantsTitle"), "mcp grants oauth apps"],
+      ["encryption", <LockIcon key="i" />, t("settings.vaultTitle"), "vault e2ee keys pairing encryption"],
     ]
     for (const [id, icon, label, words] of settings) {
       out.push({
@@ -222,7 +227,7 @@ export function CommandPalette({
         icon,
         label,
         haystack: `${label} ${words} settings`,
-        run: () => router.push(`/settings#${id}`),
+        run: () => openSettings(settingsSectionFrom(id) ?? undefined),
       })
     }
     return out
@@ -233,6 +238,7 @@ export function CommandPalette({
     devices,
     locale,
     onPairDevice,
+    openSettings,
     onRegisterDevice,
     onShortcuts,
     preferences.assistantPrimary,
@@ -296,7 +302,7 @@ export function CommandPalette({
               }
             }}
           />
-          <kbd className="hidden rounded-full bg-secondary px-2 py-0.5 text-[10px] text-muted-foreground sm:inline">Esc</kbd>
+          <kbd className="hidden rounded-full bg-secondary px-2 py-0.5 text-xs text-muted-foreground sm:inline">Esc</kbd>
         </div>
         <div className="max-h-[min(60vh,28rem)] overflow-y-auto p-1.5" role="listbox" aria-label={t("wb.search")}>
           {flat.length === 0 && (
@@ -304,7 +310,7 @@ export function CommandPalette({
           )}
           {shown.map(([group, list]) => (
             <div key={group} className="py-1">
-              <p className="px-3 pt-1 pb-1.5 text-[11px] font-medium text-muted-foreground">{group}</p>
+              <p className="px-3 pt-1 pb-1.5 text-xs font-medium text-muted-foreground">{group}</p>
               {list.map((item) => {
                 const i = flat.indexOf(item)
                 return (
@@ -327,7 +333,7 @@ export function CommandPalette({
                     )}
                     {!item.meta && <span className="flex-1" />}
                     {item.hint && (
-                      <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{item.hint}</span>
+                      <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{item.hint}</span>
                     )}
                   </button>
                 )

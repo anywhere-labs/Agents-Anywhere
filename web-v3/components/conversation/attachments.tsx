@@ -275,7 +275,7 @@ export function DraftChips({ drafts }: { drafts: DraftAttachments }) {
               <span className="truncate text-xs text-foreground">{d.file.name}</span>
               <span
                 className={cn(
-                  "truncate text-[11px] tabular-nums",
+                  "truncate text-xs tabular-nums",
                   d.status === "error" ? "text-destructive" : "text-muted-foreground"
                 )}
               >

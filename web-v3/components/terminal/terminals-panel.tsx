@@ -163,8 +163,8 @@ export function TerminalsPanel({
                   <p className="truncate font-mono text-xs font-medium text-foreground">
                     {term.shell} · {term.id.slice(0, 8)}
                   </p>
-                  <p className="truncate font-mono text-[11px] text-muted-foreground">{term.cwd}</p>
-                  <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <p className="truncate font-mono text-xs text-muted-foreground">{term.cwd}</p>
+                  <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                     {!term.running && <Badge variant="secondary">{t("terminal.exitedBadge")}</Badge>}
                     {term.mode !== "pty" && <Badge variant="warning">{term.mode}</Badge>}
                     {term.controller && (

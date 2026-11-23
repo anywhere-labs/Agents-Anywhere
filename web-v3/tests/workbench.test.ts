@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest"
 
+import { outputText } from "@/components/conversation/text"
 import { bytesToBase64Url, isUnimplemented, planTransfer, rpcCap } from "@/lib/attachments/transfer"
-import type { DriveQuotaView, SessionSummary } from "@/lib/types/v3"
+import type { ConfigOption, DriveQuotaView, SessionSummary } from "@/lib/types/v3"
 import { rememberStart, toggleIn } from "@/lib/workbench/local-prefs"
+import { joinArgs, splitArgs } from "@/lib/workbench/args"
+import { changedPicks, withPicks } from "@/lib/workbench/prepared-agent"
+import { titleFromMessage } from "@/lib/workbench/title"
 import { agentLabel, buildDeviceTree, deviceProjects, matchesQuery, projectName, tildePath } from "@/lib/workbench/tree"
 import { parseUnifiedDiff } from "@/lib/workbench/unified-diff"
 
@@ -158,5 +162,79 @@ describe("unified diff parsing", () => {
     expect(files[0]).toMatchObject({ path: "src/a.ts", additions: 2, deletions: 1, status: "modified" })
     expect(files[1]).toMatchObject({ path: "new.md", additions: 1, status: "added" })
     expect(files[0].lines.map((l) => l.kind)).toEqual(["hunk", "same", "del", "add", "add"])
+  })
+})
+
+describe("titleFromMessage", () => {
+  it("takes the first non-empty line, collapsed", () => {
+    expect(titleFromMessage("\n\n  修一下   登录跳转  \n后面的内容")).toBe("修一下 登录跳转")
+  })
+  it("cuts long text by characters, not bytes", () => {
+    const title = titleFromMessage("一".repeat(50), 40)
+    expect(title).toBe(`${"一".repeat(40)}…`)
+  })
+  it("gives nothing for empty text", () => {
+    expect(titleFromMessage("  \n ")).toBeUndefined()
+  })
+})
+
+describe("options picked before the conversation exists (prepare)", () => {
+  const config: ConfigOption[] = [
+    {
+      id: "model",
+      name: "Model",
+      category: "model",
+      current: "a",
+      options: [
+        { value: "a", name: "A" },
+        { value: "b", name: "B" },
+      ],
+    },
+    { id: "thinking", name: "Thinking", category: "thought_level", current: "high", options: [{ value: "off", name: "off" }, { value: "high", name: "high" }] },
+  ]
+
+  it("shows picks in place of the agent's defaults, ignoring values the agent does not offer", () => {
+    const shown = withPicks(config, { model: "b", thinking: "max", unknown: "x" })
+    expect(shown.map((o) => o.current)).toEqual(["b", "high"])
+    expect(config[0]!.current).toBe("a")
+  })
+
+  it("sends only what differs from the started agent", () => {
+    expect(changedPicks(config, withPicks(config, { model: "b", thinking: "high" }))).toEqual({ model: "b" })
+    expect(changedPicks(config, config)).toEqual({})
+  })
+})
+
+describe("agent arguments as one line (splitArgs / joinArgs)", () => {
+  it("splits like a shell", () => {
+    expect(splitArgs("-y @openma/pi-acp --quiet-startup")).toEqual(["-y", "@openma/pi-acp", "--quiet-startup"])
+    expect(splitArgs(`--name "two words" 'it''s' a\\ b ""`)).toEqual(["--name", "two words", "its", "a b", ""])
+    expect(splitArgs("   ")).toEqual([])
+  })
+
+  it("writes back what it reads", () => {
+    for (const args of [["-y", "pkg"], ["two words", "it's", "", "a\\b", 'say "hi"']]) {
+      expect(splitArgs(joinArgs(args))).toEqual(args)
+    }
+  })
+})
+
+describe("tool output as text (outputText)", () => {
+  it("shows an MCP tool result's text blocks instead of its JSON", () => {
+    const result = {
+      content: [
+        { type: "text", text: "# Title" },
+        { type: "image", data: "aGVsbG8=", mimeType: "image/png" },
+        { type: "text", text: "body" },
+      ],
+      structuredContent: "# Title",
+    }
+    expect(outputText(result)).toBe("# Title\nbody")
+  })
+
+  it("keeps the other shapes as before", () => {
+    expect(outputText({ stdout: "ok" })).toBe("ok")
+    expect(outputText({ exit_code: 0 })).toBe("")
+    expect(outputText({ content: [] })).toBe('{\n  "content": []\n}')
   })
 })

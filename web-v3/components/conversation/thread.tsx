@@ -6,7 +6,7 @@
 // in the document scroller (renderer/document-scroller.tsx). Everything that acts goes out through ThreadEnv.
 import { memo, useEffect, useMemo, useState } from 'react'
 import type * as React from 'react'
-import { CopyIcon, FileIcon, GitForkIcon, ImageIcon, LoaderCircleIcon, RefreshCwIcon, Undo2Icon } from 'lucide-react'
+import { CopyIcon, FileIcon, GitForkIcon, ImageIcon, RefreshCwIcon, Undo2Icon } from 'lucide-react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import type { AssistantMessage, CompactPart, Control, FilePart, ImagePart, PendingRequest, UserMessage } from '@/lib/types/v3'
 import { Attachment, AttachmentContent, AttachmentDescription, AttachmentMedia, AttachmentTitle, AttachmentTrigger } from '@/components/ui/attachment'
@@ -15,7 +15,7 @@ import { Button } from '@/components/ui/button'
 import { Marker, MarkerContent } from '@/components/ui/marker'
 import { Message, MessageContent, MessageFooter, MessageHeader } from '@/components/ui/message'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { Trace, TraceIcon, TraceLine, TraceTitle } from '@/components/ui/trace'
+import { Trace, TraceLine, TraceTitle } from '@/components/ui/trace'
 import { cn } from '@/lib/utils'
 import type { TimelineState } from '@/lib/timeline/store'
 import { useThreadEnv } from './env'
@@ -149,7 +149,7 @@ function UserTurn({ message, outgoing }: { message: UserMessage; outgoing?: bool
         )}
         {text && (
           <Bubble align="end" variant="muted" className={cn(outgoing && 'opacity-70')}>
-            <BubbleContent className="whitespace-pre-wrap">{text}</BubbleContent>
+            <BubbleContent className="px-4 py-2.5 text-reading whitespace-pre-wrap">{text}</BubbleContent>
           </Bubble>
         )}
         <MessageFooter className="gap-0.5 transition-opacity pointer-fine:opacity-0 pointer-fine:group-hover/user:opacity-100 pointer-fine:focus-within:opacity-100">
@@ -265,8 +265,10 @@ function AgentTurn({ turn, live, last, control, ctx: base }: { turn: TurnData; l
   const idleWhileRunning = live && !assistant.some((m) => !m.done) && !control?.pending.length && lastSegment?.kind !== 'steps'
   const text = replyText(turn.items)
   const error = last && control?.state === 'error' ? (control.error ?? '这一轮失败了') : null
-  // How long the turn took, on its last step group once it is done (from its first item to its last).
-  const turnMs = !live && assistant.length > 1 ? new Date(lastItem!.created_at).getTime() - new Date(assistant[0].created_at).getTime() : undefined
+  // How long the turn took, on its last step group once it is done (from its first item to its last). Under a second
+  // it is left out: item times only show when each item began, so a quick turn would read "0 秒".
+  const span = !live && assistant.length > 1 ? new Date(lastItem!.created_at).getTime() - new Date(assistant[0].created_at).getTime() : 0
+  const turnMs = span >= 1000 ? span : undefined
   const lastGroup = segments.findLast((s) => s.kind === 'steps')
   // The last reply can be asked for again (its prompt resent); a prompt with attachments cannot be resent as text.
   const canRegenerate = Boolean(
@@ -282,7 +284,7 @@ function AgentTurn({ turn, live, last, control, ctx: base }: { turn: TurnData; l
               const groupLive = live && (s === lastSegment || s.steps.some((m) => !m.done && m.parts[0].type !== 'plan'))
               return (
                 <Trace key={s.key}>
-                  <StepGroup steps={s.steps} live={groupLive} turnMs={s === lastGroup && turnMs && turnMs > 0 ? turnMs : undefined} ctx={ctx} />
+                  <StepGroup steps={s.steps} live={groupLive} turnMs={s === lastGroup ? turnMs : undefined} ctx={ctx} />
                 </Trace>
               )
             }
@@ -296,7 +298,7 @@ function AgentTurn({ turn, live, last, control, ctx: base }: { turn: TurnData; l
                   <MessageContent>
                     <MessageHeader className="justify-end">插话</MessageHeader>
                     <Bubble align="end" variant="muted">
-                      <BubbleContent className="whitespace-pre-wrap">{userText(s.message)}</BubbleContent>
+                      <BubbleContent className="px-4 py-2.5 text-reading whitespace-pre-wrap">{userText(s.message)}</BubbleContent>
                     </Bubble>
                   </MessageContent>
                 </Message>
@@ -306,9 +308,6 @@ function AgentTurn({ turn, live, last, control, ctx: base }: { turn: TurnData; l
         {idleWhileRunning && (
           <Trace>
             <TraceLine status="running">
-              <TraceIcon>
-                <LoaderCircleIcon className="animate-spin" />
-              </TraceIcon>
               <TraceTitle>正在处理</TraceTitle>
             </TraceLine>
           </Trace>

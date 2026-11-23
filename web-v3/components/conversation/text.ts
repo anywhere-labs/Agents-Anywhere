@@ -58,6 +58,14 @@ export function outputText(v: unknown): string {
     for (const k of ['stdout', 'output', 'text', 'content', 'formatted_output', 'aggregated_output']) {
       if (typeof o[k] === 'string') return o[k] as string
     }
+    // An MCP tool result ({ content: [{ type: "text", text }], structuredContent? }): its text blocks.
+    if (Array.isArray(o.content)) {
+      const text = o.content
+        .map((c) => (c && typeof c === 'object' && typeof (c as { text?: unknown }).text === 'string' ? (c as { text: string }).text : ''))
+        .filter(Boolean)
+        .join('\n')
+      if (text) return text
+    }
     if (Object.keys(o).length === 1 && 'exit_code' in o) return ''
   }
   try {

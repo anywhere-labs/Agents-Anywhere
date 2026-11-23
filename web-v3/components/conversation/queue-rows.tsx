@@ -39,14 +39,14 @@ export function QueueRows({
   )
   return (
     <div className="mb-2 space-y-1 rounded-card bg-card p-2">
-      <p className="px-2 pt-0.5 pb-1 text-[11px] text-muted-foreground">{t("conv.queueTitle")}</p>
+      <p className="px-2 pt-0.5 pb-1 text-xs text-muted-foreground">{t("conv.queueTitle")}</p>
       {queued.map((q) => (
         <div key={q.client_msg_id} className="flex items-center gap-2 rounded-full bg-background py-1 pr-1.5 pl-3.5">
-          <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">
+          <span className="min-w-0 flex-1 truncate text-sm text-foreground">
             {q.content || (q.attachments?.map((a) => a.name).join(", ") ?? "")}
           </span>
           {q.attachments?.length ? (
-            <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">+{q.attachments.length}</span>
+            <span className="shrink-0 text-xs text-muted-foreground tabular-nums">+{q.attachments.length}</span>
           ) : null}
           <span className="flex shrink-0 items-center gap-0.5">
             {canSteer && action(t("conv.queueSteer"), () => onSteer(q), <SendIcon className="size-3" />)}
