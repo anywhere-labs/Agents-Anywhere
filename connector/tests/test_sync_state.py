@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import errno
 import json
 import threading
+from pathlib import Path
+
+import pytest
 
 from connector.server.sync_state import JsonSyncStateStore
 
@@ -143,3 +147,40 @@ def test_json_sync_state_preserves_changes_made_during_flush(tmp_path) -> None:
     restored = JsonSyncStateStore(path)
     assert restored.get("codex", "connector-1", "thread-1") is not None
     assert restored.get("codex", "connector-1", "thread-2") is not None
+
+
+def _deny_read(path: Path, *args, **kwargs):
+    raise PermissionError(errno.EACCES, "Permission denied", str(path))
+
+
+def test_json_sync_state_distinguishes_an_unreadable_file_from_invalid_json(tmp_path, monkeypatch):
+    path = tmp_path / "connector-state.json"
+    original = b'{"version": 1, "states": {}}'
+    path.write_bytes(original)
+    monkeypatch.setattr(Path, "read_text", _deny_read)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        JsonSyncStateStore(path)
+
+    message = str(excinfo.value)
+    assert "cannot read connector sync state file" in message
+    assert "PermissionError" in message
+    assert "Permission denied" in message
+    assert "invalid connector sync state file" not in message
+    assert isinstance(excinfo.value.__cause__, PermissionError)
+    assert path.read_bytes() == original
+
+
+def test_json_sync_state_does_not_treat_an_unreadable_file_as_missing(tmp_path, monkeypatch):
+    path = tmp_path / "connector-state.json"
+    original = b'{"version": 1, "states": {}}'
+    path.write_bytes(original)
+    # A failed stat must not turn an unreadable checkpoint into an empty one
+    # that the next flush would replace.
+    monkeypatch.setattr(Path, "exists", lambda self: False)
+    monkeypatch.setattr(Path, "read_text", _deny_read)
+
+    with pytest.raises(RuntimeError, match="cannot read connector sync state file"):
+        JsonSyncStateStore(path)
+
+    assert path.read_bytes() == original
