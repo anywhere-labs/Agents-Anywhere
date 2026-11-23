@@ -27,7 +27,7 @@
   overflow-wrap: anywhere;
 }
 
-.stateDot {
+.status .stateDot {
   flex-shrink: 0;
   margin-top: 6px;
 }
@@ -87,7 +87,8 @@
   font-weight: 500;
 }
 
-.input {
+/* Two classes: DSH 0.2.3 inserts the official Input's own size after this rule. */
+.section .input {
   width: 100%;
   min-width: 0;
   box-sizing: border-box;

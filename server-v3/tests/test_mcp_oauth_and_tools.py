@@ -10,6 +10,18 @@ from aa_control.core.models import PresenceReport, RegisterDeviceRequest
 from aa_control.core.utc import utc_now_iso
 
 
+async def test_authorize_without_web_origin_stays_bearer_only_json(http_client: httpx.AsyncClient) -> None:
+    asm = (await http_client.get("/.well-known/oauth-authorization-server")).json()
+    assert asm["authorization_endpoint"] == "https://aa.example.test/oauth/authorize"
+    res = await http_client.get(
+        "/oauth/authorize",
+        params={"client_id": "c", "redirect_uri": "http://127.0.0.1/cb"},
+        follow_redirects=False,
+    )
+    assert res.status_code == 401
+    assert res.json()["code"] == "unauthenticated"
+
+
 def _pkce_pair() -> tuple[str, str]:
     verifier = "v" * 64
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).decode("ascii").rstrip("=")

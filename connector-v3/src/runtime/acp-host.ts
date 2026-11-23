@@ -193,9 +193,10 @@ export interface AgentRuntime {
 const BUILTIN_PRESETS: (AcpRuntimePreset & { requires: string })[] = [
   { id: "claude", name: "Claude Code", command: "npx", args: ["-y", "@agentclientprotocol/claude-agent-acp"], requires: "claude" },
   { id: "codex", name: "Codex", command: "npx", args: ["-y", "@agentclientprotocol/codex-acp"], requires: "codex" },
-  { id: "gemini", name: "Gemini CLI", command: "gemini", args: ["--acp"], requires: "gemini" },
   { id: "antigravity", name: "Antigravity", command: "agy", args: ["acp"], requires: "agy" },
-  { id: "pi", name: "Pi", command: "npx", args: ["-y", "@openma/pi-acp"], requires: "pi" },
+  // Pi prints a banner (version, skills, model) as plain agent text right after session/new; it has no marker, so it
+  // would land in the conversation as a reply. The model is already in the session's config options.
+  { id: "pi", name: "Pi", command: "npx", args: ["-y", "@openma/pi-acp", "--quiet-startup"], requires: "pi" },
 ];
 
 export function defaultAcpPresets(isInstalled: (program: string) => boolean = commandOnPath): AcpRuntimePreset[] {
