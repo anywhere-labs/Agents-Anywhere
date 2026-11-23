@@ -558,6 +558,11 @@ export class AcpTimelineProjector {
 
   private turnId: string | undefined;
   private autonomous = false;
+  /**
+   * The turn's latest item (highest seq). A cancelled turn marks it interrupted even when the agent already closed
+   * every item itself (Pi fails its running tool call on cancel), so the thread still shows the turn was stopped.
+   */
+  private turnLast: AssistantMessage | undefined;
   private stretch: OpenStretch | undefined;
   private planId: string | undefined;
   private plan: PlanEntry[] = [];
@@ -595,6 +600,7 @@ export class AcpTimelineProjector {
     this.flushReplayUser();
     if (this.turnId !== undefined) this.closeTurnItems(false);
     this.turnId = turnId;
+    this.turnLast = undefined;
     this.autonomous = false;
     // Text is matched by prefix; links and images by URI (agents echo them with their own names).
     const text = prompt?.filter((block) => block.type === "text").map((block) => contentBlockText(block)).join("") ?? "";
@@ -609,6 +615,12 @@ export class AcpTimelineProjector {
     this.flushReplayUser();
     const interrupted = stopReason === "cancelled" || stopReason === "error";
     this.closeTurnItems(interrupted);
+    const last = this.turnLast;
+    this.turnLast = undefined;
+    if (interrupted && last !== undefined) {
+      const current = this.store.getMessage(this.sessionId, last.id);
+      if (current?.role === "assistant" && !current.interrupted) this.markInterrupted(current);
+    }
     this.cancelPermissions();
     this.turnId = undefined;
     this.autonomous = false;
@@ -701,7 +713,9 @@ export class AcpTimelineProjector {
     const turnId = this.ensureTurn(id);
     const item: AssistantItemInput = { id, turn_id: turnId, done, parts: [part] };
     if (this.autonomous) item.autonomous = true;
-    return this.store.upsertAssistantItem(this.sessionId, item);
+    const message = this.store.upsertAssistantItem(this.sessionId, item);
+    if (this.turnLast === undefined || message.seq >= this.turnLast.seq) this.turnLast = message;
+    return message;
   }
 
   private appendStretch(kind: OpenStretch["kind"], text: string): void {
