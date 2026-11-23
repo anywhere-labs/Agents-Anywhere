@@ -6,25 +6,7 @@
 // once output arrives and a reasoning while it is written; whatever the reader opens or closes by hand wins.
 import { memo, useEffect, useMemo, useState } from 'react'
 import type * as React from 'react'
-import {
-  BotIcon,
-  BrainIcon,
-  CircleCheckIcon,
-  CircleDotIcon,
-  CircleIcon,
-  FileIcon,
-  FilePenLineIcon,
-  FilePlusIcon,
-  FileTextIcon,
-  GlobeIcon,
-  LoaderCircleIcon,
-  MoveIcon,
-  RouteIcon,
-  SearchIcon,
-  TerminalIcon,
-  Trash2Icon,
-  WrenchIcon,
-} from 'lucide-react'
+import { CircleCheckIcon, CircleDotIcon, CircleIcon, FileIcon } from 'lucide-react'
 import type { AssistantMessage, PendingRequest, PlanPart, SubagentPart, ThinkingPart, ToolPart } from '@/lib/types/v3'
 import { Badge } from '@/components/ui/badge'
 import { CodeBlock, CodeBlockActions, CodeBlockContent, CodeBlockCopyButton, CodeBlockHeader, CodeBlockLine, CodeBlockTitle } from '@/components/ui/code-block'
@@ -259,16 +241,6 @@ function ReasoningStep({ message, part }: { message: AssistantMessage; part: Thi
 
 // ── Tool ───────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-const KIND_ICON: Record<string, React.ReactNode> = {
-  execute: <TerminalIcon />,
-  read: <FileTextIcon />,
-  search: <SearchIcon />,
-  delete: <Trash2Icon />,
-  move: <MoveIcon />,
-  fetch: <GlobeIcon />,
-  think: <BrainIcon />,
-}
-
 /** The line's words: what the call did (or is doing), in Effi Cloud's wording. */
 function toolWords(part: ToolPart, phase: 'running' | 'done' | 'failed' | 'waiting' | 'unfinished') {
   const file = fileOf(part)
@@ -326,7 +298,6 @@ function ToolStep({ message, part, request }: { message: AssistantMessage; part:
 
   const line = (
     <TraceLine status={status}>
-      <TraceIcon>{KIND_ICON[part.kind] ?? (part.kind === 'edit' ? diffs.every((d) => !d.old_text) && diffs.length ? <FilePlusIcon /> : <FilePenLineIcon /> : <WrenchIcon />)}</TraceIcon>
       <TraceTitle>
         {words.verb && <>{words.verb} </>}
         <span className={cn(words.mono && 'font-mono text-[0.92em]')}>{words.subject}</span>
@@ -533,9 +504,6 @@ export function PlanStep({ message, part }: { message: AssistantMessage; part: P
     <TraceCollapsible {...state}>
       <TraceCollapsibleTrigger>
         <TraceLine status={running ? 'running' : undefined}>
-          <TraceIcon>
-            <RouteIcon />
-          </TraceIcon>
           <TraceTitle>计划</TraceTitle>
           <TraceDescription>
             {done} / {part.entries.length} 已完成
@@ -570,7 +538,6 @@ function SubagentStep({ part, ctx }: { part: SubagentPart; ctx: StepContext }) {
     <TraceCollapsible {...state}>
       <TraceCollapsibleTrigger>
         <TraceLine status={running ? 'running' : failed ? 'error' : undefined}>
-          <TraceIcon>{running ? <LoaderCircleIcon className="animate-spin" /> : <BotIcon />}</TraceIcon>
           <TraceTitle>
             {running ? '正在运行' : failed ? '没能完成' : part.status === 'cancelled' ? '取消了' : '运行了'} {who}：{what}
           </TraceTitle>

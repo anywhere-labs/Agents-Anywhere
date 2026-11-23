@@ -6,7 +6,7 @@
 // in the document scroller (renderer/document-scroller.tsx). Everything that acts goes out through ThreadEnv.
 import { memo, useEffect, useMemo, useState } from 'react'
 import type * as React from 'react'
-import { CopyIcon, FileIcon, GitForkIcon, ImageIcon, LoaderCircleIcon, RefreshCwIcon, Undo2Icon } from 'lucide-react'
+import { CopyIcon, FileIcon, GitForkIcon, ImageIcon, RefreshCwIcon, Undo2Icon } from 'lucide-react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import type { AssistantMessage, CompactPart, Control, FilePart, ImagePart, PendingRequest, UserMessage } from '@/lib/types/v3'
 import { Attachment, AttachmentContent, AttachmentDescription, AttachmentMedia, AttachmentTitle, AttachmentTrigger } from '@/components/ui/attachment'
@@ -15,7 +15,7 @@ import { Button } from '@/components/ui/button'
 import { Marker, MarkerContent } from '@/components/ui/marker'
 import { Message, MessageContent, MessageFooter, MessageHeader } from '@/components/ui/message'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { Trace, TraceIcon, TraceLine, TraceTitle } from '@/components/ui/trace'
+import { Trace, TraceLine, TraceTitle } from '@/components/ui/trace'
 import { cn } from '@/lib/utils'
 import type { TimelineState } from '@/lib/timeline/store'
 import { useThreadEnv } from './env'
@@ -306,9 +306,6 @@ function AgentTurn({ turn, live, last, control, ctx: base }: { turn: TurnData; l
         {idleWhileRunning && (
           <Trace>
             <TraceLine status="running">
-              <TraceIcon>
-                <LoaderCircleIcon className="animate-spin" />
-              </TraceIcon>
               <TraceTitle>正在处理</TraceTitle>
             </TraceLine>
           </Trace>
