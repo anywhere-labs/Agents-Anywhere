@@ -1,0 +1,149 @@
+# Agents Anywhere v3 self-hosted stack:
+#   Caddy (HTTPS) → web-v3 · server-v3 (control plane) · meshcall-router, with PostgreSQL and Redis.
+# Optional: RustFS (S3) for the cloud drive (profile "drive").
+#
+#   cd docker/v3 && ./init.sh            # writes .env with random secrets and the Router account
+#   docker compose up -d --build         # add --profile drive for the bundled S3 (RustFS)
+#
+# The control plane keeps accounts, devices and tunnels only; conversations stay on each Connector.
+name: agents-anywhere-v3
+
+x-control-env: &control-env
+  AA_CONTROL_DB_URL: postgresql+asyncpg://aa:${POSTGRES_PASSWORD:?run ./init.sh}@postgres:5432/aa
+  AA_CONTROL_REDIS_URL: redis://redis:6379/0
+  AA_CONTROL_SECRET: ${AA_CONTROL_SECRET:?run ./init.sh}
+  AA_CONTROL_SETUP_TOKEN: ${AA_CONTROL_SETUP_TOKEN:-}
+  AA_CONTROL_REGISTRATION_OPEN: ${AA_CONTROL_REGISTRATION_OPEN:-false}
+  AA_CONTROL_PUBLIC_ORIGIN: https://${AA_API_DOMAIN:?set AA_API_DOMAIN in .env}
+  AA_CONTROL_WEB_ORIGIN: https://${AA_DOMAIN:?set AA_DOMAIN in .env}
+  AA_CONTROL_CORS_ORIGINS: https://${AA_DOMAIN}
+  AA_CONTROL_ROUTER_URL: ws://router:8765
+  AA_CONTROL_ROUTER_PUBLIC_URL: wss://${AA_ROUTER_DOMAIN:?set AA_ROUTER_DOMAIN in .env}
+  AA_CONTROL_ROUTER_USERNAME: control
+  AA_CONTROL_ROUTER_PASSWORD: ${AA_ROUTER_PASSWORD:?run ./init.sh}
+  AA_CONTROL_S3_ENDPOINT: ${AA_S3_ENDPOINT:-}
+  AA_CONTROL_S3_PUBLIC_ENDPOINT: ${AA_S3_PUBLIC_ENDPOINT:-}
+  AA_CONTROL_S3_BUCKET: ${AA_S3_BUCKET:-aa-drive}
+  AA_CONTROL_S3_REGION: ${AA_S3_REGION:-us-east-1}
+  AA_CONTROL_S3_ACCESS_KEY_ID: ${AA_S3_ACCESS_KEY_ID:-}
+  AA_CONTROL_S3_SECRET_ACCESS_KEY: ${AA_S3_SECRET_ACCESS_KEY:-}
+  AA_CONTROL_S3_PATH_STYLE: ${AA_S3_PATH_STYLE:-true}
+
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: aa
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: aa
+    volumes: [postgres:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "aa", "-d", "aa"]
+      interval: 5s
+      retries: 30
+
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redis:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 30
+
+  router:
+    build: { context: ., dockerfile: router.Dockerfile }
+    restart: unless-stopped
+    environment:
+      # Account document written by init.sh: the control plane's "control" user (pbkdf2 hash only).
+      MESHCALL_ROUTER_AUTH: ${MESHCALL_ROUTER_AUTH:?run ./init.sh}
+      MESHCALL_ROUTER_HTTP_CORS_ORIGIN: https://${AA_DOMAIN}
+
+  migrate:
+    build: { context: ../../server-v3 }
+    environment: *control-env
+    command: ["uv", "run", "--no-sync", "alembic", "upgrade", "head"]
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  control:
+    build: { context: ../../server-v3 }
+    restart: unless-stopped
+    environment: *control-env
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      router: { condition: service_started }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/readyz')"]
+      interval: 10s
+      retries: 30
+
+  web:
+    build: { context: ../.., dockerfile: docker/v3/web.Dockerfile }
+    restart: unless-stopped
+    depends_on: [control]
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["80:80", "443:443", "443:443/udp"]
+    environment:
+      AA_DOMAIN: ${AA_DOMAIN}
+      AA_API_DOMAIN: ${AA_API_DOMAIN}
+      AA_ROUTER_DOMAIN: ${AA_ROUTER_DOMAIN}
+      AA_FILES_DOMAIN: ${AA_FILES_DOMAIN:-files.localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on: [web, control, router]
+
+  # S3-compatible storage for the cloud drive (RustFS; MinIO no longer publishes free images).
+  s3:
+    profiles: [drive]
+    image: rustfs/rustfs:latest
+    restart: unless-stopped
+    environment:
+      RUSTFS_ACCESS_KEY: ${AA_S3_ACCESS_KEY_ID:-aa-drive}
+      RUSTFS_SECRET_KEY: ${AA_S3_SECRET_ACCESS_KEY:-}
+    volumes: [s3:/data]
+
+  s3-bucket:
+    profiles: [drive]
+    build: { context: ../../server-v3 }
+    environment: *control-env
+    depends_on: [s3]
+    command:
+      - uv
+      - run
+      - --no-sync
+      - python
+      - -c
+      - |
+        import os, time, httpx
+        from aa_control.core.drive import sign_s3_request_headers
+        env = os.environ
+        for attempt in range(60):
+            url, headers = sign_s3_request_headers(
+                method="PUT", endpoint=env["AA_CONTROL_S3_ENDPOINT"], bucket=env["AA_CONTROL_S3_BUCKET"], object_key="",
+                access_key_id=env["AA_CONTROL_S3_ACCESS_KEY_ID"], secret_access_key=env["AA_CONTROL_S3_SECRET_ACCESS_KEY"],
+                region=env["AA_CONTROL_S3_REGION"])
+            try:
+                status = httpx.put(url, headers=headers).status_code
+            except httpx.HTTPError:
+                status = None
+            if status in (200, 409):
+                print("bucket ready"); break
+            time.sleep(2)
+        else:
+            raise SystemExit(f"could not create the bucket (last status {status})")
+
+volumes:
+  postgres:
+  redis:
+  caddy-data:
+  caddy-config:
+  s3:
