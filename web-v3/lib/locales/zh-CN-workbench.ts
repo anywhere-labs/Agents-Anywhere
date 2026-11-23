@@ -52,6 +52,12 @@ export const zhCNWorkbench: Record<keyof typeof enWorkbench, string> = {
   "newConv.noAgents": "这台设备没有上报可用的 Agent",
   "newConv.noAgentsHint": "在设备上安装 Agent 命令行（Claude Code、Codex、Gemini、Pi 等），然后重启 Connector。",
   "newConv.loadingAgents": "正在向设备查询 Agent…",
+  "newConv.agentStarting": "正在启动 {agent}…第一次启动要先下载，可能需要一两分钟。",
+  "newConv.agentAuthRequired": "{agent} 还没有在这台设备上登录：在设备上运行 {agent} 登录后再试。",
+  "newConv.agentAuthMethods": "登录方式：{methods}。",
+  "newConv.agentStartFailed": "{agent} 没能启动：{error}",
+  "newConv.invalidCwd": "这个目录在设备上不存在，换一个目录试试。",
+  "newConv.unknownAgent": "这台设备上没有 {agent}。",
   "newConv.failed": "没能开始对话：{error}",
 
   // 对话页

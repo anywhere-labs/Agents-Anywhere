@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest"
 
 import { bytesToBase64Url, isUnimplemented, planTransfer, rpcCap } from "@/lib/attachments/transfer"
-import type { DriveQuotaView, SessionSummary } from "@/lib/types/v3"
+import type { ConfigOption, DriveQuotaView, SessionSummary } from "@/lib/types/v3"
 import { rememberStart, toggleIn } from "@/lib/workbench/local-prefs"
+import { changedPicks, withPicks } from "@/lib/workbench/prepared-agent"
 import { titleFromMessage } from "@/lib/workbench/title"
 import { agentLabel, buildDeviceTree, deviceProjects, matchesQuery, projectName, tildePath } from "@/lib/workbench/tree"
 import { parseUnifiedDiff } from "@/lib/workbench/unified-diff"
@@ -172,5 +173,32 @@ describe("titleFromMessage", () => {
   })
   it("gives nothing for empty text", () => {
     expect(titleFromMessage("  \n ")).toBeUndefined()
+  })
+})
+
+describe("options picked before the conversation exists (prepare)", () => {
+  const config: ConfigOption[] = [
+    {
+      id: "model",
+      name: "Model",
+      category: "model",
+      current: "a",
+      options: [
+        { value: "a", name: "A" },
+        { value: "b", name: "B" },
+      ],
+    },
+    { id: "thinking", name: "Thinking", category: "thought_level", current: "high", options: [{ value: "off", name: "off" }, { value: "high", name: "high" }] },
+  ]
+
+  it("shows picks in place of the agent's defaults, ignoring values the agent does not offer", () => {
+    const shown = withPicks(config, { model: "b", thinking: "max", unknown: "x" })
+    expect(shown.map((o) => o.current)).toEqual(["b", "high"])
+    expect(config[0]!.current).toBe("a")
+  })
+
+  it("sends only what differs from the started agent", () => {
+    expect(changedPicks(config, withPicks(config, { model: "b", thinking: "high" }))).toEqual({ model: "b" })
+    expect(changedPicks(config, config)).toEqual({})
   })
 })

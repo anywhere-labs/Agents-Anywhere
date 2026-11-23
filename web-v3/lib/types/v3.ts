@@ -219,6 +219,19 @@ export interface ConfigOption {
   options: { value: string; name: string; description?: string; group?: string }[]
 }
 
+/**
+ * aa.v3.Sessions/prepare: the agent started ahead of the conversation (as soon as the new-conversation page has an
+ * agent and a directory), so its options can be chosen before the first message; `create({ prepared_id })` takes it
+ * over. Preparing again before `expires_at` returns the same id and pushes the expiry back.
+ */
+export interface PreparedAgent {
+  prepared_id: string
+  agent: AgentKind
+  cwd: string
+  config: ConfigOption[]
+  expires_at: Instant
+}
+
 export interface Session {
   id: ID
   title: string

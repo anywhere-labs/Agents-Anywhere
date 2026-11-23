@@ -25,6 +25,7 @@ import type {
   OpenTunnelResponse,
   PairedClientEntry,
   ReadFileResult,
+  PreparedAgent,
   Session,
   SessionListPayload,
   TerminalAttachRequest,
@@ -312,15 +313,16 @@ export class DeviceTunnelManager {
     device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">,
     service: string,
     method: string,
-    req: Req
+    req: Req,
+    options?: { timeoutMs?: number }
   ): Promise<Res> {
     try {
       const pooled = await this.openTunnelForDevice(device, false)
-      return await pooled.mesh.unary<Req, Res>(service, method, req)
+      return await pooled.mesh.unary<Req, Res>(service, method, req, options)
     } catch (err) {
       if (err instanceof UnauthenticatedError) {
         const pooled = await this.openTunnelForDevice(device, true)
-        return await pooled.mesh.unary<Req, Res>(service, method, req)
+        return await pooled.mesh.unary<Req, Res>(service, method, req, options)
       }
       throw err
     }
@@ -335,9 +337,20 @@ export class DeviceTunnelManager {
     return this.callUnary(device, SESSIONS_SVC, "list", limit != null ? { limit } : {})
   }
 
+  /**
+   * Start the agent before the conversation exists, for its options (see `PreparedAgent`). The first start of an
+   * `npx` agent can take minutes: on a deadline, prepare again and it joins the start still in progress.
+   */
+  prepareSession(
+    device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">,
+    payload: { agent: string; cwd?: string }
+  ): Promise<PreparedAgent> {
+    return this.callUnary(device, SESSIONS_SVC, "prepare", payload, { timeoutMs: 120_000 })
+  }
+
   createSession(
     device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">,
-    payload: { agent: string; cwd?: string; title?: string; config?: Record<string, string> }
+    payload: { agent: string; cwd?: string; title?: string; config?: Record<string, string>; prepared_id?: string }
   ): Promise<Session> {
     return this.callUnary(device, SESSIONS_SVC, "create", payload)
   }

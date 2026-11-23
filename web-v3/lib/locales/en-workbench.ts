@@ -52,6 +52,12 @@ export const enWorkbench = {
   "newConv.noAgents": "This device reports no agents",
   "newConv.noAgentsHint": "Install an agent CLI (Claude Code, Codex, Gemini, Pi…) on the device and restart its Connector.",
   "newConv.loadingAgents": "Asking the device for its agents…",
+  "newConv.agentStarting": "Starting {agent}… The first start downloads it, which can take a minute or two.",
+  "newConv.agentAuthRequired": "{agent} is not signed in on this device: run {agent} there to sign in, then try again.",
+  "newConv.agentAuthMethods": "Sign-in options: {methods}.",
+  "newConv.agentStartFailed": "{agent} could not start: {error}",
+  "newConv.invalidCwd": "This folder does not exist on the device; pick another one.",
+  "newConv.unknownAgent": "{agent} is not available on this device.",
   "newConv.failed": "Could not start the conversation: {error}",
 
   // Conversation page

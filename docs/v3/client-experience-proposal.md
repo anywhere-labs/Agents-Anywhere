@@ -82,7 +82,7 @@
 ### 2.6 全局
 
 - ⌘K 搜索：设备、Agent、项目、对话、助手对话、设置项。
-- 新对话：先选设备 → Agent → 目录（记住上次的选择），然后直接进入输入框。
+- 新对话：先选设备 → Agent → 目录（记住上次的选择），然后直接进入输入框。选好 Agent 和目录时，客户端调用 `aa.v3.Sessions/prepare` 预先启动这个 Agent：输入框旁直接显示它的模型、模式（权限）、推理强度等选项，第一次下载 Agent 也发生在用户打字的时候；启动失败（例如 Agent 未登录，`agent_auth_required`）在用户打字前就提示。发送第一条消息时 `create` 带上 `prepared_id` 接管这个 Agent，用户选的选项随 `config` 一起提交（接口见 [Connector README](../../connector-v3/README.md#新对话预先启动-agentprepare)）。
 - 空状态：没有设备时引导安装 Connector 或 Desktop；设备没有可用 Agent 时说明缺什么。
 
 ## 3. 附件

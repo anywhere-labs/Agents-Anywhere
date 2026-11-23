@@ -2,11 +2,13 @@
 
 // New conversation (client-experience-proposal §2.6; v2 task-composer + use-session-creation): pick the device (online
 // ones), the agent (what the device reports), and the working directory (home, the device's recent projects, or a
-// folder browser) — the last choice is remembered — then write the first message. The conversation is created when
-// that message is sent (aa.v3.Sessions/create with the options last used with this agent), its attachments are
-// uploaded into it, the message is sent, and the page moves into the conversation.
+// folder browser) — the last choice is remembered — then write the first message. Once the agent and the directory
+// are chosen the agent is started (aa.v3.Sessions/prepare), so its model, permission and thinking options sit in the
+// composer before anything is sent (starting with the ones last used with this agent). The conversation is created
+// when the first message is sent (create takes the started agent over, with the options picked here), its attachments
+// are uploaded into it, the message is sent, and the page moves into the conversation.
 import { useRouter, useSearchParams } from "next/navigation"
-import { Suspense, useMemo, useState } from "react"
+import { Suspense, useEffect, useMemo, useState } from "react"
 import {
   BotIcon,
   ChevronDownIcon,
@@ -38,6 +40,7 @@ import { useWorkbenchUi } from "@/components/workbench/workbench-ui"
 import { useWorkbench } from "@/lib/state/workbench-context"
 import { useDevice, useDriveQuota } from "@/lib/workbench/device-info"
 import { rememberStart, useLocalPrefs } from "@/lib/workbench/local-prefs"
+import { changedPicks, usePreparedAgent, withPicks } from "@/lib/workbench/prepared-agent"
 import { agentLabel, deviceProjects, projectName, sessionHref, tildePath } from "@/lib/workbench/tree"
 import { titleFromMessage } from "@/lib/workbench/title"
 
@@ -111,6 +114,36 @@ function NewConversationInner() {
   const loadingAgents = online && !info.status && !info.error
   const ready = Boolean(online && agent && tunnelManager && tunnelDevice)
 
+  // The agent, started as soon as it and the directory are chosen; its options, with the picks made here (and,
+  // for options not touched here, the ones last used with this agent on this device).
+  const { state: prep, retry: retryPrepare } = usePreparedAgent({
+    tunnelManager,
+    device: tunnelDevice,
+    agent,
+    cwd,
+    enabled: ready && !info.error,
+  })
+  const agentKey = deviceId && agent ? `${deviceId}:${agent}` : null
+  const [picked, setPicked] = useState<{ key: string | null; values: Record<string, string> }>({ key: null, values: {} })
+  const ownPicks = useMemo(() => (picked.key === agentKey ? picked.values : {}), [agentKey, picked])
+  const picks = useMemo(
+    () => ({ ...(agentKey ? prefs.configByAgent[agentKey] : undefined), ...ownPicks }),
+    [agentKey, ownPicks, prefs.configByAgent]
+  )
+  const shownConfig = useMemo(
+    () => (prep.status === "ready" ? withPicks(prep.prepared.config, picks) : []),
+    [picks, prep]
+  )
+  // A first start downloads the agent: after a few seconds, say so.
+  const startingKey = prep.status === "starting" ? `${agentKey}|${cwd ?? ""}` : null
+  const [slowKey, setSlowKey] = useState<string | null>(null)
+  useEffect(() => {
+    if (!startingKey) return
+    const timer = window.setTimeout(() => setSlowKey(startingKey), 4000)
+    return () => window.clearTimeout(timer)
+  }, [startingKey])
+  const slowStart = startingKey !== null && slowKey === startingKey
+
   const drop = useDropZone((files) => drafts.add(files), Boolean(ready))
 
   // The conversation exists but its first message did not go: continue there, the text waiting in its composer.
@@ -127,16 +160,30 @@ function NewConversationInner() {
     setStarting(true)
     let created: string | null = null
     try {
-      const config = prefs.configByAgent[`${deviceId}:${agent}`]
+      // Take the started agent over; still starting: wait for it (preparing again joins the start in progress).
+      let prepared = prep.status === "ready" ? prep.prepared : null
+      if (prep.status === "starting") {
+        prepared = await tunnelManager.prepareSession(tunnelDevice, { agent, ...(cwd ? { cwd } : {}) }).catch(() => null)
+      }
+      // With a started agent only what differs from its options is sent; otherwise (a Connector without prepare,
+      // or a start that failed) the options last used, as before.
+      const config = prepared ? changedPicks(prepared.config, withPicks(prepared.config, picks)) : picks
       const title = titleFromMessage(text)
       const session = await tunnelManager.createSession(tunnelDevice, {
         agent,
         ...(title ? { title } : {}),
         ...(cwd ? { cwd } : {}),
-        ...(config && Object.keys(config).length ? { config } : {}),
+        ...(prepared ? { prepared_id: prepared.prepared_id } : {}),
+        ...(Object.keys(config).length ? { config } : {}),
       })
       created = session.id
-      setPrefs((p) => ({ lastStart: rememberStart(p.lastStart, deviceId, agent, cwd) }))
+      setPrefs((p) => ({
+        lastStart: rememberStart(p.lastStart, deviceId, agent, cwd),
+        // What was picked here is remembered for the next conversation with this agent on this device.
+        ...(Object.keys(ownPicks).length
+          ? { configByAgent: { ...p.configByAgent, [`${deviceId}:${agent}`]: { ...p.configByAgent[`${deviceId}:${agent}`], ...ownPicks } } }
+          : {}),
+      }))
       const refs = drafts.items.length ? await drafts.upload(session.id) : []
       if (refs === null) {
         // Its attachments did not all go: open it with the text kept, to add the files again there.
@@ -188,11 +235,23 @@ function NewConversationInner() {
   }
 
   let notice: string | null = null
+  let onRetry: (() => void) | null = null
   if (meshError && !meshConnected) notice = `MeshCall Router: ${meshError}`
   else if (device && !online) notice = t("newConv.offline")
-  else if (info.error) notice = info.error.code === "e2e_not_paired" ? t("devices.unpairedHint") : info.error.message
-  else if (loadingAgents) notice = t("newConv.loadingAgents")
+  else if (info.error) {
+    notice = info.error.code === "e2e_not_paired" ? t("devices.unpairedHint") : info.error.message
+    onRetry = () => void reload()
+  } else if (loadingAgents) notice = t("newConv.loadingAgents")
   else if (online && info.status && runtimes.length === 0) notice = `${t("newConv.noAgents")} — ${t("newConv.noAgentsHint")}`
+  else if (prep.status === "failed") {
+    if (prep.reason === "agent_auth_required") {
+      const methods = prep.authMethods.map((m) => m.name).join("、")
+      notice = t("newConv.agentAuthRequired", { agent: agentName }) + (methods ? ` ${t("newConv.agentAuthMethods", { methods })}` : "")
+    } else if (prep.reason === "invalid_cwd") notice = t("newConv.invalidCwd")
+    else if (prep.reason === "unknown_agent") notice = t("newConv.unknownAgent", { agent: agentName })
+    else notice = t("newConv.agentStartFailed", { agent: agentName, error: prep.message })
+    onRetry = retryPrepare
+  } else if (slowStart) notice = t("newConv.agentStarting", { agent: agentName })
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col overflow-y-auto" {...drop.handlers}>
@@ -293,10 +352,10 @@ function NewConversationInner() {
         </div>
 
         {notice && (
-          <p className="text-center text-xs leading-relaxed text-muted-foreground">
+          <p className="text-center text-sm leading-relaxed text-muted-foreground">
             {notice}
-            {info.error && (
-              <button type="button" onClick={() => void reload()} className="ml-2 font-medium text-foreground underline-offset-4 hover:underline">
+            {onRetry && (
+              <button type="button" onClick={onRetry} className="ml-2 font-medium text-foreground underline-offset-4 hover:underline">
                 {t("wb.retry")}
               </button>
             )}
@@ -305,8 +364,9 @@ function NewConversationInner() {
 
         <Composer
           agent={agentName}
-          config={[]}
-          onConfig={() => undefined}
+          config={shownConfig}
+          configLoading={prep.status === "starting"}
+          onConfig={(id, value) => setPicked({ key: agentKey, values: { ...ownPicks, [id]: value } })}
           disabled={!ready || starting}
           autoFocus
           placeholder={starting ? t("newConv.starting") : t("newConv.placeholder", { agent: agentName })}
