@@ -80,7 +80,7 @@ struct LockView: View {
     }
 }
 
-enum AgentStyle {
+nonisolated enum AgentStyle {
     static func symbol(_ agent: String) -> String {
         switch agent.lowercased() {
         case let name where name.contains("claude"): "sparkle"
@@ -116,7 +116,7 @@ struct AgentIcon: View {
     }
 }
 
-enum DeviceStyle {
+nonisolated enum DeviceStyle {
     static func symbol(_ platform: String) -> String {
         switch platform {
         case "macos": "laptopcomputer"
@@ -142,7 +142,7 @@ struct SessionStateIcon: View {
     }
 }
 
-enum RelativeTime {
+nonisolated enum RelativeTime {
     static func text(_ iso: String) -> String {
         guard let date = ISO8601.parse(iso) else { return "" }
         let formatter = RelativeDateTimeFormatter()

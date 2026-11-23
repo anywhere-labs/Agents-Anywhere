@@ -11,7 +11,8 @@ import Foundation
 /// `AA_DEBUG_DEVICE` (id or part of the name) picks the device; otherwise the first online normal one.
 /// `AA_DEBUG_ROUTE`: `device` (first online device), `terminal` (a new terminal on it), `settings`, `newsheet`
 /// (the new-conversation sheet), `new:<agent>:<message>` (create a conversation, send the message, open it),
-/// `conversation:<device id>:<session id>`.
+/// `conversation:<device id>:<session id>`, `pairsheet` (the pairing sheet), `pair:<aa-pair://v1/…>` (pair with
+/// that encrypted device, then open it).
 enum DebugLaunch {
     @MainActor
     static func run(_ model: AppModel) async {
@@ -28,12 +29,33 @@ enum DebugLaunch {
         }
         guard model.phase == .signedIn, let route = env["AA_DEBUG_ROUTE"], !route.isEmpty else { return }
 
+        // `pair:<aa-pair://v1/…>`: pair with an encrypted device (IKpsk2), then open it.
+        if route.hasPrefix("pair:"), let services = model.services {
+            let uri = String(route.dropFirst("pair:".count))
+            for _ in 0..<40 where model.devices.isEmpty { try? await Task.sleep(for: .milliseconds(500)) }
+            do {
+                let status = try await services.tunnels.pair(uri: uri)
+                model.trustChanged()
+                print("[debug] paired \(status.deviceID) (\(status.deviceName)) mode \(status.mode)")
+                model.selection = .device(status.deviceID)
+            } catch {
+                print("[debug] pairing failed: \(error)")
+            }
+            return
+        }
+        if route == "pairsheet" {
+            model.pairingTarget = PairingTarget(deviceID: nil)
+            return
+        }
+
         // Wait for the live device list.
         var device: DeviceRecord?
         for _ in 0..<60 {
             let wanted = env["AA_DEBUG_DEVICE"]
             device = model.devices.first {
-                $0.isOnline && !$0.isEncryptedHint && (wanted == nil || $0.id == wanted || $0.name.localizedCaseInsensitiveContains(wanted!))
+                guard $0.isOnline else { return false }
+                guard let wanted, !wanted.isEmpty else { return !$0.isEncryptedHint }
+                return $0.id == wanted || $0.name.localizedCaseInsensitiveContains(wanted)
             }
             if device != nil { break }
             try? await Task.sleep(for: .milliseconds(500))
