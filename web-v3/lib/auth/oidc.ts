@@ -4,6 +4,7 @@
 import { fetchMe, normalizeServerUrl } from "@/lib/api/control-http"
 import type { StoredAccountSession } from "@/lib/storage/idb"
 import type { OidcPublicConfig } from "@/lib/types/v3"
+import { SessionExpiredError } from "@/lib/auth/session"
 
 const PENDING_OIDC_KEY = "aa.v3.oidc.pending"
 
@@ -161,6 +162,10 @@ export async function refreshOidcSession(
     expires_in?: number
     error_description?: string
     error?: string
+  }
+  if (json.error === "invalid_grant") {
+    // The provider no longer accepts this refresh token: only signing in again helps.
+    throw new SessionExpiredError(json.error_description ?? undefined)
   }
   if (!res.ok || !json.access_token) {
     throw new Error(json.error_description ?? json.error ?? "OIDC token refresh failed")

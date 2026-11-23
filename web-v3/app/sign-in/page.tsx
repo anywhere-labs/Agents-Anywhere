@@ -6,7 +6,7 @@ import { ArrowRightIcon, RefreshCwIcon, ServerIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { PasswordInput } from "@/components/auth/password-input"
-import { Field } from "@/components/field"
+import { Field, Notice } from "@/components/field"
 import { useI18n } from "@/components/i18n-provider"
 import { LanguageButton } from "@/components/language-menu"
 import { SignInShell, StepHeading } from "@/components/sign-in/sign-in-shell"
@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { fetchAuthConfig, normalizeServerUrl } from "@/lib/api/control-http"
 import { startOidcLogin } from "@/lib/auth/oidc"
+import { SESSION_EXPIRED_FLAG } from "@/lib/auth/session"
 import { APP_CONFIG } from "@/lib/config"
 import { useWorkbench } from "@/lib/state/workbench-context"
 import type { AuthConfigResponse } from "@/lib/types/v3"
@@ -47,6 +48,23 @@ function SignInInner() {
   const [setupToken, setSetupToken] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [showServerInput, setShowServerInput] = useState(false)
+  // Sent back here because the server refused the saved session (lib/state/workbench-context.tsx `expireSession`).
+  const [sessionExpired, setSessionExpired] = useState(false)
+
+  useEffect(() => {
+    let expiredEmail: string | null = null
+    try {
+      expiredEmail = sessionStorage.getItem(SESSION_EXPIRED_FLAG)
+      sessionStorage.removeItem(SESSION_EXPIRED_FLAG)
+    } catch {
+      return
+    }
+    if (expiredEmail === null) return
+    queueMicrotask(() => {
+      setSessionExpired(true)
+      if (expiredEmail) setEmail(expiredEmail)
+    })
+  }, [])
 
   useEffect(() => {
     if (!ready) return
@@ -142,6 +160,7 @@ function SignInInner() {
     >
       <div className="w-full max-w-sm space-y-6">
         <StepHeading title={title} />
+        {sessionExpired && <Notice tone="warning">{t("signIn.sessionExpired")}</Notice>}
         {/* Control plane server switcher (subtle disclosure) */}
         <div className="space-y-2">
           <div className="flex items-center justify-between text-xs text-muted-foreground">

@@ -59,6 +59,7 @@ export const zhCN: Messages = {
   "shell.backToAssistantList": "返回助手对话",
 
   // Sign-in (AA v3 本体仅支持简单账密登录或作为 OAuth/OIDC 客户端接入)
+  "signIn.sessionExpired": "登录已过期，请重新登录。",
   "signIn.title": "登录",
   "signIn.registerTitle": "创建账号",
   "signIn.bootstrapTitle": "初始化工作台",
