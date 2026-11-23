@@ -25,7 +25,6 @@ const KNOWN_AGENTS: Record<string, string> = {
   claude: "Claude Code",
   "claude-code": "Claude Code",
   antigravity: "Antigravity",
-  gemini: "Gemini",
   pi: "Pi",
   dsh: "DSH",
   opencode: "OpenCode",

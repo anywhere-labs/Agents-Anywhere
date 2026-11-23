@@ -1,8 +1,10 @@
 "use client"
 
 // Each agent's own mark, in one colour (currentColor) so it sits with the other icons: Claude Code, Codex and Pi use
-// their published monochrome marks (the same artwork as the README and the iOS app), Gemini CLI its four-point star;
-// any other agent (Antigravity, a configured one) gets its initial in a rounded square.
+// their published monochrome marks (the same artwork as the README and the iOS app), Antigravity the arch from its
+// current app icon (without the tile); any other agent (a configured one) gets its initial in a rounded square.
+// Marks fill their box edge to edge, except Pi's: a square silhouette looks bigger than the round ones at the same
+// size, so it is drawn at 80% (its viewBox has 10% margins).
 import type * as React from "react"
 
 import { cn } from "@/lib/utils"
@@ -18,13 +20,16 @@ const MARKS: Record<string, Mark> = {
     viewBox: "0 0 100 100",
     paths: ["M38.355 36.52v-9.415c0-.793.297-1.388.99-1.784l18.93-10.902c2.578-1.486 5.65-2.18 8.82-2.18 11.894 0 19.426 9.218 19.426 19.029 0 .694 0 1.486-.1 2.28L66.799 22.05c-1.189-.694-2.379-.694-3.568 0L38.355 36.52Zm44.202 36.67V50.694c0-1.388-.596-2.38-1.785-3.073L55.897 33.15l8.126-4.658c.694-.396 1.289-.396 1.982 0l18.93 10.902c5.452 3.172 9.118 9.91 9.118 16.452 0 7.531-4.46 14.47-11.496 17.344Zm-50.05-19.82-8.127-4.757c-.693-.396-.99-.99-.99-1.784V25.025c0-10.605 8.126-18.633 19.127-18.633 4.163 0 8.028 1.388 11.3 3.865l-19.525 11.3c-1.189.693-1.784 1.684-1.784 3.072v28.74ZM50 63.478l-11.645-6.541V43.062L50 36.522l11.645 6.54v13.875L50 63.477Zm7.483 30.129c-4.163 0-8.028-1.388-11.3-3.865l19.525-11.3c1.189-.693 1.784-1.684 1.784-3.071V46.629l8.226 4.757c.694.396.991.991.991 1.784v21.803c0 10.605-8.226 18.633-19.226 18.633v.001Zm-23.49-22.101-18.93-10.902c-5.45-3.172-9.117-9.91-9.117-16.451 0-7.632 4.559-14.47 11.595-17.344v22.596c0 1.388.595 2.379 1.784 3.072l24.777 14.37-8.126 4.659c-.694.396-1.289.396-1.982 0ZM32.905 87.76c-11.2 0-19.425-8.425-19.425-18.83 0-.794.1-1.587.198-2.38L33.2 77.85c1.189.693 2.379.693 3.568 0l24.876-14.37v9.415c0 .793-.298 1.388-.992 1.784L41.724 85.58c-2.576 1.486-5.649 2.18-8.82 2.18h.001Zm24.579 11.793c11.992 0 22.001-8.523 24.281-19.822C92.864 76.857 100 66.451 100 55.846c0-6.937-2.973-13.676-8.325-18.533.496-2.081.793-4.163.793-6.243 0-14.172-11.496-24.777-24.777-24.777-2.676 0-5.253.396-7.83 1.288C55.401 3.221 49.257.445 42.517.445c-11.992 0-22.001 8.523-24.281 19.822C7.136 23.14 0 33.547 0 44.152c0 6.938 2.973 13.676 8.325 18.533-.496 2.081-.793 4.163-.793 6.243 0 14.172 11.497 24.778 24.777 24.778 2.676 0 5.253-.397 7.83-1.289 4.459 4.36 10.604 7.136 17.344 7.136Z"],
   },
-  gemini: {
-    viewBox: "0 0 24 24",
-    paths: ["M12 2C12.4 7.2 16.8 11.6 22 12C16.8 12.4 12.4 16.8 12 22C11.6 16.8 7.2 12.4 2 12C7.2 11.6 11.6 7.2 12 2Z"],
+  antigravity: {
+    viewBox: "0 0 308 308",
+    paths: [
+      "M19.6 294.5C30.7 291.2 52.2 272.5 66 254.1C70.3 248.4 78.7 235.6 84.5 225.6C106 189.2 115.2 177.7 128 171.2C146.4 162 169.4 163.4 185.8 175C195.6 181.9 203 191.2 215.6 212.5C237.9 250.1 242.6 256.7 257.9 272.1C276.6 290.7 289.5 297.8 299.8 295.1C304.8 293.7 307.2 291 307.2 286.7C307.2 281.8 305 278.1 296.4 268.8C281.3 252.2 269.3 231.3 259.2 204C251.8 183.9 247.4 169.5 235.6 127C212.5 43.8 193.9 16.3 158 12.5C139 10.5 119.6 20.9 106.3 40.2C93.4 58.9 86.4 77.9 66.6 147.1C46.6 217.3 35 243 11.2 269.2C0.9 280.5-1.6 285.8 0.6 291.5C2.2 295.6 11.1 297 19.6 294.5Z",
+    ],
   },
+  // One path, so the blocks' shared edges leave no hairline when scaled.
   pi: {
-    viewBox: "0 0 560 560",
-    paths: ["M420 280H280V140H0V0H420V280Z", "M560 560H420V280H560V560Z", "M140 560H0V140H140V280H280V420H140V560Z"],
+    viewBox: "-70 -70 700 700",
+    paths: ["M420 280H280V140H0V0H420V280ZM560 560H420V280H560V560ZM140 560H0V140H140V280H280V420H140V560Z"],
   },
 }
 
@@ -32,7 +37,7 @@ function markFor(agent: string): Mark | undefined {
   const id = agent.toLowerCase()
   if (id.startsWith("claude")) return MARKS.claude
   if (id.startsWith("codex")) return MARKS.codex
-  if (id.startsWith("gemini")) return MARKS.gemini
+  if (id.startsWith("antigravity") || id === "agy") return MARKS.antigravity
   if (id === "pi" || id.startsWith("pi-")) return MARKS.pi
   return undefined
 }

@@ -16,7 +16,7 @@
 账号
 ├── 随身助手（Pi Lite）：对话历史、云端工作区（与设备无关）
 └── 设备（工作电脑，普通 / 加密）
-    ├── Agent（Claude Code、Codex、Antigravity、Pi、Gemini …，按设备上报的 runtimes）
+    ├── Agent（Claude Code、Codex、Antigravity、Pi …，按设备上报的 runtimes）
     │   └── 项目（工作目录 cwd，可选分组）
     │       └── 对话
     ├── 终端

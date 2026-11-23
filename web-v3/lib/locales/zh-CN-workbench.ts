@@ -50,7 +50,7 @@ export const zhCNWorkbench: Record<keyof typeof enWorkbench, string> = {
   "newConv.noDevicesHint": "在运行 Agent 的电脑上安装 Connector（或 Agents Anywhere Desktop）并注册，它就会出现在这里。",
   "newConv.offline": "这台设备离线，需要在线才能开始对话。",
   "newConv.noAgents": "这台设备没有上报可用的 Agent",
-  "newConv.noAgentsHint": "在设备上安装 Agent 命令行（Claude Code、Codex、Gemini、Pi 等），然后重启 Connector。",
+  "newConv.noAgentsHint": "在设备上安装 Agent 命令行（Claude Code、Codex、Antigravity、Pi 等），然后重启 Connector。",
   "newConv.loadingAgents": "正在向设备查询 Agent…",
   "newConv.agentStarting": "正在启动 {agent}…第一次启动要先下载，可能需要一两分钟。",
   "newConv.agentAuthRequired": "{agent} 还没有在这台设备上登录：在设备上运行 {agent} 登录后再试。",

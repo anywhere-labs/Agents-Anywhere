@@ -50,7 +50,7 @@ export const enWorkbench = {
   "newConv.noDevicesHint": "Install the Connector (or Agents Anywhere Desktop) on the computer where your agents run, register it, and it will show up here.",
   "newConv.offline": "This device is offline. Conversations need it online to start.",
   "newConv.noAgents": "This device reports no agents",
-  "newConv.noAgentsHint": "Install an agent CLI (Claude Code, Codex, Gemini, Pi…) on the device and restart its Connector.",
+  "newConv.noAgentsHint": "Install an agent CLI (Claude Code, Codex, Antigravity, Pi…) on the device and restart its Connector.",
   "newConv.loadingAgents": "Asking the device for its agents…",
   "newConv.agentStarting": "Starting {agent}… The first start downloads it, which can take a minute or two.",
   "newConv.agentAuthRequired": "{agent} is not signed in on this device: run {agent} there to sign in, then try again.",
