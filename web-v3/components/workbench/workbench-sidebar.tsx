@@ -68,6 +68,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { AgentIcon } from "@/components/workbench/agent-icon"
 import { isMacPlatform } from "@/components/workbench/shortcuts-dialog"
 import { useWorkbenchUi } from "@/components/workbench/workbench-ui"
 import { OrchesIcon } from "@/components/workbench/orches-icon"
@@ -247,6 +248,7 @@ export function WorkbenchSidebar({ resize }: { resize: SidebarResize }) {
    * A conversation row: one line, like any chat app. Agent and device are in the tooltip; an encrypted device's
    * conversations carry a lock. Running / waiting / unread marks give way to the row's menu on hover.
    */
+  // Every conversation row leads with its agent's icon (the name is in the tooltip).
   const renderRow = (s: SessionSummary, showAge = false) => {
     const href = sessionHref(s.device_id, s.id)
     return (
@@ -256,8 +258,9 @@ export function WorkbenchSidebar({ resize }: { resize: SidebarResize }) {
           render={<Link href={href} onClick={closeOnMobile} />}
           title={`${agentLabel(s.agent)} · ${deviceName(s.device_id)}`}
         >
-          {isEncrypted(s.device_id) && <LockIcon className="size-3.5! text-muted-foreground" />}
+          <AgentIcon agent={s.agent} name={agentLabel(s.agent)} className="text-muted-foreground" />
           <span className="min-w-0 flex-1 truncate">{s.title || t("wb.untitled")}</span>
+          {isEncrypted(s.device_id) && <LockIcon className="size-3! shrink-0 text-muted-foreground" />}
         </SidebarMenuButton>
         {hasIndicator(s) ? (
           <SidebarMenuBadge className="top-1/2! -translate-y-1/2 transition-opacity group-focus-within/menu-item:opacity-0 group-hover/menu-item:opacity-0 group-has-data-popup-open/menu-item:opacity-0">

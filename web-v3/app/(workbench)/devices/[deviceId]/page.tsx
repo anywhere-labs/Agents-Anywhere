@@ -117,16 +117,12 @@ function SessionRow({ s, deviceId, showAgent = true }: { s: SessionSummary; devi
       href={sessionHref(deviceId, s.id)}
       className="flex min-h-10 items-center gap-3 rounded-lg px-2 py-2 transition-colors hover:bg-surface-hover"
     >
-      <span
-        title={state}
-        className={cn(
-          "size-1.5 shrink-0 rounded-full",
-          STATE_DOT[s.state] ?? (s.unread ? "bg-foreground" : "bg-muted-foreground/30")
-        )}
-      />
-      {state && <span className="sr-only">{state}</span>}
+      {showAgent && <AgentIcon agent={s.agent} name={agentLabel(s.agent)} className="text-muted-foreground" />}
       <span className="min-w-0 flex-1 truncate text-sm text-foreground">{s.title || t("wb.untitled")}</span>
-      {showAgent && <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">{agentLabel(s.agent)}</span>}
+      {(STATE_DOT[s.state] || s.unread) && (
+        <span title={state} className={cn("size-1.5 shrink-0 rounded-full", STATE_DOT[s.state] ?? "bg-foreground")} />
+      )}
+      {state && <span className="sr-only">{state}</span>}
       <span className="w-16 shrink-0 text-right text-xs text-muted-foreground tabular-nums">{shortAgo(s.updated_at, locale)}</span>
     </Link>
   )
