@@ -155,6 +155,7 @@ export type LockBadge = "green" | "grey"
 
 export type PairingErrorCode =
   | "invalid_pairing_uri"
+  | "invalid_pairing_code"
   | "pairing_expired"
   | "pairing_used"
   | "e2e_handshake_failed"
