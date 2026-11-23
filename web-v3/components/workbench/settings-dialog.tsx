@@ -33,6 +33,7 @@ import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } fr
 import { Switch } from "@/components/ui/switch"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { fetchAuthConfig, listDriveFiles, listMcpGrants, revokeMcpGrant } from "@/lib/api/control-http"
+import { getControlledModeSupport } from "@/lib/assistant/controlled-mode"
 import type { Locale, MessageKey } from "@/lib/i18n"
 import { formatKeyFingerprint } from "@/lib/mesh/pairing"
 import { useWorkbench } from "@/lib/state/workbench-context"
@@ -194,9 +195,14 @@ function SettingsBody({ section, active, onClose }: { section: SettingsSection; 
     deviceTrusts,
     getFreshAccessToken,
     setAssistantPrimary,
+    updatePreferences,
     removeLocalDeviceTrust,
     resetBrowserVault,
   } = useWorkbench()
+  const experimental = preferences.assistantExperimental
+  const setExperimental = (patch: Partial<typeof experimental>) =>
+    void updatePreferences({ assistantExperimental: { ...experimental, ...patch } })
+  const controlledMode = getControlledModeSupport()
 
   const [oidcIssuer, setOidcIssuer] = useState<string | null>(null)
   const [driveQuota, setDriveQuota] = useState<DriveQuotaView | null>(null)
@@ -317,6 +323,31 @@ function SettingsBody({ section, active, onClose }: { section: SettingsSection; 
             </Row>
             <Row label={t("settings.assistantPrimary")} hint={t("settings.assistantPrimaryDesc")}>
               <Switch checked={preferences.assistantPrimary} onCheckedChange={(checked) => void setAssistantPrimary(Boolean(checked))} />
+            </Row>
+          </Card>
+        </Group>
+      )}
+
+      {/* Orches' experimental features (docs/v3/assistant-and-files-proposal.md §7), all off by default. */}
+      {section === "general" && (
+        <Group title={t("settings.experimentalTitle")} description={t("settings.experimentalDesc")}>
+          <Card>
+            <Row label={t("settings.jsExecution")} hint={t("settings.jsExecutionDesc")}>
+              <Switch checked={experimental.jsExecution} onCheckedChange={(checked) => setExperimental({ jsExecution: Boolean(checked) })} />
+            </Row>
+            <Row
+              label={t("settings.controlledMode")}
+              hint={
+                controlledMode.available
+                  ? t("settings.controlledModeDesc")
+                  : `${t("settings.controlledModeDesc")} ${t("settings.controlledModeUnavailable")}`
+              }
+            >
+              <Switch
+                checked={controlledMode.available && experimental.controlledMode}
+                disabled={!controlledMode.available}
+                onCheckedChange={(checked) => setExperimental({ controlledMode: Boolean(checked) })}
+              />
             </Row>
           </Card>
         </Group>

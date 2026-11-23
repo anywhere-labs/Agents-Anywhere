@@ -14,6 +14,7 @@ import type {
   ClientRouterTokenResponse,
   DeviceMode,
   DevicePlatform,
+  DeviceRouterTokenResponse,
   DriveConflictPolicy,
   DriveEncryptionMode,
   DriveEntriesResponse,
@@ -175,6 +176,17 @@ export function registerDevice(
   return requestJson<RegisterDeviceResponse>(serverUrl, "/devices/register", {
     method: "POST",
     token,
+    body: JSON.stringify(payload),
+  })
+}
+
+/** `POST /devices/router-token`: the device secret itself is the credential (no Bearer). */
+export function issueDeviceRouterToken(
+  serverUrl: string,
+  payload: { device_id: string; device_secret: string }
+): Promise<DeviceRouterTokenResponse> {
+  return requestJson<DeviceRouterTokenResponse>(serverUrl, "/devices/router-token", {
+    method: "POST",
     body: JSON.stringify(payload),
   })
 }

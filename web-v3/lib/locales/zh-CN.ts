@@ -293,6 +293,13 @@ export const zhCN: Messages = {
   "settings.unpairDevice": "取消配对",
   "settings.resetVaultDesc": "生成新的浏览器密钥并清除所有配对，之后要逐台重新配对。",
   "settings.resetVaultAction": "重置",
+  "settings.experimentalTitle": "实验性功能",
+  "settings.experimentalDesc": "默认关闭，之后可能调整或移除，只影响这个浏览器里的 Orches。",
+  "settings.jsExecution": "本地 JavaScript 工具",
+  "settings.jsExecutionDesc": "允许 Orches 运行脚本来处理数据、转换格式或计算。脚本在隔离的 QuickJS 沙箱里运行，不能联网、不能访问页面和本地存储，只能读写 Orches 工作区里的文件，超过 5 秒或 32 MB 会被终止。每次运行都要你确认。",
+  "settings.controlledMode": "被控模式",
+  "settings.controlledModeDesc": "把这个浏览器里的 Orches 临时显示为一台在线设备，你的其他客户端可以查看并继续它的对话。关闭或切走这个标签页后就会离线。",
+  "settings.controlledModeUnavailable": "暂不可用：Web 版 MeshCall 还不能提供服务，这个浏览器无法作为设备上线。",
 
   // Terminal
   "terminal.connecting": "正在连接…",

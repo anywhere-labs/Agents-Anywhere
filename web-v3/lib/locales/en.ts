@@ -292,6 +292,13 @@ export const en = {
   "settings.unpairDevice": "Unpair",
   "settings.resetVaultDesc": "Creates a new key for this browser and removes every pairing; you then pair each device again.",
   "settings.resetVaultAction": "Reset",
+  "settings.experimentalTitle": "Experimental",
+  "settings.experimentalDesc": "Off by default. They may change or go away, and only affect Orches in this browser.",
+  "settings.jsExecution": "Local JavaScript tool",
+  "settings.jsExecutionDesc": "Lets Orches run scripts to process data, convert formats or calculate. Scripts run in an isolated QuickJS sandbox with no network, page or storage access — they can only read and write files in Orches' workspace — and are stopped after 5 seconds or 32 MB. You approve every run.",
+  "settings.controlledMode": "Controlled mode",
+  "settings.controlledModeDesc": "Temporarily lists Orches in this browser as an online device, so your other clients can view and continue its conversations. It goes offline when you close or hide this tab.",
+  "settings.controlledModeUnavailable": "Not available yet: the web MeshCall library cannot serve, so this browser cannot come online as a device.",
 
   // Terminal
   "terminal.connecting": "Connecting…",

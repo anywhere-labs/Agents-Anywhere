@@ -155,3 +155,8 @@ AA v3 在工作设备工作台之外，提供一个**类 Effi 形态的轻量化
 
 - **实验性被控模式**：允许用户在浏览器或客户端设置中手动开启，将本机助手临时向 MeshCall Router 注册为一个在线实例（复用 `aa.v3.Sessions` 契约），供其他端查看或远程交互；关闭页面或手机切后台即离线。
 - **实验性本地 JS 执行**：结合虚拟文件系统提供脚本工具以扩展助手能力（数据处理、格式转换、计算等）。**安全隔离红线**：绝不在与主应用同源的上下文（包括同源 Worker）中直接执行生成代码，必须隔离在 **QuickJS-WASM（Worker 内，零 DOM / 零 IndexedDB / 零直连网络，带内存与超时上限）** 或 **无 `allow-same-origin` 的 `<iframe sandbox="allow-scripts">`** 中，仅通过受控桥访问当前助手工作区 VFS，彻底隔绝存放在主域 IndexedDB 中的登录凭据与设备 E2EE 私钥。
+
+实现现状（T519）：
+
+- 本地 JS 执行已在 `web-v3/lib/assistant/js-sandbox/` 实现，采用 QuickJS-WASM 方案：每次运行新建一个专用 Worker，Worker 只承载解释器，生成代码以字符串交给 QuickJS 解释执行；加载完成后 Worker 还会移除自身的 `fetch`、`indexedDB`、`WebSocket`、`importScripts` 等入口作为纵深防御。路径与大小校验全部在页面侧的工作区桥完成。
+- 被控模式的控制面部分用现有接口即可完成（`POST /devices/register` → `POST /devices/router-token` 拿到可注册 `aa.v3.Sessions` 且绑定 `instance_id = device_id` 的 Router Token → `aa.v3.Control/presence`），但 `meshcall/web` 0.4 只有客户端角色（WebSocket `hello` 固定 `role: "client"`，没有 `mount` / `startServing`、隧道宿主和 Noise 应答方），浏览器无法在 Router 上提供服务。客户端实现放在 `BrowserServiceHost` 接口之后，开关暂时禁用。另外两个缺口：`DevicePlatform` 没有 `web`（暂以 `linux` 注册），也没有随在线状态自动回收的临时设备（每个浏览器会长期占用一个 `max_devices` 名额，直到在其他端删除）。

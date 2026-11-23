@@ -53,6 +53,10 @@ export interface CreatePiLiteOptions {
   vfs?: AssistantVfsManager
   mcpServers?: AssistantMcpServerConfig[]
   confirm: ToolConfirmFn
+  /** Experimental capabilities (Settings › Experimental); all off unless the user turned them on. */
+  experimental?: { jsExecution?: boolean }
+  /** Called after `js_run` wrote files, so the VFS panel can refresh. */
+  onWorkspaceChanged?: () => void
 }
 
 const PROVIDER_ID = "aa-pi-lite"
@@ -231,6 +235,63 @@ function buildVfsTools(vfs: AssistantVfsManager): AgentTool[] {
   ]
 }
 
+export const JS_RUN_TOOL_NAME = "js_run"
+
+/**
+ * Experimental `js_run`: the script is interpreted by QuickJS-WASM in a dedicated, throwaway Worker — never as code of
+ * this origin — and can only reach the workspace through the confined bridge (lib/assistant/js-sandbox/).
+ */
+function buildJsRunTool(vfs: AssistantVfsManager, onWorkspaceChanged?: () => void): AgentTool {
+  return {
+    name: JS_RUN_TOOL_NAME,
+    label: "js_run",
+    description: [
+      "Run a JavaScript (ES2023) snippet in an isolated QuickJS sandbox for data processing, format conversion or",
+      "calculation. The code is the body of an async function: use `return` for the result (must be JSON-serializable)",
+      "and `await` freely. Available globals: `console.log/info/warn/error`, `input` (the optional `input` argument),",
+      "and `vfs` with `await vfs.read(path)` -> string, `await vfs.write(path, text)` -> {path,size},",
+      "`await vfs.list(prefix?)` -> [{path,size}] confined to /workspace (relative paths are under /workspace).",
+      "There is NO network, DOM, timers, modules or storage. Default limits: 5 s, 32 MB memory.",
+    ].join(" "),
+    parameters: {
+      type: "object",
+      properties: {
+        code: { type: "string", description: "JavaScript function body to execute" },
+        input: { description: "Optional JSON value exposed to the script as `input`" },
+        timeout_ms: { type: "number", description: "Optional timeout in milliseconds (max 30000)" },
+      },
+      required: ["code"],
+    } as never,
+    executionMode: "sequential",
+    async execute(_id, params, signal) {
+      const p = (params ?? {}) as { code?: unknown; input?: unknown; timeout_ms?: unknown }
+      if (typeof p.code !== "string" || !p.code.trim()) throw new Error("js_run needs a non-empty `code` string")
+      const { runScriptInSandbox, formatSandboxResult, isSandboxSupported } = await import(
+        "@/lib/assistant/js-sandbox/host"
+      )
+      if (!isSandboxSupported()) throw new Error("This browser cannot run the JS sandbox (Worker/WebAssembly missing)")
+      const outcome = await runScriptInSandbox({
+        code: p.code,
+        input: p.input,
+        limits: typeof p.timeout_ms === "number" ? { timeoutMs: p.timeout_ms } : undefined,
+        workspace: vfs,
+        signal,
+      })
+      if (outcome.written.length) onWorkspaceChanged?.()
+      return {
+        content: [{ type: "text", text: formatSandboxResult(outcome) }],
+        details: {
+          ok: outcome.ok,
+          error: outcome.error,
+          written: outcome.written,
+          durationMs: outcome.durationMs,
+          logs: outcome.logs.length,
+        },
+      }
+    },
+  }
+}
+
 /** Provider tool names: `^[a-zA-Z0-9_-]{1,64}$`, unique within one request. */
 function toolNameSlug(raw: string, fallback: string): string {
   const slug = raw.replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "")
@@ -344,6 +405,10 @@ export async function createPiLiteAgent(options: CreatePiLiteOptions): Promise<{
   const toolInfo = new Map<string, ToolConfirmationInfo>(
     vfsTools.map((t) => [t.name, { name: t.name, source: "vfs" }])
   )
+  if (options.vfs && options.experimental?.jsExecution) {
+    vfsTools.push(buildJsRunTool(options.vfs, options.onWorkspaceChanged))
+    toolInfo.set(JS_RUN_TOOL_NAME, { name: JS_RUN_TOOL_NAME, source: "sandbox" })
+  }
   const usedNames = new Set(vfsTools.map((t) => t.name))
   const mcp = options.mcpServers?.length
     ? await buildMcpTools(options.mcpServers, usedNames)
