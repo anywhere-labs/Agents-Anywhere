@@ -3,7 +3,10 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -80,6 +83,40 @@ def run_merge_case(case: dict[str, Any]) -> None:
         )
 
 
+PAIRING_CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+
+def normalize_pairing_code(value: str) -> str | None:
+    code = re.sub(r"[\s-]", "", value.upper()).replace("O", "0").replace("I", "1").replace("L", "1")
+    if len(code) == 10 and all(c in PAIRING_CODE_ALPHABET for c in code):
+        return code
+    return None
+
+
+def check_pairing_codes(fixture: dict[str, Any]) -> int:
+    kdf = fixture["kdf"]
+    for case in fixture["valid"]:
+        code = normalize_pairing_code(case["input"])
+        if code != case["code"]:
+            raise AssertionError(f"pairing code {case['input']!r} normalizes to {code!r}, want {case['code']!r}")
+        key = hashlib.pbkdf2_hmac(
+            "sha256", code.encode(), (kdf["salt_prefix"] + case["instance_id"]).encode(), kdf["iterations"], kdf["length"]
+        )
+        psk = base64.urlsafe_b64encode(key).rstrip(b"=").decode()
+        if psk != case["psk"]:
+            raise AssertionError(f"pairing code {case['input']!r}: psk {psk}, want {case['psk']}")
+    for value in fixture["invalid"]:
+        if normalize_pairing_code(value) is not None:
+            raise AssertionError(f"{value!r} must not be accepted as a pairing code")
+    for case in fixture["fingerprints"]:
+        raw = base64.urlsafe_b64decode(case["public_key"] + "=" * (-len(case["public_key"]) % 4))
+        hexed = hashlib.sha256(raw).digest()[:16].hex().upper()
+        got = " ".join(hexed[i : i + 4] for i in range(0, 32, 4))
+        if got != case["fingerprint"]:
+            raise AssertionError(f"fingerprint {got}, want {case['fingerprint']}")
+    return len(fixture["valid"]) + len(fixture["invalid"]) + len(fixture["fingerprints"])
+
+
 def main() -> int:
     manifest = json.loads((ROOT / "manifest.json").read_text(encoding="utf-8"))
     for rel in [*manifest["schemas"], *manifest["fixtures"]]:
@@ -94,9 +131,13 @@ def main() -> int:
     for case in fixtures["cases"]:
         run_merge_case(case)
 
+    pairing_vectors = check_pairing_codes(
+        json.loads((ROOT / "fixtures/pairing-code.json").read_text(encoding="utf-8"))
+    )
+
     print(
         f"contracts/aa-v3/1.0 OK: {len(manifest['schemas'])} schemas, "
-        f"{len(fixtures['cases'])} merge fixture cases verified."
+        f"{len(fixtures['cases'])} merge fixture cases, {pairing_vectors} pairing code vectors verified."
     )
     return 0
 

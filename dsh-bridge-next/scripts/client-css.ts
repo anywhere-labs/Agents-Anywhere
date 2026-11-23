@@ -32,16 +32,23 @@ export function clientCss(packageId: string, root: string): TsdownPlugin {
       }
       const classes = Object.fromEntries(Object.entries(result.exports ?? {}).map(([key, value]) => [key, value.name]))
       const tagId = `${packageId}/${filename}`
-      // Harness owns these tags and removes them before rematerializing a
-      // client factory during HMR. No global theme or standalone stylesheet.
+      // DSH 0.2.2 and earlier remove these tags before rematerializing a client
+      // factory; 0.2.3 leaves them in place, so a replaced factory (HMR or a
+      // plugin update) rewrites its tag instead of keeping the old text. DSH
+      // 0.2.3's meta.stylesheets is not used: earlier versions ignore it and
+      // would load no styles. No global theme or standalone stylesheet.
       return [
         `const tagId = ${JSON.stringify(tagId)};`,
-        `if (typeof document !== 'undefined' && document.querySelector('style[data-plugin-css=' + JSON.stringify(tagId) + ']') === null) {`,
-        `  const style = document.createElement('style');`,
-        `  style.dataset.plugin = ${JSON.stringify(packageId)};`,
-        `  style.dataset.pluginCss = tagId;`,
-        `  style.textContent = ${JSON.stringify(css)};`,
-        `  document.head.appendChild(style);`,
+        `const css = ${JSON.stringify(css)};`,
+        `if (typeof document !== 'undefined') {`,
+        `  let style = document.querySelector('style[data-plugin-css=' + JSON.stringify(tagId) + ']');`,
+        `  if (style === null) {`,
+        `    style = document.createElement('style');`,
+        `    style.dataset.plugin = ${JSON.stringify(packageId)};`,
+        `    style.dataset.pluginCss = tagId;`,
+        `    style.textContent = css;`,
+        `    document.head.appendChild(style);`,
+        `  } else if (style.textContent !== css) style.textContent = css;`,
         `}`,
         `export default ${JSON.stringify(classes)};`,
       ].join('\n')

@@ -1,0 +1,1038 @@
+{
+ "name": "terminal",
+ "description": "A real aa.v3.Terminals/attach stream (zsh: ls, colours, CJK, cat), recorded 2026-11-22; replayed with another device in control.",
+ "steps": [
+  {
+   "at": 0,
+   "message": {
+    "v": 2,
+    "type": "view.terminal",
+    "device_id": "dev_demo",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "controller_label": "iPhone",
+    "attach_mode": "view",
+    "term_mode": "pty",
+    "owner": "user",
+    "cols": 48,
+    "rows": 20
+   }
+  },
+  {
+   "at": 103,
+   "message": {
+    "v": 2,
+    "type": "term.snapshot",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "",
+    "seq": 0,
+    "cols": 48,
+    "rows": 20
+   }
+  },
+  {
+   "at": 103,
+   "message": {
+    "v": 2,
+    "type": "term.control",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "controller": {
+     "client_id": "user:usr_dev/client:desktop",
+     "label": "MacBook",
+     "connected": true,
+     "since": "2026-11-22T16:49:47.076Z"
+    },
+    "generation": 1,
+    "you": false,
+    "cols": 48,
+    "rows": 20
+   }
+  },
+  {
+   "at": 595,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "G1sxbRtbN20lG1syN20bWzFtG1swbSAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgDSAN",
+    "seq": 1
+   }
+  },
+  {
+   "at": 596,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "G10yO2RldkBkZXYtbGFwdG9wOi9Vc2Vycy9kZXYvZGVtbwc=",
+    "seq": 2
+   }
+  },
+  {
+   "at": 596,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "G10xOy4uaXh0dXJlLVNUbFA1Ugc=",
+    "seq": 3
+   }
+  },
+  {
+   "at": 598,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "G103O2ZpbGU6Ly9kZXYtbGFwdG9wL1VzZXJzL2Rldi9kZW1vG1w=",
+    "seq": 4
+   }
+  },
+  {
+   "at": 599,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "DRtbMG0bWzI3bRtbMjRtG1tKG1swMTszMm3inpwgIBtbMzZtZGVtbxtbMDBtIBtbSw==",
+    "seq": 5
+   }
+  },
+  {
+   "at": 599,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "G1s/MWgbPRtbPzIwMDRo",
+    "seq": 6
+   }
+  },
+  {
+   "at": 1309,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "bA==",
+    "seq": 7
+   }
+  },
+  {
+   "at": 1309,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "CGxzIA==",
+    "seq": 8
+   }
+  },
+  {
+   "at": 1309,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "LWw=",
+    "seq": 9
+   }
+  },
+  {
+   "at": 1310,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "YRtbPzFsGz4bWz8yMDA0bA0NCg==",
+    "seq": 10
+   }
+  },
+  {
+   "at": 1310,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "G10yO2xzIC1HIC1sYQcbXTE7bHMH",
+    "seq": 11
+   }
+  },
+  {
+   "at": 1317,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "dG90YWwgMTYNCg==",
+    "seq": 12
+   }
+  },
+  {
+   "at": 1317,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "ZHJ3eC0tLS0tLUAgICA0IGRldiAgc3RhZmYgICAgMTI4IE5vdiAyMyAwMDo0OSAbWzFtG1szNm0uG1szOTs0OW0bWzBtDQpkcnd4LS0tLS0tQCA3NjQgZGV2ICBzdGFmZiAgMjQ0NDggTm92IDIzIDAwOjQ5IBtbMW0bWzM2bS4uG1szOTs0OW0bWzBtDQotcnctci0tci0tQCAgIDEgZGV2ICBzdGFmZiAgICAgODYgTm92IDIzIDAwOjQ5IFJFQURNRS5tZA0KLXJ3LXItLXItLUAgICAxIGRldiAgc3RhZmYgICAgIDYxIE5vdiAyMyAwMDo0OSBtYXRoLnRzDQo=",
+    "seq": 13
+   }
+  },
+  {
+   "at": 1317,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "G1sxbRtbN20lG1syN20bWzFtG1swbSAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgDSAN",
+    "seq": 14
+   }
+  },
+  {
+   "at": 1319,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "G10yO2RldkBkZXYtbGFwdG9wOi9Vc2Vycy9kZXYvZGVtbwc=",
+    "seq": 15
+   }
+  },
+  {
+   "at": 1319,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "G10xOy4uaXh0dXJlLVNUbFA1Ugc=",
+    "seq": 16
+   }
+  },
+  {
+   "at": 1322,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "G103O2ZpbGU6Ly9kZXYtbGFwdG9wL1VzZXJzL2Rldi9kZW1vG1w=",
+    "seq": 17
+   }
+  },
+  {
+   "at": 1323,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "DRtbMG0bWzI3bRtbMjRtG1tKG1swMTszMm3inpwgIBtbMzZtZGVtbxtbMDBtIBtbSw==",
+    "seq": 18
+   }
+  },
+  {
+   "at": 1324,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "G1s/MWgbPRtbPzIwMDRo",
+    "seq": 19
+   }
+  },
+  {
+   "at": 2007,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "cA==",
+    "seq": 20
+   }
+  },
+  {
+   "at": 2007,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "CHByaW50",
+    "seq": 21
+   }
+  },
+  {
+   "at": 2008,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "Zg==",
+    "seq": 22
+   }
+  },
+  {
+   "at": 2008,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "IA==",
+    "seq": 23
+   }
+  },
+  {
+   "at": 2008,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "Jw==",
+    "seq": 24
+   }
+  },
+  {
+   "at": 2009,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "XA==",
+    "seq": 25
+   }
+  },
+  {
+   "at": 2009,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "MDM=",
+    "seq": 26
+   }
+  },
+  {
+   "at": 2009,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "Mw==",
+    "seq": 27
+   }
+  },
+  {
+   "at": 2010,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "Ww==",
+    "seq": 28
+   }
+  },
+  {
+   "at": 2010,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "MQ==",
+    "seq": 29
+   }
+  },
+  {
+   "at": 2010,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "Ow==",
+    "seq": 30
+   }
+  },
+  {
+   "at": 2010,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "Mw==",
+    "seq": 31
+   }
+  },
+  {
+   "at": 2010,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "Mg==",
+    "seq": 32
+   }
+  },
+  {
+   "at": 2011,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "bQ==",
+    "seq": 33
+   }
+  },
+  {
+   "at": 2011,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "Zw==",
+    "seq": 34
+   }
+  },
+  {
+   "at": 2011,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "cg==",
+    "seq": 35
+   }
+  },
+  {
+   "at": 2011,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "ZSANG1tL",
+    "seq": 36
+   }
+  },
+  {
+   "at": 2011,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "ZQ==",
+    "seq": 37
+   }
+  },
+  {
+   "at": 2011,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "DWVu",
+    "seq": 38
+   }
+  },
+  {
+   "at": 2012,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "XA==",
+    "seq": 39
+   }
+  },
+  {
+   "at": 2012,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "MA==",
+    "seq": 40
+   }
+  },
+  {
+   "at": 2012,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "Mw==",
+    "seq": 41
+   }
+  },
+  {
+   "at": 2013,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "M1s=",
+    "seq": 42
+   }
+  },
+  {
+   "at": 2013,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "MA==",
+    "seq": 43
+   }
+  },
+  {
+   "at": 2013,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "bSA=",
+    "seq": 44
+   }
+  },
+  {
+   "at": 2013,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "XA==",
+    "seq": 45
+   }
+  },
+  {
+   "at": 2013,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "MDM=",
+    "seq": 46
+   }
+  },
+  {
+   "at": 2013,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "Mw==",
+    "seq": 47
+   }
+  },
+  {
+   "at": 2013,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "Ww==",
+    "seq": 48
+   }
+  },
+  {
+   "at": 2013,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "MQ==",
+    "seq": 49
+   }
+  },
+  {
+   "at": 2013,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "Ow==",
+    "seq": 50
+   }
+  },
+  {
+   "at": 2013,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "Mw==",
+    "seq": 51
+   }
+  },
+  {
+   "at": 2013,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "NA==",
+    "seq": 52
+   }
+  },
+  {
+   "at": 2013,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "bQ==",
+    "seq": 53
+   }
+  },
+  {
+   "at": 2013,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "Yg==",
+    "seq": 54
+   }
+  },
+  {
+   "at": 2013,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "bA==",
+    "seq": 55
+   }
+  },
+  {
+   "at": 2013,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "dWU=",
+    "seq": 56
+   }
+  },
+  {
+   "at": 2014,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "XA==",
+    "seq": 57
+   }
+  },
+  {
+   "at": 2014,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "MA==",
+    "seq": 58
+   }
+  },
+  {
+   "at": 2014,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "Mw==",
+    "seq": 59
+   }
+  },
+  {
+   "at": 2014,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "Mw==",
+    "seq": 60
+   }
+  },
+  {
+   "at": 2014,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "Ww==",
+    "seq": 61
+   }
+  },
+  {
+   "at": 2014,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "MA==",
+    "seq": 62
+   }
+  },
+  {
+   "at": 2014,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "bSA=",
+    "seq": 63
+   }
+  },
+  {
+   "at": 2014,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "XA==",
+    "seq": 64
+   }
+  },
+  {
+   "at": 2014,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "eA==",
+    "seq": 65
+   }
+  },
+  {
+   "at": 2014,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "ZTRceGI4XHg=",
+    "seq": 66
+   }
+  },
+  {
+   "at": 2014,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "YWQ=",
+    "seq": 67
+   }
+  },
+  {
+   "at": 2014,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "XA==",
+    "seq": 68
+   }
+  },
+  {
+   "at": 2014,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "eA==",
+    "seq": 69
+   }
+  },
+  {
+   "at": 2014,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "ZTYgDRtbS1wNXHg5Nlw=",
+    "seq": 70
+   }
+  },
+  {
+   "at": 2015,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "eDg3XG4n",
+    "seq": 71
+   }
+  },
+  {
+   "at": 2015,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "G1s/MWwbPhtbPzIwMDRsDQ0K",
+    "seq": 72
+   }
+  },
+  {
+   "at": 2015,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "G10yO3ByaW50ZiAHG10xO3ByaW50Zgc=",
+    "seq": 73
+   }
+  },
+  {
+   "at": 2015,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "G1sxOzMybWdyZWVuG1swbSAbWzE7MzRtYmx1ZRtbMG0g5Lit5paHDQobWzFtG1s3bSUbWzI3bRtbMW0bWzBtICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICANIA0=",
+    "seq": 74
+   }
+  },
+  {
+   "at": 2016,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "G10yO2RldkBkZXYtbGFwdG9wOi9Vc2Vycy9kZXYvZGVtbwc=",
+    "seq": 75
+   }
+  },
+  {
+   "at": 2017,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "G10xOy4uaXh0dXJlLVNUbFA1Ugc=",
+    "seq": 76
+   }
+  },
+  {
+   "at": 2019,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "G103O2ZpbGU6Ly9kZXYtbGFwdG9wL1VzZXJzL2Rldi9kZW1vG1w=",
+    "seq": 77
+   }
+  },
+  {
+   "at": 2020,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "DRtbMG0bWzI3bRtbMjRtG1tKG1swMTszMm3inpwgIBtbMzZtZGVtbxtbMDBtIBtbSw==",
+    "seq": 78
+   }
+  },
+  {
+   "at": 2021,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "G1s/MWgbPRtbPzIwMDRo",
+    "seq": 79
+   }
+  },
+  {
+   "at": 2708,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "Yw==",
+    "seq": 80
+   }
+  },
+  {
+   "at": 2708,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "CGNh",
+    "seq": 81
+   }
+  },
+  {
+   "at": 2709,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "dCA=",
+    "seq": 82
+   }
+  },
+  {
+   "at": 2709,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "Ug==",
+    "seq": 83
+   }
+  },
+  {
+   "at": 2709,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "RQ==",
+    "seq": 84
+   }
+  },
+  {
+   "at": 2709,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "QUQ=",
+    "seq": 85
+   }
+  },
+  {
+   "at": 2710,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "TQ==",
+    "seq": 86
+   }
+  },
+  {
+   "at": 2710,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "RQ==",
+    "seq": 87
+   }
+  },
+  {
+   "at": 2710,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "Lm0=",
+    "seq": 88
+   }
+  },
+  {
+   "at": 2710,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "ZA==",
+    "seq": 89
+   }
+  },
+  {
+   "at": 2710,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "G1s/MWwbPg==",
+    "seq": 90
+   }
+  },
+  {
+   "at": 2710,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "G1s/MjAwNGwNDQo=",
+    "seq": 91
+   }
+  },
+  {
+   "at": 2712,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "G10yO2NhdCBSRUFETUUubWQHG10xO2NhdAc=",
+    "seq": 92
+   }
+  },
+  {
+   "at": 2716,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "IyBEZW1vDQoNCkEgdGlueSBwcm9qZWN0IHVzZWQgdG8gcmVjb3JkIHJlbmRlcmVyIGZpeHR1cmVzLg0KDQotIGFkZChhLCBiKSByZXR1cm5zIHRoZSBzdW0NCg==",
+    "seq": 93
+   }
+  },
+  {
+   "at": 2716,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "G1sxbRtbN20lG1syN20bWzFtG1swbSAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgDSAN",
+    "seq": 94
+   }
+  },
+  {
+   "at": 2717,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "G10yO2RldkBkZXYtbGFwdG9wOi9Vc2Vycy9kZXYvZGVtbwcbXTE7Li5peHR1cmUtU1RsUDVSBw==",
+    "seq": 95
+   }
+  },
+  {
+   "at": 2721,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "G103O2ZpbGU6Ly9kZXYtbGFwdG9wL1VzZXJzL2Rldi9kZW1vG1w=",
+    "seq": 96
+   }
+  },
+  {
+   "at": 2722,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "DRtbMG0bWzI3bRtbMjRtG1tKG1swMTszMm3inpwgIBtbMzZtZGVtbxtbMDBtIBtbSw==",
+    "seq": 97
+   }
+  },
+  {
+   "at": 2722,
+   "message": {
+    "v": 2,
+    "type": "term.output",
+    "terminal_id": "term_C5Op7Zgh-g_6",
+    "data": "G1s/MWgbPRtbPzIwMDRo",
+    "seq": 98
+   }
+  }
+ ],
+ "responders": {
+  "older": {
+   "messages": [],
+   "page_size": 0
+  },
+  "files": {}
+ }
+}
