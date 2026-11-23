@@ -69,6 +69,9 @@ export interface ConnectorHostOptions {
   presets?: AcpRuntimePreset[];
   /** Add the built-in agent presets that are installed here (see `defaultAcpPresets`). Default true. */
   includeDefaultPresets?: boolean;
+  /** `Sessions/prepare`: how long an unused prepared agent waits (default 10 min) and how many are kept (default 4). */
+  preparedTtlMs?: number;
+  maxPrepared?: number;
   connectorVersion?: string;
   presenceIntervalMs?: number;
   /** `send({ wait: true })` cap. */
@@ -246,6 +249,8 @@ export class ConnectorHost {
       store,
       presets: this.options.presets ?? [],
       includeDefaultPresets: this.options.includeDefaultPresets ?? true,
+      ...(this.options.preparedTtlMs !== undefined ? { preparedTtlMs: this.options.preparedTtlMs } : {}),
+      ...(this.options.maxPrepared !== undefined ? { maxPrepared: this.options.maxPrepared } : {}),
       maxFileBytes: () => this.#settings?.max_rpc_file_bytes ?? settings.max_rpc_file_bytes,
       onPushEvent: (event) => this.#onPush(event),
       clientInfo: { name: "agents-anywhere-connector", version: this.connectorVersion },

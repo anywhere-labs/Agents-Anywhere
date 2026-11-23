@@ -11,6 +11,10 @@
  * So most requests accept both spellings (`id` or `session_id`, `content` or `text`, …). Optional fields accept
  * `null`, which is how the Python control plane sends an absent value.
  *
+ * New conversations: `prepare({ agent, cwd? })` starts the agent as soon as the user picks it and reports its
+ * settings (model, mode, …) in the shape of `Session.config`, so they can be chosen before the first message;
+ * `create({ …, prepared_id })` takes that agent over instead of starting another.
+ *
  * Turns: an idle session starts a turn at once; a busy one queues the message (`control.queued`) and starts it when
  * the turn ends. `delivery: "steer"` (and `steer_queued`) interrupts the running turn and sends the message next:
  * ACP has no native mid-turn steering.
@@ -26,10 +30,12 @@ import type { AcpContentBlock } from "../core/acp-protocol.js";
 import type { DeviceGate, GateDecision } from "../core/gate.js";
 import { SessionStoreError, type SessionStore } from "../core/session-store.js";
 import {
+  ConfigOptionSchema,
   MessageSchema,
   SessionListEventSchema,
   SessionListSchema,
   SessionSchema,
+  TimelineInstantSchema,
   WatchEventSchema,
   type FilePart,
   type ImagePart,
@@ -70,6 +76,23 @@ const CreateRequestSchema = z.object({
   cwd: z.string().min(1).nullish(),
   /** `config_id → value`, applied once the agent reports its options. */
   config: z.record(z.string(), z.string()).nullish(),
+  /** `prepare`'s id: take that agent over when it was prepared for this agent and folder and has not expired; else start one. */
+  prepared_id: z.string().min(1).max(128).nullish(),
+});
+
+const PrepareRequestSchema = z.object({
+  agent: z.string().min(1).max(64),
+  cwd: z.string().min(1).nullish(),
+});
+const PrepareResponseSchema = z.object({
+  prepared_id: z.string(),
+  agent: z.string(),
+  /** Resolved, as `create` would store it. */
+  cwd: z.string(),
+  /** Same shape as `Session.config`. */
+  config: z.array(ConfigOptionSchema),
+  /** Closed after this unless `create` takes it over or `prepare` is called again. */
+  expires_at: TimelineInstantSchema,
 });
 
 const RenameRequestSchema = z.object({ id: z.string().min(1), title: z.string().max(256) });
@@ -206,22 +229,35 @@ export class SessionsService {
 
   // ── Lifecycle ──
 
+  @method({
+    description:
+      "Start an agent ahead of a new conversation and report its settings (model, mode, …) so they can be picked before the first message; pass prepared_id to create. Again for the same agent and folder: the same agent, kept longer.",
+    idempotent: true,
+    request: PrepareRequestSchema,
+    response: PrepareResponseSchema,
+  })
+  async prepare(request: z.output<typeof PrepareRequestSchema>, ctx: RpcContext) {
+    this.#gate.assertBusinessCallAllowed(ctx);
+    const cwd = await this.#agentFolder(request.agent, request.cwd);
+    const prepared = await this.#runtimes.prepare({ agent: request.agent, cwd });
+    return {
+      prepared_id: prepared.id,
+      agent: prepared.agent,
+      cwd: prepared.cwd,
+      config: prepared.config,
+      expires_at: new Date(prepared.expiresAt).toISOString(),
+    };
+  }
+
   @method({ description: "Start a conversation with an agent runtime of this device.", idempotent: false, request: CreateRequestSchema, response: SessionSchema })
   async create(request: z.output<typeof CreateRequestSchema>, ctx: RpcContext) {
     this.#gate.assertBusinessCallAllowed(ctx);
     const runtimes = this.#runtimes;
-    if (!runtimes.has(request.agent)) {
-      throw new InvalidArgumentError(`no agent runtime "${request.agent}" on this device (have: ${runtimes.list().map((r) => r.id).join(", ") || "none"})`, {
-        details: { reason: "unknown_agent" },
-      });
-    }
-    const cwd = await rpcGuard(() => resolveUserPath(request.cwd ?? "~"));
-    const info = await stat(cwd).catch(() => undefined);
-    if (!info?.isDirectory()) throw new InvalidArgumentError(`${cwd} is not a directory on this device`, { details: { reason: "invalid_cwd" } });
+    const cwd = await this.#agentFolder(request.agent, request.cwd);
 
     const session = this.#store.create({ agent: request.agent, title: request.title ?? "", cwd, steer: "interrupt" });
     try {
-      await runtimes.ensureSession(session.id);
+      await runtimes.ensureSession(session.id, { preparedId: request.prepared_id ?? undefined });
     } catch (error) {
       this.#store.delete(session.id);
       throw error;
@@ -570,6 +606,20 @@ export class SessionsService {
       if (message?.role === "user" && message.client_msg_id === clientMsgId) return message;
     }
     return undefined;
+  }
+
+  /** `create` / `prepare`: the agent must be one of this device's, and `cwd` (default home) a directory here. */
+  async #agentFolder(agent: string, requested: string | null | undefined): Promise<string> {
+    const runtimes = this.#runtimes;
+    if (!runtimes.has(agent)) {
+      throw new InvalidArgumentError(`no agent runtime "${agent}" on this device (have: ${runtimes.list().map((r) => r.id).join(", ") || "none"})`, {
+        details: { reason: "unknown_agent" },
+      });
+    }
+    const cwd = await rpcGuard(() => resolveUserPath(requested ?? "~"));
+    const info = await stat(cwd).catch(() => undefined);
+    if (!info?.isDirectory()) throw new InvalidArgumentError(`${cwd} is not a directory on this device`, { details: { reason: "invalid_cwd" } });
+    return cwd;
   }
 
   /** Who sent this, for `author` / `answered.by`: other clients see an MCP origin as `mcp:<client>`. */
