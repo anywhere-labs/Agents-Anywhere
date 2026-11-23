@@ -8,6 +8,7 @@ import type {
   PairingPayload,
   TrustTier,
 } from "@/lib/types/v3"
+import { clientTrustTier } from "@/lib/platform/desktop"
 
 const PAIR_URI_PREFIX = "aa-pair://v1/"
 const BASE64URL_32_RE = /^[A-Za-z0-9_-]{43}$/
@@ -155,7 +156,7 @@ export function buildWebTrustRecord(
     device_id: payload.instance_id,
     device_pub: payload.device_pub,
     require_e2ee: true,
-    trust_tier: "web_browser",
+    trust_tier: clientTrustTier(),
     paired_at: new Date().toISOString(),
     ...(deviceNameHint ? { device_name_hint: deviceNameHint } : {}),
   }
