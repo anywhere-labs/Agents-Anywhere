@@ -26,6 +26,9 @@ dependencies = [
 dev = [
     "aiosqlite>=0.21.0",
     "fakeredis[lua]>=2.30.0",
+    # fakeredis 2.40.0 crashes on redis 8.2.0 (FakeRedis() raises AttributeError: __closure__);
+    # drop this cap once a fakeredis release supports redis 8.2.
+    "redis<8.2",
     "jsonschema>=4.23.0",
     "psycopg[binary]>=3.2",
     "pytest>=8.3.0",
