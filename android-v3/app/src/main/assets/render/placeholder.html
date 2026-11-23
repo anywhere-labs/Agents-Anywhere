@@ -1,0 +1,242 @@
+<!doctype html>
+<!--
+  Placeholder renderer for the AA v3 Android app (aa.render/2, docs/v3/mobile-bridge.md).
+  Used only when the web-v3 render bundle (web-v3/embed/dist/aa-render.html) was not built into the APK.
+  It speaks the same bridge (ready handshake, batch, theme insets, conversation events, terminal frames,
+  scroll_state) and draws plain text: no Markdown, tool details or approvals cards (the native dock answers those).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>AA render (placeholder)</title>
+<style>
+  :root { --bg: #fff; --fg: #000; --fg2: rgba(60,60,67,.72); --fg3: rgba(60,60,67,.5); --bubble: #f2f2f7; --tool: rgba(118,118,128,.12);
+          --accent: #007aff; --term-bg: #fff; --term-fg: #1c1c1e; --top: 0px; --bottom: 0px; --scale: 1; }
+  :root.dark { --bg: #000; --fg: #fff; --fg2: rgba(235,235,245,.72); --fg3: rgba(235,235,245,.5); --bubble: #1c1c1e; --tool: rgba(118,118,128,.24);
+               --accent: #0a84ff; --term-bg: #000; --term-fg: #e5e5ea; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); -webkit-text-size-adjust: none; }
+  body { font: calc(17px * var(--scale))/1.4 -apple-system, system-ui, "Roboto", sans-serif; overflow-wrap: anywhere; }
+  #conv { padding: calc(var(--top) + 8px) 16px calc(var(--bottom) + 12px); max-width: 780px; margin: 0 auto; box-sizing: border-box; min-height: 100vh; }
+  .msg { margin: 10px 0; white-space: pre-wrap; }
+  .user { margin-left: 15%; text-align: left; background: var(--bubble); border-radius: 20px; padding: 10px 14px; width: fit-content; max-width: 85%; margin-left: auto; }
+  .assistant { padding: 0 2px; }
+  .thinking { color: var(--fg2); font-size: .88em; font-style: italic; }
+  .tool { font: calc(13px * var(--scale))/1.35 ui-monospace, "Roboto Mono", monospace; color: var(--fg2); background: var(--tool); border-radius: 10px; padding: 6px 10px; }
+  .file { color: var(--fg2); font-size: .88em; }
+  .meta { color: var(--fg3); font-size: .8em; text-align: center; margin: 14px 0; }
+  .stale { color: var(--fg3); font-size: .8em; text-align: center; margin: 8px 0 14px; }
+  a { color: var(--accent); }
+  #older { display: none; text-align: center; color: var(--accent); font-size: .88em; padding: 8px; }
+  #term { display: none; position: fixed; inset: 0; background: var(--term-bg); color: var(--term-fg);
+          padding: calc(var(--top) + 6px) 8px calc(var(--bottom) + 6px); box-sizing: border-box; overflow-y: auto; }
+  #term pre { margin: 0; font: 13px/1.3 ui-monospace, "Roboto Mono", monospace; white-space: pre-wrap; word-break: break-all; }
+  #term textarea { position: fixed; left: 0; bottom: 0; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0; }
+  .placeholder-note { color: var(--fg3); font-size: .75em; text-align: center; margin: 4px 0 12px; }
+</style>
+</head>
+<body>
+<div id="conv"><div id="older">Load earlier messages</div><div id="list"></div></div>
+<div id="term"><pre id="screen"></pre><textarea id="keys" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"></textarea></div>
+<script>
+(function () {
+  "use strict";
+  var host = {
+    post: function (obj) {
+      obj.v = 2;
+      var s = JSON.stringify(obj);
+      if (window.AndroidAA && window.AndroidAA.postMessage) window.AndroidAA.postMessage(s);
+      else if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.aa) window.webkit.messageHandlers.aa.postMessage(obj);
+      else if (window.parent !== window) window.parent.postMessage(obj, "*");
+    }
+  };
+  var conv = document.getElementById("conv"), list = document.getElementById("list"), older = document.getElementById("older");
+  var term = document.getElementById("term"), screen = document.getElementById("screen"), keys = document.getElementById("keys");
+  var state = { view: null, sessionId: null, messages: {}, hasMore: false, terminalId: null };
+  var decoder = null;
+
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+  function linkify(s) { return esc(s).replace(/https?:\/\/[^\s<]+/g, function (u) { return '<a href="' + u + '">' + u + "</a>"; }); }
+
+  function partHtml(part) {
+    switch (part && part.type) {
+      case "text": return linkify(part.text || "");
+      case "thinking": return '<div class="thinking">' + esc(part.text || "") + "</div>";
+      case "tool": return '<div class="tool">' + esc((part.title || part.kind || "tool") + " · " + (part.status || "")) + "</div>";
+      case "plan": return '<div class="tool">' + (part.entries || []).map(function (e) { return (e.status === "completed" ? "☑ " : "☐ ") + esc(e.content); }).join("<br>") + "</div>";
+      case "subagent": return '<div class="tool">' + esc("Subagent: " + (part.title || "") + " · " + (part.status || "")) + "</div>";
+      case "compaction": return '<div class="meta">Context compacted</div>';
+      case "image": case "file": return '<div class="file">📎 ' + esc(part.name || part.path) + "</div>";
+      default: return "";
+    }
+  }
+
+  function render(stick) {
+    var atBottom = stick !== false && isAtBottom();
+    var items = Object.keys(state.messages).map(function (k) { return state.messages[k]; });
+    items.sort(function (a, b) { return (a.seq || 0) - (b.seq || 0); });
+    var html = "";
+    for (var i = 0; i < items.length; i++) {
+      var m = items[i];
+      var body = (m.parts || []).map(partHtml).join("");
+      if (!body) continue;
+      html += '<div class="msg ' + (m.role === "user" ? "user" : "assistant") + '">' + body + "</div>";
+    }
+    if (state.stale) html = '<div class="stale">Offline: showing the last saved copy</div>' + html;
+    if (!items.length) html += '<div class="meta">No messages yet</div>';
+    html += '<div class="placeholder-note">Placeholder renderer (web-v3 render bundle not built into this APK)</div>';
+    list.innerHTML = html;
+    older.style.display = state.hasMore ? "block" : "none";
+    if (atBottom) scrollBottom();
+  }
+
+  function isAtBottom() { return (window.innerHeight + window.scrollY) >= document.documentElement.scrollHeight - 24; }
+  function scrollBottom() { window.scrollTo(0, document.documentElement.scrollHeight); }
+  var lastScroll = null;
+  function reportScroll() {
+    var distance = Math.max(0, document.documentElement.scrollHeight - window.innerHeight - window.scrollY);
+    var at = distance < 24;
+    if (lastScroll === at) return;
+    lastScroll = at;
+    host.post({ type: "scroll_state", at_bottom: at, distance: Math.round(distance) });
+  }
+  window.addEventListener("scroll", reportScroll, { passive: true });
+
+  function applyEvent(ev) {
+    if (!ev) return;
+    if (ev.type === "snapshot") {
+      state.messages = {}; state.stale = false;
+      (ev.messages || []).forEach(function (m) { state.messages[m.id] = m; });
+      state.hasMore = !!ev.has_more;
+      render(true); scrollBottom();
+    } else if (ev.type === "message" && ev.message) {
+      state.messages[ev.message.id] = ev.message; render();
+    }
+  }
+
+  // Terminal
+  function b64ToText(b64) {
+    var bin = atob(b64), bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    if (!decoder) decoder = new TextDecoder("utf-8");
+    return decoder.decode(bytes, { stream: true });
+  }
+  function textToB64(s) {
+    var bytes = new TextEncoder().encode(s), bin = "";
+    for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin);
+  }
+  // Strip control sequences: the placeholder shows a plain transcript, not a terminal emulator.
+  function plain(s) { return s.replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, "").replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, "").replace(/\x1b[()][A-Z0-9]/g, "").replace(/\r(?!\n)/g, ""); }
+  function termWrite(b64) {
+    var at = term.scrollTop + term.clientHeight >= term.scrollHeight - 24;
+    var text = plain(b64ToText(b64));
+    for (var i = 0; i < text.length; i++) {
+      var c = text[i];
+      if (c === "\b") screen.textContent = screen.textContent.slice(0, -1);
+      else if (c === "\x07") continue;
+      else screen.textContent += c;
+    }
+    if (screen.textContent.length > 200000) screen.textContent = screen.textContent.slice(-150000);
+    if (at) term.scrollTop = term.scrollHeight;
+  }
+  function size() {
+    var cols = Math.max(20, Math.floor((window.innerWidth - 16) / 7.8)), rows = Math.max(8, Math.floor((window.innerHeight - 40) / 17));
+    return { cols: cols, rows: rows };
+  }
+  function sendInput(data) { if (state.terminalId) host.post({ type: "term.input", terminal_id: state.terminalId, data: textToB64(data) }); }
+  var KEYMAP = { escape: "\x1b", tab: "\t", enter: "\r", backspace: "\x7f", up: "A", down: "B", right: "C", left: "D",
+                 home: "\x1b[H", end: "\x1b[F", page_up: "\x1b[5~", page_down: "\x1b[6~" };
+  var ctrlLatched = false;
+  function keySequence(k) {
+    var key = k.key && k.key.length > 1 ? k.key.toLowerCase() : k.key, mod = 1 + (k.shift ? 1 : 0) + (k.alt ? 2 : 0) + (k.ctrl ? 4 : 0);
+    var v = KEYMAP[key];
+    if (v && v.length === 1 && /[ABCD]/.test(v)) return mod > 1 ? "\x1b[1;" + mod + v : "\x1b[" + v;
+    if (v) return (k.alt ? "\x1b" : "") + v;
+    if (key && key.length === 1) {
+      var ch = key;
+      if (k.ctrl) { var code = ch.toUpperCase().charCodeAt(0); if (code >= 64 && code <= 95) ch = String.fromCharCode(code & 0x1f); }
+      return (k.alt ? "\x1b" : "") + ch;
+    }
+    return "";
+  }
+  keys.addEventListener("input", function () {
+    if (!keys.value) return;
+    var v = keys.value.replace(/\n/g, "\r");
+    if (ctrlLatched && v.length === 1) { v = keySequence({ key: v, ctrl: true }); ctrlLatched = false; }
+    sendInput(v); keys.value = "";
+  });
+  keys.addEventListener("keydown", function (e) {
+    if (e.key === "Backspace" || e.key === "Enter") { e.preventDefault(); sendInput(e.key === "Enter" ? "\r" : "\x7f"); }
+  });
+  term.addEventListener("click", function () { keys.focus(); });
+
+  function showTerminal(msg) {
+    if (state.terminalId && state.terminalId !== msg.terminal_id) host.post({ type: "term.detach", terminal_id: state.terminalId });
+    state.view = "terminal"; state.terminalId = msg.terminal_id; decoder = null;
+    conv.style.display = "none"; term.style.display = "block"; screen.textContent = "";
+    var s = size();
+    host.post({ type: "term.attach", terminal_id: msg.terminal_id, mode: msg.attach_mode || "control", cols: s.cols, rows: s.rows, label: "Android" });
+  }
+
+  function receive(msg) {
+    if (!msg || typeof msg !== "object") return;
+    switch (msg.type) {
+      case "batch": (msg.messages || []).forEach(receive); break;
+      case "theme":
+        document.documentElement.classList.toggle("dark", msg.scheme === "dark");
+        var ins = msg.insets || {};
+        document.documentElement.style.setProperty("--top", (ins.top || 0) + "px");
+        document.documentElement.style.setProperty("--bottom", (ins.bottom || 0) + "px");
+        document.documentElement.style.setProperty("--scale", msg.font_scale || 1);
+        break;
+      case "locale": document.documentElement.lang = msg.locale; older.textContent = msg.locale === "zh-CN" ? "加载更早的消息" : "Load earlier messages"; break;
+      case "view.conversation":
+        if (state.terminalId) host.post({ type: "term.detach", terminal_id: state.terminalId });
+        state = { view: "conversation", sessionId: msg.session_id, messages: {}, hasMore: false, terminalId: null };
+        term.style.display = "none"; conv.style.display = "block"; list.innerHTML = ""; lastScroll = null;
+        break;
+      case "conversation.event": if (msg.session_id === state.sessionId) applyEvent(msg.event); break;
+      case "conversation.cached":
+        if (msg.session_id !== state.sessionId) break;
+        state.messages = {}; (msg.messages || []).forEach(function (m) { state.messages[m.id] = m; });
+        state.stale = !!msg.stale; render(true); scrollBottom(); break;
+      case "conversation.older":
+        if (msg.session_id !== state.sessionId) break;
+        var h = document.documentElement.scrollHeight;
+        (msg.messages || []).forEach(function (m) { state.messages[m.id] = m; });
+        state.hasMore = !!msg.has_more; render(false);
+        window.scrollTo(0, window.scrollY + document.documentElement.scrollHeight - h);
+        break;
+      case "scroll": if (msg.to === "top") window.scrollTo({ top: 0, behavior: "smooth" }); else window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" }); break;
+      case "view.terminal": showTerminal(msg); break;
+      case "term.snapshot": screen.textContent = ""; decoder = null; if (msg.data) termWrite(msg.data); break;
+      case "term.output": if (msg.data) termWrite(msg.data); break;
+      case "term.exit": screen.textContent += "\n[process exited" + (msg.exit_code != null ? " with code " + msg.exit_code : "") + "]\n"; break;
+      case "term.closed": screen.textContent += "\n[detached]\n"; break;
+      case "term.key":
+        if (msg.key === "ctrl") { ctrlLatched = !ctrlLatched; keys.focus(); break; }
+        sendInput(keySequence(msg)); break;
+      case "file.data": break;
+    }
+  }
+
+  older.addEventListener("click", function () {
+    var seqs = Object.keys(state.messages).map(function (k) { return state.messages[k].seq || 0; });
+    host.post({ type: "load_older", session_id: state.sessionId, before_seq: seqs.length ? Math.min.apply(null, seqs) : 0 });
+  });
+  document.addEventListener("click", function (e) {
+    var a = e.target.closest && e.target.closest("a");
+    if (a) { e.preventDefault(); host.post({ type: "open_link", url: a.href }); }
+  });
+  window.addEventListener("resize", function () {
+    if (state.view === "terminal" && state.terminalId) { var s = size(); host.post({ type: "term.resize", terminal_id: state.terminalId, cols: s.cols, rows: s.rows }); }
+  });
+  window.addEventListener("message", function (e) { if (e.source === window || e.source === window.parent) receive(e.data); });
+
+  window.aa = { receive: receive, version: "placeholder-1" };
+  host.post({ type: "ready", version: "placeholder-1", protocol: "aa.render/2", capabilities: ["batch", "theme", "conversation", "conversation.cached", "load_older", "scroll", "scroll_state", "terminal", "term.key", "open_link"] });
+})();
+</script>
+</body>
+</html>

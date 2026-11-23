@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- No Material: a bare platform theme; Compose draws everything (iOS look). The window background matches the first screen. -->
+    <style name="Theme.AAv3" parent="android:Theme.DeviceDefault.Light.NoActionBar">
+        <item name="android:windowBackground">@color/aa_background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+    <!-- iOS systemGroupedBackground. -->
+    <color name="aa_background">#FFF2F2F7</color>
+</resources>
