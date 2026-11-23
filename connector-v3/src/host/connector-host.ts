@@ -82,6 +82,11 @@ export interface ConnectorHostOptions {
   /** `Sessions/prepare`: how long an unused prepared agent waits (default 10 min) and how many are kept (default 4). */
   preparedTtlMs?: number;
   maxPrepared?: number;
+  /**
+   * Close a session's agent after this long with nothing in flight, when the agent can restore its context (its
+   * next message starts it again and restores it). Default 15 min; 0 or null: never.
+   */
+  idleTtlMs?: number | null;
   connectorVersion?: string;
   presenceIntervalMs?: number;
   /** `send({ wait: true })` cap. */
@@ -271,9 +276,11 @@ export class ConnectorHost {
       onAgentSettingsChange: (agents) => state.saveAgentSettings(agents),
       ...(this.options.preparedTtlMs !== undefined ? { preparedTtlMs: this.options.preparedTtlMs } : {}),
       ...(this.options.maxPrepared !== undefined ? { maxPrepared: this.options.maxPrepared } : {}),
+      ...(this.options.idleTtlMs !== undefined ? { idleTtlMs: this.options.idleTtlMs } : {}),
       maxFileBytes: () => this.#settings?.max_rpc_file_bytes ?? settings.max_rpc_file_bytes,
       onPushEvent: (event) => this.#onPush(event),
       clientInfo: { name: "agents-anywhere-connector", version: this.connectorVersion },
+      logger: { info: (message) => this.#logger.info(message), warn: (message) => this.#logger.warn(message) },
     });
 
     const host = this;

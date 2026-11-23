@@ -169,6 +169,8 @@ const DEFAULT_WAIT_MS = 28_000;
 const STOP_GRACE_MS = 3_000;
 /** …and how long their ends are awaited once the agents are gone. */
 const STOP_SETTLE_MS = 5_000;
+/** `compact`: how long an agent that has reported no commands yet (it just started) gets to report them. */
+const COMMANDS_WAIT_MS = 3_000;
 
 function sessionRef(request: { id?: string | null; session_id?: string | null }): string {
   const id = request.id ?? request.session_id;
@@ -533,7 +535,10 @@ export class SessionsService {
     if (this.#turns.has(id)) throw new MeshCallError("failed_precondition", "wait for the running turn to finish", { details: { reason: "turn_running" } });
     this.#assertAgentEnabled(id);
     await this.#runtimes.ensureSession(id);
-    if (!this.#runtimes.availableCommands(id).some((c) => c.name === "compact")) {
+    // A just-started agent (a restart, an idle close) reports its commands a moment after it answers: wait for them.
+    const commands = () => this.#runtimes.availableCommands(id);
+    for (const deadline = Date.now() + COMMANDS_WAIT_MS; commands().length === 0 && Date.now() < deadline; ) await delay(50);
+    if (!commands().some((c) => c.name === "compact")) {
       throw new MeshCallError("failed_precondition", "this agent does not offer compaction", { details: { reason: "compact_unsupported" } });
     }
     const itemId = this.#newId();

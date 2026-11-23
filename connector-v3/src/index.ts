@@ -63,6 +63,8 @@ export {
   type PreparedAgent,
   type PreparedInfo,
   type PushEvent,
+  type RestoreMethod,
+  type RuntimeLogger,
   type StartedSession,
   type StartSessionInput,
   type TurnResult,
