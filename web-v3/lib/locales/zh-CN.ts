@@ -63,6 +63,7 @@ export const zhCN: Messages = {
   "shell.navRecent": "最近",
   "shell.navSettings": "设置",
   "shell.navAdmin": "管理后台",
+  "shell.navDrive": "云盘",
   "admin.navGroup": "管理",
   "admin.nav.overview": "概览",
   "admin.nav.drive": "云盘额度",

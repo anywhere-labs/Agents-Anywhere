@@ -62,6 +62,7 @@ export const en = {
   "shell.navRecent": "Recent",
   "shell.navSettings": "Settings",
   "shell.navAdmin": "Admin console",
+  "shell.navDrive": "Drive",
   "admin.navGroup": "Admin",
   "admin.nav.overview": "Overview",
   "admin.nav.drive": "Cloud Drive limits",
@@ -194,7 +195,7 @@ export const en = {
   "sessions.agentLabel": "Agent runtime",
   "sessions.titleLabel": "Session title (optional)",
 
-  // Portable Assistant (Pi Lite)
+  // Orches (Pi Lite)
   "assistant.title": "Orches",
   "assistant.subtitle": "Orches runs in your browser and can direct the agents on your devices; its chats can sync, encrypted, to your other devices.",
   "assistant.newChat": "New chat",

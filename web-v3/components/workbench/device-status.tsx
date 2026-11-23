@@ -1,7 +1,7 @@
 "use client"
 
 // A device's state as one mark, in the place of the device's own icon:
-//   white dot          online
+//   green dot          online
 //   white closed lock  online, encrypted, not paired with this browser yet (locked)
 //   white open lock    online, encrypted and paired
 //   grey dot           offline
@@ -82,8 +82,8 @@ export function DeviceStatusIcon({
       ) : (
         <span
           className={cn(
-            "size-2 rounded-full",
-            state === "online" ? "bg-foreground" : state === "problem" ? "bg-warning" : "bg-muted-foreground/40"
+            "size-1.5 rounded-full",
+            state === "online" ? "bg-success" : state === "problem" ? "bg-warning" : "bg-muted-foreground/40"
           )}
         />
       )}

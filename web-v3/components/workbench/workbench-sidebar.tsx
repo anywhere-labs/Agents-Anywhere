@@ -16,6 +16,7 @@ import {
   ChevronRightIcon,
   ChevronsUpDownIcon,
   CircleAlertIcon,
+  CloudIcon,
   CopyIcon,
   EllipsisIcon,
   KeyRoundIcon,
@@ -413,6 +414,16 @@ export function WorkbenchSidebar({ resize }: { resize: SidebarResize }) {
     </SidebarMenuItem>
   )
 
+  /** The cloud drive: files to keep, share between devices and point conversations at (`drive:/…`). */
+  const driveRow = (
+    <SidebarMenuItem>
+      <SidebarMenuButton isActive={pathname === "/drive"} render={<Link href="/drive" onClick={closeOnMobile} />}>
+        <CloudIcon />
+        <span className="min-w-0 flex-1 truncate">{t("shell.navDrive")}</span>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
+  )
+
   let content: React.ReactNode
   if (preferences.assistantPrimary && drilledDevice) {
     const dev = drilledDevice
@@ -546,6 +557,7 @@ export function WorkbenchSidebar({ resize }: { resize: SidebarResize }) {
             <SidebarMenu>
               {newConversationRow()}
               {orchesRow}
+              {driveRow}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
