@@ -280,7 +280,9 @@ function ToolStep({ message, part, request }: { message: AssistantMessage; part:
   const live = !message.done
   const waiting = !!request
   const unfinished = part.status === 'pending' || part.status === 'in_progress'
-  const phase = waiting ? 'waiting' : part.status === 'failed' ? 'failed' : unfinished ? (live ? 'running' : 'unfinished') : 'done'
+  // A call that a stop cut off reads "没有…完", whether the agent left it running or failed it (Pi does on cancel).
+  const cutOff = !!message.interrupted && part.status === 'failed'
+  const phase = waiting ? 'waiting' : cutOff ? 'unfinished' : part.status === 'failed' ? 'failed' : unfinished ? (live ? 'running' : 'unfinished') : 'done'
   const output = outputText(part.output)
   const diffs = part.diffs ?? []
   const counts = diffs.reduce(
