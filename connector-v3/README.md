@@ -136,15 +136,19 @@ node dist/src/cli.js start --router 'wss://router.example.com#mt_xxx'   # URL#TO
 
 ### Agent 预设
 
-内置两个预设：
+内置这些 Agent，本机装了对应的命令行才会提供：
 
-- `claude`：`npx -y @zed-industries/claude-agent-acp`
-- `codex`：`codex-acp`
+| id | 启动命令 | 需要 |
+| --- | --- | --- |
+| `claude` | `npx -y @agentclientprotocol/claude-agent-acp` | `claude` |
+| `codex` | `npx -y @agentclientprotocol/codex-acp` | `codex` |
+| `antigravity` | `agy acp` | `agy` |
+| `pi` | `npx -y @openma/pi-acp --quiet-startup` | `pi` |
 
-其他任何说 ACP（stdio 上的 JSON-RPC 2.0）的命令都可以通过 `--presets presets.json` 加入：
+Gemini CLI 不再内置。其他任何说 ACP（stdio 上的 JSON-RPC 2.0）的命令都可以通过 `--presets presets.json` 加入：
 
 ```json
-[{ "id": "gemini", "name": "Gemini CLI", "command": "gemini", "args": ["--experimental-acp"] }]
+[{ "id": "opencode", "name": "OpenCode", "command": "opencode", "args": ["acp"] }]
 ```
 
 ### 数据目录
