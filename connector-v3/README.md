@@ -14,13 +14,13 @@ v3 的工作设备进程（TypeScript，Node ≥ 22）。它在本机运行任�
 ```
 src/
   core/                 可移植（无 Node 内置模块），也可用于 WebView
-    config.ts           设置、配对客户端、ACP 预设的形状与校验
+    config.ts           设置、配对客户端、ACP 预设和每个 Agent 的本机设置的形状与校验
     timeline.ts         aa.v3 会话模型（Session / Message / Control / WatchEvent）
     session-store.ts    内存会话库：唯一的会话真相来源，watch 推送整值替换
     acp-protocol.ts     ACP 类型与 AcpTimelineProjector（session/update → 时间线）
     gate.ts             DeviceGate：配对、允许名单、每次业务调用的准入判断
   runtime/              Node 侧实现
-    state-store.ts      数据目录里的 identity / settings / paired-clients / sessions（原子写入，0600）
+    state-store.ts      数据目录里的 identity / settings / paired-clients / sessions / agents（原子写入，0600）
     device-ops.ts       文件、目录、git、附件（有上限、不走 shell）
     terminal-manager.ts 无原生依赖的终端
     acp-host.ts         通用 ACP 宿主：每个会话一个 Agent 进程，stdio 行分隔 JSON-RPC 2.0
@@ -88,6 +88,63 @@ src/
 | `invalid_cwd` | `invalid_argument` | `cwd` 不是这台设备上的目录 |
 | `agent_auth_required` | `failed_precondition` | Agent 要求先登录（ACP `-32000`，消息如 `could not start Claude Code: Authentication required`）；`details.auth_methods` 是 Agent 在 `initialize` 里给出的登录方式（`id`、`name`、`description`） |
 | `agent_start_failed` | `unavailable` | 程序不存在、启动后退出、超时或应答无法使用；消息形如 `could not start <Agent>: …` |
+
+### Agent 管理（`agents` / `update_agent` / `stop_agent`）
+
+设备页列出这台设备上的每个 Agent：开关、运行状态和停止按钮，以及设置对话框（显示名、命令、参数、环境变量、恢复默认）。三个方法都在 `aa.v3.Device` 上。
+
+| 调用 | 请求 | 响应 / 行为 |
+| --- | --- | --- |
+| `agents`（只读） | `{}` | `{ agents: AgentEntry[] }`：每个已注册的 Agent 一项（内置预设和配置的预设，关闭的也在内），顺序与 `status.runtimes` 相同 |
+| `update_agent`（幂等） | `{ id, enabled?, name?, command?, args?, env?, reset? }` | 修改后的 `AgentEntry` |
+| `stop_agent`（不可撤销，幂等） | `{ id, force? }` | `{ stopped }`：停掉的 Agent 进程数 |
+
+`AgentEntry`：
+
+| 字段 | 含义 |
+| --- | --- |
+| `id` | Agent id |
+| `name` | 显示名：本机设置过就是设置的名字，否则是预设的 |
+| `builtin` | 是不是 Connector 自带的默认预设（`--presets` 配置的为 `false`） |
+| `enabled` | 开关 |
+| `command`、`args` | 现在启动会用的命令和参数（含本机的修改） |
+| `env_keys` | 为它额外设置的环境变量的名字；值不离开设备 |
+| `customized` | 显示名、命令、参数或环境变量与预设不同（开关不算） |
+| `running` | 正在运行的 Agent 进程数：进程在跑的会话 + 预热的 + 正在启动的 |
+| `busy` | 正在执行一轮的会话数（包括 Agent 还在启动的） |
+
+`update_agent`：
+
+- 不给或为 `null` 的字段保持不变。`name` 1–128 个字符，`command` 不能为空（两者都去掉首尾空白），`args` 是字符串数组（最多 256 个，可以有空字符串）；命令、参数和环境变量的值都不能含 NUL。
+- `env`：值为字符串时设置该变量，为 `null` 时删除。变量名须匹配 `^[A-Za-z_][A-Za-z0-9_]*$`，每个 Agent 最多 128 个。这些变量加在 Connector 自身的环境之上传给 Agent，删不掉 Connector 进程继承来的变量。
+- `reset: true`：先丢掉对显示名、命令、参数和环境变量的修改（回到预设），再应用同一次调用里的其他字段。`reset` 不改开关，要同时打开就一起传 `enabled: true`。
+- 改回与预设相同的值等于没改：`customized` 为 `false`，这一项也不再保存。
+- 修改先写入数据目录的 `agents.json`（0600，目录 0700），写入失败则整个修改不生效。环境变量的值只保存在这个文件里，不会出现在任何 RPC 的返回（包括 `get_settings`）、日志或推送里。
+- **只影响之后启动的 Agent 进程**：正在运行的保持原来的设置，直到被停止（`stop_agent`）或自己退出。命令、参数或环境变量变了（或被关闭）的 Agent，它的预热 Agent 会被关闭，下一次 `prepare` 按新设置启动；只改显示名不影响预热的 Agent。新的显示名马上用在 `status.runtimes`、启动失败的错误消息和推送标题（会话没有标题时）里。
+
+关闭的 Agent（`enabled: false`）：
+
+- 不出现在 `status.runtimes` 和 presence 上报的 runtimes 里，客户端不会再提供它；`agents` 里仍然列出。
+- `prepare`、`create` 返回 `failed_precondition` / `agent_disabled`。已有会话的新一轮（`send`、`compact`、`steer_queued`、带 `content` 的 `rewind`）也这样拒绝，不会悄悄把 Agent 再启动起来；排队的消息留在队列里，重新打开后由下一次发送或 `steer_queued` 继续。
+- 关闭不会停掉正在运行的进程和正在执行的一轮，需要时再调用 `stop_agent`。
+
+`stop_agent`：
+
+- 停掉这个 Agent 的所有进程：会话的 Agent、预热的和正在启动的。会话都保留，下一条消息按那时的设置重新启动 Agent。新进程是新的 ACP 会话：不带之前的上下文，会话的设置（模型、模式等）也回到 Agent 的默认值，与 Connector 重启后一样。
+- 有会话正在执行一轮时，不带 `force` 返回 `failed_precondition` / `turns_running`（`details.count` 是这样的会话数）。带 `force: true` 时先像 `aa.v3.Sessions/stop` 那样取消这些轮次（排队的消息等下一次发送），给 Agent 3 秒正常结束，再停掉进程；到时还没结束的轮次和 Agent 还在启动的轮次都记为取消（`cancelled`），不算出错。
+- 重复调用只会停掉之后又启动的进程，没有可停的时返回 `{ stopped: 0 }`。
+
+**谁可以调用**：`update_agent` 会让设备运行调用方指定的程序，`stop_agent` 会中断会话，所以两者只接受经隧道连来的客户端：普通设备上的普通隧道，或加密设备上已配对的端到端会话。控制面的直接调用返回 `permission_denied` / `tunnel_required`，MCP 返回 `permission_denied` / `mcp_not_allowed`（MCP 开关关着时，设备门先以 `mcp_disabled_on_device` 拒绝）。`agents` 与 `status` 规则相同：普通设备上控制面和已允许的 MCP 也能读。加密设备上三个方法都只接受已配对的端到端客户端。
+
+| `details.reason` | 错误码 | 含义 |
+| --- | --- | --- |
+| `unknown_agent` | `invalid_argument` | 这台设备上没有这个 Agent |
+| `request` | `invalid_argument` | 字段不合法（MeshCall 的请求校验，`details.violations` 列出字段）；嵌入方直接调用 `ConnectorHost.updateAgent` 时为 `invalid_agent_settings`（`details.field`） |
+| `tunnel_required` | `permission_denied` | 控制面的直接调用不能修改或停止 Agent |
+| `mcp_not_allowed` | `permission_denied` | MCP 不能修改或停止 Agent |
+| `turns_running` | `failed_precondition` | `stop_agent` 时有会话正在执行一轮且没带 `force`；`details.count` 是会话数 |
+| `agent_disabled` | `failed_precondition` | Agent 已关闭：`prepare`、`create` 和已有会话的新一轮都被拒绝；`details.agent` 是 Agent id |
+| `agent_not_configurable` | `failed_precondition` | 嵌入方用 `registerRuntime` 注册、没有预设的 Runtime 只能开关，不能改显示名、命令、参数和环境变量 |
 
 ## 运行
 
@@ -157,16 +214,22 @@ node dist/src/cli.js start --router 'wss://router.example.com#mt_xxx'   # URL#TO
 
 ### Agent 预设
 
-内置两个预设：
+内置预设只在本机装有对应程序时提供（`agents` 里 `builtin: true`）：
 
-- `claude`：`npx -y @zed-industries/claude-agent-acp`
-- `codex`：`codex-acp`
+| id | 名称 | 命令 | 需要的程序 |
+| --- | --- | --- | --- |
+| `claude` | Claude Code | `npx -y @agentclientprotocol/claude-agent-acp` | `claude` |
+| `codex` | Codex | `npx -y @agentclientprotocol/codex-acp` | `codex` |
+| `antigravity` | Antigravity | `agy acp` | `agy` |
+| `pi` | Pi | `npx -y @openma/pi-acp` | `pi` |
 
-其他任何说 ACP（stdio 上的 JSON-RPC 2.0）的命令都可以通过 `--presets presets.json` 加入：
+其他任何说 ACP（stdio 上的 JSON-RPC 2.0）的命令都可以通过 `--presets presets.json` 加入（id 相同时取代内置预设）：
 
 ```json
-[{ "id": "gemini", "name": "Gemini CLI", "command": "gemini", "args": ["--experimental-acp"] }]
+[{ "id": "my-agent", "name": "My Agent", "command": "my-agent", "args": ["--acp"] }]
 ```
+
+每个预设的显示名、命令、参数和环境变量都可以在这台设备上单独修改，也可以关闭，见上面的「Agent 管理」。
 
 ### 数据目录
 
@@ -176,6 +239,7 @@ node dist/src/cli.js start --router 'wss://router.example.com#mt_xxx'   # URL#TO
 | `settings.json` | 模式、MCP 开关、配对确认、RPC 文件上限、设备名 |
 | `paired-clients.json` | 已配对客户端公钥（加密模式的信任名单） |
 | `sessions.json` | 会话快照（防抖写入） |
+| `agents.json` | 每个 Agent 的开关和本机设置：显示名、命令、参数、环境变量（0600；环境变量的值只保存在这里）。内容损坏时 Connector 不启动并指出出错的字段，不会悄悄忽略（否则关掉的 Agent 会重新打开） |
 | `attachments/<对话 id>/` | 对话没有工作目录或目录不可写时的附件（通常附件在项目的 `.agents-anywhere/attachments/<对话 id>/`） |
 
 ## 在 Desktop 中嵌入
@@ -203,13 +267,15 @@ yarn typecheck
 yarn test
 ```
 
-`tests/connector-router-e2e.test.ts` 会启动真实的 Go `meshcall-router`（v0.4.0）和一个用 Node 写的 stdio ACP 模拟 Agent，覆盖：控制面直接调用、MCP 开关、普通隧道上的创建（含 `prepare` 后带 `prepared_id` 创建）/发送/审批/排队/文件读取/终端 attach、`close_tunnel_sessions`、presence 与推送的契约形状、普通 → 加密的安全切换，以及加密模式下的配对（IKpsk2）、陌生客户端被拒、重连（IK）和撤销。Router 二进制按以下顺序查找：`MESHCALL_ROUTER_BINARY`、`../../meshcall/meshcall-router/bin/meshcall-router`、`findRouterBinary()`；都找不到时跳过该测试文件。
+`tests/connector-router-e2e.test.ts` 会启动真实的 Go `meshcall-router`（v0.4.0）和一个用 Node 写的 stdio ACP 模拟 Agent，覆盖：控制面直接调用、MCP 开关、普通隧道上的创建（含 `prepare` 后带 `prepared_id` 创建）/发送/审批/排队/文件读取/终端 attach、经 MeshCall 的 Agent 管理（列表、改设置、恢复默认、停止，以及控制面和 MCP 被拒）、`close_tunnel_sessions`、presence 与推送的契约形状、普通 → 加密的安全切换，以及加密模式下的配对（IKpsk2）、陌生客户端被拒、重连（IK）和撤销。Router 二进制按以下顺序查找：`MESHCALL_ROUTER_BINARY`、`../../meshcall/meshcall-router/bin/meshcall-router`、`findRouterBinary()`；都找不到时跳过该测试文件。
 
 `tests/acp-prepare.test.ts` 不需要 Router：用一个记录每次进程启动、`session/new` 和配置修改的模拟 Agent 覆盖 `prepare` 与 `create({ prepared_id })`——配置项的形状、并发共用一次启动、接管同一个进程（没有第二次 `session/new`）并回放预热期间的通知、不匹配 / 过期 / 已退出时退回原流程、TTL 与续期、上限淘汰、启动错误，以及停止时关闭。
 
+`tests/agent-settings.test.ts` 也不需要 Router：在初始化好的 `ConnectorHost` 上直接调用服务，模拟 Agent 记下每次启动时拿到的命令（argv0）、参数和一个环境变量。覆盖 `agents` 的形状与计数、开关（`status.runtimes`、`prepare` / `create` / 已有会话的新一轮被拒、预热 Agent 被关闭）、设置写入 `agents.json`（0600）并在重启后用于下一次启动、正在运行的进程保持旧设置、环境变量的值不出现在任何返回 / 日志 / 推送里、恢复默认、字段校验、只改显示名时保留预热 Agent、`stop_agent` 的计数与会话恢复、有轮次在跑时的 `turns_running` 与 `force`（含 Agent 还在启动、Agent 不理会取消的情况），以及控制面、MCP 和加密设备上的调用限制。
+
 ## 已知限制
 
-- ACP 没有截断上下文的接口：`rewind` 会重启该会话的 Agent，新的 Agent 不带之前的上下文；Connector 重启后，已有会话的下一条消息也会启动新的 Agent 会话。
+- ACP 没有截断上下文的接口：`rewind` 会重启该会话的 Agent，新的 Agent 不带之前的上下文；Connector 重启或 `stop_agent` 之后，已有会话的下一条消息也会启动新的 Agent 会话，会话的模型、模式等设置回到 Agent 的默认值。
 - 预热的 Agent 已经执行过 `session/new`：如果某个 Agent 在 `session/new` 时就写入自己的会话记录，没被接管的预热会话会在它自己的历史里留下一条空会话（Pi 要到第一条消息才写入，不受影响）。
 - `compact` 只在 Agent 通过 `available_commands_update` 提供 `compact` 命令时可用。
 - Router token 过期被拒后会重新获取 token 并重新挂载，期间该 Router 上的隧道会断开，客户端需要重连。

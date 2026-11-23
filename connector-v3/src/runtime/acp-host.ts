@@ -53,7 +53,15 @@ import {
   type AcpWriteTextFileParams,
   type JsonRpcId,
 } from "../core/acp-protocol.js";
-import type { AcpRuntimePreset } from "../core/config.js";
+import {
+  AgentOverrideSchema,
+  AgentOverridesSchema,
+  AgentUpdateSchema,
+  type AcpRuntimePreset,
+  type AgentOverride,
+  type AgentOverrides,
+  type AgentUpdate,
+} from "../core/config.js";
 import type { AnswerInput, AnswerResult, SessionStore } from "../core/session-store.js";
 import type { ConfigOption } from "../core/timeline.js";
 import { DeviceOpsError, readFile, resolveUserPath, writeFile } from "./device-ops.js";
@@ -135,6 +143,18 @@ export interface AgentRuntime {
   availableCommands(sessionId: string): AcpAvailableCommand[];
   closeSession(sessionId: string): Promise<void>;
   dispose(): Promise<void>;
+  /** The preset it runs (ACP runtimes): what `update_agent` changes. Without it only `enabled` can be changed. */
+  readonly preset?: AcpRuntimePreset;
+  /** Run agent processes started from now on with `preset` (same id); running ones keep theirs. Optional. */
+  configure?(preset: AcpRuntimePreset): void;
+  /** Agent processes running now: the sessions' agents, prepared ones and ones still starting. Optional. */
+  processCount?(): number;
+  /**
+   * Stop every agent process of this runtime (`stop_agent`): its sessions start the agent again on their next
+   * message, and a turn still running ends `cancelled`. Resolves with how many processes there were. Optional:
+   * `dispose` is used without it.
+   */
+  stop?(): Promise<number>;
 }
 
 /**
@@ -437,6 +457,8 @@ interface LiveSession {
   supportsConfigOptions: boolean;
   /** The agent accepts image content blocks (`promptCapabilities.image`). */
   promptImages: boolean;
+  /** Stopped on purpose (`stop`): a turn the exit interrupts ended `cancelled`, not failed. */
+  stopped: boolean;
 }
 
 /** An agent process after `initialize` + `session/new`, not yet projected into a session. */
@@ -579,23 +601,42 @@ export interface AcpRuntimeOptions {
 
 export class AcpRuntime implements AgentRuntime {
   readonly id: string;
-  readonly name: string;
-  readonly preset: AcpRuntimePreset;
   readonly #options: AcpRuntimeOptions;
+  #preset: AcpRuntimePreset;
   readonly #sessions = new Map<string, LiveSession>();
   readonly #starting = new Map<string, Promise<StartedSession>>();
   /** Agents between spawn and the end of `session/new`: `dispose` kills them too. */
   readonly #launching = new Set<AcpConnection>();
   /** Prepared agents not taken over yet. */
   readonly #prepared = new Set<WarmAgent>();
-  /** Bumped by `dispose`: a start that began before must not leave a process behind. */
+  /** Bumped by `dispose` / `stop`: a start that began before must not leave a process behind. */
   #generation = 0;
+  /** Why the last `dispose` / `stop` happened, for the starts it cut short. */
+  #stoppedBecause = "the Connector stopped";
 
   constructor(preset: AcpRuntimePreset, options: AcpRuntimeOptions) {
-    this.preset = { ...preset, args: [...(preset.args ?? [])] };
+    this.#preset = copyPreset(preset);
     this.id = preset.id;
-    this.name = preset.name;
     this.#options = options;
+  }
+
+  /** The preset agent processes are started with (`configure` changes it). */
+  get preset(): AcpRuntimePreset {
+    return copyPreset(this.#preset);
+  }
+
+  get name(): string {
+    return this.#preset.name;
+  }
+
+  /** Start agent processes from now on with `preset`; running ones keep the settings they were started with. */
+  configure(preset: AcpRuntimePreset): void {
+    if (preset.id !== this.id) throw new TypeError(`a runtime keeps its id (${this.id}, not ${preset.id})`);
+    this.#preset = copyPreset(preset);
+  }
+
+  processCount(): number {
+    return this.#sessions.size + this.#prepared.size + this.#launching.size;
   }
 
   hasSession(sessionId: string): boolean {
@@ -649,7 +690,7 @@ export class AcpRuntime implements AgentRuntime {
     this.#prepared.add(agent);
     if (generation !== this.#generation) {
       await agent.close();
-      throw this.#startError(new UnavailableError("the Connector stopped while it started"));
+      throw this.#startError(new UnavailableError(`${this.#stoppedBecause} while it started`));
     }
     return agent;
   }
@@ -658,7 +699,7 @@ export class AcpRuntime implements AgentRuntime {
     const generation = this.#generation;
     const launched = await this.#launch(input.cwd);
     try {
-      if (generation !== this.#generation) throw this.#startError(new UnavailableError("the Connector stopped while it started"));
+      if (generation !== this.#generation) throw this.#startError(new UnavailableError(`${this.#stoppedBecause} while it started`));
       return this.#attach(input.sessionId, input.cwd, launched);
     } catch (error) {
       await launched.conn.close();
@@ -668,13 +709,16 @@ export class AcpRuntime implements AgentRuntime {
 
   /** Spawn the agent, `initialize`, `session/new`. Any failure rejects with `#startError`. */
   async #launch(cwd: string): Promise<Launched> {
+    // The settings at this moment: a later `configure` applies to later starts only.
+    const preset = this.#preset;
+    const generation = this.#generation;
     let conn: AcpConnection;
     try {
       conn = await AcpConnection.spawn({
-        command: this.preset.command,
-        args: this.preset.args,
+        command: preset.command,
+        args: preset.args,
         cwd,
-        ...(this.preset.env ? { env: this.preset.env } : {}),
+        ...(preset.env ? { env: preset.env } : {}),
         ...(this.#options.requestTimeoutMs !== undefined ? { requestTimeoutMs: this.#options.requestTimeoutMs } : {}),
         ...(this.#options.killGraceMs !== undefined ? { killGraceMs: this.#options.killGraceMs } : {}),
       });
@@ -703,7 +747,8 @@ export class AcpRuntime implements AgentRuntime {
       return { conn, init, result: result as Launched["result"], updates };
     } catch (error) {
       await conn.close();
-      throw this.#startError(error, init);
+      // Killed by `dispose` / `stop` (it exited, so the request failed): say so rather than "the agent exited".
+      throw this.#startError(generation === this.#generation ? error : new UnavailableError(`${this.#stoppedBecause} while it started`), init);
     } finally {
       this.#launching.delete(conn);
     }
@@ -729,6 +774,7 @@ export class AcpRuntime implements AgentRuntime {
       permissions: new Map(),
       supportsConfigOptions: Array.isArray(result.configOptions),
       promptImages: init.agentCapabilities?.promptCapabilities?.image === true,
+      stopped: false,
     };
     conn.onRequest = (method, params) => this.#handleAgentRequest(cwd, live, method, params);
     conn.onExit = () => this.#onExit(live);
@@ -787,8 +833,13 @@ export class AcpRuntime implements AgentRuntime {
         const result = await live.conn.request("session/prompt", { sessionId: live.acpSessionId, prompt }, null);
         outcome = result?.stopReason ?? "end_turn";
       } catch (error) {
-        outcome = "error";
-        failure = errorMessage(error);
+        if (live.stopped) {
+          // `stop` ended it on purpose (an agent that did not answer `session/cancel` in time).
+          outcome = "cancelled";
+        } else {
+          outcome = "error";
+          failure = errorMessage(error);
+        }
       }
       this.#cancelPermissions(live);
       live.turn = undefined;
@@ -850,7 +901,20 @@ export class AcpRuntime implements AgentRuntime {
   }
 
   async dispose(): Promise<void> {
+    await this.#closeAll("the Connector stopped");
+  }
+
+  async stop(): Promise<number> {
+    const count = this.processCount();
+    for (const live of this.#sessions.values()) live.stopped = true;
+    await this.#closeAll("the agent was stopped");
+    return count;
+  }
+
+  /** Close every session's agent, prepared agent and agent still starting; starts under way fail with `why`. */
+  async #closeAll(why: string): Promise<void> {
     this.#generation++;
+    this.#stoppedBecause = why;
     await Promise.all([
       ...[...this.#sessions.keys()].map((id) => this.closeSession(id)),
       ...[...this.#prepared].map((agent) => agent.close()),
@@ -1002,8 +1066,20 @@ export function turnReplyText(store: SessionStore, sessionId: string, turnId: st
 
 export interface AcpRuntimeHostOptions extends AcpRuntimeOptions {
   presets?: AcpRuntimePreset[];
-  /** Add `defaultAcpPresets()` for ids not given in `presets`. Default true. */
+  /** Add the default presets for ids not given in `presets`. Default true. */
   includeDefaultPresets?: boolean;
+  /**
+   * The Connector's own presets (`builtin` in `agents()`): default `defaultAcpPresets()`, the built-in agents installed
+   * on this machine. An embedding app that ships its agents passes them here.
+   */
+  defaultPresets?: AcpRuntimePreset[];
+  /** Each agent's switch and settings as saved on this device (`agents.json`), by agent id. */
+  agentSettings?: AgentOverrides;
+  /**
+   * Persist every agent's settings after `updateAgent` changed them (the whole map). The change applies only once
+   * this resolves; a rejection refuses it. The values of `env` are secrets: keep them on the device.
+   */
+  onAgentSettingsChange?: (settings: AgentOverrides) => void | Promise<void>;
   /** A prepared agent nobody took over is closed after this long without another `prepare` for it. Default 10 min. */
   preparedTtlMs?: number;
   /** Prepared agents kept on this device; beyond it the least recently used ready one is closed. Default 4. */
@@ -1019,6 +1095,25 @@ export interface PreparedInfo {
   config: ConfigOption[];
   /** When it is closed unless a session takes it over or it is prepared again (ms since the epoch). */
   expiresAt: number;
+}
+
+/** An agent of this device as `aa.v3.Device/agents` reports it (`busy` comes from the sessions service). */
+export interface AgentInfo {
+  id: string;
+  /** Display name: the device's own if it set one, else the preset's. */
+  name: string;
+  /** One of the Connector's default presets. */
+  builtin: boolean;
+  enabled: boolean;
+  /** What a process started now would run. */
+  command: string;
+  args: string[];
+  /** Names of its extra environment variables; the values never leave the device. */
+  envKeys: string[];
+  /** The name, command, args or environment differ from the preset. */
+  customized: boolean;
+  /** Agent processes running now: the sessions' agents, prepared ones and ones still starting. */
+  running: number;
 }
 
 interface PreparedEntry {
@@ -1046,6 +1141,14 @@ export class AcpRuntimeHost {
   readonly #preparedById = new Map<string, PreparedEntry>();
   readonly #preparedTtlMs: number;
   readonly #maxPrepared: number;
+  /** The preset each configurable runtime was registered with: what `update_agent` changes and `reset` goes back to. */
+  readonly #presets = new Map<string, AcpRuntimePreset>();
+  /** Ids registered from the default presets. */
+  readonly #builtin = new Set<string>();
+  /** Every agent's saved changes, ids not registered here included (kept as they are). */
+  #overrides = new Map<string, AgentOverride>();
+  /** `updateAgent` calls run one at a time, so none is lost. */
+  #agentUpdates: Promise<unknown> = Promise.resolve();
   onPushEvent: ((event: PushEvent) => void) | undefined;
 
   constructor(options: AcpRuntimeHostOptions) {
@@ -1054,9 +1157,14 @@ export class AcpRuntimeHost {
     this.#options = { ...options, onPushEvent: (event) => this.onPushEvent?.(event) };
     this.#preparedTtlMs = options.preparedTtlMs ?? DEFAULT_PREPARED_TTL_MS;
     this.#maxPrepared = Math.max(1, options.maxPrepared ?? DEFAULT_MAX_PREPARED);
+    this.#overrides = new Map(Object.entries(AgentOverridesSchema.parse(options.agentSettings ?? {})));
     for (const preset of options.presets ?? []) this.registerPreset(preset);
     if (options.includeDefaultPresets ?? true) {
-      for (const preset of defaultAcpPresets()) if (!this.#runtimes.has(preset.id)) this.registerPreset(preset);
+      for (const preset of options.defaultPresets ?? defaultAcpPresets()) {
+        if (this.#runtimes.has(preset.id)) continue;
+        this.registerPreset(preset);
+        this.#builtin.add(preset.id);
+      }
     }
   }
 
@@ -1066,17 +1174,136 @@ export class AcpRuntimeHost {
     return runtime;
   }
 
+  /** Add (or replace) a runtime. One with a `preset` runs with this device's saved settings for its id applied. */
   registerRuntime(runtime: AgentRuntime): void {
     if (!runtime.id) throw new TypeError("a runtime needs an id");
     this.#runtimes.set(runtime.id, runtime);
+    this.#builtin.delete(runtime.id);
+    const preset = runtime.configure ? runtime.preset : undefined;
+    if (preset === undefined) {
+      this.#presets.delete(runtime.id);
+      return;
+    }
+    this.#presets.set(runtime.id, copyPreset(preset));
+    runtime.configure?.(effectivePreset(preset, this.#overrides.get(runtime.id)));
   }
 
+  /** The agents that can be used here (`status.runtimes`): every registered one except those turned off. */
   list(): { id: string; name: string }[] {
-    return [...this.#runtimes.values()].map((r) => ({ id: r.id, name: r.name }));
+    return [...this.#runtimes.values()].filter((r) => !this.isDisabled(r.id)).map((r) => ({ id: r.id, name: r.name }));
   }
 
+  /** Registered here, turned off or not. */
   has(runtimeId: string): boolean {
     return this.#runtimes.has(runtimeId);
+  }
+
+  // ── Agent settings (`aa.v3.Device/agents`, `update_agent`, `stop_agent`) ──
+
+  /** Turned off on this device (`update_agent({ enabled: false })`). False for ids not registered here. */
+  isDisabled(agentId: string): boolean {
+    return this.#runtimes.has(agentId) && this.#overrides.get(agentId)?.enabled === false;
+  }
+
+  /** Throws `failed_precondition` / `agent_disabled` when the agent is turned off: it starts no process, takes no turn. */
+  assertEnabled(agentId: string): void {
+    if (!this.isDisabled(agentId)) return;
+    const name = this.#runtimes.get(agentId)?.name ?? agentId;
+    throw new MeshCallError("failed_precondition", `${name} is turned off on this device`, { details: { reason: "agent_disabled", agent: agentId } });
+  }
+
+  /** Every registered agent, turned off ones included, in the order of `list()`. */
+  agents(): AgentInfo[] {
+    return [...this.#runtimes.values()].map((runtime) => this.#info(runtime));
+  }
+
+  /** One agent; `invalid_argument` / `unknown_agent` when it is not registered here. */
+  agent(agentId: string): AgentInfo {
+    return this.#info(this.runtime(agentId));
+  }
+
+  /**
+   * Turn an agent on or off, or change its display name, command, args or extra environment variables (see
+   * `AgentUpdate`). Saved through `onAgentSettingsChange` before anything changes, then applied to agent processes
+   * started from now on: running ones keep their settings until stopped, and prepared agents whose launch settings
+   * changed (or that were turned off) are closed so the next `prepare` starts them anew.
+   */
+  updateAgent(agentId: string, update: AgentUpdate): Promise<AgentInfo> {
+    const run = async (): Promise<AgentInfo> => {
+      const runtime = this.runtime(agentId);
+      const parsed = AgentUpdateSchema.safeParse(update);
+      if (!parsed.success) throw invalidAgentSettings(parsed.error);
+      const preset = this.#presets.get(agentId);
+      const before = this.#overrides.get(agentId) ?? {};
+      const after = applyAgentUpdate(preset ?? bareSettings(runtime), before, parsed.data);
+      const checked = AgentOverrideSchema.safeParse(after);
+      if (!checked.success) throw invalidAgentSettings(checked.error);
+      if (preset === undefined && hasLaunchOrName(after)) {
+        throw new MeshCallError("failed_precondition", `${runtime.name} has no settings to change, only its switch`, {
+          details: { reason: "agent_not_configurable", agent: agentId },
+        });
+      }
+
+      const next = new Map(this.#overrides);
+      if (Object.keys(after).length > 0) next.set(agentId, after);
+      else next.delete(agentId);
+      await this.#options.onAgentSettingsChange?.(Object.fromEntries(next));
+      this.#overrides = next;
+
+      let relaunch = false;
+      if (preset !== undefined) {
+        const now = effectivePreset(preset, after);
+        relaunch = !sameLaunch(effectivePreset(preset, before), now);
+        runtime.configure?.(now);
+      }
+      // A prepared agent runs the old command, args or environment, or one that is off now: the next `prepare` starts anew.
+      const turnedOff = before.enabled !== false && after.enabled === false;
+      if (relaunch || turnedOff) await this.#dropPreparedOf(agentId);
+      return this.#info(runtime);
+    };
+    const result = this.#agentUpdates.then(run, run);
+    this.#agentUpdates = result.catch(() => undefined);
+    return result;
+  }
+
+  /**
+   * Stop every process of `agentId`: its sessions' agents, prepared ones and ones still starting. Sessions stay and
+   * start the agent again on their next message, with the settings of that moment. Resolves with how many processes
+   * were stopped. Turns still running are not waited for (`SessionsService.stopAgent` cancels them first).
+   */
+  async stopAgent(agentId: string): Promise<number> {
+    const runtime = this.runtime(agentId);
+    const count = this.#processCount(runtime);
+    // The pool forgets its prepared agents while the runtime stops every process (those included).
+    await Promise.all([this.#dropPreparedOf(agentId), runtime.stop ? runtime.stop() : runtime.dispose()]);
+    return count;
+  }
+
+  #info(runtime: AgentRuntime): AgentInfo {
+    const preset = this.#presets.get(runtime.id);
+    const override = this.#overrides.get(runtime.id) ?? {};
+    const effective = effectivePreset(preset ?? bareSettings(runtime), override);
+    return {
+      id: runtime.id,
+      name: runtime.name,
+      builtin: this.#builtin.has(runtime.id),
+      enabled: override.enabled !== false,
+      command: effective.command,
+      args: effective.args,
+      envKeys: Object.keys(effective.env ?? {}),
+      customized: preset !== undefined && (effective.name !== preset.name || !sameLaunch(effective, preset)),
+      running: this.#processCount(runtime),
+    };
+  }
+
+  #processCount(runtime: AgentRuntime): number {
+    if (runtime.processCount) return runtime.processCount();
+    return this.store.list().sessions.filter((s) => s.agent === runtime.id && runtime.hasSession(s.id)).length;
+  }
+
+  /** Close the prepared agents of `agentId` (one still starting is closed once it is ready). */
+  async #dropPreparedOf(agentId: string): Promise<void> {
+    await Promise.all([...this.#prepared.values()].filter((entry) => entry.agent === agentId).map((entry) => this.#dropPrepared(entry)));
   }
 
   runtime(runtimeId: string): AgentRuntime {
@@ -1112,6 +1339,7 @@ export class AcpRuntimeHost {
     if (session === undefined) throw new MeshCallError("not_found", `no session ${sessionId}`, { details: { reason: "session_not_found" } });
     const runtime = this.runtime(session.agent);
     if (runtime.hasSession(sessionId)) return;
+    this.assertEnabled(session.agent);
     const prepared = options.preparedId ? this.#takePrepared(options.preparedId, session.agent, session.cwd) : undefined;
     await runtime.startSession({ sessionId, cwd: session.cwd, ...(prepared ? { prepared } : {}) });
     const pending = this.#pendingConfig.get(sessionId);
@@ -1136,6 +1364,7 @@ export class AcpRuntimeHost {
    */
   async prepare(input: { agent: string; cwd: string }): Promise<PreparedInfo> {
     const runtime = this.runtime(input.agent);
+    this.assertEnabled(input.agent);
     const key = `${input.agent}\u0000${input.cwd}`;
     let entry = this.#prepared.get(key);
     if (entry?.ready !== undefined && !entry.ready.usable) {
@@ -1246,6 +1475,8 @@ export class AcpRuntimeHost {
   }
 
   async prompt(sessionId: string, turnId: string, prompt: AcpContentBlock[]): Promise<TurnResult> {
+    const agent = this.store.get(sessionId)?.agent;
+    if (agent !== undefined) this.assertEnabled(agent); // a turned-off agent takes no new turn, running or not
     await this.ensureSession(sessionId);
     return this.runtimeFor(sessionId).sendPrompt(sessionId, { turnId, prompt });
   }
@@ -1291,4 +1522,83 @@ export class AcpRuntimeHost {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+// ── Agent settings ──────────────────────────────────────────────────────────────────────────────────────────────
+
+function copyPreset(preset: AcpRuntimePreset): AcpRuntimePreset {
+  return { id: preset.id, name: preset.name, command: preset.command, args: [...(preset.args ?? [])], ...(preset.env ? { env: { ...preset.env } } : {}) };
+}
+
+/** What a runtime without a preset is shown as: only its switch can change. */
+function bareSettings(runtime: AgentRuntime): AcpRuntimePreset {
+  return { id: runtime.id, name: runtime.name, command: "", args: [] };
+}
+
+/** The settings an agent runs with: its preset with this device's changes applied. */
+function effectivePreset(preset: AcpRuntimePreset, override: AgentOverride | undefined): AcpRuntimePreset {
+  const env = override?.env ?? preset.env;
+  return {
+    id: preset.id,
+    name: override?.name ?? preset.name,
+    command: override?.command ?? preset.command,
+    args: [...(override?.args ?? preset.args ?? [])],
+    ...(env !== undefined && Object.keys(env).length > 0 ? { env: { ...env } } : {}),
+  };
+}
+
+/**
+ * `current` with `update` applied, keeping only what differs from the preset (an agent set back to its preset's
+ * values is not customized, and follows the preset when a later Connector changes it). `reset` starts again from
+ * the preset, except for the switch.
+ */
+function applyAgentUpdate(preset: AcpRuntimePreset, current: AgentOverride, update: AgentUpdate): AgentOverride {
+  const next: AgentOverride = update.reset ? (current.enabled === false ? { enabled: false } : {}) : { ...current };
+  if (update.enabled != null) next.enabled = update.enabled;
+  if (update.name != null) next.name = update.name;
+  if (update.command != null) next.command = update.command;
+  if (update.args != null) next.args = [...update.args];
+  if (update.env != null) {
+    // `update` went through `AgentUpdateSchema`, whose records never carry a `__proto__` key: plain assignment is safe.
+    const env: Record<string, string> = { ...(next.env ?? preset.env ?? {}) };
+    for (const [key, value] of Object.entries(update.env)) {
+      if (value === null) delete env[key];
+      else env[key] = value;
+    }
+    next.env = env;
+  }
+  const kept: AgentOverride = {};
+  if (next.enabled === false) kept.enabled = false;
+  if (next.name !== undefined && next.name !== preset.name) kept.name = next.name;
+  if (next.command !== undefined && next.command !== preset.command) kept.command = next.command;
+  if (next.args !== undefined && !sameArgs(next.args, preset.args ?? [])) kept.args = next.args;
+  if (next.env !== undefined && !sameEnv(next.env, preset.env ?? {})) kept.env = next.env;
+  return kept;
+}
+
+function hasLaunchOrName(override: AgentOverride): boolean {
+  return override.name !== undefined || override.command !== undefined || override.args !== undefined || override.env !== undefined;
+}
+
+/** Same command, args and environment: a process started with either is the same. */
+function sameLaunch(a: AcpRuntimePreset, b: AcpRuntimePreset): boolean {
+  return a.command === b.command && sameArgs(a.args ?? [], b.args ?? []) && sameEnv(a.env ?? {}, b.env ?? {});
+}
+
+function sameArgs(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((arg, i) => arg === b[i]);
+}
+
+function sameEnv(a: Readonly<Record<string, string>>, b: Readonly<Record<string, string>>): boolean {
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length && keys.every((key) => Object.hasOwn(b, key) && a[key] === b[key]);
+}
+
+/** A bad `update_agent` from a direct caller (MeshCall checks the request schema before a remote one gets here). */
+function invalidAgentSettings(error: { issues: readonly { path: readonly PropertyKey[]; message: string }[] }): InvalidArgumentError {
+  const issue = error.issues[0];
+  const where = (issue?.path ?? []).map(String).join(".");
+  return new InvalidArgumentError(`invalid agent settings${where ? ` (${where})` : ""}: ${issue?.message ?? "invalid"}`, {
+    details: { reason: "invalid_agent_settings", ...(where ? { field: where } : {}) },
+  });
 }

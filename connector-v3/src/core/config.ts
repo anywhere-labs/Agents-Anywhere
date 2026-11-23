@@ -122,6 +122,77 @@ export interface AcpRuntimePreset {
   env?: Record<string, string>;
 }
 
+// ── Per-agent settings (`aa.v3.Device/update_agent`) ────────────────────────────────────────────────────────────
+
+/** The names an agent's extra environment variables may have. */
+export const AGENT_ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/u;
+/** Extra environment variables one agent may have. */
+export const MAX_AGENT_ENV_VARS = 128;
+
+const noNul = (value: string): boolean => !value.includes("\u0000");
+const NO_NUL = "must not contain NUL characters";
+
+export const AgentIdSchema = z.string().min(1).max(64);
+export const AgentNameSchema = z.string().trim().min(1).max(128);
+export const AgentCommandSchema = z.string().trim().min(1).max(4096).refine(noNul, NO_NUL);
+export const AgentArgsSchema = z.array(z.string().max(4096).refine(noNul, NO_NUL)).max(256);
+export const AgentEnvNameSchema = z.string().max(256).regex(AGENT_ENV_NAME_PATTERN, "must match ^[A-Za-z_][A-Za-z0-9_]*$");
+export const AgentEnvValueSchema = z.string().max(32_768).refine(noNul, NO_NUL);
+
+/**
+ * What this device changed about one agent against its preset: turned off, or another display name, command, args
+ * or set of extra environment variables. `env`, when present, is the agent's whole set of extra variables (it takes
+ * the place of the preset's). Kept only on the device (`agents.json`, 0600): the values of `env` never leave it.
+ */
+export const AgentOverrideSchema = z.object({
+  enabled: z.boolean().optional(),
+  name: AgentNameSchema.optional(),
+  command: AgentCommandSchema.optional(),
+  args: AgentArgsSchema.optional(),
+  env: z
+    .record(AgentEnvNameSchema, AgentEnvValueSchema)
+    .refine((env) => Object.keys(env).length <= MAX_AGENT_ENV_VARS, `at most ${MAX_AGENT_ENV_VARS} environment variables`)
+    .optional(),
+});
+
+export interface AgentOverride {
+  enabled?: boolean;
+  name?: string;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+}
+
+/** Every agent's override, by agent id. */
+export const AgentOverridesSchema = z.record(AgentIdSchema, AgentOverrideSchema);
+export type AgentOverrides = Record<string, AgentOverride>;
+
+/**
+ * A change to one agent (`update_agent` without its `id`). Absent or `null` fields stay as they are; in `env` a
+ * string sets the variable and `null` removes it. `reset` first drops the changes to the name, command, args and
+ * environment (back to the preset), then applies the other fields; it leaves `enabled` alone.
+ */
+export const AgentUpdateSchema = z.object({
+  enabled: z.boolean().nullish(),
+  name: AgentNameSchema.nullish(),
+  command: AgentCommandSchema.nullish(),
+  args: AgentArgsSchema.nullish(),
+  env: z
+    .record(AgentEnvNameSchema, AgentEnvValueSchema.nullable())
+    .refine((env) => Object.keys(env).length <= MAX_AGENT_ENV_VARS, `at most ${MAX_AGENT_ENV_VARS} environment variables`)
+    .nullish(),
+  reset: z.boolean().nullish(),
+});
+
+export interface AgentUpdate {
+  enabled?: boolean | null;
+  name?: string | null;
+  command?: string | null;
+  args?: string[] | null;
+  env?: Record<string, string | null> | null;
+  reset?: boolean | null;
+}
+
 // ── Compile-time agreement between the schemas and the interfaces above ─────────────────────────────────────────
 
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
@@ -131,4 +202,7 @@ export type _ConfigSchemaChecks = [
   Assert<Same<z.infer<typeof PairedClientEntrySchema>, PairedClientEntry>>,
   Assert<Same<z.infer<typeof DeviceIdentitySchema>, DeviceIdentity>>,
   Assert<Same<z.infer<typeof AcpRuntimePresetSchema>, AcpRuntimePreset>>,
+  Assert<Same<z.infer<typeof AgentOverrideSchema>, AgentOverride>>,
+  Assert<Same<z.infer<typeof AgentOverridesSchema>, AgentOverrides>>,
+  Assert<Same<z.infer<typeof AgentUpdateSchema>, AgentUpdate>>,
 ];
