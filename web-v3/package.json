@@ -11,7 +11,12 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "embed:build": "vite build --config embed/vite.config.ts",
+    "embed:dev": "vite --config embed/vite.config.ts",
+    "embed:schema": "node embed/scripts/gen-schema.mjs",
+    "embed:fixtures": "node embed/scripts/build-fixtures.mjs",
+    "embed:smoke": "node embed/scripts/smoke.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",
@@ -45,14 +50,21 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@tailwindcss/vite": "^4",
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^6.3.0",
+    "ajv": "^8.20.0",
     "eslint": "^9",
     "eslint-config-next": "16.4.6",
     "fake-indexeddb": "^6.2.5",
+    "playwright-core": "^1.65",
     "tailwindcss": "^4",
+    "ts-json-schema-generator": "^2.10.0",
     "typescript": "^5",
+    "vite": "^8",
+    "vite-plugin-singlefile": "^2.3.4",
     "vitest": "^4.1.10"
   }
 }

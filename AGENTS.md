@@ -14,6 +14,7 @@ Agents Anywhere 是一个跨设备的 Agent 工作台。工作设备上的 **Con
 | `connector/` | 工作设备侧进程，连接 Server 并驱动 Runtime | Python、uv |
 | `web-next/` | Web 客户端（另有自己的 [AGENTS.md](web-next/AGENTS.md)） | Next.js、TypeScript、Yarn |
 | `desktop-workbench/` | **当前**桌面客户端，内含受管理的本机 Connector | Electron、TypeScript、Yarn |
+| `desktop-v3/` | v3 桌面客户端：从安装包加载 `web-v3` 静态导出，并管理本机的 `connector-v3` 与本地 `meshcall-router`，见 [README](desktop-v3/README.md) | Electron、TypeScript、Yarn |
 | `android/` | Android 客户端，见 `android/ARCHITECTURE.md` | Kotlin、Gradle、JDK 17 |
 | `ios/` | iOS / iPadOS 客户端，见 `ios/ARCHITECTURE.md` | Swift、Xcode |
 | `dsh-bridge-next/` | **当前** DSH 插件（npm 包，也随 DSH Desktop 分发） | TypeScript、Yarn |
@@ -38,6 +39,7 @@ Agents Anywhere 是一个跨设备的 Agent 工作台。工作设备上的 **Con
   - Connector：`cd connector && uv run ruff check connector tests && uv run pytest -q`
   - Web：`cd web-next && yarn test && yarn typecheck && yarn protocol:check`
   - Desktop：`cd desktop-workbench && yarn test:main && yarn renderer:typecheck`
+  - Desktop v3：`cd desktop-v3 && corepack yarn typecheck && corepack yarn test`（改了 `web-v3` 的路由或服务端功能时，再跑一次 `cd web-v3 && AA_DESKTOP_EXPORT=1 corepack yarn build`，确认 Desktop 用的静态导出还能构建）
   - DSH 插件：`cd dsh-bridge-next && corepack yarn check`（集成测试会在进程内拉起 Connector 探针和 Server，同样需要 `AGENT_SERVER_TEST_DB_URL`）
 - 本地联调用 `./local-up.sh`（Server + Web，可加 `--with-connector`）或 `./desktop-local-up.sh`。**不要**使用 `--reset-data`，除非用户明确要求，因为它会删除本地数据库。
 - Server 测试需要 PostgreSQL：通过 `AGENT_SERVER_TEST_DB_URL` 指向一个名字含 `test` 的一次性数据库（本地用 `docker/docker-compose.local.yml` 的 postgres，建库和环境变量见[开发指南](docs/development.md)）；测试会清空该库的所有表，绝不能指向开发库或生产库，也不要把生产 URL 带进测试进程。

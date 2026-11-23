@@ -1,0 +1,285 @@
+{
+ "name": "conversation-cached",
+ "description": "Offline: the cached copy of the pi session (conversation.cached), read-only and marked stale.",
+ "steps": [
+  {
+   "at": 0,
+   "message": {
+    "v": 2,
+    "type": "view.conversation",
+    "device_id": "dev_615df603d8b28f5fbd67ebaf",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "agent": "pi",
+    "readonly": false,
+    "encrypted": false
+   }
+  },
+  {
+   "at": 30,
+   "message": {
+    "v": 2,
+    "type": "conversation.cached",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "messages": [
+     {
+      "id": "eccc0edd-a836-4033-9222-43c47fa42889",
+      "created_at": "2026-11-22T16:32:48.345Z",
+      "seq": 0,
+      "done": true,
+      "role": "assistant",
+      "turn_id": "eccc0edd-a836-4033-9222-43c47fa42889",
+      "autonomous": true,
+      "parts": [
+       {
+        "type": "text",
+        "text": "**pi v1.6.0** via openma-pi-acp v0.1.8\n\n_(skills and extensions of the recording machine omitted)_"
+       }
+      ]
+     },
+     {
+      "id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "created_at": "2026-11-22T16:32:48.347Z",
+      "seq": 1,
+      "done": true,
+      "role": "user",
+      "client_msg_id": "rec_1795365168345",
+      "author": "user:usr_dev/client:embed-fixture-recorder",
+      "rewindable": true,
+      "parts": [
+       {
+        "type": "text",
+        "text": "Look at the files in the current directory (use your tools to list them and read README.md and math.ts), then explain in two short bullet points what the project does and show the add function in a fenced ts code block."
+       }
+      ]
+     },
+     {
+      "id": "edf41201-6faa-4e40-9122-12e11ffa11b3",
+      "created_at": "2026-11-22T16:32:49.355Z",
+      "seq": 2,
+      "done": true,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "thinking",
+        "text": "Let me look at the current directory files."
+       }
+      ]
+     },
+     {
+      "id": "78e6103e-e1d5-4371-9998-994bf2397623",
+      "created_at": "2026-11-22T16:32:49.627Z",
+      "seq": 3,
+      "done": true,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ICx3gvXLz4IUYGkxeMw76339",
+        "title": "ls -la",
+        "kind": "execute",
+        "status": "completed",
+        "input": {
+         "command": "ls -la"
+        },
+        "output": {
+         "content": [
+          {
+           "type": "text",
+           "text": "total 16\ndrwx------@   4 dev  staff    128 Nov 23 00:32 .\ndrwx------@ 683 dev  staff  21856 Nov 23 00:32 ..\n-rw-r--r--@   1 dev  staff     86 Nov 23 00:32 README.md\n-rw-r--r--@   1 dev  staff     61 Nov 23 00:32 math.ts\n"
+          }
+         ],
+         "structuredContent": {
+          "output": "total 16\ndrwx------@   4 dev  staff    128 Nov 23 00:32 .\ndrwx------@ 683 dev  staff  21856 Nov 23 00:32 ..\n-rw-r--r--@   1 dev  staff     86 Nov 23 00:32 README.md\n-rw-r--r--@   1 dev  staff     61 Nov 23 00:32 math.ts\n",
+          "truncated": false,
+          "exit_code": 0,
+          "wall_time_seconds": 0
+         }
+        }
+       }
+      ]
+     },
+     {
+      "id": "ea9a8535-fbc1-4f80-b5a3-9073a1f16e11",
+      "created_at": "2026-11-22T16:32:50.691Z",
+      "seq": 4,
+      "done": true,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_VSQnf3y6i6esT2ERfube0064",
+        "title": "Read README.md",
+        "kind": "read",
+        "status": "completed",
+        "input": {
+         "path": "README.md"
+        },
+        "output": {
+         "content": [
+          {
+           "type": "text",
+           "text": "# Demo\n\nA tiny project used to record renderer fixtures.\n\n- add(a, b) returns the sum\n"
+          }
+         ],
+         "structuredContent": "# Demo\n\nA tiny project used to record renderer fixtures.\n\n- add(a, b) returns the sum\n"
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/README.md"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "id": "92b951e2-1353-478d-861d-54bcd8207096",
+      "created_at": "2026-11-22T16:32:50.852Z",
+      "seq": 5,
+      "done": true,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_01_ET_eJ3VUJfnnLgCF9tCqgsP9151",
+        "title": "Read math.ts",
+        "kind": "read",
+        "status": "completed",
+        "input": {
+         "path": "math.ts"
+        },
+        "output": {
+         "content": [
+          {
+           "type": "text",
+           "text": "export function add(a: number, b: number) {\n  return a + b\n}\n"
+          }
+         ],
+         "structuredContent": "export function add(a: number, b: number) {\n  return a + b\n}\n"
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": true,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to record renderer fixtures.\n- It provides an `add(a, b)` function that returns the sum of two numbers.\n\n```ts\nexport function add(a: number, b: number) {\n  return a + b\n}\n```"
+       }
+      ]
+     },
+     {
+      "id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "created_at": "2026-11-22T16:32:54.255Z",
+      "seq": 7,
+      "done": true,
+      "role": "user",
+      "client_msg_id": "rec_1795365174254",
+      "author": "user:usr_dev/client:embed-fixture-recorder",
+      "rewindable": true,
+      "parts": [
+       {
+        "type": "text",
+        "text": "Now add a `sub(a, b)` function to math.ts next to add, then reply with one sentence."
+       }
+      ]
+     },
+     {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": true,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "completed",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n  return a + b\n}",
+           "newText": "export function add(a: number, b: number) {\n  return a + b\n}\n\nexport function sub(a: number, b: number) {\n  return a - b\n}"
+          }
+         ]
+        },
+        "output": {
+         "content": [
+          {
+           "type": "text",
+           "text": "Successfully replaced 1 block(s) in math.ts."
+          }
+         ],
+         "details": {
+          "diff": " 1 export function add(a: number, b: number) {\n 2   return a + b\n 3 }\n+4 \n+5 export function sub(a: number, b: number) {\n+6   return a - b\n+7 }",
+          "patch": "--- math.ts\n+++ math.ts\n@@ -1,3 +1,7 @@\n export function add(a: number, b: number) {\n   return a + b\n }\n+\n+export function sub(a: number, b: number) {\n+  return a - b\n+}\n",
+          "firstChangedLine": 4
+         }
+        },
+        "diffs": [
+         {
+          "path": "/Users/dev/demo/math.ts",
+          "old_text": "export function add(a: number, b: number) {\n  return a + b\n}\n",
+          "new_text": "export function add(a: number, b: number) {\n  return a + b\n}\n\nexport function sub(a: number, b: number) {\n  return a - b\n}\n"
+         }
+        ],
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts",
+          "line": 4
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "id": "ef668299-ea6f-4f75-a852-e667246af848",
+      "created_at": "2026-11-22T16:32:56.445Z",
+      "seq": 9,
+      "done": true,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "text",
+        "text": "Added the `sub(a, b)` function to math.ts right after `add`."
+       }
+      ]
+     }
+    ],
+    "control": {
+     "state": "disconnected",
+     "steer": "interrupt",
+     "pending": [],
+     "queued": []
+    },
+    "stale": true
+   }
+  }
+ ],
+ "responders": {
+  "older": {
+   "messages": [],
+   "page_size": 0
+  },
+  "files": {}
+ }
+}

@@ -6,7 +6,6 @@ import AgentDefaultModel from '@deepseek-ai/dsh-agent-default-model'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
-import SessionProjection from '@deepseek-ai/dsh-session-projection'
 import SessionController from '@deepseek-ai/dsh-api-session-controller'
 import Attachments from '@deepseek-ai/dsh-attachment-local'
 import AgentPresets from '@deepseek-ai/dsh-agent-preset-registry'
@@ -68,7 +67,7 @@ export class TextAdapter extends LlmAdapter {
 export async function mountAgents(ctx: Context, adapter?: LlmAdapter,
   defaultModel: { provider: string, model: string, reasoningEffort?: string } = { provider: 'test', model: 'text' }): Promise<void> {
   await ctx.plugin(LlmRuntime).await()
-  await ctx.plugin(SessionProjection).await()
+  // The base fixture already provides sessionProjections, which 0.2.3 SessionQuery injects.
   await ctx.plugin(SystemPrompt).await()
   await ctx.plugin(ToolRuntime).await()
   // 0.2.2 moved tool execution out of the loop; an Agent runs only with an executor in scope.

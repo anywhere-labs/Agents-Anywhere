@@ -6,7 +6,7 @@
 // encrypted devices; the MCP switch on normal ones), plus rename / delete. Device management follows v2 web-next's
 // device page; runtime availability states are not reported by v3 Connectors yet.
 import Link from "next/link"
-import { useParams, useRouter, useSearchParams } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react"
 import {
   ActivityIcon,
@@ -40,6 +40,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { E2eeLockBadge } from "@/components/workbench/e2ee-lock-badge"
 import { FileBrowser } from "@/components/workbench/file-browser"
 import { PairDeviceDialog } from "@/components/workbench/pair-device-dialog"
+import { useRouteParams } from "@/lib/platform/route-params"
 import { PLATFORM_ICON } from "@/components/workbench/workbench-sidebar"
 import { WorkbenchShell } from "@/components/workbench/workbench-shell"
 import { formatKeyFingerprint } from "@/lib/mesh/pairing"
@@ -92,7 +93,7 @@ function SessionRow({ s, deviceId }: { s: SessionSummary; deviceId: string }) {
 }
 
 function DeviceWorkbenchPageInner() {
-  const params = useParams<{ deviceId: string }>()
+  const params = useRouteParams<{ deviceId: string }>("/devices/[deviceId]")
   const searchParams = useSearchParams()
   const router = useRouter()
   const { t, locale } = useI18n()
@@ -123,7 +124,7 @@ function DeviceWorkbenchPageInner() {
   const [unpinOpen, setUnpinOpen] = useState(false)
   const [fingerprintState, setFingerprintState] = useState<{ pub: string; fp: string } | null>(null)
   const [pairedClients, setPairedClients] = useState<PairedClientEntry[]>([])
-  const [generatedPairing, setGeneratedPairing] = useState<{ uri: string; expires_at: string } | null>(null)
+  const [generatedPairing, setGeneratedPairing] = useState<{ code: string; fingerprint: string; expires_at: string } | null>(null)
 
   useEffect(() => {
     if (!trust?.device_pub) return
@@ -547,8 +548,8 @@ function DeviceWorkbenchPageInner() {
                     onClick={() =>
                       void call(async () => {
                         if (!tunnelManager || !tunnelDevice) return
-                        const res = await tunnelManager.createPairing(tunnelDevice, { platform: "web" })
-                        setGeneratedPairing({ uri: res.uri, expires_at: res.expires_at })
+                        const res = await tunnelManager.createPairing(tunnelDevice, { kind: "code" })
+                        setGeneratedPairing({ code: res.code ?? "", fingerprint: res.fingerprint ?? "", expires_at: res.expires_at })
                       })
                     }
                   >
@@ -556,14 +557,21 @@ function DeviceWorkbenchPageInner() {
                   </Button>
                 </div>
                 {generatedPairing && (
-                  <CopyableValue
-                    label={t("device.pairingLinkExpires", {
-                      time: new Date(generatedPairing.expires_at).toLocaleTimeString(locale === "zh-CN" ? "zh-CN" : "en-US"),
-                    })}
-                    value={generatedPairing.uri}
-                    copyLabel={t("common.copy")}
-                    copyFailedLabel={t("common.copyFailed")}
-                  />
+                  <div className="space-y-2">
+                    <CopyableValue
+                      label={t("devices.generatedCodeLabel", {
+                        time: new Date(generatedPairing.expires_at).toLocaleTimeString(locale === "zh-CN" ? "zh-CN" : "en-US"),
+                      })}
+                      value={generatedPairing.code}
+                      copyLabel={t("common.copy")}
+                      copyFailedLabel={t("common.copyFailed")}
+                    />
+                    {generatedPairing.fingerprint && (
+                      <p className="text-xs text-muted-foreground">
+                        {t("devices.pairFingerprint")}: <span className="font-mono">{generatedPairing.fingerprint}</span>
+                      </p>
+                    )}
+                  </div>
                 )}
                 {pairedClients.length === 0 ? (
                   <p className="text-sm text-muted-foreground">{t("devices.noPairedClients")}</p>
@@ -637,6 +645,7 @@ function DeviceWorkbenchPageInner() {
           if (!open) void reload()
         }}
         deviceNameHint={device.name}
+        deviceId={device.id}
       />
 
       <ConfirmDialog

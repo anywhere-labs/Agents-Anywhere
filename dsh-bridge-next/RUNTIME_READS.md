@@ -16,10 +16,10 @@
 - `router.ts`：会话查询、当前状态、分页捕获、订阅、图片/文本请求与配置目录；纯读取不调用 Agent create/resume。
 - `native.ts`、`visibility.ts`、`sync.ts`：官方事件与读写、侧栏过滤、初始校准及实时推送。
 - `sessions/source.ts`：官方会话清单、明确的归档/不可见/缺失状态及即时可用性检查。
-- `history.ts`、`tools.ts`：原始事件转换为统一 Timeline。Python 不解释 DSH 原始消息。
+- `history.ts`、`tools.ts`：原始事件转换为统一 Timeline。Python 不解释 DSH 原始消息。DSH 0.2.3 回复中的 `action-card` 代码块（操作卡片）按 DSH 读取卡片的规则去掉（`action-cards.ts`），不进入 Timeline。
 - `identity.ts`：沿用共享协议的会话 ID、Timeline ID 和内容哈希算法；握手传入 runtime instance 的 `sessionNamespace`，区分平台归属。
 
-当前开发依赖与自动化检查使用 DSH SDK `0.2.2-rc.5`，支持范围见[技术说明](TECHNICAL.md)。Host 完整日志通过 `sessionQuery.observeSession(id, { projectionMode: 'none' })` 的不可变 observation 读取；无 Host 的兼容 reader 仍使用 `readSession`，不使用仅代表当前模型上下文的 `readSurface`。不创建新的会话内容数据库。
+当前开发依赖与自动化检查使用 DSH SDK `0.2.3-alpha.2`，支持范围见[技术说明](TECHNICAL.md)。Host 完整日志通过 `sessionQuery.observeSession(id, { projectionMode: 'none' })` 的不可变 observation 读取；无 Host 的兼容 reader 仍使用 `readSession`，不使用仅代表当前模型上下文的 `readSurface`。不创建新的会话内容数据库。
 
 ## 发现与添加
 

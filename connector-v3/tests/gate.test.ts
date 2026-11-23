@@ -7,13 +7,27 @@ import addFormatsModule from "ajv-formats";
 import { generateE2EKey, MeshCallError, PermissionDeniedError } from "meshcall";
 
 import type { PairedClientEntry } from "../src/core/config.js";
-import { DeviceGate, PAIRING_URI_PREFIX, PairingError, base64UrlEncode, isPairingExpired, parsePairingUri } from "../src/core/gate.js";
+import {
+  DeviceGate,
+  PAIRING_CODE_ID,
+  PAIRING_CODE_MAX_ATTEMPTS,
+  PAIRING_URI_PREFIX,
+  PairingError,
+  base64UrlEncode,
+  derivePairingCodePsk,
+  formatPairingCode,
+  isPairingExpired,
+  keyFingerprint,
+  normalizePairingCode,
+  parsePairingUri,
+} from "../src/core/gate.js";
 
 // ajv and ajv-formats are CommonJS; under NodeNext ESM the default import is `module.exports`.
 const Ajv2020 = Ajv2020Module.default;
 const addFormats = addFormatsModule.default;
 
 const SCHEMA_URL = new URL("../../../contracts/aa-v3/1.0/pairing.schema.json", import.meta.url);
+const CODE_VECTORS_URL = new URL("../../../contracts/aa-v3/1.0/fixtures/pairing-code.json", import.meta.url);
 
 async function pairingValidators() {
   const schema = JSON.parse(await readFile(SCHEMA_URL, "utf8")) as { $id: string };
@@ -22,8 +36,9 @@ async function pairingValidators() {
   ajv.addSchema(schema);
   const payload = ajv.getSchema(`${schema.$id}#/$defs/PairingPayload`);
   const entry = ajv.getSchema(`${schema.$id}#/$defs/PairedClientEntry`);
-  assert.ok(payload && entry, "pairing schema defs resolve");
-  return { payload, entry };
+  const code = ajv.getSchema(`${schema.$id}#/$defs/PairingCode`);
+  assert.ok(payload && entry && code, "pairing schema defs resolve");
+  return { payload, entry, code };
 }
 
 class Clock {
@@ -326,5 +341,71 @@ describe("assertBusinessCallAllowed", () => {
     assert.equal(gate.assertBusinessCallAllowed({ tunnel }).via, "tunnel");
     gate.mode = "encrypted";
     assert.throws(() => gate.assertBusinessCallAllowed({ tunnel }), (error: unknown) => error instanceof MeshCallError);
+  });
+});
+
+describe("pairing codes", () => {
+  interface CodeVectors {
+    valid: { input: string; instance_id: string; code: string; psk: string }[];
+    invalid: string[];
+    fingerprints: { public_key: string; fingerprint: string }[];
+  }
+  const vectors = async () => JSON.parse(await readFile(CODE_VECTORS_URL, "utf8")) as CodeVectors;
+
+  it("match the contract's vectors (normalization, PBKDF2 PSK, fingerprint)", async () => {
+    const { valid, invalid, fingerprints } = await vectors();
+    for (const v of valid) {
+      assert.equal(normalizePairingCode(v.input), v.code, v.input);
+      assert.equal(await derivePairingCodePsk(v.input, v.instance_id), v.psk, v.input);
+    }
+    for (const value of invalid) {
+      assert.equal(normalizePairingCode(value), undefined, JSON.stringify(value));
+      await assert.rejects(derivePairingCodePsk(value, "dev_01"), (e: unknown) => e instanceof PairingError && e.code === "invalid_pairing_code");
+    }
+    for (const f of fingerprints) assert.equal(await keyFingerprint(f.public_key), f.fingerprint);
+  });
+
+  it("a code pairs once, under the fixed pairing id, with the PSK the client derives", async () => {
+    const { code: validateCode } = await pairingValidators();
+    const { gate } = await newGate();
+    const created = await gate.createPairingCode(undefined, { label: "Browser", platform: "web" });
+    assert.ok(validateCode(created.code), JSON.stringify(validateCode.errors));
+    assert.equal(created.fingerprint, await keyFingerprint(gate.e2ePublicKey));
+    assert.equal(formatPairingCode(created.code.toLowerCase().replace("-", " ")), created.code);
+
+    assert.equal(gate.getPairingPsk(PAIRING_CODE_ID), await derivePairingCodePsk(created.code, "dev_01"));
+    const peerKey = await clientKey();
+    assert.equal(await gate.authorizePeer({ peerKey, pairingId: PAIRING_CODE_ID }), true);
+    assert.equal(gate.getPairingPsk(PAIRING_CODE_ID), undefined, "spent");
+    assert.equal(gate.listPairedClients()[0]?.platform, "web");
+  });
+
+  it("a new code replaces the previous one; codes and links live side by side", async () => {
+    const { gate } = await newGate();
+    const first = await gate.createPairingCode();
+    const { payload } = await gate.createPairing();
+    const second = await gate.createPairingCode();
+    assert.notEqual(first.code, second.code);
+    assert.equal(gate.getPairingPsk(PAIRING_CODE_ID), await derivePairingCodePsk(second.code, "dev_01"));
+    assert.equal(gate.getPairingPsk(payload.pairing_id), payload.psk);
+  });
+
+  it(`allows ${PAIRING_CODE_MAX_ATTEMPTS} handshake attempts, then the code is gone`, async () => {
+    const { gate } = await newGate();
+    await gate.createPairingCode();
+    for (let i = 0; i < PAIRING_CODE_MAX_ATTEMPTS; i++) assert.ok(gate.getPairingPsk(PAIRING_CODE_ID), `attempt ${i + 1}`);
+    assert.equal(gate.getPairingPsk(PAIRING_CODE_ID), undefined);
+    assert.equal(await gate.authorizePeer({ peerKey: await clientKey(), pairingId: PAIRING_CODE_ID }), false);
+    // A link is not limited: a wrong guess against it needs the 32-byte PSK.
+    const { payload } = await gate.createPairing();
+    for (let i = 0; i < PAIRING_CODE_MAX_ATTEMPTS + 2; i++) assert.equal(gate.getPairingPsk(payload.pairing_id), payload.psk);
+  });
+
+  it("expires", async () => {
+    const { gate, clock } = await newGate();
+    await gate.createPairingCode(60_000);
+    clock.advance(60_000);
+    assert.equal(gate.getPairingPsk(PAIRING_CODE_ID), undefined);
+    assert.equal(await gate.authorizePeer({ peerKey: await clientKey(), pairingId: PAIRING_CODE_ID }), false);
   });
 });

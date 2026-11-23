@@ -32,6 +32,7 @@ AA_CONTROL_SERVER_URL=http://127.0.0.1:8787 corepack yarn dev
   - 快捷键：⌘K 搜索、⌘⇧O 新对话、⌘B 侧栏、⌘J 助手、⌘/ 快捷键一览（也在 ⌘K 里）。
   - 设备页（`/devices/[deviceId]`）：概览（Agent 列表、状态、最近对话、重命名 / 删除）、对话（按 Agent / 项目分组与筛选）、终端、文件（浏览与预览）、安全（配对、已配对客户端、MCP 开关）。
   - 终端（`aa.v3.Terminals`，设计见 `docs/v3/terminal-proposal.md`）：屏幕快照首帧 + `seq` 断线续传、单控制者多旁观者（无人控制时输入即接管，他人控制时提示「接管」，可「接管并保持尺寸」）、旁观者按控制者行列数渲染、非 PTY 设备提示不支持全屏程序；触屏设备支持单指滚动（含惯性）、长按选择复制、双指缩放字号与扩展键栏（Esc、Ctrl、Tab、方向键、PgUp/PgDn、Home/End）。协议状态机 `lib/terminal/` 不依赖 React，传输层可替换为移动端原生 bridge。
+  - 移动端渲染包（[`embed/`](embed/README.md)）：iOS / Android WebView 加载的单文件 HTML（`corepack yarn embed:build` → `embed/dist/aa-render.html`），复用上面的对话组件与 xterm.js 终端，经 `aa.render/2` bridge（[`docs/v3/mobile-bridge.md`](../docs/v3/mobile-bridge.md)）收发消息，自己不联网；附夹具回放页与无头冒烟测试。
 - **随身助手 Pi Lite + 云端工作区 VFS（T518）**：
   - 按需动态加载 `@earendil-works/pi-agent-core` 与 `@earendil-works/pi-ai`（不污染首屏体积）。
   - Tokens Anywhere PKCE S256 一键接入 + 账号级单 Key 跨浏览器复用与自动续期（`/assistant/tokens`、`/oauth/tokens/callback`），以及本地 BYOK API Key 回退。
@@ -40,6 +41,17 @@ AA_CONTROL_SERVER_URL=http://127.0.0.1:8787 corepack yarn dev
   - 任意密码 PBKDF2-SHA256 + AES-256-GCM KEK/DEK 多设备加密同步（允许任意长度密码、短密码仅温和提示、AAD 绑定防替换、修改密码不重加密旧会话、忘记密码显式重置）、双指纹三路冲突检测与 SSE 跨端实时同步。
   - 全局右侧抽屉（`⌘J`）+ 独立全页（`/assistant`）+ **「助手为主角」** 侧边栏视图切换（主列表优先显示随身助手历史对话，点击工作设备翻页钻入设备子视图）。
 - **设置页（`/settings`）**：主题与语言（仅位于外观设置，不在侧边栏重复展示）、「助手为主角」布局开关、友好本地化的账号额度说明（不暴露内部字段名）、限额云盘清理、管理员单账号云盘配额策略、MCP 授权撤销、浏览器本地 E2EE 凭据库。
+
+## Desktop 静态导出
+
+[`desktop-v3`](../desktop-v3/README.md) 把本应用构建成静态导出打进安装包，用 `app://aa/` 加载（绿锁）：
+
+```bash
+AA_DESKTOP_EXPORT=1 corepack yarn build   # 产物在 .next-desktop/，不影响同时运行的 next dev
+```
+
+- 动态路由在导出时只为占位参数 `_` 生成页面（见各路由的 `layout.tsx`），Desktop 把任意 id 映射到占位页，页面用 `useRouteParams` 从地址栏读取真实 id。
+- `lib/platform/desktop.ts` 只在 Desktop 里生效：客户端私钥与 refresh token 存入系统钥匙串、加密设备显示绿锁、控制面请求经 Desktop 主进程转发。在浏览器里这些都不起作用。
 
 ## 注意事项
 
@@ -56,6 +68,8 @@ corepack yarn lint
 corepack yarn test
 corepack yarn build
 ```
+
+移动端渲染包另有 `corepack yarn embed:build && corepack yarn embed:smoke`（见 [embed/README.md](embed/README.md)）。
 
 ## 相关文档索引
 

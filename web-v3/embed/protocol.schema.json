@@ -1,0 +1,2186 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://agents-anywhere.dev/schemas/aa.render/2/protocol.schema.json",
+  "title": "aa.render/2 bridge messages",
+  "description": "Every message between the native iOS / Android apps and the WebView render bundle (docs/v3/mobile-bridge.md). Generated from web-v3/embed/src/protocol.ts by `corepack yarn embed:schema`; do not edit by hand.",
+  "$ref": "#/definitions/BridgeMessage",
+  "definitions": {
+    "BridgeMessage": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/NativeMessage"
+        },
+        {
+          "$ref": "#/definitions/WebMessage"
+        }
+      ],
+      "description": "Every message on the bridge, either way (the JSON Schema's root)."
+    },
+    "NativeMessage": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ThemeMessage"
+        },
+        {
+          "$ref": "#/definitions/LocaleMessage"
+        },
+        {
+          "$ref": "#/definitions/ViewConversationMessage"
+        },
+        {
+          "$ref": "#/definitions/ConversationEventMessage"
+        },
+        {
+          "$ref": "#/definitions/ConversationOlderMessage"
+        },
+        {
+          "$ref": "#/definitions/ConversationCachedMessage"
+        },
+        {
+          "$ref": "#/definitions/FileDataMessage"
+        },
+        {
+          "$ref": "#/definitions/ViewTerminalMessage"
+        },
+        {
+          "$ref": "#/definitions/TermSnapshotMessage"
+        },
+        {
+          "$ref": "#/definitions/TermOutputMessage"
+        },
+        {
+          "$ref": "#/definitions/TermControlMessage"
+        },
+        {
+          "$ref": "#/definitions/TermRejectedMessage"
+        },
+        {
+          "$ref": "#/definitions/TermExitMessage"
+        },
+        {
+          "$ref": "#/definitions/TermClosedMessage"
+        },
+        {
+          "$ref": "#/definitions/TermKeyMessage"
+        },
+        {
+          "$ref": "#/definitions/ScrollMessage"
+        },
+        {
+          "$ref": "#/definitions/BatchMessage"
+        }
+      ]
+    },
+    "ThemeMessage": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 2,
+          "description": "Always 2."
+        },
+        "type": {
+          "type": "string",
+          "const": "theme"
+        },
+        "scheme": {
+          "type": "string",
+          "enum": [
+            "light",
+            "dark"
+          ]
+        },
+        "insets": {
+          "$ref": "#/definitions/Insets"
+        },
+        "font_scale": {
+          "type": "number",
+          "description": "Dynamic Type / font scale; 1 = default (16 px root)."
+        },
+        "reduce_motion": {
+          "type": "boolean"
+        },
+        "high_contrast": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "insets",
+        "scheme",
+        "type",
+        "v"
+      ],
+      "description": "Appearance and the safe area covered by native glass controls (CSS px); re-sent whenever it changes."
+    },
+    "Insets": {
+      "type": "object",
+      "properties": {
+        "top": {
+          "type": "number"
+        },
+        "bottom": {
+          "type": "number"
+        },
+        "left": {
+          "type": "number"
+        },
+        "right": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "top",
+        "bottom",
+        "left",
+        "right"
+      ]
+    },
+    "LocaleMessage": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 2,
+          "description": "Always 2."
+        },
+        "type": {
+          "type": "string",
+          "const": "locale"
+        },
+        "locale": {
+          "type": "string",
+          "enum": [
+            "zh-CN",
+            "en"
+          ]
+        }
+      },
+      "required": [
+        "locale",
+        "type",
+        "v"
+      ]
+    },
+    "ViewConversationMessage": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 2,
+          "description": "Always 2."
+        },
+        "type": {
+          "type": "string",
+          "const": "view.conversation"
+        },
+        "device_id": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "readonly": {
+          "type": "boolean",
+          "description": "No approvals from the thread (e.g. a viewer without answer rights); native still shows its own dock."
+        },
+        "encrypted": {
+          "type": "boolean"
+        },
+        "me": {
+          "type": "string",
+          "description": "Extension: the reader's account name (`author` / `answered.by` equal to it read \"你\" and are not labelled)."
+        }
+      },
+      "required": [
+        "agent",
+        "device_id",
+        "encrypted",
+        "readonly",
+        "session_id",
+        "type",
+        "v"
+      ],
+      "description": "Switch to a conversation: the page clears and waits for a `conversation.event` snapshot (or `conversation.cached`)."
+    },
+    "ConversationEventMessage": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 2,
+          "description": "Always 2."
+        },
+        "type": {
+          "type": "string",
+          "const": "conversation.event"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "event": {
+          "$ref": "#/definitions/WatchEvent"
+        }
+      },
+      "required": [
+        "event",
+        "session_id",
+        "type",
+        "v"
+      ],
+      "description": "One `aa.v3.Sessions/watch` WatchEvent, forwarded as is (`snapshot` / `message` / `item` / `session` / `control`)."
+    },
+    "WatchEvent": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "snapshot"
+            },
+            "session": {
+              "$ref": "#/definitions/Session"
+            },
+            "messages": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/Message"
+              }
+            },
+            "has_more": {
+              "type": "boolean"
+            },
+            "control": {
+              "$ref": "#/definitions/Control"
+            }
+          },
+          "required": [
+            "type",
+            "session",
+            "messages",
+            "has_more",
+            "control"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "message"
+            },
+            "message": {
+              "$ref": "#/definitions/Message"
+            }
+          },
+          "required": [
+            "type",
+            "message"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "item"
+            },
+            "message": {
+              "$ref": "#/definitions/Message"
+            }
+          },
+          "required": [
+            "type",
+            "message"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "control"
+            },
+            "control": {
+              "$ref": "#/definitions/Control"
+            }
+          },
+          "required": [
+            "type",
+            "control"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "session"
+            },
+            "session": {
+              "$ref": "#/definitions/Session"
+            }
+          },
+          "required": [
+            "type",
+            "session"
+          ]
+        }
+      ]
+    },
+    "Session": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/ID"
+        },
+        "title": {
+          "type": "string"
+        },
+        "agent": {
+          "$ref": "#/definitions/AgentKind"
+        },
+        "device": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/ID"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name"
+          ]
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "created_at": {
+          "$ref": "#/definitions/Instant"
+        },
+        "updated_at": {
+          "$ref": "#/definitions/Instant"
+        },
+        "message_count": {
+          "type": "number"
+        },
+        "config": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ConfigOption"
+          }
+        },
+        "forked_from": {
+          "type": "object",
+          "properties": {
+            "session_id": {
+              "$ref": "#/definitions/ID"
+            },
+            "message_id": {
+              "$ref": "#/definitions/ID"
+            }
+          },
+          "required": [
+            "session_id",
+            "message_id"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "agent",
+        "device",
+        "cwd",
+        "created_at",
+        "updated_at",
+        "message_count",
+        "config"
+      ]
+    },
+    "ID": {
+      "type": "string"
+    },
+    "AgentKind": {
+      "type": "string"
+    },
+    "Instant": {
+      "type": "string"
+    },
+    "ConfigOption": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "current": {
+          "type": "string"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "value": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "group": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "value",
+              "name"
+            ]
+          }
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "current",
+        "options"
+      ]
+    },
+    "Message": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/UserMessage"
+        },
+        {
+          "$ref": "#/definitions/AssistantMessage"
+        }
+      ]
+    },
+    "UserMessage": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/ID"
+        },
+        "seq": {
+          "type": "number"
+        },
+        "done": {
+          "type": "boolean"
+        },
+        "role": {
+          "type": "string",
+          "const": "user"
+        },
+        "created_at": {
+          "$ref": "#/definitions/Instant"
+        },
+        "author": {
+          "type": "string"
+        },
+        "client_msg_id": {
+          "type": "string"
+        },
+        "steered": {
+          "type": "boolean",
+          "const": true
+        },
+        "rewindable": {
+          "type": "boolean"
+        },
+        "parts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/UserPart"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "seq",
+        "done",
+        "role",
+        "created_at",
+        "parts"
+      ]
+    },
+    "UserPart": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/TextPart"
+        },
+        {
+          "$ref": "#/definitions/ImagePart"
+        },
+        {
+          "$ref": "#/definitions/FilePart"
+        }
+      ]
+    },
+    "TextPart": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "text"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "text"
+      ]
+    },
+    "ImagePart": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "image"
+        },
+        "path": {
+          "type": "string"
+        },
+        "mime": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "size": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "path",
+        "mime",
+        "name",
+        "size"
+      ]
+    },
+    "FilePart": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "file"
+        },
+        "path": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "mime": {
+          "type": "string"
+        },
+        "size": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "path",
+        "name",
+        "mime",
+        "size"
+      ]
+    },
+    "AssistantMessage": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/ID"
+        },
+        "seq": {
+          "type": "number"
+        },
+        "done": {
+          "type": "boolean"
+        },
+        "role": {
+          "type": "string",
+          "const": "assistant"
+        },
+        "turn_id": {
+          "$ref": "#/definitions/ID"
+        },
+        "created_at": {
+          "$ref": "#/definitions/Instant"
+        },
+        "subagent_id": {
+          "$ref": "#/definitions/ID"
+        },
+        "interrupted": {
+          "type": "boolean",
+          "const": true
+        },
+        "autonomous": {
+          "type": "boolean",
+          "const": true
+        },
+        "parts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/AssistantPart"
+          },
+          "minItems": 1,
+          "maxItems": 1
+        }
+      },
+      "required": [
+        "id",
+        "seq",
+        "done",
+        "role",
+        "turn_id",
+        "created_at",
+        "parts"
+      ]
+    },
+    "AssistantPart": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/TextPart"
+        },
+        {
+          "$ref": "#/definitions/ThinkingPart"
+        },
+        {
+          "$ref": "#/definitions/ToolPart"
+        },
+        {
+          "$ref": "#/definitions/PlanPart"
+        },
+        {
+          "$ref": "#/definitions/SubagentPart"
+        },
+        {
+          "$ref": "#/definitions/CompactionPart"
+        }
+      ]
+    },
+    "ThinkingPart": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "thinking"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "text"
+      ]
+    },
+    "ToolPart": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "tool"
+        },
+        "id": {
+          "$ref": "#/definitions/ID"
+        },
+        "title": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/definitions/ToolKind"
+        },
+        "status": {
+          "$ref": "#/definitions/ToolStatus"
+        },
+        "input": {},
+        "output": {},
+        "diffs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "old_text": {
+                "type": "string"
+              },
+              "new_text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "new_text"
+            ]
+          }
+        },
+        "locations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "line": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "path"
+            ]
+          }
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "title",
+        "kind",
+        "status"
+      ]
+    },
+    "ToolKind": {
+      "type": "string",
+      "enum": [
+        "read",
+        "edit",
+        "delete",
+        "move",
+        "search",
+        "execute",
+        "think",
+        "fetch",
+        "switch_mode",
+        "other"
+      ]
+    },
+    "ToolStatus": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "in_progress",
+        "completed",
+        "failed"
+      ]
+    },
+    "PlanPart": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "plan"
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/PlanEntry"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "entries"
+      ]
+    },
+    "PlanEntry": {
+      "type": "object",
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "in_progress",
+            "completed"
+          ]
+        },
+        "priority": {
+          "type": "string",
+          "enum": [
+            "high",
+            "medium",
+            "low"
+          ]
+        }
+      },
+      "required": [
+        "content",
+        "status"
+      ]
+    },
+    "SubagentPart": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "subagent"
+        },
+        "id": {
+          "$ref": "#/definitions/ID"
+        },
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "agent_type": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "running",
+            "completed",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "started_at": {
+          "$ref": "#/definitions/Instant"
+        },
+        "ended_at": {
+          "$ref": "#/definitions/Instant"
+        },
+        "tool_count": {
+          "type": "number"
+        },
+        "parts": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 0
+        },
+        "result": {
+          "type": "string"
+        },
+        "background": {
+          "type": "boolean",
+          "const": true
+        },
+        "error": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "title",
+        "status",
+        "started_at",
+        "tool_count",
+        "parts"
+      ]
+    },
+    "CompactionPart": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "compaction"
+        },
+        "id": {
+          "$ref": "#/definitions/ID"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "running",
+            "completed",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "trigger": {
+          "type": "string",
+          "enum": [
+            "manual",
+            "auto"
+          ]
+        },
+        "summary": {
+          "type": "string"
+        },
+        "tokens_before": {
+          "type": "number"
+        },
+        "tokens_after": {
+          "type": "number"
+        },
+        "at": {
+          "$ref": "#/definitions/Instant"
+        },
+        "ended_at": {
+          "$ref": "#/definitions/Instant"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "status",
+        "at"
+      ]
+    },
+    "Control": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "idle",
+            "running",
+            "error",
+            "disconnected"
+          ]
+        },
+        "error": {
+          "type": "string"
+        },
+        "steer": {
+          "type": "string",
+          "enum": [
+            "native",
+            "interrupt",
+            "none"
+          ]
+        },
+        "pending": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/PendingRequest"
+          }
+        },
+        "answered": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/AnsweredRequest"
+          }
+        },
+        "queued": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/QueuedMessage"
+          }
+        },
+        "background": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/BackgroundTask"
+          }
+        },
+        "usage": {
+          "$ref": "#/definitions/ContextUsage"
+        },
+        "capabilities": {
+          "type": "object",
+          "properties": {
+            "compact": {
+              "type": "boolean"
+            },
+            "compact_instructions": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "compact"
+          ]
+        }
+      },
+      "required": [
+        "state",
+        "steer",
+        "pending",
+        "queued"
+      ]
+    },
+    "PendingRequest": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "$ref": "#/definitions/ID"
+        },
+        "message_id": {
+          "$ref": "#/definitions/ID"
+        },
+        "tool_call_id": {
+          "$ref": "#/definitions/ID"
+        },
+        "title": {
+          "type": "string"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/PermissionOption"
+          }
+        }
+      },
+      "required": [
+        "request_id",
+        "message_id",
+        "tool_call_id",
+        "title",
+        "options"
+      ]
+    },
+    "PermissionOption": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/ID"
+        },
+        "name": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/definitions/PermissionOptionKind"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "kind"
+      ]
+    },
+    "PermissionOptionKind": {
+      "type": "string",
+      "enum": [
+        "allow_once",
+        "allow_always",
+        "reject_once",
+        "reject_always"
+      ]
+    },
+    "AnsweredRequest": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "$ref": "#/definitions/ID"
+        },
+        "by": {
+          "type": "string"
+        },
+        "device": {
+          "type": "string"
+        },
+        "option_id": {
+          "$ref": "#/definitions/ID"
+        },
+        "at": {
+          "$ref": "#/definitions/Instant"
+        }
+      },
+      "required": [
+        "request_id",
+        "by",
+        "option_id",
+        "at"
+      ]
+    },
+    "QueuedMessage": {
+      "type": "object",
+      "properties": {
+        "client_msg_id": {
+          "type": "string"
+        },
+        "author": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        },
+        "attachments": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ImagePart"
+              },
+              {
+                "$ref": "#/definitions/FilePart"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "client_msg_id",
+        "author",
+        "content"
+      ]
+    },
+    "BackgroundTask": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/ID"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "shell",
+            "agent",
+            "other"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "running",
+            "completed",
+            "failed",
+            "killed"
+          ]
+        },
+        "started_at": {
+          "$ref": "#/definitions/Instant"
+        },
+        "ended_at": {
+          "$ref": "#/definitions/Instant"
+        },
+        "exit_code": {
+          "type": "number"
+        },
+        "output_tail": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "title",
+        "status",
+        "started_at"
+      ]
+    },
+    "ContextUsage": {
+      "type": "object",
+      "properties": {
+        "used": {
+          "type": "number"
+        },
+        "size": {
+          "type": "number"
+        },
+        "model": {
+          "type": "string"
+        },
+        "updated_at": {
+          "$ref": "#/definitions/Instant"
+        }
+      },
+      "required": [
+        "updated_at"
+      ]
+    },
+    "ConversationOlderMessage": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 2,
+          "description": "Always 2."
+        },
+        "type": {
+          "type": "string",
+          "const": "conversation.older"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Message"
+          }
+        },
+        "has_more": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "has_more",
+        "messages",
+        "session_id",
+        "type",
+        "v"
+      ],
+      "description": "The answer to `load_older`: items before `before_seq`, oldest first."
+    },
+    "ConversationCachedMessage": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 2,
+          "description": "Always 2."
+        },
+        "type": {
+          "type": "string",
+          "const": "conversation.cached"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Message"
+          }
+        },
+        "control": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Control"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stale": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "control",
+        "messages",
+        "session_id",
+        "stale",
+        "type",
+        "v"
+      ],
+      "description": "Offline: what native cached, drawn read-only and marked stale until a live snapshot replaces it."
+    },
+    "FileDataMessage": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 2,
+          "description": "Always 2."
+        },
+        "type": {
+          "type": "string",
+          "const": "file.data"
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "base64": {
+          "type": "string",
+          "description": "The bytes (standard base64) when ok."
+        },
+        "mime": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ok",
+        "request_id",
+        "type",
+        "v"
+      ],
+      "description": "The answer to `file.read`."
+    },
+    "ViewTerminalMessage": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 2,
+          "description": "Always 2."
+        },
+        "type": {
+          "type": "string",
+          "const": "view.terminal"
+        },
+        "device_id": {
+          "type": "string"
+        },
+        "terminal_id": {
+          "type": "string"
+        },
+        "controller_label": {
+          "type": "string",
+          "description": "The name this client reports as controller when it attaches (`attach.label`)."
+        },
+        "attach_mode": {
+          "type": "string",
+          "enum": [
+            "view",
+            "control"
+          ],
+          "description": "Extension: \"control\" when this device just created the terminal (doc terminal-proposal §3). Default \"view\"."
+        },
+        "term_mode": {
+          "type": "string",
+          "enum": [
+            "pty",
+            "pipe",
+            "script"
+          ],
+          "description": "Extension: `TerminalInfo.mode`; \"pipe\" / \"script\" show the \"no full-screen programs\" note. Default \"pty\"."
+        },
+        "owner": {
+          "type": "string",
+          "enum": [
+            "user",
+            "agent"
+          ],
+          "description": "Extension: `TerminalInfo.owner`; \"agent\" terminals are read-only. Default \"user\"."
+        },
+        "cols": {
+          "type": "number",
+          "description": "Extension: the size from `TerminalInfo`, used until the snapshot arrives."
+        },
+        "rows": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "device_id",
+        "terminal_id",
+        "type",
+        "v"
+      ],
+      "description": "Switch to a terminal. The bundle then posts `term.attach`."
+    },
+    "TermSnapshotMessage": {
+      "type": "object",
+      "properties": {
+        "terminal_id": {
+          "type": "string"
+        },
+        "v": {
+          "type": "number",
+          "const": 2,
+          "description": "Always 2."
+        },
+        "type": {
+          "type": "string",
+          "const": "term.snapshot"
+        },
+        "data": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "number"
+        },
+        "cols": {
+          "type": "number"
+        },
+        "rows": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "cols",
+        "data",
+        "rows",
+        "seq",
+        "type",
+        "v"
+      ],
+      "description": "`aa.v3.Terminals/attach` output frames, forwarded (data = base64)."
+    },
+    "TermOutputMessage": {
+      "type": "object",
+      "properties": {
+        "terminal_id": {
+          "type": "string"
+        },
+        "v": {
+          "type": "number",
+          "const": 2,
+          "description": "Always 2."
+        },
+        "type": {
+          "type": "string",
+          "const": "term.output"
+        },
+        "data": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "data",
+        "seq",
+        "type",
+        "v"
+      ]
+    },
+    "TermControlMessage": {
+      "type": "object",
+      "properties": {
+        "terminal_id": {
+          "type": "string"
+        },
+        "v": {
+          "type": "number",
+          "const": 2,
+          "description": "Always 2."
+        },
+        "type": {
+          "type": "string",
+          "const": "term.control"
+        },
+        "controller": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TerminalController"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "generation": {
+          "type": "number"
+        },
+        "you": {
+          "type": "boolean"
+        },
+        "cols": {
+          "type": "number"
+        },
+        "rows": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "cols",
+        "controller",
+        "generation",
+        "rows",
+        "type",
+        "v",
+        "you"
+      ]
+    },
+    "TerminalController": {
+      "type": "object",
+      "properties": {
+        "client_id": {
+          "type": "string",
+          "description": "`e2e:<peer_key>` on encrypted devices, the tunnel principal on normal devices."
+        },
+        "label": {
+          "type": "string"
+        },
+        "connected": {
+          "type": "boolean",
+          "description": "false while the controller's attach is gone but its 10 s grace period has not ended."
+        },
+        "since": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "client_id",
+        "label",
+        "connected",
+        "since"
+      ]
+    },
+    "TermRejectedMessage": {
+      "type": "object",
+      "properties": {
+        "terminal_id": {
+          "type": "string"
+        },
+        "v": {
+          "type": "number",
+          "const": 2,
+          "description": "Always 2."
+        },
+        "type": {
+          "type": "string",
+          "const": "term.rejected"
+        },
+        "reason": {
+          "$ref": "#/definitions/TerminalRejectReason"
+        },
+        "generation": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "generation",
+        "reason",
+        "type",
+        "v"
+      ]
+    },
+    "TerminalRejectReason": {
+      "type": "string",
+      "enum": [
+        "not_controller",
+        "stale_generation",
+        "agent_owned"
+      ]
+    },
+    "TermExitMessage": {
+      "type": "object",
+      "properties": {
+        "terminal_id": {
+          "type": "string"
+        },
+        "v": {
+          "type": "number",
+          "const": 2,
+          "description": "Always 2."
+        },
+        "type": {
+          "type": "string",
+          "const": "term.exit"
+        },
+        "exit_code": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "exit_signal": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "exit_code",
+        "type",
+        "v"
+      ]
+    },
+    "TermClosedMessage": {
+      "type": "object",
+      "properties": {
+        "terminal_id": {
+          "type": "string"
+        },
+        "v": {
+          "type": "number",
+          "const": 2,
+          "description": "Always 2."
+        },
+        "type": {
+          "type": "string",
+          "const": "term.closed"
+        },
+        "fatal": {
+          "type": "boolean"
+        },
+        "snapshot_next": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "v"
+      ],
+      "description": "Native's attach ended. `fatal`: do not reconnect. `snapshot_next`: the stream fell behind, start from a snapshot."
+    },
+    "TermKeyMessage": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 2,
+          "description": "Always 2."
+        },
+        "type": {
+          "type": "string",
+          "const": "term.key"
+        },
+        "key": {
+          "type": "string"
+        },
+        "ctrl": {
+          "type": "boolean"
+        },
+        "alt": {
+          "type": "boolean"
+        },
+        "shift": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "key",
+        "type",
+        "v"
+      ],
+      "description": "A key from native's extra-keys bar. `key`: escape, tab, up, down, left, right, home, end, page_up, page_down, a single character (sent with `ctrl` / `alt`), or `ctrl` alone to latch Ctrl for the next typed character."
+    },
+    "ScrollMessage": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 2,
+          "description": "Always 2."
+        },
+        "type": {
+          "type": "string",
+          "const": "scroll"
+        },
+        "to": {
+          "type": "string",
+          "enum": [
+            "bottom",
+            "top"
+          ]
+        }
+      },
+      "required": [
+        "to",
+        "type",
+        "v"
+      ],
+      "description": "A native button (e.g. \"back to bottom\")."
+    },
+    "BatchMessage": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 2,
+          "description": "Always 2."
+        },
+        "type": {
+          "type": "string",
+          "const": "batch"
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/NativeMessage"
+          }
+        }
+      },
+      "required": [
+        "messages",
+        "type",
+        "v"
+      ]
+    },
+    "WebMessage": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ReadyMessage"
+        },
+        {
+          "$ref": "#/definitions/LoadOlderMessage"
+        },
+        {
+          "$ref": "#/definitions/AnswerMessage"
+        },
+        {
+          "$ref": "#/definitions/OpenLinkMessage"
+        },
+        {
+          "$ref": "#/definitions/OpenFileMessage"
+        },
+        {
+          "$ref": "#/definitions/FileReadMessage"
+        },
+        {
+          "$ref": "#/definitions/CopyMessage"
+        },
+        {
+          "$ref": "#/definitions/HapticMessage"
+        },
+        {
+          "$ref": "#/definitions/ScrollStateMessage"
+        },
+        {
+          "$ref": "#/definitions/TermAttachMessage"
+        },
+        {
+          "$ref": "#/definitions/TermDetachMessage"
+        },
+        {
+          "$ref": "#/definitions/TermInputMessage"
+        },
+        {
+          "$ref": "#/definitions/TermResizeMessage"
+        },
+        {
+          "$ref": "#/definitions/TermClaimMessage"
+        },
+        {
+          "$ref": "#/definitions/TermReleaseMessage"
+        }
+      ]
+    },
+    "ReadyMessage": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 2,
+          "description": "Always 2."
+        },
+        "type": {
+          "type": "string",
+          "const": "ready"
+        },
+        "version": {
+          "type": "string",
+          "description": "The bundle's version (web-v3 package version)."
+        },
+        "protocol": {
+          "type": "string",
+          "const": "aa.render/2"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "capabilities",
+        "protocol",
+        "type",
+        "v",
+        "version"
+      ]
+    },
+    "LoadOlderMessage": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 2,
+          "description": "Always 2."
+        },
+        "type": {
+          "type": "string",
+          "const": "load_older"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "before_seq": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "before_seq",
+        "session_id",
+        "type",
+        "v"
+      ]
+    },
+    "AnswerMessage": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 2,
+          "description": "Always 2."
+        },
+        "type": {
+          "type": "string",
+          "const": "answer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "option_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "option_id",
+        "request_id",
+        "session_id",
+        "type",
+        "v"
+      ]
+    },
+    "OpenLinkMessage": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 2,
+          "description": "Always 2."
+        },
+        "type": {
+          "type": "string",
+          "const": "open_link"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "url",
+        "v"
+      ]
+    },
+    "OpenFileMessage": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 2,
+          "description": "Always 2."
+        },
+        "type": {
+          "type": "string",
+          "const": "open_file"
+        },
+        "path": {
+          "type": "string"
+        },
+        "line": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "path",
+        "type",
+        "v"
+      ]
+    },
+    "FileReadMessage": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 2,
+          "description": "Always 2."
+        },
+        "type": {
+          "type": "string",
+          "const": "file.read"
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "max_bytes": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "path",
+        "request_id",
+        "type",
+        "v"
+      ]
+    },
+    "CopyMessage": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 2,
+          "description": "Always 2."
+        },
+        "type": {
+          "type": "string",
+          "const": "copy"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "type",
+        "v"
+      ]
+    },
+    "HapticMessage": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 2,
+          "description": "Always 2."
+        },
+        "type": {
+          "type": "string",
+          "const": "haptic"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "light",
+            "success",
+            "warning"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "type",
+        "v"
+      ]
+    },
+    "ScrollStateMessage": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 2,
+          "description": "Always 2."
+        },
+        "type": {
+          "type": "string",
+          "const": "scroll_state"
+        },
+        "at_bottom": {
+          "type": "boolean"
+        },
+        "distance": {
+          "type": "number",
+          "description": "CSS px from the bottom of the thread."
+        }
+      },
+      "required": [
+        "at_bottom",
+        "distance",
+        "type",
+        "v"
+      ]
+    },
+    "TermAttachMessage": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 2,
+          "description": "Always 2."
+        },
+        "type": {
+          "type": "string",
+          "const": "term.attach"
+        },
+        "terminal_id": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "view",
+            "control"
+          ]
+        },
+        "cols": {
+          "type": "number"
+        },
+        "rows": {
+          "type": "number"
+        },
+        "resume_seq": {
+          "type": "number",
+          "description": "Last output seq rendered: native resumes the attach from there (doc terminal-proposal §4)."
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "terminal_id",
+        "type",
+        "v"
+      ]
+    },
+    "TermDetachMessage": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 2,
+          "description": "Always 2."
+        },
+        "type": {
+          "type": "string",
+          "const": "term.detach"
+        },
+        "terminal_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "terminal_id",
+        "type",
+        "v"
+      ]
+    },
+    "TermInputMessage": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 2,
+          "description": "Always 2."
+        },
+        "type": {
+          "type": "string",
+          "const": "term.input"
+        },
+        "terminal_id": {
+          "type": "string"
+        },
+        "data": {
+          "type": "string",
+          "description": "base64"
+        },
+        "generation": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "data",
+        "generation",
+        "terminal_id",
+        "type",
+        "v"
+      ]
+    },
+    "TermResizeMessage": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 2,
+          "description": "Always 2."
+        },
+        "type": {
+          "type": "string",
+          "const": "term.resize"
+        },
+        "terminal_id": {
+          "type": "string"
+        },
+        "cols": {
+          "type": "number"
+        },
+        "rows": {
+          "type": "number"
+        },
+        "generation": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "cols",
+        "generation",
+        "rows",
+        "terminal_id",
+        "type",
+        "v"
+      ]
+    },
+    "TermClaimMessage": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 2,
+          "description": "Always 2."
+        },
+        "type": {
+          "type": "string",
+          "const": "term.claim"
+        },
+        "terminal_id": {
+          "type": "string"
+        },
+        "cols": {
+          "type": "number"
+        },
+        "rows": {
+          "type": "number"
+        },
+        "keep_size": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "terminal_id",
+        "type",
+        "v"
+      ]
+    },
+    "TermReleaseMessage": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 2,
+          "description": "Always 2."
+        },
+        "type": {
+          "type": "string",
+          "const": "term.release"
+        },
+        "terminal_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "terminal_id",
+        "type",
+        "v"
+      ]
+    }
+  }
+}

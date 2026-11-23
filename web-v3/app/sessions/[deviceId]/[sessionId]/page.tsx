@@ -7,7 +7,7 @@
 // phones. Files dropped anywhere on the conversation are attached.
 // Behaviour follows AA v2 web-next mapped to aa.v3.Sessions: watch (snapshot then live), send with
 // delivery auto / queue / steer, answer, set_config, stop, rename, fork, compact, delete, unqueue, steer_queued.
-import { useParams, useRouter } from "next/navigation"
+import { useRouter } from "next/navigation"
 import {
   useCallback,
   useEffect,
@@ -47,6 +47,7 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { useMediaQuery } from "@/hooks/use-media-query"
 import { loadDeviceImage, sentPreview } from "@/lib/attachments/previews"
 import { PairingError } from "@/lib/mesh/pairing"
+import { useRouteParams } from "@/lib/platform/route-params"
 import { useWorkbench } from "@/lib/state/workbench-context"
 import { TimelineStore } from "@/lib/timeline/store"
 import type { FilePart, ImagePart, QueuedMessage } from "@/lib/types/v3"
@@ -64,7 +65,7 @@ const WebThreadItem: ThreadItem = ({ id, anchor, children }) => (
 const errorText = (err: unknown) => (err instanceof Error ? err.message : String(err))
 
 export default function SessionWorkspacePage() {
-  const params = useParams<{ deviceId: string; sessionId: string }>()
+  const params = useRouteParams<{ deviceId: string; sessionId: string }>("/sessions/[deviceId]/[sessionId]")
   const router = useRouter()
   const { t, locale } = useI18n()
   const { activeAccount, clientIdentity, sessions, refreshSessions } = useWorkbench()
@@ -797,6 +798,7 @@ export default function SessionWorkspacePage() {
           if (!open) setRetryNonce((n) => n + 1)
         }}
         deviceNameHint={device?.name}
+        deviceId={device?.id}
       />
     </WorkbenchShell>
   )

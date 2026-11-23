@@ -4,12 +4,19 @@ from typing import Annotated, Any
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, Header, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
-from aa_control.api.deps import current_user, get_mcp_service, public_origin
-from aa_control.core.errors import UnauthenticatedError
+from aa_control.api.deps import (
+    bearer_token,
+    current_user,
+    get_auth_service,
+    get_mcp_service,
+    public_origin,
+)
+from aa_control.core.errors import UnauthenticatedError, ValidationError
 from aa_control.core.models import OkResponse, UserView
+from aa_control.services.auth_service import AuthService
 from aa_control.services.mcp_service import McpService
 
 router = APIRouter(tags=["mcp"])
@@ -57,14 +64,25 @@ async def oauth_register_client(
     )
 
 
-@router.get("/oauth/authorize")
+@router.get("/oauth/authorize", response_model=None)
 async def oauth_authorize_preview(
-    client_id: str,
-    redirect_uri: str,
-    user: Annotated[UserView, Depends(current_user)],
+    request: Request,
+    auth: Annotated[AuthService, Depends(get_auth_service)],
     mcp: Annotated[McpService, Depends(get_mcp_service)],
+    client_id: str | None = None,
+    redirect_uri: str | None = None,
     scope: str = "",
-) -> dict[str, Any]:
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any] | RedirectResponse:
+    # A browser navigation (an MCP client opening the authorization endpoint) never carries a Bearer
+    # header: hand it to the Web consent page with the untouched query. Bearer callers get JSON.
+    if not authorization:
+        consent_url = mcp.consent_page_redirect(request.url.query)
+        if consent_url is not None:
+            return RedirectResponse(consent_url, status_code=302, headers={"Cache-Control": "no-store"})
+    user = await auth.authenticate_access_token(bearer_token(authorization))
+    if not client_id or not redirect_uri:
+        raise ValidationError("client_id and redirect_uri are required")
     requested = [s for s in scope.split() if s]
     return await mcp.consent_preview(
         user_id=user.id,

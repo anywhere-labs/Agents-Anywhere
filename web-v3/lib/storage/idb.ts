@@ -9,6 +9,8 @@
 
 import { generateE2EKey } from "meshcall/web"
 
+import { clientTrustTier, forgetSecret, openSecret, sealSecret } from "@/lib/platform/desktop"
+
 import type {
   AuthMode,
   ClientDeviceTrustRecord,
@@ -251,13 +253,29 @@ function randomClientId(): string {
   return `cli_web_${hex}`
 }
 
+// In the desktop app these secrets live in the OS keychain; IndexedDB keeps a placeholder (`lib/platform/desktop.ts`).
+const CLIENT_KEY_SECRET = "client_identity.private_key"
+const refreshTokenSecret = (accountId: string) => `account.${accountId}.refresh_token`
+
+async function storeClientIdentity(record: ClientIdentityRecord): Promise<void> {
+  const privateKey = (await sealSecret(CLIENT_KEY_SECRET, record.privateKey)) ?? record.privateKey
+  await backend.put("meta", "client_identity", { ...record, privateKey })
+}
+
+async function openAccountSession(row: StoredAccountSession): Promise<StoredAccountSession> {
+  return { ...row, refreshToken: await openSecret(refreshTokenSecret(row.accountId), row.refreshToken) }
+}
+
 export const vault = {
   // ── Browser-local installation identity & X25519 static keypair ──
 
   async getOrCreateClientIdentity(): Promise<ClientIdentityRecord> {
     const existing = await backend.get<ClientIdentityRecord>("meta", "client_identity")
     if (existing?.clientId && existing.privateKey && existing.publicKey) {
-      return existing
+      const privateKey = await openSecret(CLIENT_KEY_SECRET, existing.privateKey)
+      if (privateKey) return { ...existing, privateKey }
+      // The key is gone from the OS keychain: devices pinned to the old identity must be paired again.
+      return this.regenerateClientIdentity()
     }
     const pair = await generateE2EKey()
     const created: ClientIdentityRecord = {
@@ -266,7 +284,7 @@ export const vault = {
       publicKey: pair.publicKey,
       createdAt: new Date().toISOString(),
     }
-    await backend.put("meta", "client_identity", created)
+    await storeClientIdentity(created)
     return created
   },
 
@@ -278,7 +296,7 @@ export const vault = {
       publicKey: pair.publicKey,
       createdAt: new Date().toISOString(),
     }
-    await backend.put("meta", "client_identity", created)
+    await storeClientIdentity(created)
     await backend.clearStore("device_trust")
     return created
   },
@@ -286,7 +304,8 @@ export const vault = {
   // ── Multi-account sessions ──
 
   async listAccounts(): Promise<StoredAccountSession[]> {
-    const all = await backend.listAll<StoredAccountSession>("account_sessions")
+    const rows = await backend.listAll<StoredAccountSession>("account_sessions")
+    const all = await Promise.all(rows.map(openAccountSession))
     return all.sort((a, b) => b.lastUsedAt - a.lastUsedAt)
   },
 
@@ -300,12 +319,14 @@ export const vault = {
   },
 
   async saveAccountSession(session: StoredAccountSession): Promise<void> {
-    await backend.put("account_sessions", session.accountId, session)
+    const refreshToken = await sealSecret(refreshTokenSecret(session.accountId), session.refreshToken)
+    await backend.put("account_sessions", session.accountId, { ...session, refreshToken })
     await backend.put("meta", "active_account_id", session.accountId)
   },
 
   async removeAccountSession(accountId: string): Promise<void> {
     await backend.del("account_sessions", accountId)
+    await forgetSecret(refreshTokenSecret(accountId))
     await backend.del("assistant_keys", accountId)
     const active = await this.getActiveAccountId()
     if (active === accountId) {
@@ -315,6 +336,8 @@ export const vault = {
   },
 
   async clearAllAccountSessions(): Promise<void> {
+    const rows = await backend.listAll<StoredAccountSession>("account_sessions")
+    await Promise.all(rows.map((row) => forgetSecret(refreshTokenSecret(row.accountId))))
     await backend.clearStore("account_sessions")
     await backend.clearStore("assistant_keys")
     await backend.del("meta", "active_account_id")
@@ -346,7 +369,7 @@ export const vault = {
     const locked: ClientDeviceTrustRecord & { _accountId: string } = {
       ...record,
       require_e2ee: true,
-      trust_tier: "web_browser",
+      trust_tier: clientTrustTier(),
       _accountId: accountId,
     }
     await backend.put("device_trust", this.trustKey(accountId, record.device_id), locked)
@@ -469,6 +492,8 @@ export const vault = {
   },
 
   async clearAll(): Promise<void> {
+    await this.clearAllAccountSessions()
+    await forgetSecret(CLIENT_KEY_SECRET)
     for (const s of STORES) await backend.clearStore(s)
   },
 

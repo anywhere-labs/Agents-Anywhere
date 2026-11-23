@@ -6,7 +6,7 @@ import { contentHash, sessionId, itemId } from '../../src/host/dsh-runtime/ident
 import { RuntimeRouter } from '../../src/host/dsh-runtime/router.js'
 import { decodeModelSelection, decodePermissionSelection, modelSelectionId, permissionSelectionId } from '../../src/host/dsh-runtime/selections.js'
 import { readFile } from 'node:fs/promises'
-import { createToolResultMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
+import { createToolResultMessage, createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 
 function log(events: { type: string, data: unknown }[]): SessionLogSnapshot {
   return { session: { id: 'native', version: 0, createdAt: 0, isSeeded: false }, inheritedEventCount: 0,
@@ -223,6 +223,44 @@ test('cancelled streams drop undispatched tools and retain image references with
   assert.ok(!items.some(item => item.content.callId === 'dropped'))
   assert.ok(items.some(item => item.content.text === '[图片暂不支持跨设备预览]'))
   assert.ok(!JSON.stringify(items).includes('private model config'))
+})
+
+test('DSH 0.2.3 action-card blocks never reach the timeline, while streaming or after the reply', () => {
+  const card = '{"action":"enable_official_plugin","title":"思考翻译","brief":"把显示的思考过程翻译成中文。","details":{"name":"thinking-translation"}}'
+  const intro = '思考翻译插件可以把显示的思考过程翻译成中文。\n\n点击下方「启用」即可。'
+  const answer = `${intro}\n\n\`\`\`action-card\n${card}\n\`\`\``
+  const events = log([...start, assistant([{ type: 'text', text: answer }])]).events
+  const projection = createProjection('native', 'platform')
+  projection.apply(events[0]!)
+  projection.apply(events[1]!)
+  const streamed: string[] = []
+  // The deltas split the opening fence line and the JSON, as a streaming model does.
+  const deltas = [`${intro}\n\n\`\``, `\`action-card\n${card.slice(0, 14)}`, `${card.slice(14)}\n\`\`\``]
+  for (const [index, text] of deltas.entries()) {
+    projection.stream(1, 1, { type: 'text-delta', index: 0, text }, 1002 + index, 1)
+    const delta = projection.drain()
+    assert.deepEqual(delta.removed, [], 'hiding a card block must not discard the streamed message')
+    streamed.push(...delta.items.filter(item => item.type === 'message').map(item => String(item.content.text)))
+  }
+  assert.deepEqual(streamed, [`${intro}\n\n\`\``, intro, intro])
+  projection.apply(events[2]!)
+  const final = projection.drain()
+  assert.deepEqual(final.removed, [])
+  const message = final.items.find(item => item.type === 'message')!
+  assert.equal(message.content.text, intro)
+  assert.equal(message.status, 'done')
+  const cold = projectHistory(log([...start, assistant([{ type: 'text', text: answer }])]), 'platform')
+  assert.deepEqual(cold.filter(item => item.type === 'message').map(item => [item.id, item.content.text]), [[message.id, intro]])
+})
+
+test('a text block holding only an action-card block produces no message; user text is never filtered', () => {
+  const onlyCard = '```action-card\n{"action":"enable_official_plugin","title":"t","brief":"b","details":{"name":"n"}}\n```'
+  const items = projectHistory(log([...start,
+    { type: 'user/message', data: createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: onlyCard }] }) },
+    assistant([{ type: 'reasoning', text: '想一想' }, { type: 'text', text: onlyCard }]),
+  ]), 'platform')
+  assert.deepEqual(items.filter(item => item.type === 'message').map(item => [item.role, item.content.text]), [['user', onlyCard]])
+  assert.equal(items.filter(item => item.content.kind === 'reasoning').length, 1)
 })
 
 test('compaction keeps original messages and ignores internal informational events', () => {

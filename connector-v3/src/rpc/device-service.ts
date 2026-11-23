@@ -19,9 +19,10 @@ import {
 } from "meshcall";
 
 import { ClientPlatformSchema, PairedClientEntrySchema, type PairedClientEntry } from "../core/config.js";
-import type { DeviceGate, GateDecision } from "../core/gate.js";
+import { PAIRING_CODE_ID, type DeviceGate, type GateDecision } from "../core/gate.js";
 import {
   DeviceOpsError,
+  fetchDriveFile,
   getDeviceStatus,
   gitDiff,
   gitStatus,
@@ -29,6 +30,8 @@ import {
   readFile,
   saveAttachment,
   writeFile,
+  type AttachmentLocation,
+  type DriveDownload,
 } from "../runtime/device-ops.js";
 import type { ConnectorSettings } from "../runtime/state-store.js";
 import { TerminalError } from "../runtime/terminal-manager.js";
@@ -49,7 +52,12 @@ export function toRpcError(error: unknown): unknown {
       case "attachment_too_large":
         return new ResourceExhaustedError(error.message, options);
       case "git_unavailable":
+      case "drive_unavailable":
         return new UnavailableError(error.message, options);
+      case "drive_failed":
+        return new UnavailableError(error.message, options);
+      case "integrity_failed":
+        return new MeshCallError("data_loss", error.message, options);
       case "git_failed":
         return new MeshCallError("failed_precondition", error.message, options);
       default:
@@ -62,6 +70,8 @@ export function toRpcError(error: unknown): unknown {
       case "terminal_not_found":
         return new MeshCallError("not_found", error.message, options);
       case "terminal_not_running":
+      case "not_controller":
+      case "agent_owned":
         return new MeshCallError("failed_precondition", error.message, options);
       case "terminal_limit_reached":
         return new ResourceExhaustedError(error.message, options);
@@ -94,6 +104,10 @@ export interface DeviceServiceHost {
   /** Persist a settings change; a mode change is applied with the safe switch after this call answered. */
   updateSettings(patch: Partial<ConnectorSettings>): Promise<ConnectorSettings>;
   runtimes(): { id: string; name: string }[];
+  /** A conversation's working directory (its attachments go to `<cwd>/.agents-anywhere/attachments/<id>/`). */
+  sessionCwd?(sessionId: string): string | undefined;
+  /** Cloud-drive download link for `fileId` as this device; undefined when the device has no control plane. */
+  driveDownload?: ((fileId: string) => Promise<DriveDownload>) | undefined;
   /** Remove a client from the allowlist and end its live streams. */
   revokePairedClient(clientPub: string): boolean;
 }
@@ -192,21 +206,44 @@ const GitDiffResponseSchema = z.object({
   bytes: z.number().optional(),
 });
 
-const SaveAttachmentRequestSchema = z.object({ name: z.string().min(1).max(255), base64: z.string(), mime: z.string().max(128).nullish() });
+const SaveAttachmentRequestSchema = z.object({
+  name: z.string().min(1).max(255),
+  base64: z.string(),
+  mime: z.string().max(128).nullish(),
+  /** The conversation it is for: stored in that conversation's attachment folder. */
+  session_id: z.string().min(1).max(128).nullish(),
+});
+const FetchDriveFileRequestSchema = z.object({
+  file_id: z.string().min(1).max(128),
+  session_id: z.string().min(1).max(128).nullish(),
+  name: z.string().min(1).max(255).nullish(),
+  mime: z.string().max(128).nullish(),
+  /** Hex SHA-256 of the stored drive object (ciphertext for encrypted files). */
+  sha256: z.string().regex(/^[0-9a-fA-F]{64}$/).nullish(),
+  /** base64url 32-byte AES-256-GCM key for `ephemeral_key` files (only over an E2E tunnel). */
+  file_key: z.string().regex(/^[A-Za-z0-9_-]{43}$/).nullish(),
+});
 const SaveAttachmentResponseSchema = z.object({ id: z.string(), path: z.string(), name: z.string(), mime: z.string(), size: z.number() });
 
 const PairedClientsResponseSchema = z.object({ clients: z.array(PairedClientEntrySchema) });
 const RevokeRequestSchema = z.object({ client_pub: z.string().min(1) });
 const RevokeResponseSchema = z.object({ ok: z.literal(true), revoked: z.boolean() });
 const CreatePairingRequestSchema = z.object({
+  /** `link` (default): an `aa-pair://` link for a QR code; `code`: a short code to type in. */
+  kind: z.enum(["link", "code"]).nullish(),
   ttl_ms: z.number().int().positive().max(60 * 60 * 1000).nullish(),
   label: z.string().trim().min(1).max(128).nullish(),
   platform: ClientPlatformSchema.nullish(),
 });
 const CreatePairingResponseSchema = z.object({
-  uri: z.string(),
+  /** The `aa-pair://v1/…` link (kind `link`). */
+  uri: z.string().optional(),
+  /** The pairing code, XXXXX-XXXXX (kind `code`). */
+  code: z.string().optional(),
   pairing_id: z.string(),
   expires_at: z.string(),
+  /** Device key fingerprint, as the paired client shows it. */
+  fingerprint: z.string(),
 });
 
 // ── Service ─────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -325,8 +362,48 @@ export class DeviceService {
         base64: request.base64,
         maxBytes: this.#host.settings().max_rpc_file_bytes,
         ...(request.mime != null ? { mime: request.mime } : {}),
+        location: this.#location(request.session_id),
       }),
     );
+  }
+
+  @method({
+    description: "Download a large attachment from the cloud drive into a conversation's attachment folder.",
+    idempotent: false,
+    request: FetchDriveFileRequestSchema,
+    response: SaveAttachmentResponseSchema,
+  })
+  async fetch_drive_file(request: z.output<typeof FetchDriveFileRequestSchema>, ctx: RpcContext) {
+    this.#host.gate.assertBusinessCallAllowed(ctx);
+    const driveDownload = this.#host.driveDownload;
+    if (!driveDownload) {
+      throw new UnavailableError("this device is not connected to a control plane, so it cannot reach the cloud drive", {
+        details: { reason: "drive_unavailable" },
+      });
+    }
+    if (request.file_key != null && ctx.e2e == null) {
+      throw new InvalidArgumentError("file_key may only be sent over an end-to-end encrypted tunnel", { details: { reason: "file_key_needs_e2e" } });
+    }
+    return rpcGuard(() =>
+      fetchDriveFile(
+        this.#host.dataDir,
+        {
+          fileId: request.file_id,
+          ...(request.name != null ? { name: request.name } : {}),
+          ...(request.mime != null ? { mime: request.mime } : {}),
+          ...(request.sha256 != null ? { sha256: request.sha256 } : {}),
+          ...(request.file_key != null ? { fileKey: request.file_key } : {}),
+          location: this.#location(request.session_id),
+        },
+        driveDownload,
+      ),
+    );
+  }
+
+  #location(sessionId: string | null | undefined): AttachmentLocation {
+    if (sessionId == null) return {};
+    const cwd = this.#host.sessionCwd?.(sessionId);
+    return { sessionId, ...(cwd ? { projectDir: cwd } : {}) };
   }
 
   @method({ description: "Clients paired with this device.", readOnly: true, request: EmptySchema, response: PairedClientsResponseSchema })
@@ -344,7 +421,7 @@ export class DeviceService {
   }
 
   @method({
-    description: "Create a one-time pairing for another client. Only from a paired end-to-end client: the link carries the pairing secret.",
+    description: "Create a one-time pairing (link or code) for another client. Only from a paired end-to-end client: it carries the pairing secret.",
     idempotent: false,
     request: CreatePairingRequestSchema,
     response: CreatePairingResponseSchema,
@@ -358,7 +435,12 @@ export class DeviceService {
     const hint: { label?: string; platform?: z.output<typeof ClientPlatformSchema> } = {};
     if (request.label != null) hint.label = request.label;
     if (request.platform != null) hint.platform = request.platform;
-    const { uri, payload } = await this.#host.gate.createPairing(request.ttl_ms ?? undefined, hint);
-    return { uri, pairing_id: payload.pairing_id, expires_at: payload.expires_at };
+    const gate = this.#host.gate;
+    if (request.kind === "code") {
+      const created = await gate.createPairingCode(request.ttl_ms ?? undefined, hint);
+      return { code: created.code, pairing_id: PAIRING_CODE_ID, expires_at: created.expires_at, fingerprint: created.fingerprint };
+    }
+    const { uri, payload } = await gate.createPairing(request.ttl_ms ?? undefined, hint);
+    return { uri, pairing_id: payload.pairing_id, expires_at: payload.expires_at, fingerprint: await gate.fingerprint() };
   }
 }

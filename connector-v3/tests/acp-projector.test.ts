@@ -211,6 +211,70 @@ describe("AcpTimelineProjector", () => {
     assert.equal(tool?.interrupted, true);
   });
 
+  it("marks a stopped turn's last item interrupted even when the agent closed its items itself (Pi)", () => {
+    const { projector, send, assistant } = setup();
+    projector.beginTurn(send("go").id);
+    projector.handleUpdate(thought("Run it."));
+    projector.handleUpdate({ sessionUpdate: "tool_call", toolCallId: "call_1", title: "sleep 45", kind: "execute", status: "in_progress" });
+    // On cancel Pi fails the running tool call before session/prompt answers "cancelled".
+    projector.handleUpdate({ sessionUpdate: "tool_call_update", toolCallId: "call_1", status: "failed" });
+    projector.endTurn("cancelled");
+    const items = assistant();
+    assert.deepEqual(items.map((m) => [m.parts[0].type, m.done, m.interrupted]), [
+      ["thinking", true, undefined],
+      ["tool", true, true],
+    ]);
+  });
+
+  it("leaves a turn that ended normally unmarked", () => {
+    const { projector, send, assistant } = setup();
+    projector.beginTurn(send("go").id);
+    projector.handleUpdate({ sessionUpdate: "tool_call", toolCallId: "call_1", title: "ls", kind: "execute", status: "completed" });
+    projector.handleUpdate(text("Done."));
+    projector.endTurn("end_turn");
+    assert.deepEqual(assistant().map((m) => m.interrupted), [undefined, undefined]);
+  });
+
+  it("drops an agent's echo of the prompt it was just sent (Antigravity)", () => {
+    const { projector, send, all, assistant } = setup();
+    const user = send("Reply with PONG");
+    projector.beginTurn(user.id, [{ type: "text", text: "Reply with PONG" }]);
+    projector.handleUpdate({ sessionUpdate: "available_commands_update", availableCommands: [] });
+    projector.handleUpdate({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "Reply with " } });
+    projector.handleUpdate({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "PONG" } });
+    projector.handleUpdate(text("PONG"));
+    projector.endTurn("end_turn");
+    assert.deepEqual(all().map((m) => m.role), ["user", "assistant"]);
+    assert.equal(assistant()[0]?.turn_id, user.id);
+  });
+
+  it("matches echoed attachment links by URI, whatever name the agent gives them", () => {
+    const { projector, send, all, assistant } = setup();
+    const user = send("Read the file");
+    projector.beginTurn(user.id, [
+      { type: "text", text: "Read the file" },
+      { type: "resource_link", uri: "file:///p/.agents-anywhere/attachments/s/abc-notes.txt", name: "notes.txt" },
+    ]);
+    projector.handleUpdate({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "Read the file" } });
+    projector.handleUpdate({
+      sessionUpdate: "user_message_chunk",
+      content: { type: "resource_link", uri: "file:///p/.agents-anywhere/attachments/s/abc-notes.txt", name: "abc-notes.txt" },
+    });
+    projector.handleUpdate(text("secret"));
+    projector.endTurn("end_turn");
+    assert.deepEqual(all().map((m) => m.role), ["user", "assistant"]);
+    assert.equal(assistant()[0]?.turn_id, user.id);
+  });
+
+  it("still records user chunks that are not an echo of the prompt (session/load replay)", () => {
+    const { projector, send, all } = setup();
+    projector.beginTurn(send("first").id, [{ type: "text", text: "first" }]);
+    projector.handleUpdate({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "something else" } });
+    projector.handleUpdate(text("ok"));
+    projector.endTurn("end_turn");
+    assert.deepEqual(all().map((m) => m.role), ["user", "user", "assistant"]);
+  });
+
   it("opens an autonomous turn for output outside a prompt", () => {
     const { projector, assistant } = setup();
     projector.handleUpdate(text("Background job finished."));
