@@ -157,7 +157,7 @@ class McpService:
         base = issuer.rstrip("/")
         return {
             "issuer": base,
-            "authorization_endpoint": f"{base}/oauth/authorize",
+            "authorization_endpoint": self.authorization_endpoint(issuer),
             "token_endpoint": f"{base}/oauth/token",
             "registration_endpoint": f"{base}/oauth/register",
             "response_types_supported": ["code"],
@@ -166,6 +166,22 @@ class McpService:
             "scopes_supported": list(ALL_MCP_SCOPES),
             "token_endpoint_auth_methods_supported": ["none", "client_secret_post"],
         }
+
+    def authorization_endpoint(self, issuer: str) -> str:
+        """Where MCP clients send the user's browser to approve access.
+
+        With ``web_origin`` configured this is the Web consent page; otherwise the control plane's own
+        ``/oauth/authorize`` (a Bearer-only JSON API that only first-party clients can drive).
+        """
+        base = (self._settings.web_origin or issuer).rstrip("/")
+        return f"{base}/oauth/authorize"
+
+    def consent_page_redirect(self, query: str) -> str | None:
+        """URL of the Web consent page carrying the same authorization query, or ``None`` if unset."""
+        if not self._settings.web_origin:
+            return None
+        target = f"{self._settings.web_origin}/oauth/authorize"
+        return f"{target}?{query}" if query else target
 
     def protected_resource_metadata(self, issuer: str) -> dict[str, Any]:
         base = issuer.rstrip("/")

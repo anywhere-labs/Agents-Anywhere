@@ -19,6 +19,8 @@ import type {
   DrivePurpose,
   DriveQuotaView,
   ListAssistantConversationsResponse,
+  McpAuthorizeApproveResponse,
+  McpConsentPreview,
   McpGrantView,
   McpScope,
   PresignedHttpTarget,
@@ -562,6 +564,49 @@ export function revokeMcpGrant(
   return requestJson<{ ok: boolean }>(serverUrl, `/mcp/grants/${encodeURIComponent(grantId)}`, {
     method: "DELETE",
     token,
+  })
+}
+
+/** Consent preview for an external MCP client's authorization request (`GET /oauth/authorize`). */
+export function fetchMcpConsentPreview(
+  serverUrl: string,
+  token: string,
+  params: { clientId: string; redirectUri: string; scopes: string[] }
+): Promise<McpConsentPreview> {
+  const query = new URLSearchParams({
+    client_id: params.clientId,
+    redirect_uri: params.redirectUri,
+    scope: params.scopes.join(" "),
+  })
+  return requestJson<McpConsentPreview>(serverUrl, `/oauth/authorize?${query.toString()}`, { token })
+}
+
+/** Approve an external MCP client's authorization request (`POST /oauth/authorize`). */
+export function approveMcpAuthorization(
+  serverUrl: string,
+  token: string,
+  params: {
+    clientId: string
+    redirectUri: string
+    codeChallenge: string
+    codeChallengeMethod: "S256"
+    state: string | null
+    scopes: McpScope[]
+    deviceIds: string[]
+  }
+): Promise<McpAuthorizeApproveResponse> {
+  return requestJson<McpAuthorizeApproveResponse>(serverUrl, "/oauth/authorize", {
+    method: "POST",
+    token,
+    body: JSON.stringify({
+      client_id: params.clientId,
+      redirect_uri: params.redirectUri,
+      code_challenge: params.codeChallenge,
+      code_challenge_method: params.codeChallengeMethod,
+      state: params.state,
+      scopes: params.scopes,
+      device_ids: params.deviceIds,
+    }),
   })
 }
 
