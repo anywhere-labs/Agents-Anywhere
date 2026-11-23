@@ -4,7 +4,7 @@
  *
  *   aa-connector register --control-url URL --access-token TOKEN [--name NAME] [--mode normal|encrypted]
  *   aa-connector start    [--router URL[#TOKEN]]... [--presets FILE]
- *   aa-connector pair     [--ttl SECONDS] [--label LABEL] [--platform ios|android|desktop|web|cli]
+ *   aa-connector pair     [--code | --link] [--ttl SECONDS] [--label LABEL] [--platform ios|android|desktop|web|cli]
  *   aa-connector mode     <normal|encrypted> [--yes]
  *   aa-connector mcp      <on|off>
  *   aa-connector clients
@@ -38,7 +38,7 @@ Usage:
   aa-connector register    --control-url URL --access-token TOKEN [--name NAME] [--mode normal|encrypted] [--force]
   aa-connector start       [--local-router] [--local-router-port PORT] [--router URL[#TOKEN]]... [--presets FILE]
   aa-connector local-token [--principal NAME] [--ttl SECONDS]
-  aa-connector pair        [--ttl SECONDS] [--label LABEL] [--platform ios|android|desktop|web|cli]
+  aa-connector pair        [--code | --link] [--ttl SECONDS] [--label LABEL] [--platform ios|android|desktop|web|cli]
   aa-connector mode        <normal|encrypted> [--yes]
   aa-connector mcp         <on|off>
   aa-connector clients
@@ -63,7 +63,7 @@ class CliError extends Error {}
 
 type AdminRequest =
   | { cmd: "status" }
-  | { cmd: "pair"; ttl_ms?: number; label?: string; platform?: ClientPlatform }
+  | { cmd: "pair"; kind?: "code" | "link" | "both"; ttl_ms?: number; label?: string; platform?: ClientPlatform }
   | { cmd: "local_token"; principal?: string; ttl_seconds?: number }
   | { cmd: "mode"; mode: DeviceMode }
   | { cmd: "mcp"; allow: boolean }
@@ -112,8 +112,17 @@ async function handleAdmin(host: ConnectorHost, request: AdminRequest): Promise<
       const hint: { label?: string; platform?: ClientPlatform } = {};
       if (request.label) hint.label = request.label;
       if (request.platform) hint.platform = ClientPlatformSchema.parse(request.platform);
-      const { uri, payload } = await host.createPairing(request.ttl_ms, hint);
-      return { uri, expires_at: payload.expires_at, pairing_id: payload.pairing_id };
+      const kind = request.kind ?? "both";
+      const result: Record<string, string> = { fingerprint: await host.gate.fingerprint() };
+      if (kind !== "link") {
+        const code = await host.createPairingCode(request.ttl_ms, hint);
+        Object.assign(result, { code: code.code, code_expires_at: code.expires_at });
+      }
+      if (kind !== "code") {
+        const { uri, payload } = await host.createPairing(request.ttl_ms, hint);
+        Object.assign(result, { uri, expires_at: payload.expires_at, pairing_id: payload.pairing_id });
+      }
+      return result;
     }
     case "mode":
       await host.switchMode(request.mode);
@@ -327,7 +336,8 @@ async function cmdStart(dataDir: string, values: Record<string, string | boolean
 }
 
 async function cmdPair(dataDir: string, values: Record<string, string | boolean | string[] | undefined>): Promise<void> {
-  const request: AdminRequest = { cmd: "pair" };
+  if (values.code && values.link) throw new CliError("--code and --link are exclusive (without either you get both)");
+  const request: AdminRequest = { cmd: "pair", kind: values.code ? "code" : values.link ? "link" : "both" };
   if (values.ttl !== undefined) {
     const seconds = Number(values.ttl);
     if (!(seconds > 0)) throw new CliError("--ttl is a positive number of seconds");
@@ -337,10 +347,19 @@ async function cmdPair(dataDir: string, values: Record<string, string | boolean 
   if (typeof values.platform === "string") request.platform = ClientPlatformSchema.parse(values.platform);
   const answer = await tryAdmin(dataDir, request);
   if (answer === undefined) throw new CliError("no running Connector for this data directory: start it first (`aa-connector start`)");
-  const result = answer.result as { uri: string; expires_at: string };
-  print("Pairing link (show it only on this device; it carries the pairing secret and works once):\n");
-  print(result.uri);
-  print(`\nexpires at ${result.expires_at}`);
+  const result = answer.result as { uri?: string; expires_at?: string; code?: string; code_expires_at?: string; fingerprint: string };
+  if (result.code !== undefined) {
+    print("Pairing code (type it into the client; works once, at most a few tries):\n");
+    print(`    ${result.code}\n`);
+    print(`expires at ${result.code_expires_at}`);
+    print(`device key fingerprint: ${result.fingerprint} (the client shows the same once paired)`);
+  }
+  if (result.uri !== undefined) {
+    if (result.code !== undefined) print("");
+    print(`${result.code !== undefined ? "Or paste this pairing link" : "Pairing link"} (show it only on this device; it carries the pairing secret and works once):\n`);
+    print(result.uri);
+    print(`\nexpires at ${result.expires_at}`);
+  }
 }
 
 async function cmdMode(dataDir: string, positionals: string[], values: Record<string, string | boolean | string[] | undefined>): Promise<void> {
@@ -432,6 +451,8 @@ async function main(argv: string[]): Promise<void> {
       router: { type: "string", multiple: true },
       presets: { type: "string" },
       ttl: { type: "string" },
+      code: { type: "boolean" },
+      link: { type: "boolean" },
       label: { type: "string" },
       platform: { type: "string" },
       yes: { type: "boolean" },

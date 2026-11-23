@@ -445,6 +445,12 @@ export class ConnectorHost {
 
   // ── Pairing ──
 
+  /** A one-time pairing code to type into a client (`DeviceGate.createPairingCode`). Show it only on this device. */
+  async createPairingCode(ttlMs?: number, hint: PairingHint = {}): Promise<{ code: string; expires_at: string; fingerprint: string }> {
+    await this.init();
+    return this.gate.createPairingCode(ttlMs, hint);
+  }
+
   /** A one-time pairing link (`aa-pair://v1/…`). Show it only on this device. */
   async createPairing(ttlMs?: number, hint: PairingHint = {}): Promise<{ uri: string; payload: PairingPayload }> {
     await this.init();

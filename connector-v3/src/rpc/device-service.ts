@@ -19,7 +19,7 @@ import {
 } from "meshcall";
 
 import { ClientPlatformSchema, PairedClientEntrySchema, type PairedClientEntry } from "../core/config.js";
-import type { DeviceGate, GateDecision } from "../core/gate.js";
+import { PAIRING_CODE_ID, type DeviceGate, type GateDecision } from "../core/gate.js";
 import {
   DeviceOpsError,
   fetchDriveFile,
@@ -229,14 +229,21 @@ const PairedClientsResponseSchema = z.object({ clients: z.array(PairedClientEntr
 const RevokeRequestSchema = z.object({ client_pub: z.string().min(1) });
 const RevokeResponseSchema = z.object({ ok: z.literal(true), revoked: z.boolean() });
 const CreatePairingRequestSchema = z.object({
+  /** `link` (default): an `aa-pair://` link for a QR code; `code`: a short code to type in. */
+  kind: z.enum(["link", "code"]).nullish(),
   ttl_ms: z.number().int().positive().max(60 * 60 * 1000).nullish(),
   label: z.string().trim().min(1).max(128).nullish(),
   platform: ClientPlatformSchema.nullish(),
 });
 const CreatePairingResponseSchema = z.object({
-  uri: z.string(),
+  /** The `aa-pair://v1/…` link (kind `link`). */
+  uri: z.string().optional(),
+  /** The pairing code, XXXXX-XXXXX (kind `code`). */
+  code: z.string().optional(),
   pairing_id: z.string(),
   expires_at: z.string(),
+  /** Device key fingerprint, as the paired client shows it. */
+  fingerprint: z.string(),
 });
 
 // ── Service ─────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -414,7 +421,7 @@ export class DeviceService {
   }
 
   @method({
-    description: "Create a one-time pairing for another client. Only from a paired end-to-end client: the link carries the pairing secret.",
+    description: "Create a one-time pairing (link or code) for another client. Only from a paired end-to-end client: it carries the pairing secret.",
     idempotent: false,
     request: CreatePairingRequestSchema,
     response: CreatePairingResponseSchema,
@@ -428,7 +435,12 @@ export class DeviceService {
     const hint: { label?: string; platform?: z.output<typeof ClientPlatformSchema> } = {};
     if (request.label != null) hint.label = request.label;
     if (request.platform != null) hint.platform = request.platform;
-    const { uri, payload } = await this.#host.gate.createPairing(request.ttl_ms ?? undefined, hint);
-    return { uri, pairing_id: payload.pairing_id, expires_at: payload.expires_at };
+    const gate = this.#host.gate;
+    if (request.kind === "code") {
+      const created = await gate.createPairingCode(request.ttl_ms ?? undefined, hint);
+      return { code: created.code, pairing_id: PAIRING_CODE_ID, expires_at: created.expires_at, fingerprint: created.fingerprint };
+    }
+    const { uri, payload } = await gate.createPairing(request.ttl_ms ?? undefined, hint);
+    return { uri, pairing_id: payload.pairing_id, expires_at: payload.expires_at, fingerprint: await gate.fingerprint() };
   }
 }
