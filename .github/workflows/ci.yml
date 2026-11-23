@@ -63,6 +63,7 @@ jobs:
       server_v3: ${{ steps.paths.outputs.server_v3 }}
       connector_v3: ${{ steps.paths.outputs.connector_v3 }}
       web: ${{ steps.paths.outputs.web }}
+      web_v3: ${{ steps.paths.outputs.web_v3 }}
       desktop: ${{ steps.paths.outputs.desktop }}
     steps:
       - name: Check out repository
@@ -81,6 +82,7 @@ jobs:
           server_v3=false
           connector_v3=false
           web=false
+          web_v3=false
           desktop=false
 
           run_everything() {
@@ -92,6 +94,7 @@ jobs:
             server_v3=true
             connector_v3=true
             web=true
+            web_v3=true
             desktop=true
           }
 
@@ -116,7 +119,7 @@ jobs:
                   ;;
                 .github/workflows/dsh-bridge.yml) plugin=true ;;
                 .github/actions/setup-yarn/action.yml)
-                  plugin=true; web=true; desktop=true; connector_v3=true ;;
+                  plugin=true; web=true; web_v3=true; desktop=true; connector_v3=true ;;
                 .github/workflows/*|.github/actions/*|contracts/*)
                   run_everything "shared file changed: $path"
                   ;;
@@ -133,12 +136,13 @@ jobs:
                 server-v3/*) server_v3=true; connector_v3=true ;;
                 connector-v3/*) connector_v3=true ;;
                 web-next/*) web=true ;;
+                web-v3/*) web_v3=true ;;
                 desktop-workbench/*) desktop=true ;;
               esac
             done < "$RUNNER_TEMP/changed-paths"
           fi
 
-          for scope in plugin connector acp server server_v3 connector_v3 web desktop; do
+          for scope in plugin connector acp server server_v3 connector_v3 web web_v3 desktop; do
             echo "$scope=${!scope}" >> "$GITHUB_OUTPUT"
             echo "$scope: ${!scope}"
           done
@@ -499,3 +503,27 @@ jobs:
         run: |
           corepack yarn typecheck
           corepack yarn test
+
+  web_v3:
+    name: Web v3 workbench & Portable Assistant
+    needs: changes
+    if: needs.changes.outputs.web_v3 == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+      - name: Validate AA v3 contracts
+        run: python3 contracts/aa-v3/1.0/validate.py
+      - name: Install Web v3 dependencies
+        uses: ./.github/actions/setup-yarn
+        with:
+          project: web-v3
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Typecheck, lint, test and build Web v3
+        working-directory: web-v3
+        run: |
+          corepack yarn typecheck
+          corepack yarn lint
+          corepack yarn test
+          corepack yarn build

@@ -70,6 +70,8 @@ export function toRpcError(error: unknown): unknown {
       case "terminal_not_found":
         return new MeshCallError("not_found", error.message, options);
       case "terminal_not_running":
+      case "not_controller":
+      case "agent_owned":
         return new MeshCallError("failed_precondition", error.message, options);
       case "terminal_limit_reached":
         return new ResourceExhaustedError(error.message, options);
