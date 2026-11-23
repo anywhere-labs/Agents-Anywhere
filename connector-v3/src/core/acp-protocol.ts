@@ -2,9 +2,9 @@
 // `session/update` stream into aa.v3 timeline items in a `SessionStore`.
 //
 // Only the parts of ACP the Connector uses are typed here (https://agentclientprotocol.com): initialize,
-// session/new, session/load, session/prompt, session/cancel, session/set_config_option, session/set_mode, the
-// `session/update` notification and the agent → client `session/request_permission` / `fs/*` requests. Unknown
-// fields and update kinds are tolerated: agents add them faster than the spec moves.
+// session/new, session/resume, session/load, session/prompt, session/cancel, session/set_config_option,
+// session/set_mode, the `session/update` notification and the agent → client `session/request_permission` / `fs/*`
+// requests. Unknown fields and update kinds are tolerated: agents add them faster than the spec moves.
 //
 // Portable: no Node built-ins. Spawning the agent and framing stdio is `src/runtime/*`'s job.
 
@@ -218,9 +218,16 @@ export interface AcpClientCapabilities {
 }
 
 export interface AcpAgentCapabilities {
+  /** `session/load`: the agent reopens a session and replays it as `session/update`s before it answers. */
   loadSession?: boolean;
   promptCapabilities?: { image?: boolean; audio?: boolean; embeddedContext?: boolean };
   mcpCapabilities?: { http?: boolean; sse?: boolean };
+  /** Session methods beyond new / load / prompt; each is supported when present (`{}`), not when absent or null. */
+  sessionCapabilities?: {
+    /** `session/resume`: reopen a session without replaying it. */
+    resume?: Record<string, unknown> | null;
+    close?: Record<string, unknown> | null;
+  } | null;
 }
 
 export interface AcpInitializeParams {
@@ -261,6 +268,15 @@ export interface AcpLoadSessionResult {
   modes?: AcpSessionModeState | null;
   configOptions?: AcpSessionConfigOption[] | null;
 }
+
+/** `session/resume` (agents with `sessionCapabilities.resume`): like `session/load`, without the replay. */
+export interface AcpResumeSessionParams {
+  sessionId: string;
+  cwd: string;
+  mcpServers?: AcpMcpServer[];
+}
+
+export type AcpResumeSessionResult = AcpLoadSessionResult;
 
 export interface AcpPromptParams {
   sessionId: string;
@@ -333,6 +349,7 @@ export interface AcpAgentMethods {
   initialize: { params: AcpInitializeParams; result: AcpInitializeResult };
   "session/new": { params: AcpNewSessionParams; result: AcpNewSessionResult };
   "session/load": { params: AcpLoadSessionParams; result: AcpLoadSessionResult | null };
+  "session/resume": { params: AcpResumeSessionParams; result: AcpResumeSessionResult | null };
   "session/prompt": { params: AcpPromptParams; result: AcpPromptResult };
   "session/set_config_option": { params: AcpSetConfigOptionParams; result: AcpSetConfigOptionResult };
   "session/set_mode": { params: AcpSetModeParams; result: Record<string, never> | null };
@@ -427,7 +444,7 @@ export function configOptionFromModes(modes: AcpSessionModeState): ConfigOption 
   };
 }
 
-/** Config options of a `session/new` / `session/load` result. */
+/** Config options of a `session/new` / `session/resume` / `session/load` result. */
 export function configFromSessionResult(result: AcpNewSessionResult | AcpLoadSessionResult | null | undefined): ConfigOption[] {
   if (result == null) return [];
   if (result.configOptions) return configOptionsFromAcp(result.configOptions);

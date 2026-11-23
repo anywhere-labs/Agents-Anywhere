@@ -23,7 +23,7 @@ src/
     state-store.ts      数据目录里的 identity / settings / paired-clients / sessions / agents（原子写入，0600）
     device-ops.ts       文件、目录、git、附件（有上限、不走 shell）
     terminal-manager.ts 无原生依赖的终端
-    acp-host.ts         通用 ACP 宿主：每个会话一个 Agent 进程，stdio 行分隔 JSON-RPC 2.0
+    acp-host.ts         通用 ACP 宿主：每个会话一个 Agent 进程，stdio 行分隔 JSON-RPC 2.0；重启 Agent 时恢复它的上下文，回收空闲进程
   rpc/                  MeshCall 服务（targeted，instance = 设备 id）
     device-admin-service.ts  aa.v3.DeviceAdmin：ping / close_tunnel_sessions / check_update / rename
     sessions-service.ts      aa.v3.Sessions
@@ -120,7 +120,7 @@ src/
 - `reset: true`：先丢掉对命令、参数和环境变量的修改（回到预设），再应用同一次调用里的其他字段。`reset` 不改开关，要同时打开就一起传 `enabled: true`。
 - 改回与预设相同的值等于没改：`customized` 为 `false`，这一项也不再保存。
 - 修改先写入数据目录的 `agents.json`（0600，目录 0700），写入失败则整个修改不生效。环境变量的值只保存在这个文件里，不会出现在任何 RPC 的返回（包括 `get_settings`）、日志或推送里。
-- **只影响之后启动的 Agent 进程**：正在运行的保持原来的设置，直到被停止（`stop_agent`）或自己退出。命令、参数或环境变量变了（或被关闭）的 Agent，它的预热 Agent 会被关闭，下一次 `prepare` 按新设置启动。
+- **只影响之后启动的 Agent 进程**：正在运行的保持原来的设置，直到被停止（`stop_agent`）、空闲回收或自己退出。命令、参数或环境变量变了（或被关闭）的 Agent，它的预热 Agent 会被关闭，下一次 `prepare` 按新设置启动。
 
 关闭的 Agent（`enabled: false`）：
 
@@ -130,7 +130,7 @@ src/
 
 `stop_agent`：
 
-- 停掉这个 Agent 的所有进程：会话的 Agent、预热的和正在启动的。会话都保留，下一条消息按那时的设置重新启动 Agent。新进程是新的 ACP 会话：不带之前的上下文，会话的设置（模型、模式等）也回到 Agent 的默认值，与 Connector 重启后一样。
+- 停掉这个 Agent 的所有进程：会话的 Agent、预热的和正在启动的。会话都保留，下一条消息按那时的设置重新启动 Agent。支持恢复的 Agent（四个内置 Agent 都支持）会重新打开原来的 ACP 会话，带着之前的上下文继续；会话的设置（模型、模式等）保持对话里的值。与 Connector 重启后一样，见下面的「恢复 Agent 的上下文，回收空闲进程」。
 - 有会话正在执行一轮时，不带 `force` 返回 `failed_precondition` / `turns_running`（`details.count` 是这样的会话数）。带 `force: true` 时先像 `aa.v3.Sessions/stop` 那样取消这些轮次（排队的消息等下一次发送），给 Agent 3 秒正常结束，再停掉进程；到时还没结束的轮次和 Agent 还在启动的轮次都记为取消（`cancelled`），不算出错。
 - 重复调用只会停掉之后又启动的进程，没有可停的时返回 `{ stopped: 0 }`。
 
@@ -145,6 +145,20 @@ src/
 | `turns_running` | `failed_precondition` | `stop_agent` 时有会话正在执行一轮且没带 `force`；`details.count` 是会话数 |
 | `agent_disabled` | `failed_precondition` | Agent 已关闭：`prepare`、`create` 和已有会话的新一轮都被拒绝；`details.agent` 是 Agent id |
 | `agent_not_configurable` | `failed_precondition` | 嵌入方用 `registerRuntime` 注册、没有预设的 Runtime 只能开关，不能改命令、参数和环境变量 |
+
+### 恢复 Agent 的上下文，回收空闲进程
+
+每个对话都记下它的 Agent 自己的会话 id（ACP `sessionId`，在 `session/new` 之后、`create` 接管预热 Agent 时记下），随对话保存在 `sessions.json` 里，不出现在任何 RPC 返回里。Connector 重启、`stop_agent`、Agent 崩溃或空闲回收之后，对话的下一条消息（或 `compact`）启动 Agent 时，新进程会重新打开这个会话，而不是新开一个：
+
+- Agent 在 `initialize` 里声明了 `sessionCapabilities.resume` 时用 `session/resume`，Agent 不回放历史。
+- 否则，或者 Agent 拒绝了 `session/resume`（例如 Antigravity 读不到会话时会建议改用 `session/load`），在声明了 `loadSession: true` 时用 `session/load`。Agent 会先把整个对话作为 `session/update` 重放一遍再应答；这些历史 AA 已经有了，所以在请求完成之前，这个会话的对话内容（用户消息、回复、思考、工具调用、计划）一律丢弃，只保留最新的斜杠命令、配置和模式。`session/resume` 期间也这样处理，以防 Agent 不按规范重放。
+- 设置以对话为准：Agent 启动后报告的值与对话里的不同、而 Agent 仍提供对话里的值时，在下一轮开始前改回对话里的值；Agent 不再提供的值放弃，以 Agent 报告的为准。Agent 没能恢复、新开会话时也这样处理。
+- 恢复失败（Agent 两种方法都不支持、会话已不存在或 Agent 报错）时，退回 `session/new`：对话照常继续，但 Agent 不带之前的上下文，新会话的 id 取代旧的。Connector 日志里会记一条 warn，写明原因（对话里已有 Agent 的回复时才记）；对话里没有提示，因为时间线现在没有表达这种提示的条目类型。
+- 不恢复的情况：`rewind` 之后（Agent 的上下文里有被删掉的消息，而 ACP 不能截断上下文），以及 fork 出来的新对话，都从新的 Agent 会话开始。
+
+四个内置 Agent（Claude Code、Codex、Antigravity、Pi）现在的版本都同时声明了 `session/resume` 和 `session/load`，所以都用 `session/resume`。
+
+**空闲回收**：Agent 支持恢复（`session/resume` 或 `session/load`）时，对话持续 `idleTtlMs`（默认 15 分钟）没有在进行的事：没有正在执行的一轮、没有待回答的权限请求、也没有正在进行的设置修改，就关闭它的 Agent 进程。对话保留，下一条消息重新启动 Agent 并恢复上下文；`Device/agents` 的 `running` 相应减少。Agent 在两轮之间自己发来的输出（消息、思考、工具调用、计划）也算有动静，会重新计时；用量报告之类的元数据不算。不支持恢复的 Agent 不回收，和以前一样一直运行到被停止。预热的 Agent 仍按自己的 TTL。`ConnectorHost` / `AcpRuntimeHost` 的 `idleTtlMs` 可以调整，`0` 或 `null` 表示不回收。回收中的进程还没退出时来了新消息，新进程会等它退出后再启动，不会有两个进程同时打开同一个 Agent 会话。
 
 ## 运行
 
@@ -238,7 +252,7 @@ node dist/src/cli.js start --router 'wss://router.example.com#mt_xxx'   # URL#TO
 | `identity.json` | 设备 id、设备密钥、控制面地址、设备 X25519 私钥（0600，私钥不离开本机） |
 | `settings.json` | 模式、MCP 开关、配对确认、RPC 文件上限、设备名 |
 | `paired-clients.json` | 已配对客户端公钥（加密模式的信任名单） |
-| `sessions.json` | 会话快照（防抖写入） |
+| `sessions.json` | 会话快照（防抖写入），包括每个对话的 Agent 会话 id（`acp_session_id`，Agent 重启时用它恢复上下文）。旧文件没有这个字段也能照常加载 |
 | `agents.json` | 每个 Agent 的开关和本机设置：命令、参数、环境变量（0600；环境变量的值只保存在这里）。不认识的键会被忽略；已知的值损坏时 Connector 不启动并指出出错的字段，不会悄悄忽略（否则关掉的 Agent 会重新打开） |
 | `attachments/<对话 id>/` | 对话没有工作目录或目录不可写时的附件（通常附件在项目的 `.agents-anywhere/attachments/<对话 id>/`） |
 
@@ -271,11 +285,14 @@ yarn test
 
 `tests/acp-prepare.test.ts` 不需要 Router：用一个记录每次进程启动、`session/new` 和配置修改的模拟 Agent 覆盖 `prepare` 与 `create({ prepared_id })`——配置项的形状、并发共用一次启动、接管同一个进程（没有第二次 `session/new`）并回放预热期间的通知、不匹配 / 过期 / 已退出时退回原流程、TTL 与续期、上限淘汰、启动错误，以及停止时关闭。
 
+`tests/acp-restore.test.ts` 也不需要 Router：模拟 Agent 把会话存成文件，新进程可以重新打开，每次回复都说出它记得的内容。覆盖 `session/resume`、只有 `session/load`（重放的历史不进对话）、Agent 不按规范在 resume 时也重放、两种都不支持（新开会话、记 warn、不回收）、恢复被拒（先 resume 再 load，都失败时新开会话并记 warn）、resume 被拒但 load 成功、Agent 崩溃后恢复、Connector 重启后恢复（`sessions.json` 里的 id）、恢复后把设置改回对话里的值、接管预热 Agent 后记下它的会话 id、`rewind` 后不再恢复、空闲回收（轮次比 TTL 长时不回收、回收后下一条消息恢复、两轮之间自己的输出算有动静而用量报告不算、预热 Agent 不受影响、`0` / `null` 关闭、回收中的进程退出前不启动新进程），以及没有这个字段的旧 `sessions.json`。
+
 `tests/agent-settings.test.ts` 也不需要 Router：在初始化好的 `ConnectorHost` 上直接调用服务，模拟 Agent 记下每次启动时拿到的命令（argv0）、参数和一个环境变量。覆盖 `agents` 的形状与计数、开关（`status.runtimes`、`prepare` / `create` / 已有会话的新一轮被拒、预热 Agent 被关闭）、设置写入 `agents.json`（0600）并在重启后用于下一次启动、正在运行的进程保持旧设置、环境变量的值不出现在任何返回 / 日志 / 推送里、恢复默认、字段校验、设置变了时关闭预热 Agent（没变时保留）、带旧字段的 `agents.json` 照常加载、`stop_agent` 的计数与会话恢复、有轮次在跑时的 `turns_running` 与 `force`（含 Agent 还在启动、Agent 不理会取消的情况），以及控制面、MCP 和加密设备上的调用限制。
 
 ## 已知限制
 
-- ACP 没有截断上下文的接口：`rewind` 会重启该会话的 Agent，新的 Agent 不带之前的上下文；Connector 重启或 `stop_agent` 之后，已有会话的下一条消息也会启动新的 Agent 会话，会话的模型、模式等设置回到 Agent 的默认值。
+- ACP 没有截断上下文的接口：`rewind` 会重启该会话的 Agent，新的 Agent 不带之前的上下文（设置保持对话里的值）；fork 出来的对话也从新的 Agent 会话开始。
+- Agent 不支持恢复或恢复失败时，Connector 重启、`stop_agent` 之后的下一条消息会新开 ACP 会话，不带之前的上下文。这只记在 Connector 日志里，对话里没有提示：时间线还没有这种提示的条目类型，要显示需要先改跨端契约。
 - 预热的 Agent 已经执行过 `session/new`：如果某个 Agent 在 `session/new` 时就写入自己的会话记录，没被接管的预热会话会在它自己的历史里留下一条空会话（Pi 要到第一条消息才写入，不受影响）。
 - `compact` 只在 Agent 通过 `available_commands_update` 提供 `compact` 命令时可用。
 - Router token 过期被拒后会重新获取 token 并重新挂载，期间该 Router 上的隧道会断开，客户端需要重连。

@@ -1,7 +1,8 @@
 // In-memory session store: the Connector is the only source of truth for conversations (the v3 Server keeps none).
 //
 // Holds, per session: the `Session`, its ordered items (`seq` = position from 0), the `Control`, the sidebar flags
-// (`unread`, `pinned`) and the `client_msg_id` → message id idempotency map. Every change is pushed to watchers as
+// (`unread`, `pinned`), the `client_msg_id` → message id idempotency map and the agent's own session id (ACP
+// `sessionId`, kept on the device so a restarted agent can reopen it). Every change is pushed to watchers as
 // the whole current value (`watch` = snapshot, then replacements by id); each watcher keeps only the newest value
 // per item, so a slow client skips frames instead of falling behind.
 //
@@ -143,6 +144,8 @@ export const SessionRecordSnapshotSchema = z.object({
   unread: z.boolean(),
   pinned: z.boolean(),
   client_msg_ids: z.record(z.string(), z.string()),
+  /** The agent's own id for this conversation (ACP `sessionId`), to restore its context; absent in older files. */
+  acp_session_id: z.string().min(1).optional(),
 });
 
 export const SessionStoreSnapshotSchema = z.object({
@@ -247,6 +250,11 @@ interface SessionRecord {
   pinned: boolean;
   /** client_msg_id → user message id. */
   clientMsgIds: Map<string, string>;
+  /**
+   * The agent's own session behind this conversation (ACP `sessionId`): when the agent process starts again, it is
+   * asked to reopen this one. Not part of `Session`: it never leaves the device.
+   */
+  acpSessionId: string | undefined;
   watchers: Set<CoalescingQueue<WatchEvent>>;
 }
 
@@ -340,6 +348,7 @@ export class SessionStore {
       unread: false,
       pinned: false,
       clientMsgIds: new Map(),
+      acpSessionId: undefined,
       watchers: new Set(),
     });
     this.changed(undefined, { list: true });
@@ -353,6 +362,10 @@ export class SessionStore {
   updateSession(id: string, patch: SessionPatch): Session {
     const record = this.require(id);
     const session = record.session;
+    // The agent's own session belongs to the agent and folder it was opened with.
+    if ((patch.agent !== undefined && patch.agent !== session.agent) || (patch.cwd !== undefined && patch.cwd !== session.cwd)) {
+      record.acpSessionId = undefined;
+    }
     if (patch.title !== undefined) session.title = patch.title;
     if (patch.cwd !== undefined) session.cwd = patch.cwd;
     if (patch.agent !== undefined) session.agent = patch.agent;
@@ -387,6 +400,19 @@ export class SessionStore {
     if (record.pinned === pinned) return;
     record.pinned = pinned;
     this.changed(undefined, { list: true });
+  }
+
+  /** The agent's own session behind `id` (ACP `sessionId`), to reopen when its process starts again. */
+  acpSessionId(id: string): string | undefined {
+    return this.require(id).acpSessionId;
+  }
+
+  /** Remember (or, with `undefined`, forget) the agent's own session behind `id`. Saved with the session. */
+  setAcpSessionId(id: string, acpSessionId: string | undefined): void {
+    const record = this.require(id);
+    if (record.acpSessionId === acpSessionId) return;
+    record.acpSessionId = acpSessionId;
+    this.changed(undefined, {});
   }
 
   // ── Items ──
@@ -468,7 +494,10 @@ export class SessionStore {
     return { messages: clone(messages.slice(start, end)), has_more: start > 0 };
   }
 
-  /** Remove `messageId` and everything after it. Watchers get a new snapshot. Returns the removed items. */
+  /**
+   * Remove `messageId` and everything after it. Watchers get a new snapshot. Returns the removed items. The agent's
+   * own session is forgotten: it holds the removed items, so the agent starts a new one.
+   */
   rewind(id: string, messageId: string): { removed: Message[] } {
     const record = this.require(id);
     const index = record.index.get(messageId);
@@ -480,6 +509,7 @@ export class SessionStore {
       if (removedIds.has(messageIdOf)) record.clientMsgIds.delete(clientMsgId);
     }
     record.control.pending = record.control.pending.filter((p) => !removedIds.has(p.message_id));
+    record.acpSessionId = undefined;
     record.session.message_count = record.messages.length;
     record.session.updated_at = this.iso();
     for (const watcher of record.watchers) watcher.reset(() => this.snapshotEvent(record));
@@ -621,6 +651,7 @@ export class SessionStore {
         unread: r.unread,
         pinned: r.pinned,
         client_msg_ids: Object.fromEntries(r.clientMsgIds),
+        ...(r.acpSessionId !== undefined ? { acp_session_id: r.acpSessionId } : {}),
       })),
     };
   }
@@ -641,6 +672,7 @@ export class SessionStore {
         unread: saved.unread,
         pinned: saved.pinned,
         clientMsgIds: new Map(Object.entries(saved.client_msg_ids)),
+        acpSessionId: saved.acp_session_id,
         watchers: previous.get(saved.session.id)?.watchers ?? new Set(),
       };
       for (const message of messages) {
