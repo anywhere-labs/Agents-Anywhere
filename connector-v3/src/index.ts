@@ -34,7 +34,17 @@ export {
 
 // RPC services
 export { DeviceAdminService, TunnelStreamTracker, type DeviceAdminHooks, type TrackedStream } from "./rpc/device-admin-service.js";
-export { DeviceService, rpcGuard, toRpcError, type DeviceServiceHost } from "./rpc/device-service.js";
+export {
+  AgentEntrySchema,
+  DeviceService,
+  rpcGuard,
+  StopAgentRequestSchema,
+  toRpcError,
+  UpdateAgentRequestSchema,
+  type AgentEntry,
+  type AgentStatus,
+  type DeviceServiceHost,
+} from "./rpc/device-service.js";
 export { SessionsService, type SessionsServiceDeps } from "./rpc/sessions-service.js";
 export { terminalClientIdentity, TerminalsService, type TerminalClientIdentity, type TerminalsServiceDeps } from "./rpc/terminals-service.js";
 
@@ -48,6 +58,7 @@ export {
   turnReplyText,
   type AcpRuntimeHostOptions,
   type AcpRuntimeOptions,
+  type AgentInfo,
   type AgentRuntime,
   type PreparedAgent,
   type PreparedInfo,

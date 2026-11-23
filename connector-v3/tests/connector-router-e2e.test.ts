@@ -442,6 +442,25 @@ describe("ConnectorHost against a real meshcall-router", { skip: SKIP, timeout: 
     assert.equal(firstTurn.reply_text, "echo: prepared");
     await client.unary("aa.v3.Sessions", "delete", { id: adopted.id }, { instance: deviceId });
 
+    // Agent management through MeshCall: anyone allowed may list; changing and stopping only through a tunnel; the
+    // request and the answer pass the schemas, and an environment value never comes back.
+    type Agent = { id: string; name: string; builtin: boolean; enabled: boolean; command: string; env_keys: string[]; customized: boolean; running: number; busy: number };
+    const agents = await client.unary<object, { agents: Agent[] }>("aa.v3.Device", "agents", {}, { instance: deviceId });
+    assert.deepEqual(agents.agents.map((a) => [a.id, a.name, a.builtin, a.enabled, a.running]), [["mock", "Mock ACP", false, true, 1]]);
+    assert.equal((await control.unary<object, { agents: Agent[] }>("aa.v3.Device", "agents", {}, direct("client"))).agents.length, 1);
+    assert.equal(reasonOf(await rejection(control.unary("aa.v3.Device", "update_agent", { id: "mock", command: "/bin/false" }, direct("client")))), "tunnel_required");
+    assert.equal(reasonOf(await rejection(control.unary("aa.v3.Device", "stop_agent", { id: "mock" }, direct("mcp", { "aa-mcp-client": "Claude" })))), "mcp_not_allowed");
+    const badEnv = await rejection(client.unary("aa.v3.Device", "update_agent", { id: "mock", env: { "NOT-A-NAME": "x" } }, { instance: deviceId }));
+    assert.ok(badEnv instanceof MeshCallError && badEnv.code === "invalid_argument", String(badEnv));
+    // The name is not a setting: a `name` in the request is dropped like any field the schema does not have.
+    const changed = await client.unary<object, Agent>("aa.v3.Device", "update_agent", { id: "mock", name: "Mock (mine)", env: { MOCK_TOKEN: "s3cret-value" } }, { instance: deviceId });
+    assert.deepEqual([changed.name, changed.env_keys, changed.customized], ["Mock ACP", ["MOCK_TOKEN"], true]);
+    assert.ok(!JSON.stringify(changed).includes("s3cret-value"));
+    const reset = await client.unary<object, Agent>("aa.v3.Device", "update_agent", { id: "mock", reset: true, enabled: null }, { instance: deviceId });
+    assert.deepEqual([reset.name, reset.env_keys, reset.customized], ["Mock ACP", [], false]);
+    // Stops the first session's agent; its next message below starts it again.
+    assert.deepEqual(await client.unary("aa.v3.Device", "stop_agent", { id: "mock" }, { instance: deviceId }), { stopped: 1 });
+
     const view = new SessionView(client.serverStream<object, WatchEvent>("aa.v3.Sessions", "watch", { id: created.id }, { instance: deviceId }));
     await view.until((v) => v.session !== undefined, "watch snapshot");
 
