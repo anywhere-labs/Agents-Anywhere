@@ -149,7 +149,7 @@ function UserTurn({ message, outgoing }: { message: UserMessage; outgoing?: bool
         )}
         {text && (
           <Bubble align="end" variant="muted" className={cn(outgoing && 'opacity-70')}>
-            <BubbleContent className="whitespace-pre-wrap">{text}</BubbleContent>
+            <BubbleContent className="px-4 py-2.5 text-reading whitespace-pre-wrap">{text}</BubbleContent>
           </Bubble>
         )}
         <MessageFooter className="gap-0.5 transition-opacity pointer-fine:opacity-0 pointer-fine:group-hover/user:opacity-100 pointer-fine:focus-within:opacity-100">
@@ -296,7 +296,7 @@ function AgentTurn({ turn, live, last, control, ctx: base }: { turn: TurnData; l
                   <MessageContent>
                     <MessageHeader className="justify-end">插话</MessageHeader>
                     <Bubble align="end" variant="muted">
-                      <BubbleContent className="whitespace-pre-wrap">{userText(s.message)}</BubbleContent>
+                      <BubbleContent className="px-4 py-2.5 text-reading whitespace-pre-wrap">{userText(s.message)}</BubbleContent>
                     </Bubble>
                   </MessageContent>
                 </Message>

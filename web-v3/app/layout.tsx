@@ -1,6 +1,5 @@
 import type { Metadata, Viewport } from "next"
 
-import "@fontsource/caveat/500.css"
 import "./harmonyos-sans-sc.css"
 import "./globals.css"
 import { Providers } from "@/components/providers"

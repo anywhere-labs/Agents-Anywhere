@@ -3,8 +3,9 @@
 // A conversation (client-experience-proposal §2.4). Thread in the middle (Effi Cloud's turn rendering, approvals inline
 // under the tool call as in Claude Code Desktop / Codex / Cursor), queued messages above the input, the composer at the
 // bottom — centred under a greeting while the conversation is empty, as in ChatGPT / Claude.ai — and the side panel
-// (files, changes, terminal, plan) beside the thread on wide screens, over it on medium ones and in a bottom sheet on
-// phones. Files dropped anywhere on the conversation are attached.
+// (files, changes, terminal, plan): beside the thread when there is room for both, over it when there is not, in a
+// bottom sheet on phones; it slides in and out and its left edge is dragged to resize it. Files dropped anywhere on the
+// conversation are attached.
 // Behaviour follows AA v2 web-next mapped to aa.v3.Sessions: watch (snapshot then live), send with
 // delivery auto / queue / steer, answer, set_config, stop, rename, fork, compact, delete, unqueue, steer_queued.
 import { useRouter } from "next/navigation"
@@ -42,9 +43,10 @@ import {
 } from "@/components/ui/message-scroller"
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { PairDeviceDialog } from "@/components/workbench/pair-device-dialog"
-import { WorkbenchShell } from "@/components/workbench/workbench-shell"
 import { useIsMobile } from "@/hooks/use-mobile"
-import { useMediaQuery } from "@/hooks/use-media-query"
+import { Dock } from "@/components/workbench/dock"
+import { useElementWidth } from "@/hooks/use-element-width"
+import type { PanelWidthSpec } from "@/hooks/use-panel-width"
 import { loadDeviceImage, sentPreview } from "@/lib/attachments/previews"
 import { PairingError } from "@/lib/mesh/pairing"
 import { useRouteParams } from "@/lib/platform/route-params"
@@ -63,6 +65,15 @@ const WebThreadItem: ThreadItem = ({ id, anchor, children }) => (
 )
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : String(err))
+
+/** The side panel's width; it docks beside the thread only while the thread keeps `MIN_THREAD` px. */
+const PANEL_WIDTH: PanelWidthSpec = {
+  key: "aa.conversation.panel.width",
+  initial: 480,
+  min: 320,
+  max: () => 900,
+}
+const MIN_THREAD = 520
 
 export default function SessionWorkspacePage() {
   const params = useRouteParams<{ deviceId: string; sessionId: string }>("/sessions/[deviceId]/[sessionId]")
@@ -394,8 +405,12 @@ export default function SessionWorkspacePage() {
   )
 
   // ── Side panel ──
-  const wide = useMediaQuery("(min-width: 1280px)")
   const isMobile = useIsMobile()
+  // The room the conversation has (the sidebar and Orches take theirs): the panel docks while the thread keeps
+  // MIN_THREAD beside it, and lies over the thread when it would not.
+  const [rowRef, rowWidth] = useElementWidth<HTMLDivElement>()
+  const panelDocked = rowWidth - MIN_THREAD >= PANEL_WIDTH.min
+  const panelCap = panelDocked ? rowWidth - MIN_THREAD : Math.round(rowWidth * 0.88)
   // Wide screens remember whether the panel is open; on phones it is a sheet opened on demand only.
   const [sheetOpen, setSheetOpen] = useState(false)
   const panelOpen = isMobile ? sheetOpen : prefs.panel.open
@@ -540,8 +555,8 @@ export default function SessionWorkspacePage() {
   const drop = useDropZone((files) => drafts.add(files), !readOnly)
 
   return (
-    <WorkbenchShell hideMobileBar>
-      <div className="relative flex min-h-0 flex-1 overflow-hidden">
+    <>
+      <div ref={rowRef} className="relative flex min-h-0 flex-1 overflow-hidden">
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" {...drop.handlers}>
           <DropOverlay show={drop.over} />
           <ConversationHeader
@@ -713,12 +728,18 @@ export default function SessionWorkspacePage() {
           )}
         </div>
 
-        {/* Side panel: beside the thread ≥ 1280, over it on medium screens, a bottom sheet on phones. */}
-        {panelOpen && wide && <div className="w-[min(30rem,40vw)] shrink-0 border-l border-border">{panel}</div>}
-        {panelOpen && !wide && !isMobile && (
-          <div className="absolute inset-y-0 right-0 z-20 w-[min(28rem,88%)] border-l border-border bg-background shadow-xl animate-in fade-in slide-in-from-right-4 duration-200 motion-reduce:animate-none">
+        {/* Side panel: beside the thread when both fit, over it when not; a bottom sheet on phones. */}
+        {!isMobile && rowWidth > 0 && (
+          <Dock
+            open={panelOpen}
+            spec={PANEL_WIDTH}
+            cap={panelCap}
+            overlay={!panelDocked}
+            resizeLabel={t("shell.resizePanel")}
+            resizeTitle={t("shell.resizeHint")}
+          >
             {panel}
-          </div>
+          </Dock>
         )}
       </div>
 
@@ -800,6 +821,6 @@ export default function SessionWorkspacePage() {
         deviceNameHint={device?.name}
         deviceId={device?.id}
       />
-    </WorkbenchShell>
+    </>
   )
 }

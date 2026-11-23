@@ -48,7 +48,7 @@ function switchValues(o: ConfigOption) {
 }
 
 const TRIGGER =
-  "h-8 min-w-0 gap-1 rounded-full px-2.5 text-[13px] font-normal text-muted-foreground hover:text-foreground aria-expanded:bg-surface-hover aria-expanded:text-foreground"
+  "h-8 min-w-0 gap-1 rounded-full px-2.5 text-sm font-normal text-muted-foreground hover:text-foreground aria-expanded:bg-surface-hover aria-expanded:text-foreground"
 
 type Level = "read" | "plan" | "ask" | "auto" | "all"
 const LEVEL_ICON: Record<Level, React.ReactNode> = {
@@ -188,14 +188,14 @@ export function ConfigPickers({
   }
   if (loading && !options.length) {
     return (
-      <span className="flex h-8 items-center gap-1.5 px-2 text-[13px] text-muted-foreground">
+      <span className="flex h-8 items-center gap-1.5 px-2 text-sm text-muted-foreground">
         <LoaderCircleIcon className="size-3 animate-spin" />
         {agent}
       </span>
     )
   }
   if (!model && !thought && !rest.length) {
-    return <span className="flex h-8 items-center px-2 text-[13px] text-muted-foreground">{agent}</span>
+    return <span className="flex h-8 items-center px-2 text-sm text-muted-foreground">{agent}</span>
   }
   const cur = model?.options.find((x) => x.value === model.current)
   const name = model ? (cur ? modelName(cur) : model.current || t("composer.defaultModel")) : agent

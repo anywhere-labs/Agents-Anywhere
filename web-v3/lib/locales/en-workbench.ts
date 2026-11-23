@@ -4,6 +4,7 @@
 export const enWorkbench = {
   // Sidebar & navigation
   "wb.newConversation": "New conversation",
+  "wb.addDevice": "Add device",
   "wb.search": "Search",
   "wb.untitled": "New conversation",
   "wb.pin": "Pin",
@@ -14,14 +15,14 @@ export const enWorkbench = {
   "wb.conversations": "Conversations",
   "wb.deviceNoConversations": "No conversations on this device yet.",
   "wb.noDevicesHint": "No work devices yet. Install the Connector or Agents Anywhere Desktop on a computer, then register it here.",
-  "wb.assistantEmpty": "No assistant conversations yet.",
+  "wb.assistantEmpty": "No Orches chats yet.",
 
   // ⌘K palette
   "palette.placeholder": "Search conversations, devices, agents, projects, settings…",
   "palette.noResults": "Nothing found",
   "palette.groupActions": "Actions",
   "palette.groupConversations": "Conversations",
-  "palette.groupAssistant": "Assistant",
+  "palette.groupAssistant": "Orches",
   "palette.groupDevices": "Devices",
   "palette.groupAgents": "Agents",
   "palette.groupProjects": "Projects",
@@ -204,7 +205,8 @@ export const enWorkbench = {
   "shortcuts.search": "Search",
   "shortcuts.newConversation": "New conversation",
   "shortcuts.toggleSidebar": "Show or hide the sidebar",
-  "shortcuts.assistant": "Assistant",
+  "shortcuts.assistant": "Open Orches",
+  "shortcuts.settings": "Open settings",
   "shortcuts.help": "Keyboard shortcuts",
   "shortcuts.composer": "Composer",
   "shortcuts.send": "Send",

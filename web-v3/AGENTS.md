@@ -17,7 +17,8 @@ Read [`.agents/skills/anywhere-ui/SKILL.md`](./.agents/skills/anywhere-ui/SKILL.
 - `embed/` — Single-file mobile WebView render bundle (`aa.render/2`, `docs/v3/mobile-bridge.md`): `embed/src/protocol.ts` is the bridge's source of truth (`embed/protocol.schema.json` is generated from it); it reuses `components/conversation/*` and `components/terminal/terminal-view.tsx` as they are. Build with `corepack yarn embed:build`, check with `corepack yarn embed:smoke`.
 - `lib/platform/{desktop,export-params,route-params}` & `components/desktop/*` — Desktop (`../desktop-v3`) integration: `window.aaDesktop` bridge (OS-keychain secrets, managed connector), green-lock trust tier, control-plane proxy URLs, and the `AA_DESKTOP_EXPORT=1` static export (dynamic routes pre-rendered for the placeholder `_`; read ids with `useRouteParams`, never `useParams`). All of it is inert in the browser.
 - `lib/state/{workbench-context,assistant-context}.tsx` — Top-level providers wired into `components/providers.tsx`.
-- `components/workbench/*` & `components/conversation/*` — Workbench chrome (`WorkbenchShell`, dual-mode `WorkbenchSidebar`, ⌘K `CommandPalette`, `NewConversation`, `FileBrowser`, `E2eeLockBadge`, `AssistantPanel`, dialogs) and the conversation (timeline renderer shared with the mobile bundle, `Composer`, `ConfigPickers`, `ApprovalDock` (only a jump-to reminder: approvals are answered inline in the thread), `QueueRows`, `SidePanel`, `ConversationHeader`, `ShortcutsDialog`). Interaction logic follows the v2 Web client (`web-next/`) and, where they differ, the familiar patterns of mainstream agent apps (ChatGPT, Claude, Codex, Cursor: centred composer on an empty conversation, inline approvals, regenerate, drop anywhere, ⌘K / ⌘⇧O / ⌘/); layout follows `docs/v3/client-experience-proposal.md`.
+- `app/(workbench)/` — Every workbench page (home, `/new`, conversations, devices, Orches, `/settings`) shares one `WorkbenchShell` from `app/(workbench)/layout.tsx`, so the sidebar, Orches and their state survive navigation; pages render only their own content.
+- `components/workbench/*` & `components/conversation/*` — Workbench chrome (`WorkbenchShell`, dual-mode `WorkbenchSidebar`, ⌘K `CommandPalette`, `SettingsDialog` (⌘, and the account menu), `NewConversation`, `FileBrowser`, `E2eeLockBadge`, `AssistantPanel` (Orches), `Dock` / `ResizeHandle` (right-hand panels), dialogs) and the conversation (timeline renderer shared with the mobile bundle, `Composer`, `ConfigPickers`, `ApprovalDock` (only a jump-to reminder: approvals are answered inline in the thread), `QueueRows`, `SidePanel`, `ConversationHeader`, `ShortcutsDialog`). Interaction logic follows the v2 Web client (`web-next/`) and, where they differ, the familiar patterns of mainstream agent apps (ChatGPT, Claude, Codex, Cursor: centred composer on an empty conversation, inline approvals, regenerate, drop anywhere, ⌘K / ⌘⇧O / ⌘/); layout follows `docs/v3/client-experience-proposal.md`.
 - `lib/workbench/*` — Device → agent → project tree, per-account local UI memory (pins, last start, panel), cached device status/settings and drive quota, unified-diff parser.
 - `lib/attachments/*` — Attachment transfer (RPC ≤ device cap, Cloud Drive + `fetch_drive_file` above it, one-time AES-GCM key for encrypted devices) and image preview cache.
 
@@ -30,12 +31,35 @@ Read [`.agents/skills/anywhere-ui/SKILL.md`](./.agents/skills/anywhere-ui/SKILL.
   - Zero hard-coded hex colors in `.tsx` files (except `viewport.themeColor` in `app/layout.tsx`).
   - Keep `app/globals.css` two-tier `superellipse(1.35)` / `round` geometry and `HarmonyOS Sans SC` CJK-only font stack verbatim.
   - Keep sidebar wordmark hover-free (`components/console/section-switcher.tsx`) and mobile sidebar trigger standalone (`components/console/collapsed-nav-bar.tsx`).
-  - Language switcher lives ONLY inside Settings › Appearance (never duplicated in the sidebar).
+  - Language switcher lives ONLY inside Settings › General (never duplicated in the sidebar).
   - Never expose raw dotted claim keys (like `aa.drive_quota_mb`) to end users; render allowances with `DetailCard` / `DetailList` using rich localized copy.
   - Keep `lib/locales/en.ts` and `lib/locales/zh-CN.ts` in exact key + placeholder parity.
 - **No Lockfile Commits**: Never commit `yarn.lock`.
 
 - **Desktop static export**: `desktop-v3` ships this app as a static export (`AA_DESKTOP_EXPORT=1 corepack yarn build`). Do not add server-only features (route handlers, middleware/proxy, server actions, `cookies()`/`headers()`); new dynamic routes need a `layout.tsx` with `generateStaticParams() { return exportPlaceholderParams(...) }` plus `PathKeyed`, and their pages must use `useRouteParams`.
+
+## 字号与层级 (type scale and hierarchy)
+
+Hierarchy comes from a few steps used the same way everywhere, then weight and colour; not from many sizes.
+
+| Size | Token | For |
+| --- | --- | --- |
+| 12px | `text-xs` | Meta only: timestamps, counts, keyboard hints, badges, a hint line under a row. Never text the user must read to act. |
+| 14px | `text-sm` | UI text: sidebar rows, buttons, menus, form labels, settings rows, panel content, thinking and tool output (`Markdown size="compact"`). |
+| 15px | `text-reading` (line height 1.7) | Conversation text: replies (`Markdown`), user bubbles, the composer on wide screens. Headings inside a reply stay within a step of the text (h1 1.25em, h2 1.125em, h3–h6 1em; `.aa-md` in `app/globals.css`). |
+| 16px | `text-base` | Section and dialog titles; the composer on phones (keeps iOS from zooming on focus). |
+| 18px | `text-lg` | Empty-state titles and the like. |
+| 24px | `text-2xl` | Page titles (`PageHeader`). |
+
+- No arbitrary sizes (`text-[11px]`, `text-[13px]`, …). The one exception is avatar initials sized to their circle.
+- Secondary information keeps its size and turns `text-muted-foreground`; it is not shrunk a step.
+- Weight: 400 for text, 500 for row names and bar titles, 600 for page and dialog titles.
+- The brand wordmark is the sans heading font (`components/brand-wordmark.tsx`), not a script face.
+
+## Panels
+
+- The left sidebar (`components/ui/sidebar.tsx`, offcanvas) folds away with ⌘B or the button in its header; while folded, `SidebarReopen` keeps a sidebar button and a new-conversation button at the top left. Its width comes from the shell (`--sidebar-width`), dragged by the right edge, double-click for the default; both are kept in this browser (`aa.sidebar.*`).
+- Right-hand panels use `Dock` (`components/workbench/dock.tsx`): docked beside the page (pushing it over) or, when there is no room, over it; they slide in and out whole with `DOCK_EASE` and are resized by the left edge. Orches docks from 1024px (⌘J or its sidebar row); the conversation side panel docks while the thread keeps 520px. Phones use bottom sheets.
 
 ## Verification
 

@@ -42,7 +42,6 @@ import { FileBrowser } from "@/components/workbench/file-browser"
 import { PairDeviceDialog } from "@/components/workbench/pair-device-dialog"
 import { useRouteParams } from "@/lib/platform/route-params"
 import { PLATFORM_ICON } from "@/components/workbench/workbench-sidebar"
-import { WorkbenchShell } from "@/components/workbench/workbench-shell"
 import { formatKeyFingerprint } from "@/lib/mesh/pairing"
 import { useWorkbench } from "@/lib/state/workbench-context"
 import type { PairedClientEntry, SessionSummary } from "@/lib/types/v3"
@@ -366,7 +365,7 @@ function DeviceWorkbenchPageInner() {
                 </ul>
               )}
               {agents.length > 0 && (
-                <p className="text-[11px] text-muted-foreground">{t("device.agentAvailabilityUnknown")}</p>
+                <p className="text-xs text-muted-foreground">{t("device.agentAvailabilityUnknown")}</p>
               )}
             </section>
 
@@ -456,7 +455,7 @@ function DeviceWorkbenchPageInner() {
                       <p className="flex items-center gap-1.5 px-3 text-xs text-muted-foreground" title={p.cwd}>
                         <FolderIcon className="size-3.5" />
                         {p.name}
-                        <span className="truncate font-mono text-[11px] opacity-70">{tildePath(p.cwd)}</span>
+                        <span className="truncate font-mono text-xs opacity-70">{tildePath(p.cwd)}</span>
                       </p>
                       <div className="-mx-1 flex flex-col">
                         {p.sessions.map((s) => (
@@ -680,10 +679,8 @@ function DeviceWorkbenchPageInner() {
 
 export default function DeviceWorkbenchPage() {
   return (
-    <WorkbenchShell>
-      <Suspense fallback={<FullPageSpinner />}>
-        <DeviceWorkbenchPageInner />
-      </Suspense>
-    </WorkbenchShell>
+    <Suspense fallback={<FullPageSpinner />}>
+      <DeviceWorkbenchPageInner />
+    </Suspense>
   )
 }

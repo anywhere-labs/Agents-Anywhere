@@ -4,6 +4,7 @@ import type { enWorkbench } from "./en-workbench"
 export const zhCNWorkbench: Record<keyof typeof enWorkbench, string> = {
   // 侧栏与导航
   "wb.newConversation": "新对话",
+  "wb.addDevice": "添加设备",
   "wb.search": "搜索",
   "wb.untitled": "新对话",
   "wb.pin": "置顶",
@@ -14,14 +15,14 @@ export const zhCNWorkbench: Record<keyof typeof enWorkbench, string> = {
   "wb.conversations": "对话",
   "wb.deviceNoConversations": "这台设备上还没有对话。",
   "wb.noDevicesHint": "还没有工作设备。在电脑上安装 Connector 或 Agents Anywhere Desktop，再在这里注册。",
-  "wb.assistantEmpty": "还没有助手对话。",
+  "wb.assistantEmpty": "还没有 Orches 对话。",
 
   // ⌘K
   "palette.placeholder": "搜索对话、设备、Agent、项目、设置…",
   "palette.noResults": "没有找到",
   "palette.groupActions": "操作",
   "palette.groupConversations": "对话",
-  "palette.groupAssistant": "随身助手",
+  "palette.groupAssistant": "Orches",
   "palette.groupDevices": "设备",
   "palette.groupAgents": "Agent",
   "palette.groupProjects": "项目",
@@ -204,7 +205,8 @@ export const zhCNWorkbench: Record<keyof typeof enWorkbench, string> = {
   "shortcuts.search": "搜索",
   "shortcuts.newConversation": "新对话",
   "shortcuts.toggleSidebar": "显示或隐藏侧栏",
-  "shortcuts.assistant": "助手",
+  "shortcuts.assistant": "打开 Orches",
+  "shortcuts.settings": "打开设置",
   "shortcuts.help": "键盘快捷键",
   "shortcuts.composer": "输入框",
   "shortcuts.send": "发送",

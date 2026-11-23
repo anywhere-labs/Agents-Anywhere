@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 import { bytesToBase64Url, isUnimplemented, planTransfer, rpcCap } from "@/lib/attachments/transfer"
 import type { DriveQuotaView, SessionSummary } from "@/lib/types/v3"
 import { rememberStart, toggleIn } from "@/lib/workbench/local-prefs"
+import { titleFromMessage } from "@/lib/workbench/title"
 import { agentLabel, buildDeviceTree, deviceProjects, matchesQuery, projectName, tildePath } from "@/lib/workbench/tree"
 import { parseUnifiedDiff } from "@/lib/workbench/unified-diff"
 
@@ -158,5 +159,18 @@ describe("unified diff parsing", () => {
     expect(files[0]).toMatchObject({ path: "src/a.ts", additions: 2, deletions: 1, status: "modified" })
     expect(files[1]).toMatchObject({ path: "new.md", additions: 1, status: "added" })
     expect(files[0].lines.map((l) => l.kind)).toEqual(["hunk", "same", "del", "add", "add"])
+  })
+})
+
+describe("titleFromMessage", () => {
+  it("takes the first non-empty line, collapsed", () => {
+    expect(titleFromMessage("\n\n  修一下   登录跳转  \n后面的内容")).toBe("修一下 登录跳转")
+  })
+  it("cuts long text by characters, not bytes", () => {
+    const title = titleFromMessage("一".repeat(50), 40)
+    expect(title).toBe(`${"一".repeat(40)}…`)
+  })
+  it("gives nothing for empty text", () => {
+    expect(titleFromMessage("  \n ")).toBeUndefined()
   })
 })

@@ -216,7 +216,7 @@ export function FilePreview({
         <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground" title={path}>
           {name}
         </span>
-        {result && <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{formatSize(result.size)}</span>}
+        {result && <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatSize(result.size)}</span>}
         {isMarkdown && result?.encoding === "utf8" && (
           <Button variant="ghost" size="xs" onClick={() => setShowSource((v) => !v)}>
             {showSource ? t("panel.rendered") : t("panel.source")}
@@ -265,7 +265,7 @@ export function FilePreview({
               <HighlightedText text={result.content} path={path} />
             )}
             {!result.eof && (
-              <p className="text-[11px] text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 {t("panel.truncated", { size: formatSize(result.bytes_read) })}
               </p>
             )}
@@ -351,7 +351,7 @@ export function FileBrowser({
         >
           <ArrowUpIcon className="size-3.5" />
         </Button>
-        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground" title={listing?.path}>
+        <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground" title={listing?.path}>
           {listing ? tildePath(listing.path) : ""}
         </span>
         <Button
@@ -374,7 +374,7 @@ export function FileBrowser({
               <button
                 type="button"
                 data-active={file === entry.path || undefined}
-                className="flex h-8 w-full min-w-0 items-center gap-2 rounded-full px-2.5 text-left text-[13px] hover:bg-surface-hover data-active:bg-surface-raised"
+                className="flex h-8 w-full min-w-0 items-center gap-2 rounded-full px-2.5 text-left text-sm hover:bg-surface-hover data-active:bg-surface-raised"
                 onClick={() => (entry.is_dir ? void load(entry.path) : setFile(entry.path))}
               >
                 {entry.is_dir ? (
@@ -386,7 +386,7 @@ export function FileBrowser({
                 )}
                 <span className="min-w-0 flex-1 truncate">{entry.name}</span>
                 {!entry.is_dir && (
-                  <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+                  <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
                     {formatSize(entry.size)}
                   </span>
                 )}

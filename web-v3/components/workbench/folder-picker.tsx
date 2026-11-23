@@ -117,7 +117,7 @@ export function FolderPickerDialog({
                 <button
                   type="button"
                   onClick={() => void load(e.path)}
-                  className="flex h-8 w-full min-w-0 items-center gap-2 rounded-full px-3 text-left text-[13px] hover:bg-surface-hover"
+                  className="flex h-8 w-full min-w-0 items-center gap-2 rounded-full px-3 text-left text-sm hover:bg-surface-hover"
                 >
                   <FolderIcon className="size-4 shrink-0 text-muted-foreground" />
                   <span className="min-w-0 truncate">{e.name}</span>
@@ -166,19 +166,19 @@ export function DirectoryOptions({
       type="button"
       onClick={onClick}
       className={cn(
-        "flex h-10 w-full min-w-0 items-center gap-2.5 rounded-full px-3 text-left text-[13px] hover:bg-surface-hover",
+        "flex h-10 w-full min-w-0 items-center gap-2.5 rounded-full px-3 text-left text-sm hover:bg-surface-hover",
         active && "bg-surface-raised"
       )}
     >
       <span className="flex shrink-0 text-muted-foreground [&_svg]:size-4">{icon}</span>
       <span className="min-w-0 truncate text-foreground">{label}</span>
-      {meta && <span className="min-w-0 flex-1 truncate text-right font-mono text-[11px] text-muted-foreground">{meta}</span>}
+      {meta && <span className="min-w-0 flex-1 truncate text-right font-mono text-xs text-muted-foreground">{meta}</span>}
     </button>
   )
   return (
     <div className="flex flex-col gap-0.5">
       {row("home", value === null, <HomeIcon />, t("newConv.homeDirectory"), "~", () => onPick(null))}
-      {recent.length > 0 && <p className="px-3 pt-2 pb-1 text-[11px] text-muted-foreground">{t("newConv.recentProjects")}</p>}
+      {recent.length > 0 && <p className="px-3 pt-2 pb-1 text-xs text-muted-foreground">{t("newConv.recentProjects")}</p>}
       {recent.slice(0, 8).map((p) =>
         row(p.cwd, value === p.cwd, <FolderIcon />, p.name, tildePath(p.cwd), () => onPick(p.cwd))
       )}

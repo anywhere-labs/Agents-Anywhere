@@ -39,9 +39,10 @@ import { useWorkbench } from "@/lib/state/workbench-context"
 import { useDevice, useDriveQuota } from "@/lib/workbench/device-info"
 import { rememberStart, useLocalPrefs } from "@/lib/workbench/local-prefs"
 import { agentLabel, deviceProjects, projectName, sessionHref, tildePath } from "@/lib/workbench/tree"
+import { titleFromMessage } from "@/lib/workbench/title"
 
 const CHIP =
-  "h-9 max-w-full min-w-0 gap-2 rounded-full border-border-strong bg-transparent px-3.5 text-[13px] font-normal"
+  "h-9 max-w-full min-w-0 gap-2 rounded-full border-border-strong bg-transparent px-3.5 text-sm font-normal"
 
 function NewConversationInner() {
   const { t } = useI18n()
@@ -127,8 +128,10 @@ function NewConversationInner() {
     let created: string | null = null
     try {
       const config = prefs.configByAgent[`${deviceId}:${agent}`]
+      const title = titleFromMessage(text)
       const session = await tunnelManager.createSession(tunnelDevice, {
         agent,
+        ...(title ? { title } : {}),
         ...(cwd ? { cwd } : {}),
         ...(config && Object.keys(config).length ? { config } : {}),
       })
@@ -269,7 +272,7 @@ function NewConversationInner() {
               <span className="truncate" title={cwd ?? "~"}>
                 {cwd ? projectName(cwd) : t("newConv.homeDirectory")}
               </span>
-              {cwd && <span className="hidden truncate font-mono text-[11px] text-muted-foreground sm:inline">{tildePath(cwd)}</span>}
+              {cwd && <span className="hidden truncate font-mono text-xs text-muted-foreground sm:inline">{tildePath(cwd)}</span>}
               <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" />
             </PopoverTrigger>
             <PopoverContent align="center" className="w-80 gap-0 p-1.5">

@@ -249,7 +249,7 @@ function ReasoningStep({ message, part }: { message: AssistantMessage; part: Thi
       <TraceCollapsibleTrigger>{line}</TraceCollapsibleTrigger>
       {/* AI Elements › Reasoning keeps Streamdown for the text. */}
       <TraceCollapsibleContent className={FLUSH}>
-        <Markdown streaming={running} className="text-muted-foreground">
+        <Markdown streaming={running} size="compact" className="text-muted-foreground">
           {part.text}
         </Markdown>
       </TraceCollapsibleContent>
@@ -586,11 +586,11 @@ function SubagentStep({ part, ctx }: { part: SubagentPart; ctx: StepContext }) {
           </Trace>
         )}
         {words.map((m) => (
-          <Markdown key={m.id} className="text-muted-foreground">
+          <Markdown key={m.id} size="compact" className="text-muted-foreground">
             {m.parts[0].type === 'text' ? m.parts[0].text : ''}
           </Markdown>
         ))}
-        {part.result && <Markdown className="text-muted-foreground">{part.result}</Markdown>}
+        {part.result && <Markdown size="compact" className="text-muted-foreground">{part.result}</Markdown>}
         {part.error && <p className="text-destructive">{part.error}</p>}
       </TraceCollapsibleContent>
     </TraceCollapsible>

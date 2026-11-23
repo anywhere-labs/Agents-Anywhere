@@ -14,7 +14,6 @@ import {
   PlusIcon,
   RefreshCwIcon,
   SaveIcon,
-  SparklesIcon,
   Trash2Icon,
   WrenchIcon,
 } from "lucide-react"
@@ -45,7 +44,7 @@ import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { AssistantPanel } from "@/components/workbench/assistant-panel"
-import { WorkbenchShell } from "@/components/workbench/workbench-shell"
+import { OrchesIcon } from "@/components/workbench/orches-icon"
 import {
   fetchDriveQuota,
   provisionBuiltInAssistantMcpToken,
@@ -386,12 +385,12 @@ function AssistantPageInner() {
   )
 
   return (
-    <WorkbenchShell>
+    <>
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <div className="shrink-0 border-b border-border px-6 py-4">
           <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-2.5">
-              <SparklesIcon className="size-5 text-foreground" />
+              <OrchesIcon className="size-5 text-foreground" />
               <div>
                 <h1 className="font-heading text-lg font-semibold tracking-tight text-foreground">
                   {t("assistant.title")}
@@ -549,7 +548,7 @@ function AssistantPageInner() {
                               <p className="truncate font-mono text-xs font-medium text-foreground">
                                 {f.path}
                               </p>
-                              <p className="text-[11px] text-muted-foreground">
+                              <p className="text-xs text-muted-foreground">
                                 {formatBytes(f.size)}
                               </p>
                             </div>
@@ -1109,7 +1108,7 @@ function AssistantPageInner() {
           toast.success(t("common.saved"))
         }}
       />
-    </WorkbenchShell>
+    </>
   )
 }
 

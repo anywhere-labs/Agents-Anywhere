@@ -5,11 +5,12 @@ import { useMemo, useRef, useState } from "react"
 import {
   ArrowUpIcon,
   LockIcon,
+  PanelRightCloseIcon,
   PlusIcon,
   RefreshCwIcon,
-  SparklesIcon,
   SquareIcon,
   WrenchIcon,
+  XIcon,
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -19,17 +20,24 @@ import { Spinner } from "@/components/spinner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { OrchesIcon } from "@/components/workbench/orches-icon"
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
   InputGroupTextarea,
 } from "@/components/ui/input-group"
+import { useIsMobile } from "@/hooks/use-mobile"
 import { extractChatEntries, useAssistant } from "@/lib/state/assistant-context"
 import { cn } from "@/lib/utils"
 
-export function AssistantPanel({ compact = false }: { compact?: boolean }) {
+/**
+ * Orches' conversation. `compact`: in the docked panel or the phone sheet (narrower, no centred column); `onClose`
+ * puts a close button in its header.
+ */
+export function AssistantPanel({ compact = false, onClose }: { compact?: boolean; onClose?: () => void }) {
   const { t } = useI18n()
+  const isMobile = useIsMobile()
   const {
     activeConversation,
     startNewConversation,
@@ -92,14 +100,9 @@ export function AssistantPanel({ compact = false }: { compact?: boolean }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* Header strip */}
-      <div
-        className={cn(
-          "flex shrink-0 items-center justify-between gap-2 border-b px-4 py-2.5",
-          compact && "pr-12"
-        )}
-      >
+      <div className={cn("flex h-14 shrink-0 items-center justify-between gap-2 border-b", compact ? "px-3" : "px-4")}>
         <div className="flex min-w-0 items-center gap-2">
-          <SparklesIcon className="size-4 shrink-0 text-muted-foreground" />
+          <OrchesIcon className="size-4 shrink-0 text-muted-foreground" />
           <span className="truncate text-sm font-medium">
             {activeConversation?.title ?? t("assistant.title")}
           </span>
@@ -128,6 +131,11 @@ export function AssistantPanel({ compact = false }: { compact?: boolean }) {
           >
             <PlusIcon className="size-4" />
           </Button>
+          {onClose && (
+            <Button variant="ghost" size="icon-sm" aria-label={t("shell.closeOrches")} onClick={onClose}>
+              {isMobile ? <XIcon className="size-4" /> : <PanelRightCloseIcon className="size-4" />}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -159,7 +167,7 @@ export function AssistantPanel({ compact = false }: { compact?: boolean }) {
         <div className={cn("mx-auto flex flex-col gap-5", compact ? "max-w-none" : "max-w-3xl")}>
           {!hasModel ? (
             <div className="rounded-card bg-card p-6 text-center space-y-3">
-              <SparklesIcon className="mx-auto size-7 stroke-[1.5] text-muted-foreground" />
+              <OrchesIcon className="mx-auto size-7 stroke-[1.5] text-muted-foreground" />
               <h3 className="text-base font-medium">{t("assistant.noModelTitle")}</h3>
               <p className="mx-auto max-w-md text-sm text-muted-foreground">
                 {t("assistant.noModelDesc")}
@@ -172,7 +180,7 @@ export function AssistantPanel({ compact = false }: { compact?: boolean }) {
             </div>
           ) : entries.length === 0 && !running ? (
             <div className="py-16 text-center space-y-2">
-              <SparklesIcon className="mx-auto size-7 stroke-[1.5] text-muted-foreground" />
+              <OrchesIcon className="mx-auto size-7 stroke-[1.5] text-muted-foreground" />
               <p className="text-sm font-medium">{t("assistant.title")}</p>
               <p className="mx-auto max-w-md text-xs text-muted-foreground">
                 {t("assistant.subtitle")}

@@ -254,7 +254,7 @@ export function Composer({
           aria-label={t("composer.commands")}
           className="absolute inset-x-0 bottom-full z-30 mb-2 overflow-hidden rounded-2xl bg-popover p-1.5 shadow-lg ring-1 ring-foreground/5"
         >
-          <p className="flex items-center gap-1.5 px-2.5 pt-1 pb-1.5 text-[11px] text-muted-foreground">
+          <p className="flex items-center gap-1.5 px-2.5 pt-1 pb-1.5 text-xs text-muted-foreground">
             <SlashIcon className="size-3" />
             {t("composer.commands")}
           </p>
@@ -323,7 +323,7 @@ export function Composer({
             }}
             placeholder={dragging ? t("composer.dropHere") : placeholder}
             aria-label={placeholder ?? t("composer.send")}
-            className="max-h-60 min-h-12 px-4 pt-3.5 pb-1 text-[15px] leading-relaxed md:text-sm"
+            className="max-h-60 min-h-12 px-4 pt-3.5 pb-1 text-base leading-relaxed md:text-reading"
             onKeyDown={(e) => {
               // Safari ends the composition before the Enter that confirms a candidate; that Enter has keyCode 229.
               if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return
@@ -446,7 +446,7 @@ export function Composer({
                   aria-disabled={!canSend}
                 >
                   <ListPlusIcon className="size-4" />
-                  <span className="text-[13px]">{t("composer.queue")}</span>
+                  <span className="text-sm">{t("composer.queue")}</span>
                 </InputGroupButton>
                 <DropdownMenu>
                   <DropdownMenuTrigger
@@ -510,7 +510,7 @@ export function Composer({
         </InputGroup>
       </form>
       {running && (
-        <p className="px-4 pt-1.5 text-[11px] text-muted-foreground max-sm:hidden">
+        <p className="px-4 pt-1.5 text-xs text-muted-foreground max-sm:hidden">
           {canSteer ? t("composer.runningHint", { mod }) : t("composer.runningHintQueue")}
         </p>
       )}

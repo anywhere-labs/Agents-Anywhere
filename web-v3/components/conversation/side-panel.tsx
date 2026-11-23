@@ -95,7 +95,7 @@ export function SidePanel({
                 aria-selected={tab === id}
                 onClick={() => onTab(id)}
                 className={cn(
-                  "flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3 text-[13px] text-muted-foreground transition-colors hover:text-foreground",
+                  "flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3 text-sm text-muted-foreground transition-colors hover:text-foreground",
                   tab === id && "bg-secondary text-foreground"
                 )}
               >
@@ -139,7 +139,7 @@ export function SidePanel({
 function DiffLines({ lines }: { lines: DiffLine[] }) {
   return (
     <CodeBlock size="sm" className="rounded-xl border-0 bg-background">
-      <CodeBlockContent className="max-h-96 text-[11px]">
+      <CodeBlockContent className="max-h-96 text-xs">
         {lines.map((l, i) =>
           l.kind === "hunk" ? (
             <CodeBlockLine key={i} className="text-muted-foreground">
@@ -158,7 +158,7 @@ function DiffLines({ lines }: { lines: DiffLine[] }) {
 
 function Counts({ add, del }: { add: number; del: number }) {
   return (
-    <span className="shrink-0 font-mono text-[11px] tabular-nums">
+    <span className="shrink-0 font-mono text-xs tabular-nums">
       <span className="text-success">+{add}</span> <span className="text-destructive">−{del}</span>
     </span>
   )
@@ -262,7 +262,7 @@ function ChangesTab({
     <div className="min-h-0 flex-1 space-y-5 overflow-y-auto">
       {edits.length > 0 && (
         <section className="space-y-2">
-          <p className="px-1 text-[11px] font-medium text-muted-foreground">{t("panel.conversationEdits")}</p>
+          <p className="px-1 text-xs font-medium text-muted-foreground">{t("panel.conversationEdits")}</p>
           <ul className="space-y-1.5">
             {edits.map((f) => (
               <FileRow key={f.path} file={f} />
@@ -272,7 +272,7 @@ function ChangesTab({
       )}
       <section className="space-y-2">
         <div className="flex items-center gap-2 px-1">
-          <p className="flex-1 text-[11px] font-medium text-muted-foreground">
+          <p className="flex-1 text-xs font-medium text-muted-foreground">
             {git?.files.length ? t("panel.filesChanged", { count: git.files.length }) : t("panel.workingTree")}
           </p>
           <Button variant="ghost" size="icon-xs" aria-label={t("panel.loadDiff")} onClick={() => void load()}>
@@ -408,12 +408,12 @@ function PlanTab({ messages, control }: { messages: Message[]; control: Control 
     <div className="min-h-0 flex-1 space-y-5 overflow-y-auto">
       {plan ? (
         <section className="space-y-2">
-          <p className="px-1 text-[11px] font-medium text-muted-foreground tabular-nums">
+          <p className="px-1 text-xs font-medium text-muted-foreground tabular-nums">
             {t("panel.planProgress", { done, total: plan.entries.length })}
           </p>
           <ul className="space-y-1 rounded-2xl bg-card p-2">
             {plan.entries.map((e, i) => (
-              <li key={i} className="flex items-start gap-2.5 rounded-xl px-2 py-1.5 text-[13px]">
+              <li key={i} className="flex items-start gap-2.5 rounded-xl px-2 py-1.5 text-sm">
                 {e.status === "completed" ? (
                   <CircleCheckIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                 ) : e.status === "in_progress" ? (
@@ -438,7 +438,7 @@ function PlanTab({ messages, control }: { messages: Message[]; control: Control 
       )}
       {background.length > 0 && (
         <section className="space-y-2">
-          <p className="px-1 text-[11px] font-medium text-muted-foreground">{t("panel.background")}</p>
+          <p className="px-1 text-xs font-medium text-muted-foreground">{t("panel.background")}</p>
           <ul className="space-y-1.5">
             {background.map((b) => (
               <li key={b.id} className="space-y-1 rounded-2xl bg-card px-3 py-2">
@@ -450,11 +450,11 @@ function PlanTab({ messages, control }: { messages: Message[]; control: Control 
                   )}
                   <span className="min-w-0 flex-1 truncate font-mono">{b.title}</span>
                   {b.exit_code != null && (
-                    <span className="text-[11px] tabular-nums text-muted-foreground">exit {b.exit_code}</span>
+                    <span className="text-xs tabular-nums text-muted-foreground">exit {b.exit_code}</span>
                   )}
                 </div>
                 {b.output_tail && (
-                  <pre className="max-h-32 overflow-auto rounded-xl bg-background p-2 font-mono text-[11px] whitespace-pre-wrap text-muted-foreground">
+                  <pre className="max-h-32 overflow-auto rounded-xl bg-background p-2 font-mono text-xs whitespace-pre-wrap text-muted-foreground">
                     {b.output_tail}
                   </pre>
                 )}

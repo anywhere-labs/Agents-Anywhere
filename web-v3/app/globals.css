@@ -11,9 +11,11 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
+  /* Conversation text (messages, the composer on wide screens): web-v3/AGENTS.md › 字号与层级. */
+  --text-reading: 0.9375rem;
+  --text-reading--line-height: 1.7;
   --font-heading: var(--font-display);
   --font-sans: var(--font-sans);
-  --font-script: var(--font-script);
   --color-surface-raised: var(--surface-raised);
   --color-series-1: var(--series-1);
   --color-series-2: var(--series-2);
@@ -91,9 +93,6 @@
   --font-display:
     "HarmonyOS Sans SC", "SF Pro Display", -apple-system, BlinkMacSystemFont,
     "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-  /* The brand wordmark's handwriting for custom brand names (self-hosted
-     via @fontsource/caveat); "Agents Anywhere" is a pre-shaped SVG path. */
-  --font-script: "Caveat", "Segoe Script", cursive;
   /* The public frame, shared by the header and the page content so their
        edges line up (AA --dsh-page-width/--dsh-page-gutter). The gutter
        grows with a quarter of the viewport, so the measured header never
@@ -613,4 +612,43 @@ html[data-page-motion="back"]::view-transition-new(root) {
 /* See LANGUAGE_PENDING_SCRIPT (optional SSR flash guard). */
 html[data-language-pending] body {
   visibility: hidden;
+}
+
+/*
+ * Reading text (Markdown in conversations, the assistant and file previews). Unlayered on purpose: it must win over
+ * the utility classes Streamdown puts on its elements (`text-2xl` on an h2 and so on). Headings stay one step above
+ * the text instead of jumping to page-title sizes. See web-v3/AGENTS.md › 字号与层级.
+ */
+.aa-md {
+  font-size: var(--text-reading);
+  line-height: var(--text-reading--line-height);
+}
+.aa-md-compact {
+  font-size: 0.875rem;
+  line-height: 1.65;
+}
+.aa-md [data-streamdown="heading-1"] {
+  font-size: 1.25em;
+  line-height: 1.5;
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+}
+.aa-md [data-streamdown="heading-2"] {
+  font-size: 1.125em;
+  line-height: 1.5;
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+}
+.aa-md :is([data-streamdown="heading-3"], [data-streamdown="heading-4"], [data-streamdown="heading-5"], [data-streamdown="heading-6"]) {
+  font-size: 1em;
+  line-height: 1.7;
+  margin-top: 1.25em;
+  margin-bottom: 0.25em;
+}
+.aa-md > :first-child {
+  margin-top: 0;
+}
+.aa-md :is([data-streamdown="table-cell"], [data-streamdown="table-header-cell"]) {
+  font-size: 0.875em;
+  line-height: 1.6;
 }

@@ -22,7 +22,6 @@
     "@base-ui/react": "^1.9.0",
     "@earendil-works/pi-agent-core": "1.5.0",
     "@earendil-works/pi-ai": "1.5.0",
-    "@fontsource/caveat": "^5.2.6",
     "@luzixu/harmonyos-sans": "0.1.2",
     "@streamdown/cjk": "^1.0.4",
     "@streamdown/code": "^2.0.0",
