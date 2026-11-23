@@ -8,6 +8,7 @@
 // conversation are attached.
 // Behaviour follows AA v2 web-next mapped to aa.v3.Sessions: watch (snapshot then live), send with
 // delivery auto / queue / steer, answer, set_config, stop, rename, fork, compact, delete, unqueue, steer_queued.
+import { MeshCallError } from "meshcall/web"
 import { useRouter } from "next/navigation"
 import {
   useCallback,
@@ -56,7 +57,7 @@ import type { FilePart, ImagePart, QueuedMessage } from "@/lib/types/v3"
 import { useDevice, useDriveQuota } from "@/lib/workbench/device-info"
 import { toggleIn, useLocalPrefs } from "@/lib/workbench/local-prefs"
 import { cn } from "@/lib/utils"
-import { agentLabel, sessionHref, sessionKey, tildePath } from "@/lib/workbench/tree"
+import { agentLabel, deviceHref, sessionHref, sessionKey, tildePath } from "@/lib/workbench/tree"
 
 const WebThreadItem: ThreadItem = ({ id, anchor, children }) => (
   <MessageScrollerItem data-turn-id={id} scrollAnchor={anchor}>
@@ -237,6 +238,19 @@ export default function SessionWorkspacePage() {
     quota,
   })
 
+  // A failed call as a toast. The session's agent turned off on the device (aa.v3.Device/update_agent) refuses new
+  // turns: say so, with the way to the device page where it is turned on again.
+  const showError = useCallback(
+    (err: unknown) => {
+      if (err instanceof MeshCallError && err.reason === "agent_disabled") {
+        toast.error(t("conv.agentDisabled"), {
+          action: { label: t("conv.openDevice"), onClick: () => router.push(deviceHref(deviceId)) },
+        })
+      } else toast.error(errorText(err))
+    },
+    [deviceId, router, t]
+  )
+
   // ── Sending ──
   const handleSubmit = useCallback(
     async (text: string, delivery: Delivery): Promise<boolean> => {
@@ -277,11 +291,11 @@ export default function SessionWorkspacePage() {
         return true
       } catch (err) {
         store.removeOutgoing(clientMsgId)
-        toast.error(errorText(err))
+        showError(err)
         return false
       }
     },
-    [activeAccount, drafts, sessionId, store, t, tunnelDevice, tunnelManager]
+    [activeAccount, drafts, sessionId, showError, store, t, tunnelDevice, tunnelManager]
   )
 
   const call = useCallback(
@@ -291,11 +305,11 @@ export default function SessionWorkspacePage() {
         if (ok) toast.success(ok)
         return res
       } catch (err) {
-        toast.error(errorText(err))
+        showError(err)
         return undefined
       }
     },
-    []
+    [showError]
   )
 
   const handleStop = useCallback(() => {

@@ -7,6 +7,7 @@
 // composer before anything is sent (starting with the ones last used with this agent). The conversation is created
 // when the first message is sent (create takes the started agent over, with the options picked here), its attachments
 // are uploaded into it, the message is sent, and the page moves into the conversation.
+import { MeshCallError } from "meshcall/web"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Suspense, useEffect, useMemo, useState } from "react"
 import {
@@ -205,7 +206,12 @@ function NewConversationInner() {
       router.push(sessionHref(deviceId, session.id))
       return true
     } catch (err) {
-      const error = err instanceof Error ? err.message : String(err)
+      const error =
+        err instanceof MeshCallError && err.reason === "agent_disabled"
+          ? t("newConv.agentDisabled", { agent: agentName })
+          : err instanceof Error
+            ? err.message
+            : String(err)
       if (created) {
         toast.error(t("newConv.sendFailed", { error }))
         return handOver(created, text)
@@ -250,6 +256,7 @@ function NewConversationInner() {
       notice = t("newConv.agentAuthRequired", { agent: agentName }) + (methods ? ` ${t("newConv.agentAuthMethods", { methods })}` : "")
     } else if (prep.reason === "invalid_cwd") notice = t("newConv.invalidCwd")
     else if (prep.reason === "unknown_agent") notice = t("newConv.unknownAgent", { agent: agentName })
+    else if (prep.reason === "agent_disabled") notice = t("newConv.agentDisabled", { agent: agentName })
     else notice = t("newConv.agentStartFailed", { agent: agentName, error: prep.message })
     onRetry = retryPrepare
   } else if (slowStart) notice = t("newConv.agentStarting", { agent: agentName })
