@@ -426,6 +426,22 @@ describe("ConnectorHost against a real meshcall-router", { skip: SKIP, timeout: 
     const configured = await client.unary<object, Session>("aa.v3.Sessions", "set_config", { id: created.id, config_id: "model", value: "smart" }, { instance: deviceId });
     assert.equal(configured.config[0]?.current, "smart");
 
+    // prepare → create({ prepared_id }): the agent starts before the first message and reports its settings; create
+    // takes it over and the first turn runs on it. Then the extra session goes again (later steps count sessions).
+    const prepared = await client.unary<object, { prepared_id: string; agent: string; cwd: string; config: Session["config"]; expires_at: string }>(
+      "aa.v3.Sessions", "prepare", { agent: "mock", cwd: workDir }, { instance: deviceId });
+    assert.deepEqual([prepared.agent, prepared.cwd, prepared.config[0]?.id, prepared.config[0]?.current], ["mock", workDir, "model", "fast"]);
+    assert.ok(Date.parse(prepared.expires_at) > Date.now());
+    assert.equal(reasonOf(await rejection(client.unary("aa.v3.Sessions", "prepare", { agent: "nope" }, { instance: deviceId }))), "unknown_agent");
+    const adopted = await client.unary<object, Session>(
+      "aa.v3.Sessions", "create", { agent: "mock", cwd: workDir, prepared_id: prepared.prepared_id, config: { model: "smart" } }, { instance: deviceId });
+    assert.equal(adopted.config[0]?.current, "smart");
+    assert.deepEqual(host.runtimes.listPrepared(), []);
+    const firstTurn = await client.unary<object, { reply_text?: string }>(
+      "aa.v3.Sessions", "send", { id: adopted.id, client_msg_id: "p1", content: "prepared", wait: true }, { instance: deviceId, timeoutMs: 15_000 });
+    assert.equal(firstTurn.reply_text, "echo: prepared");
+    await client.unary("aa.v3.Sessions", "delete", { id: adopted.id }, { instance: deviceId });
+
     const view = new SessionView(client.serverStream<object, WatchEvent>("aa.v3.Sessions", "watch", { id: created.id }, { instance: deviceId }));
     await view.until((v) => v.session !== undefined, "watch snapshot");
 

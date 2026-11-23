@@ -49,6 +49,8 @@ export {
   type AcpRuntimeHostOptions,
   type AcpRuntimeOptions,
   type AgentRuntime,
+  type PreparedAgent,
+  type PreparedInfo,
   type PushEvent,
   type StartedSession,
   type StartSessionInput,

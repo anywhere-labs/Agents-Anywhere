@@ -443,6 +443,11 @@ export function configFromSessionResult(result: AcpNewSessionResult | AcpLoadSes
   return [];
 }
 
+/** `current_mode_update`: the mode setting (the `mode` option, or any option of the `mode` category) now reads `modeId`. */
+export function configWithMode(config: readonly ConfigOption[], modeId: string): ConfigOption[] {
+  return config.map((option) => (option.id === MODE_CONFIG_ID || option.category === "mode" ? { ...option, current: modeId } : option));
+}
+
 function planEntries(entries: readonly AcpPlanEntry[]): PlanEntry[] {
   return entries.map((entry) => {
     const out: PlanEntry = { content: entry.content, status: entry.status };
@@ -768,10 +773,7 @@ export class AcpTimelineProjector {
   private setMode(modeId: string): void {
     const session = this.store.get(this.sessionId);
     if (session === undefined) return;
-    const config = session.config.map((option) =>
-      option.id === MODE_CONFIG_ID || option.category === "mode" ? { ...option, current: modeId } : option,
-    );
-    this.store.updateSession(this.sessionId, { config });
+    this.store.updateSession(this.sessionId, { config: configWithMode(session.config, modeId) });
   }
 
   /** `session/load` replays history: user chunks become one user message that opens the next turn. */

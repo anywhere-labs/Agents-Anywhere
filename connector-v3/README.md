@@ -69,6 +69,27 @@ src/
 
 会话忙时，新消息进入 `control.queued`，本轮结束后自动发送；`delivery: "steer"` 或 `steer_queued` 会中断当前轮次并让该消息排到下一个（ACP 没有原生的轮内插话）。
 
+### 新对话：预先启动 Agent（`prepare`）
+
+新对话页选好设备、Agent 和目录后，客户端调用 `prepare`：Connector 马上启动这个 Agent（`initialize` + `session/new`），把模型、模式（权限）、推理强度等配置项交给客户端，用户在发第一条消息前就能选，第一次 `npx` 下载也发生在用户打字的时候。发送时 `create` 带上 `prepared_id`，接管这个已经启动的 Agent。
+
+| 调用 | 请求 | 响应 / 行为 |
+| --- | --- | --- |
+| `prepare` | `{ agent, cwd? }`：`cwd` 的解析（默认 `~`）、目录校验和准入都与 `create` 相同 | `{ prepared_id, agent, cwd, config, expires_at }`：`cwd` 是解析后的路径；`config` 与 `Session.config` 同形，可以直接交给配置选择器；`expires_at`（RFC 3339）之前没被接管、也没再次 `prepare`，Agent 就会被关闭 |
+| `create` | 新增可选 `prepared_id` | 预热的 Agent 属于同一 `agent`、同一 `cwd` 且没过期时直接接管：不再起进程、不再 `session/new`，预热期间 Agent 发来的 `session/update`（斜杠命令、配置变化等）回放进会话，然后照常应用 `config`。`prepared_id` 不存在、已过期、Agent 已退出或 `agent` / `cwd` 不匹配时，按原流程新起 Agent，不报错 |
+
+- 同一 Agent、同一目录只有一个预热 Agent：再次 `prepare` 返回同一个 `prepared_id` 并重新计算过期时间（新对话页停留较久时可以用它续期）；正在启动时，并发的 `prepare` 共用同一次启动。第一次 `npx` 启动可能要几分钟，调用超时后再调一次 `prepare` 就会接上还在进行的那次启动。
+- 生命周期：空闲超过 TTL（默认 10 分钟，从 Agent 就绪或上一次 `prepare` 算起）关闭；每台设备最多保留 4 个，超出时关闭最久未用的（正在启动的不会被挤掉）；Connector 停止时全部关闭，正在启动的 `prepare` 返回 `agent_start_failed`。两个上限可以用 `ConnectorHost` / `AcpRuntimeHost` 的 `preparedTtlMs`、`maxPrepared` 调整。预热的 Agent 只在内存里，Connector 重启后旧的 `prepared_id` 失效，`create` 会按原流程启动。
+- 接管之前没有会话：Agent 发来的权限请求一律回答 `cancelled`，读写文件请求照常按 `cwd` 处理。
+- 启动失败时 `prepare` 直接返回错误，`create` 遇到同样的失败也返回同样的错误（`details.agent` 是 Agent id）：
+
+| `details.reason` | 错误码 | 含义 |
+| --- | --- | --- |
+| `unknown_agent` | `invalid_argument` | 这台设备上没有这个 Agent |
+| `invalid_cwd` | `invalid_argument` | `cwd` 不是这台设备上的目录 |
+| `agent_auth_required` | `failed_precondition` | Agent 要求先登录（ACP `-32000`，消息如 `could not start Claude Code: Authentication required`）；`details.auth_methods` 是 Agent 在 `initialize` 里给出的登录方式（`id`、`name`、`description`） |
+| `agent_start_failed` | `unavailable` | 程序不存在、启动后退出、超时或应答无法使用；消息形如 `could not start <Agent>: …` |
+
 ### 终端（`aa.v3.Terminals`）
 
 设计见[终端方案](../docs/v3/terminal-proposal.md)，帧格式见 [`terminals.schema.json`](../contracts/aa-v3/1.0/terminals.schema.json)。
@@ -199,11 +220,14 @@ yarn typecheck
 yarn test
 ```
 
-`tests/connector-router-e2e.test.ts` 会启动真实的 Go `meshcall-router`（v0.4.0）和一个用 Node 写的 stdio ACP 模拟 Agent，覆盖：控制面直接调用、MCP 开关、普通隧道上的创建/发送/审批/排队/文件读取/终端 attach、两台客户端共用一个终端时的控制权（旁观者输入被拒、接管后旧控制者的输入被丢弃、只有控制者能改尺寸）和 `resume_seq` 续传（终端的帧都按 `terminals.schema.json` 校验）、`close_tunnel_sessions`、presence 与推送的契约形状、普通 → 加密的安全切换，以及加密模式下的配对（IKpsk2）、陌生客户端被拒、重连（IK）和撤销。Router 二进制按以下顺序查找：`MESHCALL_ROUTER_BINARY`、`../../meshcall/meshcall-router/bin/meshcall-router`、`findRouterBinary()`；都找不到时跳过该测试文件。
+`tests/connector-router-e2e.test.ts` 会启动真实的 Go `meshcall-router`（v0.4.0）和一个用 Node 写的 stdio ACP 模拟 Agent，覆盖：控制面直接调用、MCP 开关、普通隧道上的创建（含 `prepare` 后带 `prepared_id` 创建）/发送/审批/排队/文件读取/终端 attach、两台客户端共用一个终端时的控制权（旁观者输入被拒、接管后旧控制者的输入被丢弃、只有控制者能改尺寸）和 `resume_seq` 续传（终端的帧都按 `terminals.schema.json` 校验）、`close_tunnel_sessions`、presence 与推送的契约形状、普通 → 加密的安全切换，以及加密模式下的配对（IKpsk2）、陌生客户端被拒、重连（IK）和撤销。Router 二进制按以下顺序查找：`MESHCALL_ROUTER_BINARY`、`../../meshcall/meshcall-router/bin/meshcall-router`、`findRouterBinary()`；都找不到时跳过该测试文件。
+
+`tests/acp-prepare.test.ts` 不需要 Router：用一个记录每次进程启动、`session/new` 和配置修改的模拟 Agent 覆盖 `prepare` 与 `create({ prepared_id })`——配置项的形状、并发共用一次启动、接管同一个进程（没有第二次 `session/new`）并回放预热期间的通知、不匹配 / 过期 / 已退出时退回原流程、TTL 与续期、上限淘汰、启动错误，以及停止时关闭。
 
 ## 已知限制
 
 - ACP 没有截断上下文的接口：`rewind` 会重启该会话的 Agent，新的 Agent 不带之前的上下文；Connector 重启后，已有会话的下一条消息也会启动新的 Agent 会话。
+- 预热的 Agent 已经执行过 `session/new`：如果某个 Agent 在 `session/new` 时就写入自己的会话记录，没被接管的预热会话会在它自己的历史里留下一条空会话（Pi 要到第一条消息才写入，不受影响）。
 - `compact` 只在 Agent 通过 `available_commands_update` 提供 `compact` 命令时可用。
 - Router token 过期被拒后会重新获取 token 并重新挂载，期间该 Router 上的隧道会断开，客户端需要重连。
 - MeshCall 的契约检查（W002）只把 `idempotent/readOnly/destructive: true` 当作声明；`create`、`send` 等方法确实不幂等，已显式标 `idempotent: false`，启动时仍会打印 5 条 W002 警告。
