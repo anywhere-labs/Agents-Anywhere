@@ -16,6 +16,7 @@
   --text-reading--line-height: 1.7;
   --font-heading: var(--font-display);
   --font-sans: var(--font-sans);
+  --font-script: var(--font-script);
   --color-surface-raised: var(--surface-raised);
   --color-series-1: var(--series-1);
   --color-series-2: var(--series-2);
@@ -93,6 +94,9 @@
   --font-display:
     "HarmonyOS Sans SC", "SF Pro Display", -apple-system, BlinkMacSystemFont,
     "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  /* The brand wordmark's handwriting for custom brand names (self-hosted
+     via @fontsource/caveat); "Agents Anywhere" is a pre-shaped SVG path. */
+  --font-script: "Caveat", "Segoe Script", cursive;
   /* The public frame, shared by the header and the page content so their
        edges line up (AA --dsh-page-width/--dsh-page-gutter). The gutter
        grows with a quarter of the viewport, so the measured header never

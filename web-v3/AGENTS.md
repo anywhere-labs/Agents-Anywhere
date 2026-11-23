@@ -54,7 +54,7 @@ Hierarchy comes from a few steps used the same way everywhere, then weight and c
 - No arbitrary sizes (`text-[11px]`, `text-[13px]`, …). The one exception is avatar initials sized to their circle.
 - Secondary information keeps its size and turns `text-muted-foreground`; it is not shrunk a step.
 - Weight: 400 for text, 500 for row names and bar titles, 600 for page and dialog titles.
-- The brand wordmark is the sans heading font (`components/brand-wordmark.tsx`), not a script face.
+- The brand wordmark is the Agents Anywhere handwriting (pre-shaped Caveat outlines in `components/brand-wordmark.tsx`, the same mark as v2); it is the one place a script face appears and is never swapped for a UI font.
 
 ## Panels
 

@@ -321,7 +321,7 @@ export function WorkbenchSidebar({ resize }: { resize: SidebarResize }) {
           }}
           className="mr-auto inline-flex h-9 w-fit items-center rounded-md px-2 text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:outline-none"
         >
-          <BrandWordmark size="default" className="pointer-events-none" />
+          <BrandWordmark size="sm" className="pointer-events-none" />
         </Link>
         <Tooltip>
           <TooltipTrigger
