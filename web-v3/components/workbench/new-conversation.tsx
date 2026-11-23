@@ -35,7 +35,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { DirectoryOptions, FolderPickerDialog } from "@/components/workbench/folder-picker"
-import { DeviceMarks } from "@/components/workbench/workbench-sidebar"
+import { DeviceStatusIcon } from "@/components/workbench/device-status"
 import { useWorkbenchUi } from "@/components/workbench/workbench-ui"
 import { useWorkbench } from "@/lib/state/workbench-context"
 import { useDevice, useDriveQuota } from "@/lib/workbench/device-info"
@@ -51,7 +51,7 @@ function NewConversationInner() {
   const { t } = useI18n()
   const router = useRouter()
   const search = useSearchParams()
-  const { activeAccount, devices, deviceTrusts, sessions, refreshSessions, meshConnected, meshError } = useWorkbench()
+  const { activeAccount, devices, sessions, refreshSessions, meshConnected, meshError } = useWorkbench()
   const { openRegisterDevice } = useWorkbenchUi()
   const [prefs, setPrefs] = useLocalPrefs(activeAccount?.accountId)
   const last = prefs.lastStart
@@ -266,11 +266,12 @@ function NewConversationInner() {
           {/* Device */}
           <DropdownMenu>
             <DropdownMenuTrigger render={<Button variant="outline" className={CHIP} aria-label={t("newConv.device")} />}>
-              <LaptopIcon className="size-4 shrink-0 text-muted-foreground" />
-              <span className="truncate">{device?.name ?? t("newConv.chooseDevice")}</span>
-              {device && (
-                <DeviceMarks device={device} paired={Boolean(deviceTrusts[device.id])} encrypted={encrypted} />
+              {device ? (
+                <DeviceStatusIcon device={device} />
+              ) : (
+                <LaptopIcon className="size-4 shrink-0 text-muted-foreground" />
               )}
+              <span className="truncate">{device?.name ?? t("newConv.chooseDevice")}</span>
               <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="center" className="w-72">

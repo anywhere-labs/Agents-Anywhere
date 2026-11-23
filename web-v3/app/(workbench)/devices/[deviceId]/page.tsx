@@ -1,16 +1,18 @@
 "use client"
 
-// A device (client-experience-proposal §2.3): Overview (status, platform and version, mode and lock, its agents with
-// a way to start a conversation with each, recent conversations), Conversations (all of them by agent / project, with
-// a filter), Terminals, Files (browse and preview, git status and diff) and Security (pairing and paired clients on
-// encrypted devices; the MCP switch on normal ones), plus rename / delete. Device management follows v2 web-next's
-// device page; runtime availability states are not reported by v3 Connectors yet.
+// A device (client-experience-proposal §2.3), laid out like v2 web-next's device page: the name as the page title
+// (click to rename) with its presence and lock beside it, then one column of plain sections under quiet labels —
+// Agents (each starts a conversation with it), Projects (start one in it, or see its conversations), Recent
+// conversations and the device's details. Other tabs: Conversations (all of them by agent / project, with a filter),
+// Terminals, Files (browse and preview, git status and diff) and Security (pairing and paired clients on encrypted
+// devices; the MCP switch on normal ones). Runtime availability states are not reported by v3 Connectors yet.
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react"
 import {
-  ActivityIcon,
   BotIcon,
+  ChevronRightIcon,
+  EllipsisIcon,
   FolderIcon,
   KeyRoundIcon,
   LaptopIcon,
@@ -26,14 +28,19 @@ import { toast } from "sonner"
 
 import { ConfirmDialog } from "@/components/console/confirm-dialog"
 import { CopyableValue } from "@/components/console/copyable-value"
-import { DetailCard, type DetailItem } from "@/components/console/detail-list"
+import { DetailList, type DetailItem } from "@/components/console/detail-list"
 import { PageContainer } from "@/components/console/page-header"
 import { useI18n } from "@/components/i18n-provider"
 import { FullPageSpinner } from "@/components/spinner"
 import { TerminalsPanel } from "@/components/terminal/terminals-panel"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -41,7 +48,6 @@ import { E2eeLockBadge } from "@/components/workbench/e2ee-lock-badge"
 import { FileBrowser } from "@/components/workbench/file-browser"
 import { PairDeviceDialog } from "@/components/workbench/pair-device-dialog"
 import { useRouteParams } from "@/lib/platform/route-params"
-import { PLATFORM_ICON } from "@/components/workbench/workbench-sidebar"
 import { formatKeyFingerprint } from "@/lib/mesh/pairing"
 import { useWorkbench } from "@/lib/state/workbench-context"
 import type { PairedClientEntry, SessionSummary } from "@/lib/types/v3"
@@ -51,6 +57,7 @@ import { formatSize, shortAgo } from "@/lib/workbench/time"
 import {
   agentLabel,
   buildDeviceTree,
+  deviceProjects,
   matchesQuery,
   projectName,
   sessionHref,
@@ -68,28 +75,55 @@ function uptime(seconds: number, zh: boolean): string {
   return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`
 }
 
-function SessionRow({ s, deviceId }: { s: SessionSummary; deviceId: string }) {
+/** A page section's label: quiet, like the sidebar's group labels (v2's section headings). */
+function SectionLabel({ children, action }: { children: React.ReactNode; action?: React.ReactNode }) {
+  return (
+    <div className="mb-1 flex min-h-8 items-center justify-between gap-2 px-2">
+      <h2 className="text-xs font-medium text-muted-foreground">{children}</h2>
+      {action}
+    </div>
+  )
+}
+
+const STATE_DOT: Partial<Record<SessionSummary["state"], string>> = {
+  running: "bg-success",
+  waiting: "bg-warning",
+  error: "bg-destructive",
+}
+
+/** One conversation (v2's session row): its state as a dot, the title, the agent, when it last moved. */
+function SessionRow({ s, deviceId, showAgent = true }: { s: SessionSummary; deviceId: string; showAgent?: boolean }) {
   const { t, locale } = useI18n()
+  const state =
+    s.state === "running"
+      ? t("sessions.stateRunning")
+      : s.state === "waiting"
+        ? t("sessions.stateWaiting")
+        : s.state === "error"
+          ? t("sessions.stateError")
+          : undefined
   return (
     <Link
       href={sessionHref(deviceId, s.id)}
-      className="flex items-center justify-between gap-4 rounded-full px-3 py-2.5 transition-colors hover:bg-surface-hover"
+      className="flex min-h-10 items-center gap-3 rounded-lg px-2 py-2 transition-colors hover:bg-surface-hover"
     >
-      <div className="min-w-0">
-        <p className="truncate text-sm text-foreground">{s.title || t("wb.untitled")}</p>
-        <p className="truncate text-xs text-muted-foreground">
-          {agentLabel(s.agent)} · <span className="font-mono">{tildePath(s.cwd)}</span>
-        </p>
-      </div>
-      <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground tabular-nums">
-        {s.state === "running" && <Badge variant="secondary">{t("sessions.stateRunning")}</Badge>}
-        {s.state === "waiting" && <Badge variant="warning">{t("sessions.stateWaiting")}</Badge>}
-        {s.state === "error" && <Badge variant="destructive">{t("sessions.stateError")}</Badge>}
-        {shortAgo(s.updated_at, locale)}
-      </span>
+      <span
+        title={state}
+        className={cn(
+          "size-1.5 shrink-0 rounded-full",
+          STATE_DOT[s.state] ?? (s.unread ? "bg-foreground" : "bg-muted-foreground/30")
+        )}
+      />
+      {state && <span className="sr-only">{state}</span>}
+      <span className="min-w-0 flex-1 truncate text-sm text-foreground">{s.title || t("wb.untitled")}</span>
+      {showAgent && <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">{agentLabel(s.agent)}</span>}
+      <span className="w-16 shrink-0 text-right text-xs text-muted-foreground tabular-nums">{shortAgo(s.updated_at, locale)}</span>
     </Link>
   )
 }
+
+const PROJECTS_SHOWN = 6
+const RECENT_SHOWN = 8
 
 function DeviceWorkbenchPageInner() {
   const params = useRouteParams<{ deviceId: string }>("/devices/[deviceId]")
@@ -115,8 +149,9 @@ function DeviceWorkbenchPageInner() {
   const [filter, setFilter] = useState("")
   const [cwdFilter, setCwdFilter] = useState<string | null>(searchParams.get("cwd"))
 
-  const [renameOpen, setRenameOpen] = useState(false)
-  const [renameText, setRenameText] = useState("")
+  // The name as the page title: click to rename in place (Enter saves, Esc or leaving cancels).
+  const [editingName, setEditingName] = useState<string | null>(null)
+  const [allProjects, setAllProjects] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [pairOpen, setPairOpen] = useState(false)
@@ -180,6 +215,15 @@ function DeviceWorkbenchPageInner() {
   }
 
   const tree = useMemo(() => buildDeviceTree(deviceSessions), [deviceSessions])
+  const projects = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const s of deviceSessions) counts.set(s.cwd, (counts.get(s.cwd) ?? 0) + 1)
+    return deviceProjects(deviceSessions).map((p) => ({
+      ...p,
+      name: tildePath(p.cwd) === "~" ? t("newConv.homeDirectory") : p.name,
+      count: counts.get(p.cwd) ?? 0,
+    }))
+  }, [deviceSessions, t])
   // Agents: what the device reports, plus agents it has conversations with (an agent may have been removed since).
   const agents = useMemo(() => {
     const ids = new Set([...(status?.runtimes ?? []).map((r) => r.id), ...tree.map((a) => a.agent)])
@@ -239,54 +283,90 @@ function DeviceWorkbenchPageInner() {
     )
   }
 
-  const Icon = PLATFORM_ICON[device.platform] ?? LaptopIcon
   const online = device.presence === "online"
+  const newHref = (query: Record<string, string>) =>
+    `/new?${new URLSearchParams({ device: device.id, ...query }).toString()}`
+  const commitName = () => {
+    const next = editingName?.trim()
+    setEditingName(null)
+    if (!next || next === device.name || !controlClient) return
+    void call(async () => {
+      await controlClient.renameDevice(device.id, next)
+      await refreshDevices()
+    }, t("common.saved"))
+  }
+  const refresh = () => {
+    void reload()
+    void call(async () => {
+      if (!controlClient) return
+      const res = await controlClient.pingDevice(device.id)
+      toast.success(t("devices.pingOk", { time: res.server_time }))
+    })
+  }
+  const shownProjects = allProjects ? projects : projects.slice(0, PROJECTS_SHOWN)
 
   return (
     <div className="flex-1 overflow-y-auto">
-      <PageContainer className="gap-6">
-        {/* Header */}
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="flex min-w-0 items-center gap-3">
-            <Icon className="size-7 shrink-0 stroke-[1.5] text-muted-foreground" />
-            <div className="min-w-0">
-              <h1 className="flex flex-wrap items-center gap-2 font-heading text-2xl font-semibold tracking-tight">
-                <span className="truncate">{device.name}</span>
-                {encrypted && <E2eeLockBadge paired={Boolean(trust)} compact />}
-              </h1>
-              <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
-                <span className={cn("size-1.5 rounded-full", online ? "bg-success" : "bg-muted-foreground/40")} />
-                {online ? t("devices.online") : t("device.offlineCached")}
-                {status?.hostname && <span className="truncate">· {status.hostname}</span>}
-              </p>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              size="sm"
-              disabled={!online}
-              render={<Link href={`/new?device=${encodeURIComponent(device.id)}`} />}
-              nativeButton={false}
-            >
+      <PageContainer className="max-w-4xl gap-6 py-8">
+        {/* Header (v2): the name is the title — click to rename — with its presence and lock beside it. */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          {editingName !== null ? (
+            <input
+              autoFocus
+              value={editingName}
+              aria-label={t("devices.deviceName")}
+              onChange={(e) => setEditingName(e.target.value)}
+              onBlur={() => setEditingName(null)}
+              onKeyDown={(e) => {
+                if (e.nativeEvent.isComposing) return
+                if (e.key === "Enter") {
+                  e.preventDefault()
+                  commitName()
+                } else if (e.key === "Escape") {
+                  e.preventDefault()
+                  setEditingName(null)
+                }
+              }}
+              className="h-10 max-w-sm min-w-0 flex-1 rounded-lg bg-card px-2 font-heading text-2xl font-semibold tracking-tight text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+            />
+          ) : (
+            <h1 className="min-w-0">
+              <button
+                type="button"
+                title={t("devices.rename")}
+                onClick={() => setEditingName(device.name)}
+                className="max-w-full truncate text-left font-heading text-2xl font-semibold tracking-tight underline-offset-4 hover:underline"
+              >
+                {device.name}
+              </button>
+            </h1>
+          )}
+          <span className="flex shrink-0 items-center gap-1.5 text-sm text-muted-foreground">
+            <span className={cn("size-2 rounded-full", online ? "bg-success" : "bg-muted-foreground/40")} />
+            {online ? t("devices.online") : t("device.offlineCached")}
+          </span>
+          {encrypted && <E2eeLockBadge paired={Boolean(trust)} compact className="shrink-0" />}
+          <div className="ml-auto flex shrink-0 items-center gap-1.5">
+            <Button size="sm" disabled={!online} render={<Link href={newHref({})} />} nativeButton={false}>
               <PlusIcon className="size-3.5" />
               {t("wb.newConversation")}
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={info.loading || !online}
-              onClick={() => {
-                void reload()
-                void call(async () => {
-                  if (!controlClient) return
-                  const res = await controlClient.pingDevice(device.id)
-                  toast.success(t("devices.pingOk", { time: res.server_time }))
-                })
-              }}
-            >
-              {info.loading ? <RefreshCwIcon className="size-3.5 animate-spin" /> : <ActivityIcon className="size-3.5" />}
-              {t("common.refresh")}
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={t("conv.more")} />}>
+                <EllipsisIcon className="size-4" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-48">
+                <DropdownMenuItem onClick={() => setEditingName(device.name)}>
+                  <PencilIcon />
+                  {t("devices.rename")}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem variant="destructive" onClick={() => setDeleteOpen(true)}>
+                  <Trash2Icon />
+                  {t("device.delete")}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
 
@@ -296,7 +376,7 @@ function DeviceWorkbenchPageInner() {
               <LockIcon className="mt-0.5 size-5 shrink-0 text-warning" />
               <div className="space-y-1">
                 <p className="text-sm font-medium text-foreground">{t("devices.unpaired")}</p>
-                <p className="text-xs text-muted-foreground">{t("devices.unpairedHint")}</p>
+                <p className="text-sm text-muted-foreground">{t("devices.unpairedHint")}</p>
               </div>
             </div>
             <Button size="sm" onClick={() => setPairOpen(true)}>
@@ -305,7 +385,7 @@ function DeviceWorkbenchPageInner() {
           </div>
         )}
         {tunnelError && tunnelError.code !== "e2e_not_paired" && (
-          <p className="rounded-2xl bg-card px-4 py-3 text-xs text-destructive">
+          <p className="rounded-2xl bg-card px-4 py-3 text-sm text-destructive">
             {tunnelError.code === "e2e_required_locally" ? t("devices.locallyLockedError") : tunnelError.message}
           </p>
         )}
@@ -319,100 +399,158 @@ function DeviceWorkbenchPageInner() {
             <TabsTrigger value="security">{t("devices.tabSecurity")}</TabsTrigger>
           </TabsList>
 
-          {/* Overview */}
-          <TabsContent value="overview" className="mt-6 space-y-6">
-            <section className="space-y-3 rounded-card bg-card p-6">
-              <div className="space-y-1">
-                <h2 className="text-lg font-semibold tracking-tight">{t("device.agents")}</h2>
-                <p className="text-sm text-muted-foreground">{t("device.agentsHint")}</p>
-              </div>
+          {/* Overview: one column of plain sections (v2) */}
+          <TabsContent value="overview" className="mt-6 space-y-8">
+            <section>
+              <SectionLabel
+                action={
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    disabled={info.loading || !online}
+                    onClick={refresh}
+                    className="text-muted-foreground"
+                  >
+                    <RefreshCwIcon className={cn("size-3.5", info.loading && "animate-spin")} />
+                    {t("common.refresh")}
+                  </Button>
+                }
+              >
+                {t("device.agents")}
+              </SectionLabel>
               {!online ? (
-                <p className="text-sm text-muted-foreground">{t("newConv.offline")}</p>
+                <p className="px-2 py-2 text-sm text-muted-foreground">{t("newConv.offline")}</p>
               ) : !status && !tunnelError ? (
-                <p className="text-sm text-muted-foreground">{t("newConv.loadingAgents")}</p>
+                <p className="px-2 py-2 text-sm text-muted-foreground">{t("newConv.loadingAgents")}</p>
               ) : agents.length === 0 ? (
-                <div className="space-y-1 rounded-2xl bg-background p-4">
-                  <p className="text-sm font-medium text-foreground">{t("newConv.noAgents")}</p>
-                  <p className="text-xs leading-relaxed text-muted-foreground">{t("newConv.noAgentsHint")}</p>
+                <div className="space-y-1 px-2 py-2">
+                  <p className="text-sm text-foreground">{t("newConv.noAgents")}</p>
+                  <p className="text-sm text-muted-foreground">{t("newConv.noAgentsHint")}</p>
                 </div>
               ) : (
-                <ul className="grid gap-2 sm:grid-cols-2">
-                  {agents.map((a) => (
-                    <li key={a.id} className="flex items-center gap-3 rounded-2xl bg-background px-4 py-3">
-                      <BotIcon className="size-5 shrink-0 stroke-[1.5] text-muted-foreground" />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium text-foreground">{a.name}</p>
-                        <p className="truncate text-xs text-muted-foreground">
-                          {t("device.agentConversations", { count: a.count })}
-                          {!a.reported && ` · ${t("device.agentNotReported")}`}
-                        </p>
-                      </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={!a.reported}
-                        render={
+                <ul className="flex flex-col">
+                  {agents.map((a) => {
+                    const startable = online && a.reported
+                    const body = (
+                      <>
+                        <BotIcon className="size-4 shrink-0 text-muted-foreground" />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium text-foreground">{a.name}</span>
+                          <span className="block truncate text-xs text-muted-foreground">
+                            {t("device.agentConversations", { count: a.count })}
+                            {!a.reported && ` · ${t("device.agentNotReported")}`}
+                          </span>
+                        </span>
+                        {startable && (
+                          <span className="flex shrink-0 items-center gap-1 text-sm text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+                            <PlusIcon className="size-4" />
+                            {t("device.agentStart")}
+                          </span>
+                        )}
+                      </>
+                    )
+                    return (
+                      <li key={a.id}>
+                        {startable ? (
                           <Link
-                            href={`/new?device=${encodeURIComponent(device.id)}&agent=${encodeURIComponent(a.id)}`}
-                          />
-                        }
-                        nativeButton={false}
-                      >
-                        {t("device.agentStart")}
-                      </Button>
-                    </li>
-                  ))}
+                            href={newHref({ agent: a.id })}
+                            className="group flex min-h-12 items-center gap-3 rounded-lg px-2 py-2 transition-colors hover:bg-surface-hover"
+                          >
+                            {body}
+                          </Link>
+                        ) : (
+                          <div className="flex min-h-12 items-center gap-3 px-2 py-2 opacity-60">{body}</div>
+                        )}
+                      </li>
+                    )
+                  })}
                 </ul>
-              )}
-              {agents.length > 0 && (
-                <p className="text-xs text-muted-foreground">{t("device.agentAvailabilityUnknown")}</p>
               )}
             </section>
 
-            <div className="grid gap-6 lg:grid-cols-2">
-              <DetailCard title={t("devices.tabOverview")} items={details} />
-              <section className="space-y-2 rounded-card bg-card p-6">
-                <div className="flex items-center justify-between gap-2">
-                  <h2 className="text-lg font-semibold tracking-tight">{t("device.recent")}</h2>
-                  {deviceSessions.length > 5 && (
-                    <Button variant="ghost" size="xs" onClick={() => setTab("conversations")}>
-                      {t("wb.showAll", { count: deviceSessions.length })}
-                    </Button>
-                  )}
+            {projects.length > 0 && (
+              <section>
+                <SectionLabel>{t("device.projects")}</SectionLabel>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {shownProjects.map((p) => (
+                    <div
+                      key={p.cwd}
+                      className="flex min-w-0 items-center rounded-xl bg-card transition-colors hover:bg-surface-hover"
+                    >
+                      <button
+                        type="button"
+                        title={t("device.projectConversations")}
+                        onClick={() => {
+                          setCwdFilter(p.cwd)
+                          setTab("conversations")
+                        }}
+                        className="flex min-w-0 flex-1 items-center gap-3 py-2.5 pl-3 text-left"
+                      >
+                        <FolderIcon className="size-4 shrink-0 text-muted-foreground" />
+                        <span className="min-w-0">
+                          <span className="block truncate text-sm font-medium text-foreground">{p.name}</span>
+                          <span className="block truncate text-xs text-muted-foreground" title={p.cwd}>
+                            {tildePath(p.cwd)} · {t("device.agentConversations", { count: p.count })}
+                          </span>
+                        </span>
+                      </button>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        disabled={!online}
+                        aria-label={t("device.newInProject", { name: p.name })}
+                        title={t("device.newInProject", { name: p.name })}
+                        className="mx-1.5 shrink-0"
+                        render={<Link href={newHref({ cwd: p.cwd })} />}
+                        nativeButton={false}
+                      >
+                        <PlusIcon className="size-4" />
+                      </Button>
+                    </div>
+                  ))}
                 </div>
-                {deviceSessions.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">{t("wb.deviceNoConversations")}</p>
-                ) : (
-                  <div className="-mx-3 flex flex-col">
-                    {deviceSessions.slice(0, 5).map((s) => (
-                      <SessionRow key={s.id} s={s} deviceId={device.id} />
-                    ))}
-                  </div>
+                {projects.length > PROJECTS_SHOWN && (
+                  <button
+                    type="button"
+                    aria-expanded={allProjects}
+                    onClick={() => setAllProjects((v) => !v)}
+                    className="mt-2 flex items-center gap-1 px-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
+                  >
+                    {allProjects ? t("device.showLess") : t("wb.showAll", { count: projects.length })}
+                    <ChevronRightIcon className={cn("size-3.5 transition-transform", allProjects && "-rotate-90")} />
+                  </button>
                 )}
               </section>
-            </div>
+            )}
 
-            <section className="flex flex-wrap items-center justify-between gap-4 rounded-card bg-card p-6">
-              <div className="space-y-1">
-                <h2 className="text-base font-semibold">{t("device.manage")}</h2>
-                <p className="text-xs text-muted-foreground">{t("devices.deleteConfirmDesc")}</p>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setRenameText(device.name)
-                    setRenameOpen(true)
-                  }}
-                >
-                  <PencilIcon className="size-3.5" />
-                  {t("devices.rename")}
-                </Button>
-                <Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)}>
-                  <Trash2Icon className="size-3.5" />
-                  {t("common.delete")}
-                </Button>
+            <section>
+              <SectionLabel
+                action={
+                  deviceSessions.length > RECENT_SHOWN && (
+                    <Button variant="ghost" size="xs" className="text-muted-foreground" onClick={() => setTab("conversations")}>
+                      {t("wb.showAll", { count: deviceSessions.length })}
+                      <ChevronRightIcon className="size-3.5" />
+                    </Button>
+                  )
+                }
+              >
+                {t("device.recent")}
+              </SectionLabel>
+              {deviceSessions.length === 0 ? (
+                <p className="px-2 py-2 text-sm text-muted-foreground">{t("wb.deviceNoConversations")}</p>
+              ) : (
+                <div className="flex flex-col">
+                  {deviceSessions.slice(0, RECENT_SHOWN).map((s) => (
+                    <SessionRow key={s.id} s={s} deviceId={device.id} />
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <section>
+              <SectionLabel>{t("device.info")}</SectionLabel>
+              <div className="rounded-2xl bg-card p-4">
+                <DetailList items={details} />
               </div>
             </section>
           </TabsContent>
@@ -439,27 +577,25 @@ function DeviceWorkbenchPageInner() {
               )}
             </div>
             {filteredTree.length === 0 ? (
-              <p className="rounded-card bg-card p-8 text-center text-sm text-muted-foreground">
+              <p className="px-2 py-6 text-center text-sm text-muted-foreground">
                 {deviceSessions.length ? t("device.noMatches") : t("wb.deviceNoConversations")}
               </p>
             ) : (
               filteredTree.map((a) => (
-                <section key={a.agent} className="space-y-3 rounded-card bg-card p-5">
-                  <h2 className="flex items-center gap-2 text-sm font-semibold">
-                    <BotIcon className="size-4 text-muted-foreground" />
-                    {agentLabel(a.agent, status?.runtimes)}
-                    <span className="font-normal text-muted-foreground tabular-nums">{a.count}</span>
-                  </h2>
+                <section key={a.agent} className="pt-2">
+                  <SectionLabel>
+                    {agentLabel(a.agent, status?.runtimes)} · {a.count}
+                  </SectionLabel>
                   {a.projects.map((p) => (
-                    <div key={p.key} className="space-y-1">
-                      <p className="flex items-center gap-1.5 px-3 text-xs text-muted-foreground" title={p.cwd}>
-                        <FolderIcon className="size-3.5" />
-                        {p.name}
-                        <span className="truncate font-mono text-xs opacity-70">{tildePath(p.cwd)}</span>
+                    <div key={p.key} className="pb-2">
+                      <p className="flex items-center gap-1.5 px-2 pt-1 pb-0.5 text-xs text-muted-foreground" title={p.cwd}>
+                        <FolderIcon className="size-3.5 shrink-0" />
+                        <span className="shrink-0">{p.name}</span>
+                        <span className="truncate opacity-70">{tildePath(p.cwd)}</span>
                       </p>
-                      <div className="-mx-1 flex flex-col">
+                      <div className="flex flex-col">
                         {p.sessions.map((s) => (
-                          <SessionRow key={s.id} s={s} deviceId={device.id} />
+                          <SessionRow key={s.id} s={s} deviceId={device.id} showAgent={false} />
                         ))}
                       </div>
                     </div>
@@ -490,7 +626,7 @@ function DeviceWorkbenchPageInner() {
               <div className="flex items-center justify-between gap-4 rounded-card bg-card p-6">
                 <div className="space-y-1">
                   <p className="text-sm font-medium text-foreground">{t("devices.allowMcp")}</p>
-                  <p className="text-xs leading-relaxed text-muted-foreground">{t("devices.allowMcpDesc")}</p>
+                  <p className="text-sm leading-relaxed text-muted-foreground">{t("devices.allowMcpDesc")}</p>
                 </div>
                 <Switch
                   checked={settings.allow_mcp}
@@ -508,7 +644,7 @@ function DeviceWorkbenchPageInner() {
             <div className="space-y-4 rounded-card bg-card p-6">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="space-y-1">
-                  <h3 className="flex items-center gap-2 text-lg font-semibold">
+                  <h3 className="flex items-center gap-2 text-base font-semibold">
                     <LockIcon className="size-4 text-muted-foreground" />
                     {t("devices.greyLockTitle")}
                   </h3>
@@ -605,37 +741,6 @@ function DeviceWorkbenchPageInner() {
           </TabsContent>
         </Tabs>
       </PageContainer>
-
-      <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>{t("devices.rename")}</DialogTitle>
-          </DialogHeader>
-          <form
-            id="rename-device"
-            onSubmit={(e) => {
-              e.preventDefault()
-              const next = renameText.trim()
-              if (!next || !controlClient) return
-              void call(async () => {
-                await controlClient.renameDevice(device.id, next)
-                await refreshDevices()
-                setRenameOpen(false)
-              }, t("common.saved"))
-            }}
-          >
-            <Input autoFocus value={renameText} onChange={(e) => setRenameText(e.target.value)} aria-label={t("devices.deviceName")} />
-          </form>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setRenameOpen(false)}>
-              {t("common.cancel")}
-            </Button>
-            <Button type="submit" form="rename-device">
-              {t("common.save")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <PairDeviceDialog
         open={pairOpen}

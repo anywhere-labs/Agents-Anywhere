@@ -23,14 +23,11 @@ import {
   LoaderCircleIcon,
   LockIcon,
   LogOutIcon,
-  MonitorIcon,
   PanelLeftIcon,
   PinIcon,
   PlusIcon,
   SearchIcon,
-  ServerIcon,
   SettingsIcon,
-  ShieldAlertIcon,
   ShieldIcon,
   SquarePenIcon,
   Trash2Icon,
@@ -73,20 +70,15 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { isMacPlatform } from "@/components/workbench/shortcuts-dialog"
 import { useWorkbenchUi } from "@/components/workbench/workbench-ui"
 import { OrchesIcon } from "@/components/workbench/orches-icon"
+import { DeviceStatusIcon } from "@/components/workbench/device-status"
 import { ResizeHandle } from "@/components/workbench/resize-handle"
 import { useAssistant } from "@/lib/state/assistant-context"
 import { useWorkbench } from "@/lib/state/workbench-context"
-import type { DevicePlatform, DeviceRecord, SessionSummary } from "@/lib/types/v3"
+import type { DeviceRecord, SessionSummary } from "@/lib/types/v3"
 import { cn } from "@/lib/utils"
 import { toggleIn, useLocalPrefs } from "@/lib/workbench/local-prefs"
 import { shortAgo } from "@/lib/workbench/time"
 import { agentLabel, deviceHref, sessionHref, sessionKey } from "@/lib/workbench/tree"
-
-export const PLATFORM_ICON: Record<DevicePlatform, typeof LaptopIcon> = {
-  macos: LaptopIcon,
-  linux: ServerIcon,
-  windows: MonitorIcon,
-}
 
 const RECENT_LIMIT = 40
 
@@ -96,34 +88,6 @@ function SessionStatus({ state, unread }: { state: SessionSummary["state"]; unre
   if (state === "error") return <CircleAlertIcon className="size-3.5 text-destructive" />
   if (unread) return <span className="size-2 rounded-full bg-foreground" />
   return null
-}
-
-/** Presence dot + lock, as shown wherever a device appears. */
-export function DeviceMarks({
-  device,
-  paired,
-  encrypted,
-}: {
-  device: Pick<DeviceRecord, "presence">
-  paired: boolean
-  encrypted: boolean
-}) {
-  return (
-    <span className="flex shrink-0 items-center gap-1.5">
-      {encrypted &&
-        (paired ? (
-          <LockIcon className="size-3! text-muted-foreground" />
-        ) : (
-          <ShieldAlertIcon className="size-3! text-warning" />
-        ))}
-      <span
-        className={cn(
-          "size-1.5 rounded-full",
-          device.presence === "online" ? "bg-success" : "bg-muted-foreground/40"
-        )}
-      />
-    </span>
-  )
 }
 
 /** The sidebar's width, owned by the shell (it sets `--sidebar-width` on the sidebar's wrapper). */
@@ -366,10 +330,9 @@ export function WorkbenchSidebar({ resize }: { resize: SidebarResize }) {
     </SidebarHeader>
   )
 
-  /** One line per device: presence dot and lock; a device's conversations live on its page. */
+  /** One line per device: its state (online, offline, locked, unlocked, a problem) as one mark, then its name. */
   const deviceRows = (onPick: (dev: DeviceRecord) => void, drillIn: boolean) =>
     devices.map((dev) => {
-      const Icon = PLATFORM_ICON[dev.platform] ?? LaptopIcon
       const href = deviceHref(dev.id)
       return (
         <SidebarMenuItem key={dev.id}>
@@ -377,11 +340,9 @@ export function WorkbenchSidebar({ resize }: { resize: SidebarResize }) {
             isActive={pathname === href}
             onClick={() => onPick(dev)}
             className={cn(dev.presence === "offline" && "text-muted-foreground")}
-            title={dev.presence === "online" ? t("devices.online") : t("devices.offline")}
           >
-            <Icon />
+            <DeviceStatusIcon device={dev} />
             <span className="min-w-0 flex-1 truncate">{dev.name}</span>
-            <DeviceMarks device={dev} paired={Boolean(deviceTrusts[dev.id])} encrypted={isEncrypted(dev.id)} />
             {drillIn && <ChevronRightIcon className="size-3.5! text-muted-foreground" />}
           </SidebarMenuButton>
         </SidebarMenuItem>
@@ -455,7 +416,6 @@ export function WorkbenchSidebar({ resize }: { resize: SidebarResize }) {
   let content: React.ReactNode
   if (preferences.assistantPrimary && drilledDevice) {
     const dev = drilledDevice
-    const Icon = PLATFORM_ICON[dev.platform] ?? LaptopIcon
     content = (
       <div key={`dev-${dev.id}`} className="flex flex-col animate-in fade-in slide-in-from-right-6 duration-200 motion-reduce:animate-none">
         <SidebarGroup className="pb-0">
@@ -476,14 +436,13 @@ export function WorkbenchSidebar({ resize }: { resize: SidebarResize }) {
                   render={<Link href={deviceHref(dev.id)} onClick={closeOnMobile} />}
                   size="lg"
                 >
-                  <Icon />
+                  <DeviceStatusIcon device={dev} />
                   <span className="flex min-w-0 flex-1 flex-col">
                     <span className="truncate font-medium">{dev.name}</span>
                     <span className="truncate text-xs font-normal text-muted-foreground">
                       {dev.presence === "online" ? t("devices.online") : t("devices.offline")}
                     </span>
                   </span>
-                  <DeviceMarks device={dev} paired={Boolean(deviceTrusts[dev.id])} encrypted={isEncrypted(dev.id)} />
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>
