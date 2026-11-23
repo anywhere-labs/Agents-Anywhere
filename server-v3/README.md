@@ -38,13 +38,14 @@ Agents Anywhere v3 的轻控制面后端，实现定稿架构文档中定义的 
   - 上传预签名强制签名 `Content-Length` 并在 `/complete` 校验 `HEAD` 字节数，防止绕过配额；
   - 默认 RPC 直传阈值 8 MiB（与 `connector-v3` 对齐），默认总配额 512 MiB、单文件上限 100 MiB、默认过期 7 天（上限 30 天）；配额与 TTL 按「管理员单账号策略覆盖 > OIDC/默认权益声明（`aa.drive_quota_mb`、`aa.drive_ttl_days`、`aa.drive_max_file_mb`）> 服务默认值」三层生效；
   - 双模式鉴权（用户 Bearer JWT 与 Connector `X-AA-Device-Id` / `X-AA-Device-Secret` 均可上传下载，且 Connector 自动继承用户 Redis 缓存的 OIDC 权益）；
-  - 支持普通文件、助手云端 VFS（`assistant_vfs`，按 `vfs_path` 覆写并自动回收旧版本、`account_dek` 端侧加密剥离明文文件名）与加密设备大文件单次密钥中转（`ephemeral_key`，服务端绝不接收或存储 `file_key`）；内置后台定时清理过期文件与超时未完成预占。
+  - 支持普通文件、助手云端 VFS（`assistant_vfs`，按 `vfs_path` 覆写并自动回收旧版本、`account_dek` 端侧加密剥离明文文件名）与加密设备大文件单次密钥中转（`ephemeral_key`，服务端绝不接收或存储 `file_key`）；内置后台定时清理过期文件、超时未完成预占和已删除文件的对象。
+  - **文件系统（路径与文件夹）**：每个文件有规范化的绝对路径（如 `/报告/2026/q3.pdf`，同一账号下未删除的文件路径唯一），文件夹是显式记录（空文件夹也存在，根目录 `/` 隐含）；没有指定位置的上传放进 `/Transfers/`（重名加 ` (1)` 后缀），Orches 云端工作区的文件镜像为 `/Orches/<vfs_path>`（只由 Orches 同步写入，云盘接口只能列出、下载和删除），加密文件不因路径泄露名称（以文件 id 命名）。接口：`GET /drive/entries`（列出文件夹的直接子项，每个文件带到期时间）、`POST /drive/folders`、`PATCH /drive/files/{id}` 与 `PATCH /drive/folders/{id}`（重命名 / 移动，文件夹整棵子树跟着改，冲突返回 409 `drive_path_conflict`）、`DELETE /drive/folders/{id}`（递归软删除，对象当场尽量删除，余下交给清理任务）、`GET /drive/resolve?path=…|ref=drive:/…`；`POST /drive/uploads` 可用 `path` / `folder` / `on_conflict` 指定位置。文本引用格式为 `drive:/路径/文件名`（`aa_control/core/drive.py` 的 `format_drive_ref` / `parse_drive_ref`）。规则、错误码与引用格式见 [assistant-and-files-proposal.md](../docs/v3/assistant-and-files-proposal.md) 6.1–6.3。
 - **随身助手整包同步、KEK/DEK 密钥信封与 Tokens Anywhere 托管 Key 复用（`/assistant/*`）**：
   - **对话级整包同步**：`GET /assistant/conversations`（仅返回列表元数据，按更新时间倒序）、`GET /assistant/conversations/{id}`、`PUT /assistant/conversations/{id}`（默认单条上限 20 MiB 返回 413、单账号保留最新 100 条自动淘汰旧对话）、`DELETE /assistant/conversations/{id}`；服务端不做新旧裁决，原样存储并通过 Redis Pub/Sub（`GET /assistant/events` SSE 流）向同账号其他在线端实时广播变更（按用户隔离）；
   - **账号级任意密码 KEK/DEK 密钥信封（`/assistant/encryption`、`/assistant/encryption/reset`）**：保存版本化 KDF（`pbkdf2-sha256` / `argon2id`）、`salt` 与 `AES-256-GCM` 包裹的 `wrapped_dek`，服务端永远接触不到用户密码与明文 DEK；改密码使用 `expected_version` 乐观锁递增 `key_version` 且保持 `dek_epoch` 不变（无需重加密历史对话）；开启加密后拒绝明文对话上传并校验 `dek_epoch`；忘密码重置要求显式 `confirm_wipe=true`，原子清空旧密文对话与 `account_dek` 云盘 VFS 文件并递增 `dek_epoch`；
   - **Tokens Anywhere 单账号托管 Key 加密复用（`/assistant/tokens`）**：每个账号仅存一份经服务端密钥 Fernet 加密的托管 Key 与 refresh token；首端连接写入、并发后续端自动复用已有 Key（返回 `kept: true` 供客户端撤销多余授权）；每 30 天在 Redis 分布式锁保护下自动续期 refresh token（`invalid_grant` 自动清除）；断开支持 `?key_hash=` 条件清理并尽力调用 Tokens RFC 7009 `/api/v1/oauth/revoke` 撤销授权；**严格仅允许本人一等登录会话访问，拒绝 MCP OAuth Token 与第三方 OIDC 应用**（响应均带 `Cache-Control: no-store`）。
-- **3.0 数据库迁移（`migrations/versions/v3_0.py`、`v3_1.py`、`v3_2.py`）**：
-  - `v3_0` 支持空库全新初始化与 2.x 原地升级（保留 `users` / `oauth_accounts`，清理旧会话表）；`v3_1` 新增 `drive_files` 与 `drive_user_policies`；`v3_2` 新增 `assistant_conversations`、`assistant_key_envelopes` 与 `assistant_tokens_connections`。
+- **3.0 数据库迁移（`migrations/versions/v3_0.py` … `v3_3.py`）**：
+  - `v3_0` 支持空库全新初始化与 2.x 原地升级（保留 `users` / `oauth_accounts`，清理旧会话表）；`v3_1` 新增 `drive_files` 与 `drive_user_policies`；`v3_2` 新增 `assistant_conversations`、`assistant_key_envelopes` 与 `assistant_tokens_connections`；`v3_3` 给 `drive_files` 加 `path` / `parent_path` / `on_conflict`、新增 `drive_folders`，并为已有文件回填路径（`transfer` → `/Transfers/<filename>`，重名加后缀；`assistant_vfs` → `/Orches/<vfs_path>`）。
 
 ## 目录分层
 

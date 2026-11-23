@@ -14,10 +14,16 @@ import type {
   ClientRouterTokenResponse,
   DeviceMode,
   DevicePlatform,
+  DriveConflictPolicy,
   DriveEncryptionMode,
+  DriveEntriesResponse,
   DriveFileView,
+  DriveFolderDeleteResponse,
+  DriveFolderMoveResponse,
+  DriveFolderView,
   DrivePurpose,
   DriveQuotaView,
+  DriveResolveResponse,
   ListAssistantConversationsResponse,
   McpAuthorizeApproveResponse,
   McpConsentPreview,
@@ -209,6 +215,10 @@ export function createDriveUpload(
     filename?: string | null
     mime_type?: string | null
     vfs_path?: string | null
+    /** Full target path (plaintext transfer uploads only); `folder` picks just the folder. */
+    path?: string | null
+    folder?: string | null
+    on_conflict?: DriveConflictPolicy | null
     ttl_seconds?: number | null
     encryption_mode?: DriveEncryptionMode
     encryption_nonce?: string | null
@@ -231,12 +241,14 @@ export function completeDriveUpload(
   serverUrl: string,
   token: string,
   fileId: string,
-  etag?: string | null
+  etag?: string | null,
+  /** Retry a completion that hit 409 drive_path_conflict with another policy. */
+  onConflict?: DriveConflictPolicy | null
 ): Promise<DriveFileView> {
   return requestJson<DriveFileView>(serverUrl, `/drive/files/${encodeURIComponent(fileId)}/complete`, {
     method: "POST",
     token,
-    body: JSON.stringify(etag ? { etag } : {}),
+    body: JSON.stringify({ ...(etag ? { etag } : {}), ...(onConflict ? { on_conflict: onConflict } : {}) }),
   })
 }
 
@@ -261,6 +273,83 @@ export function deleteDriveFile(
     method: "DELETE",
     token,
   })
+}
+
+/** Subfolders and live files directly inside `path` (`GET /drive/entries`). */
+export function listDriveEntries(
+  serverUrl: string,
+  token: string,
+  path = "/",
+  params?: { limit?: number; offset?: number }
+): Promise<DriveEntriesResponse> {
+  const q = new URLSearchParams({ path })
+  if (params?.limit != null) q.set("limit", String(params.limit))
+  if (params?.offset != null) q.set("offset", String(params.offset))
+  return requestJson<DriveEntriesResponse>(serverUrl, `/drive/entries?${q.toString()}`, { token })
+}
+
+/** Create a folder and any missing parents (`POST /drive/folders`). */
+export function createDriveFolder(
+  serverUrl: string,
+  token: string,
+  path: string,
+  options?: { existOk?: boolean }
+): Promise<DriveFolderView> {
+  return requestJson<DriveFolderView>(serverUrl, "/drive/folders", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ path, ...(options?.existOk ? { exist_ok: true } : {}) }),
+  })
+}
+
+/** Rename and/or move a file to the full path `path` (`PATCH /drive/files/{id}`). */
+export function moveDriveFile(
+  serverUrl: string,
+  token: string,
+  fileId: string,
+  path: string
+): Promise<DriveFileView> {
+  return requestJson<DriveFileView>(serverUrl, `/drive/files/${encodeURIComponent(fileId)}`, {
+    method: "PATCH",
+    token,
+    body: JSON.stringify({ path }),
+  })
+}
+
+/** Rename and/or move a folder with everything in it (`PATCH /drive/folders/{id}`). */
+export function moveDriveFolder(
+  serverUrl: string,
+  token: string,
+  folderId: string,
+  path: string
+): Promise<DriveFolderMoveResponse> {
+  return requestJson<DriveFolderMoveResponse>(serverUrl, `/drive/folders/${encodeURIComponent(folderId)}`, {
+    method: "PATCH",
+    token,
+    body: JSON.stringify({ path }),
+  })
+}
+
+/** Delete a folder and everything in it (`DELETE /drive/folders/{id}`). */
+export function deleteDriveFolder(
+  serverUrl: string,
+  token: string,
+  folderId: string
+): Promise<DriveFolderDeleteResponse> {
+  return requestJson<DriveFolderDeleteResponse>(serverUrl, `/drive/folders/${encodeURIComponent(folderId)}`, {
+    method: "DELETE",
+    token,
+  })
+}
+
+/** Resolve a drive path or a `drive:/…` reference to the file or folder it names (`GET /drive/resolve`). */
+export function resolveDrivePath(
+  serverUrl: string,
+  token: string,
+  target: { path: string } | { ref: string }
+): Promise<DriveResolveResponse> {
+  const q = new URLSearchParams("ref" in target ? { ref: target.ref } : { path: target.path })
+  return requestJson<DriveResolveResponse>(serverUrl, `/drive/resolve?${q.toString()}`, { token })
 }
 
 export function fetchAdminDrivePolicy(

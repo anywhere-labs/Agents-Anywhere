@@ -99,6 +99,54 @@ AA v3 在工作设备工作台之外，提供一个**类 Effi 形态的轻量化
    - **助手工作区文件**：开启助手加密时，客户端在上传 S3 前用账号 `DEK` 做 `AES-256-GCM` 加密（含原始文件名元数据），下载后本机解密，多设备通用；
    - **加密设备大文件中转**：上传方生成单次随机 256-bit 文件密钥先加密再上传 S3，只把 `{file_id, file_key, sha256}` 经 **E2EE 加密隧道**发给接收端，对象存储与控制面均无法读取内容。
 
+### 6.1 云盘是一个文件系统：路径与文件夹
+
+状态：已实现（`server-v3` 迁移 `v3_3`，Web 云盘页 `/drive`）。助手已定名为 **Orches**，它的云端工作区在云盘里是 `/Orches` 文件夹（接口里的用途仍叫 `assistant_vfs`）。
+
+- **路径**：每个云盘文件都有规范化的绝对路径，例如 `/报告/2026/q3.pdf`；同一账号下，未删除的文件路径唯一，路径区分大小写。规范化：`\` 视为 `/`，连续和末尾的 `/` 合并，缺少开头的 `/` 时补上，每一级名称做 Unicode NFC 规范化并去掉首尾空白；不允许 `.`、`..` 和控制字符，每级名称最长 255 个字符，整条路径最长 1024 个字符、最多 32 级。
+- **文件夹**：文件夹是显式记录（`drive_folders`），空文件夹也存在；根目录 `/` 是隐含的，没有记录。文件放进不存在的文件夹时，服务端自动建好所有上级文件夹（`mkdir -p`）。同一个路径不能既是文件又是文件夹，文件下面也不能再放东西。
+- **两个由服务端创建的文件夹**，存储名固定用英文，客户端按 `system` 字段显示名称：
+
+  | 存储路径 | `system` | Web 显示 | 内容 |
+  | --- | --- | --- | --- |
+  | `/Transfers` | `transfers` | 临时中转 / Transfers | 发给工作设备的大附件（`purpose: transfer`）。没有指定位置的上传都放这里，重名时在扩展名前加 ` (1)`、` (2)`…（`q3.pdf` → `q3 (1).pdf`，`a.tar.gz` → `a (1).tar.gz`） |
+  | `/Orches` | `orches` | Orches | Orches 的云端工作区（`purpose: assistant_vfs`），文件路径是 `/Orches/<vfs_path>` |
+
+  这两个文件夹不能重命名或移动，可以删除（连同里面的文件；下次有文件进来时自动重建）。`/Transfers` 里的文件可以像普通文件一样改名、移走。
+- **`/Orches` 只由 Orches 自己的同步写入**：云盘接口在这里只能列出、下载、复制引用和删除（文件和文件夹都可以删），不能新建文件夹、上传、重命名或移动，也不能把文件移进来或移出去（409 `drive_managed_path`）。原因是 Orches 的读写以 `vfs_path` 为准：加密文件把 `vfs_path` 绑进了 AES-GCM 的附加数据，改名后就解不开；同步也按 `vfs_path` 覆盖旧版本。所以 `vfs_path` 原样保留，云盘路径只是它的镜像。`vfs_path` 不是合法的云盘路径（例如含控制字符、超过 32 级），或镜像路径被占（例如 `workspace` 既是文件又是另一个文件的上级目录）时，这个文件放在 `/Orches/<文件 id>`，Orches 照常按 `vfs_path` 读写。
+- **加密文件不因路径泄露名称**：`ephemeral_key`（加密设备的大附件）和不带 `vfs_path` 的 `account_dek` 文件，服务端本来就不知道名称，它们的云盘名称就是文件 id（例如 `/Transfers/drv_3f…`）。加密上传不能用 `path` 指定文件名，只能用 `folder` 指定文件夹（422 `drive_encrypted_name`）；加密文件可以移到别的文件夹，但不能改名。带 `vfs_path` 的 `account_dek` 文件，路径本来就以明文存在服务端，镜像成云盘路径不会多泄露信息。
+- **保留时间不变**：每个文件仍有自己的到期时间（默认 7 天，管理员可按账号调整），重命名、移动不改变到期时间，列表里每个文件都带 `expires_at`；到期后文件从列表和路径里消失，由清理任务删除对象。文件夹不会过期，文件到期后留下的空文件夹继续存在。过期但还没清理的文件不占路径，新文件可以直接放到同一个路径。网页上传的文件同样记为 `transfer`，保留规则相同。
+- **删除**：删除文件或文件夹（递归）后，文件立刻从列表、路径和配额里消失（状态变为 `deleted`）；对象存储里的对象当场尽量删除，存储暂时不可用或一次删得太多时，剩下的由已有的后台清理任务接着删。删除文件夹时，正在上传到其中的文件也一并取消。
+- **数据库迁移 `v3_3`** 给已有文件回填路径：`transfer` 文件放进 `/Transfers/<filename>`，重名的按完成时间排序，最早的保留原名、后面的加后缀（已过期但还没被清理的文件排在最后，不会让仍有效的文件被加上后缀）；没有明文名称的（`ephemeral_key`、上传时没给 `filename`）用文件 id。`assistant_vfs` 文件放进 `/Orches/<vfs_path>`，没有 `vfs_path` 或路径不合法、被占的放进 `/Orches/<文件 id>`；同一个 `vfs_path` 还留着多个就绪版本时（旧版本的对象删除失败过），最新的保留路径，旧的标记为删除，交给清理任务。明文 `transfer` 文件的 `filename` 同步改成它在云盘里的名字。回退到 `v3_2` 时删掉路径列和文件夹表，已标记删除的文件改为过期的上传占位，由 `v3_2` 的清理任务删除。
+
+### 6.2 云盘接口
+
+用户 Bearer Token 和 Connector 设备凭据都可以调用，账号之间互相隔离。
+
+| 接口 | 说明 |
+| --- | --- |
+| `GET /drive/entries?path=/报告&limit=200&offset=0` | 列出一个文件夹的直接子项：全部子文件夹，以及未过期的文件（分页，`limit` 最大 1000），每个文件带 `expires_at`。返回 `{ path, ref, folder, folders, files, total_files, quota }`，根目录的 `folder` 为 `null`。文件夹不存在时 404 `drive_path_not_found`，路径是文件时 422 `drive_not_a_folder` |
+| `POST /drive/folders` `{ path, exist_ok? }` | 新建文件夹（自动建上级），201；已存在时 409 `drive_path_conflict`，带 `exist_ok: true` 时返回已有的文件夹（200） |
+| `PATCH /drive/files/{file_id}` `{ path }` | 重命名或移动一个文件，`path` 是新的完整路径；到期时间、内容和 id 不变。目标被占时 409 `drive_path_conflict` |
+| `PATCH /drive/folders/{folder_id}` `{ path }` | 重命名或移动文件夹，整棵子树（子文件夹、文件、正在上传进来的文件）一起改路径；返回 `{ folder, moved_folders, moved_files }`。移到自己里面 422 `drive_move_into_self` |
+| `DELETE /drive/folders/{folder_id}` | 递归删除，返回 `{ ok, deleted_folders, deleted_files }` |
+| `GET /drive/resolve?path=…` 或 `?ref=drive:/…` | 把路径或引用解析成文件夹或文件，返回 `{ kind: "file" \| "folder", path, ref, folder, file }`；什么都没有时 404 `drive_path_not_found` |
+| `POST /drive/uploads` 新增字段 | `path`：完整目标路径，只限明文上传；`folder`：只指定文件夹，文件名取 `filename`，没有时取文件 id；`on_conflict`：目标被占时 `rename`（默认，加 ` (n)` 后缀）、`fail`（409）或 `replace`（替换原文件，但不会替换文件夹）。都不给时放进 `/Transfers/`。`assistant_vfs` 上传不接受这三个字段，路径总是 `/Orches/<vfs_path>`，并替换同一 `vfs_path` 的旧版本 |
+| `POST /drive/files/{file_id}/complete` 新增字段 | `on_conflict`：路径在上传开始时检查一次、完成时最终确定。完成时目标被占返回 409，上传占位在上传链接有效期内保留，可以换一种策略再次完成 |
+
+- 文件视图新增 `path`、`name`、`parent_path`、`ref`（规范引用）和 `managed`（是否在 `/Orches` 下）；文件夹视图是 `{ id, path, name, parent_path, ref, system, managed, created_at, updated_at }`。
+- 原有接口和字段不变：`GET /drive/files`（含 `purpose`、`vfs_prefix` 过滤）、按 id 查询 / 下载 / 删除、`vfs_path`。附件中转、Orches 同步和 Connector 的 `fetch_drive_file` 不改也能继续工作。明文 `transfer` 文件的 `filename` 跟随它在云盘里的名字（包括重名后缀和改名），下载时的文件名和列表一致。
+- 错误统一是 `{ code, detail }`：`drive_invalid_path` / `drive_invalid_ref`（422，路径或引用不合法），`drive_path_conflict`（409，目标已有文件或文件夹），`drive_parent_is_file`（409，某一级上级是文件），`drive_managed_path`（409，`/Orches` 只由 Orches 写入），`drive_system_folder`（409，`/Transfers`、`/Orches` 不能改名或移动），`drive_move_into_self`、`drive_encrypted_name`、`drive_not_a_folder`（422），`drive_path_not_found`、`drive_folder_not_found`（404）。
+
+### 6.3 文本引用 `drive:/…`
+
+云盘里的文件和文件夹用 `drive:` 加绝对路径引用，例如 `drive:/报告/2026/q3.pdf`；文件夹是 `drive:/报告/2026`，根目录是 `drive:/`。
+
+- **规范形式**由服务端生成，就是文件和文件夹视图里的 `ref`，客户端「复制引用」直接用它。名称保持可读，中文等非 ASCII 字母原样保留；只有下面这些字符按 UTF-8 百分号编码：空白（含全角空格）、控制和格式字符（含双向文本控制符），`%`，保留给以后用的 `?` 和 `#`，以及在文字、Markdown 链接和表格里容易截断引用的 `(`、`)`、`[`、`]`、`<`、`>`、`"`、`'`、`|` 和反引号。例如 `/Transfers/q3 (1).pdf` 的引用是 `drive:/Transfers/q3%20%281%29.pdf`。
+- **解析**（`aa_control/core/drive.py` 的 `parse_drive_ref`，`GET /drive/resolve?ref=…`）：`drive:` 不区分大小写；百分号编码会被解码，所以手写的 `drive:/报告/q3 final.pdf` 也能解析，不构成转义的单个 `%` 按字面处理；解码后的路径按 6.1 的规则规范化。`drive://…` 留给以后（例如跨账号引用），未编码的 `?`、`#` 留给以后的参数和片段，现在都返回 422 `drive_invalid_ref`。
+- **引用的是路径，不是文件 id**：文件改名或移动后，旧引用解析不到（404）；同一路径换成新文件后，引用指向新文件。
+- **以后的用法**：消息正文和附件里可以直接写 `drive:/…`。客户端或 Connector 用 `GET /drive/resolve?ref=…` 换成文件，再走已有的下载链接或 `fetch_drive_file` 流程把文件交给 Agent。从一段文字里提取引用时，引用在空白或上面那些需要编码的字符处结束；紧跟在末尾的 `.`、`,`、`;`、`:`、`!` 当作标点。名称以这些字符结尾的文件，可以用尖括号括起来写：`<drive:/报告/终版.>`（`<`、`>` 在引用内部总是编码的，所以不会混淆）。
+
 ---
 
 ## 7. 实验性能力（默认关闭）

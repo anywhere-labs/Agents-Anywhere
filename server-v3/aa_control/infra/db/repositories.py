@@ -1,15 +1,27 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import secrets
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import and_, delete, func, insert, or_, select, update
+from sqlalchemy import Table, and_, bindparam, delete, func, insert, or_, select, text, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from aa_control.core.drive import (
+    dedupe_drive_name,
+    drive_ancestors,
+    drive_basename,
+    drive_parent,
+    join_drive_path,
+)
+from aa_control.core.errors import ConflictError
 from aa_control.core.utc import utc_now_iso
 from aa_control.infra.db import schema
 
@@ -122,6 +134,9 @@ class DriveFileRow:
     filename: str | None
     mime_type: str | None
     vfs_path: str | None
+    path: str
+    parent_path: str
+    on_conflict: str | None
     encryption_mode: str
     encryption_nonce: str | None
     encryption_key_version: int | None
@@ -133,6 +148,43 @@ class DriveFileRow:
     created_at: str
     completed_at: str | None
     updated_at: str
+
+
+@dataclass(frozen=True)
+class DriveFolderRow:
+    id: str
+    user_id: str
+    path: str
+    parent_path: str
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class DrivePathProbe:
+    """What stands at a drive path right now (expired files do not count)."""
+
+    kind: str | None  # "file" | "folder" | None
+    blocking_file: str | None  # an ancestor that is a file, so nothing can be placed at the path
+
+
+@dataclass(frozen=True)
+class DrivePlacement:
+    file: DriveFileRow
+    superseded: list[DriveFileRow]  # soft-deleted older versions whose objects should be removed
+
+
+@dataclass(frozen=True)
+class DriveFolderMove:
+    folder: DriveFolderRow
+    moved_folders: int
+    moved_files: int
+
+
+@dataclass(frozen=True)
+class DriveFolderDeletion:
+    deleted_folders: int
+    deleted_files: list[DriveFileRow]  # now soft-deleted; their objects still need removing
 
 
 @dataclass(frozen=True)
@@ -192,6 +244,197 @@ class AssistantTokensConnectionRow:
     refreshed_at: int
     created_at: str
     updated_at: str
+
+
+# ---------------------------------------------------------------------------
+# Drive filesystem bookkeeping shared by the path-changing repository methods
+# ---------------------------------------------------------------------------
+
+_DRIVE_ACTIVE_STATUSES = ("pending", "ready")
+
+
+def _drive_lock_key(user_id: str) -> int:
+    digest = hashlib.blake2b(f"aa-drive-namespace:{user_id}".encode(), digest_size=8).digest()
+    return int.from_bytes(digest, "big", signed=True)
+
+
+def _path_within(column: Any, path: str) -> Any:
+    """``column`` is ``path`` or lies below it. Uses substr rather than LIKE: paths may hold % and _, and SQLite's
+    LIKE ignores ASCII case."""
+    below = path + "/"
+    return or_(column == path, func.substr(column, 1, len(below)) == below)
+
+
+def _path_below(column: Any, path: str) -> Any:
+    below = path + "/"
+    return func.substr(column, 1, len(below)) == below
+
+
+def _insert_ignoring_conflicts(conn: AsyncConnection, table: Table, values: dict[str, Any]) -> Any:
+    if conn.dialect.name == "postgresql":
+        return pg_insert(table).values(**values).on_conflict_do_nothing()
+    if conn.dialect.name == "sqlite":
+        return sqlite_insert(table).values(**values).on_conflict_do_nothing()
+    return insert(table).values(**values)
+
+
+def _drive_conflict(path: str, kind: str) -> ConflictError:
+    return ConflictError(f"a {kind} already exists at {path}", code="drive_path_conflict")
+
+
+class _DriveNamespace:
+    """Path checks and changes for one account inside one transaction.
+
+    On PostgreSQL every path-changing transaction first takes a per-account advisory lock, so the check-then-write
+    steps below cannot interleave (files and folders live in two tables, which no unique index spans). The
+    partial unique index on ready files' paths stays as the last line of defence.
+    """
+
+    def __init__(self, conn: AsyncConnection, user_id: str, now_ts: int) -> None:
+        self._conn = conn
+        self._user_id = user_id
+        self._now_ts = now_ts
+        self.now_iso = utc_now_iso()
+
+    async def lock(self) -> None:
+        if self._conn.dialect.name == "postgresql":
+            await self._conn.execute(
+                text("SELECT pg_advisory_xact_lock(:key)"),
+                {"key": _drive_lock_key(self._user_id)},
+            )
+
+    async def file(self, file_id: str) -> DriveFileRow | None:
+        tbl = schema.drive_files
+        row = (await self._conn.execute(select(tbl).where(tbl.c.id == file_id))).mappings().first()
+        return _to_drive_file(row) if row else None
+
+    async def folder(self, path: str) -> DriveFolderRow | None:
+        tbl = schema.drive_folders
+        row = (
+            await self._conn.execute(select(tbl).where(tbl.c.user_id == self._user_id, tbl.c.path == path))
+        ).mappings().first()
+        return _to_drive_folder(row) if row else None
+
+    async def folder_by_id(self, folder_id: str) -> DriveFolderRow | None:
+        tbl = schema.drive_folders
+        row = (await self._conn.execute(select(tbl).where(tbl.c.id == folder_id))).mappings().first()
+        if row is None or str(row["user_id"]) != self._user_id:
+            return None
+        return _to_drive_folder(row)
+
+    async def live_file(self, path: str, *, exclude_id: str | None = None) -> DriveFileRow | None:
+        tbl = schema.drive_files
+        stmt = select(tbl).where(
+            tbl.c.user_id == self._user_id,
+            tbl.c.path == path,
+            tbl.c.status == "ready",
+            tbl.c.expires_at > self._now_ts,
+        )
+        if exclude_id is not None:
+            stmt = stmt.where(tbl.c.id != exclude_id)
+        row = (await self._conn.execute(stmt.limit(1))).mappings().first()
+        return _to_drive_file(row) if row else None
+
+    async def evict_expired(self, path: str, *, subtree: bool = False) -> None:
+        """Expired files keep their row until the cleanup worker removes them; any at ``path`` (and below it with
+        ``subtree``) give the path up now and wait for cleanup as deleted rows."""
+        tbl = schema.drive_files
+        where_path = _path_within(tbl.c.path, path) if subtree else tbl.c.path == path
+        await self._conn.execute(
+            update(tbl)
+            .where(
+                tbl.c.user_id == self._user_id,
+                where_path,
+                tbl.c.status == "ready",
+                tbl.c.expires_at <= self._now_ts,
+            )
+            .values(status="deleted", updated_at=self.now_iso)
+        )
+
+    async def insert_folder(self, path: str) -> DriveFolderRow:
+        tbl = schema.drive_folders
+        await self._conn.execute(
+            _insert_ignoring_conflicts(
+                self._conn,
+                tbl,
+                {
+                    "id": f"dfd_{secrets.token_hex(12)}",
+                    "user_id": self._user_id,
+                    "path": path,
+                    "parent_path": drive_parent(path),
+                    "created_at": self.now_iso,
+                    "updated_at": self.now_iso,
+                },
+            )
+        )
+        row = await self.folder(path)
+        assert row is not None
+        return row
+
+    async def ensure_folders(self, path: str) -> None:
+        """Create every missing folder above ``path`` (mkdir -p); a file standing in the way is a conflict."""
+        for ancestor in drive_ancestors(path):
+            if await self.folder(ancestor) is not None:
+                continue
+            await self.evict_expired(ancestor)
+            if await self.live_file(ancestor) is not None:
+                raise ConflictError(
+                    f"{ancestor} is a file, so nothing can be placed inside it",
+                    code="drive_parent_is_file",
+                )
+            await self.insert_folder(ancestor)
+
+    async def taken_names(self, parent: str) -> set[str]:
+        folders = schema.drive_folders
+        files = schema.drive_files
+        folder_paths = (
+            await self._conn.execute(
+                select(folders.c.path).where(folders.c.user_id == self._user_id, folders.c.parent_path == parent)
+            )
+        ).scalars().all()
+        file_paths = (
+            await self._conn.execute(
+                select(files.c.path).where(
+                    files.c.user_id == self._user_id,
+                    files.c.parent_path == parent,
+                    files.c.status == "ready",
+                    files.c.expires_at > self._now_ts,
+                )
+            )
+        ).scalars().all()
+        return {drive_basename(str(p)) for p in (*folder_paths, *file_paths)}
+
+    async def mark_deleted(self, file_ids: Sequence[str]) -> None:
+        if not file_ids:
+            return
+        tbl = schema.drive_files
+        await self._conn.execute(
+            update(tbl)
+            .where(tbl.c.id.in_(list(file_ids)), tbl.c.status != "deleted")
+            .values(status="deleted", updated_at=self.now_iso)
+        )
+
+    async def claim(self, path: str, policy: str) -> tuple[str, list[DriveFileRow]]:
+        """Free ``path`` for a file according to ``policy``; returns the path to use and the files it replaced.
+
+        rename: a taken path becomes the first free ``name (n)`` in the same folder; fail: a taken path raises
+        409 drive_path_conflict; replace: a file standing there is soft-deleted (a folder never is).
+        """
+        await self.ensure_folders(path)
+        await self.evict_expired(path)
+        folder = await self.folder(path)
+        occupant = await self.live_file(path)
+        if folder is None and occupant is None:
+            return path, []
+        if policy == "replace" and folder is None and occupant is not None:
+            await self.mark_deleted([occupant.id])
+            return path, [occupant]
+        if policy == "rename":
+            parent = drive_parent(path)
+            renamed = join_drive_path(parent, dedupe_drive_name(drive_basename(path), await self.taken_names(parent)))
+            await self.evict_expired(renamed)
+            return renamed, []
+        raise _drive_conflict(path, "folder" if folder is not None else "file")
 
 
 class ControlRepository:
@@ -1023,6 +1266,8 @@ class ControlRepository:
         filename: str | None,
         mime_type: str | None,
         vfs_path: str | None,
+        path: str,
+        on_conflict: str,
         encryption_mode: str,
         encryption_nonce: str | None,
         encryption_key_version: int | None,
@@ -1047,6 +1292,9 @@ class ControlRepository:
                     filename=filename,
                     mime_type=mime_type,
                     vfs_path=vfs_path,
+                    path=path,
+                    parent_path=drive_parent(path),
+                    on_conflict=on_conflict,
                     encryption_mode=encryption_mode,
                     encryption_nonce=encryption_nonce,
                     encryption_key_version=encryption_key_version,
@@ -1071,52 +1319,6 @@ class ControlRepository:
                 await conn.execute(select(schema.drive_files).where(schema.drive_files.c.id == file_id))
             ).mappings().first()
             return _to_drive_file(row) if row else None
-
-    async def mark_drive_file_ready(
-        self,
-        *,
-        file_id: str,
-        etag: str | None,
-        expires_at: int,
-    ) -> DriveFileRow | None:
-        now = utc_now_iso()
-        async with self._engine.begin() as conn:
-            await conn.execute(
-                update(schema.drive_files)
-                .where(schema.drive_files.c.id == file_id)
-                .values(
-                    status="ready",
-                    etag=etag,
-                    expires_at=expires_at,
-                    completed_at=now,
-                    updated_at=now,
-                )
-            )
-            row = (
-                await conn.execute(select(schema.drive_files).where(schema.drive_files.c.id == file_id))
-            ).mappings().first()
-            return _to_drive_file(row) if row else None
-
-    async def list_superseded_vfs_files(
-        self,
-        *,
-        user_id: str,
-        vfs_path: str,
-        exclude_file_id: str,
-    ) -> list[DriveFileRow]:
-        async with self._engine.connect() as conn:
-            rows = (
-                await conn.execute(
-                    select(schema.drive_files).where(
-                        schema.drive_files.c.user_id == user_id,
-                        schema.drive_files.c.purpose == "assistant_vfs",
-                        schema.drive_files.c.vfs_path == vfs_path,
-                        schema.drive_files.c.status == "ready",
-                        schema.drive_files.c.id != exclude_file_id,
-                    )
-                )
-            ).mappings().all()
-            return [_to_drive_file(r) for r in rows]
 
     async def list_drive_files(
         self,
@@ -1147,13 +1349,32 @@ class ControlRepository:
             res = await conn.execute(delete(schema.drive_files).where(schema.drive_files.c.id == file_id))
             return res.rowcount > 0
 
+    async def mark_drive_files_deleted(self, file_ids: Sequence[str]) -> int:
+        """Soft-delete files: they vanish from listings, paths and quota at once; the cleanup worker (or the caller,
+        right away) removes their objects and then their rows."""
+        tbl = schema.drive_files
+        marked = 0
+        ids = list(file_ids)
+        now = utc_now_iso()
+        async with self._engine.begin() as conn:
+            for start in range(0, len(ids), 500):
+                res = await conn.execute(
+                    update(tbl)
+                    .where(tbl.c.id.in_(ids[start : start + 500]), tbl.c.status != "deleted")
+                    .values(status="deleted", updated_at=now)
+                )
+                marked += res.rowcount
+        return marked
+
     async def list_expired_drive_files(self, *, now_ts: int, limit: int = 100) -> list[DriveFileRow]:
+        """Rows the cleanup worker removes: soft-deleted files, expired files and abandoned upload reservations."""
         async with self._engine.connect() as conn:
             rows = (
                 await conn.execute(
                     select(schema.drive_files)
                     .where(
                         or_(
+                            schema.drive_files.c.status == "deleted",
                             and_(
                                 schema.drive_files.c.status == "ready",
                                 schema.drive_files.c.expires_at <= now_ts,
@@ -1177,10 +1398,344 @@ class ControlRepository:
                     select(schema.drive_files).where(
                         schema.drive_files.c.user_id == user_id,
                         schema.drive_files.c.encryption_mode == "account_dek",
+                        schema.drive_files.c.status != "deleted",
                     )
                 )
             ).mappings().all()
             return [_to_drive_file(r) for r in rows]
+
+    # ------------------------------------------------------------------
+    # Drive filesystem: folders, paths, moves and recursive deletes (v3_3)
+    # ------------------------------------------------------------------
+
+    async def get_drive_folder(self, folder_id: str) -> DriveFolderRow | None:
+        async with self._engine.connect() as conn:
+            row = (
+                await conn.execute(select(schema.drive_folders).where(schema.drive_folders.c.id == folder_id))
+            ).mappings().first()
+            return _to_drive_folder(row) if row else None
+
+    async def get_drive_folder_by_path(self, user_id: str, path: str) -> DriveFolderRow | None:
+        async with self._engine.connect() as conn:
+            return await _DriveNamespace(conn, user_id, 0).folder(path)
+
+    async def get_live_drive_file_by_path(self, user_id: str, path: str, *, now_ts: int) -> DriveFileRow | None:
+        async with self._engine.connect() as conn:
+            return await _DriveNamespace(conn, user_id, now_ts).live_file(path)
+
+    async def probe_drive_path(self, user_id: str, path: str, *, now_ts: int) -> DrivePathProbe:
+        async with self._engine.connect() as conn:
+            ns = _DriveNamespace(conn, user_id, now_ts)
+            for ancestor in drive_ancestors(path):
+                if await ns.folder(ancestor) is None and await ns.live_file(ancestor) is not None:
+                    return DrivePathProbe(kind=None, blocking_file=ancestor)
+            if await ns.folder(path) is not None:
+                return DrivePathProbe(kind="folder", blocking_file=None)
+            if await ns.live_file(path) is not None:
+                return DrivePathProbe(kind="file", blocking_file=None)
+            return DrivePathProbe(kind=None, blocking_file=None)
+
+    async def list_drive_children(
+        self,
+        user_id: str,
+        *,
+        parent_path: str,
+        now_ts: int,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[DriveFolderRow], list[DriveFileRow], int]:
+        """Direct subfolders (all) and live files (paged) of one folder, ordered by path."""
+        folders = schema.drive_folders
+        files = schema.drive_files
+        live = and_(
+            files.c.user_id == user_id,
+            files.c.parent_path == parent_path,
+            files.c.status == "ready",
+            files.c.expires_at > now_ts,
+        )
+        async with self._engine.connect() as conn:
+            folder_rows = (
+                await conn.execute(
+                    select(folders)
+                    .where(folders.c.user_id == user_id, folders.c.parent_path == parent_path)
+                    .order_by(folders.c.path)
+                )
+            ).mappings().all()
+            file_rows = (
+                await conn.execute(select(files).where(live).order_by(files.c.path).limit(limit).offset(offset))
+            ).mappings().all()
+            total = (await conn.execute(select(func.count()).select_from(files).where(live))).scalar_one()
+            return (
+                [_to_drive_folder(r) for r in folder_rows],
+                [_to_drive_file(r) for r in file_rows],
+                int(total),
+            )
+
+    async def create_drive_folder(
+        self,
+        *,
+        user_id: str,
+        path: str,
+        exist_ok: bool,
+        now_ts: int,
+    ) -> tuple[DriveFolderRow, bool]:
+        """mkdir -p ``path``; returns the folder and whether it was created."""
+        try:
+            async with self._engine.begin() as conn:
+                ns = _DriveNamespace(conn, user_id, now_ts)
+                await ns.lock()
+                existing = await ns.folder(path)
+                if existing is not None:
+                    if exist_ok:
+                        return existing, False
+                    raise _drive_conflict(path, "folder")
+                await ns.ensure_folders(path)
+                await ns.evict_expired(path)
+                if await ns.live_file(path) is not None:
+                    raise _drive_conflict(path, "file")
+                return await ns.insert_folder(path), True
+        except IntegrityError as exc:
+            raise ConflictError(f"{path} changed while creating it; try again", code="drive_path_conflict") from exc
+
+    async def place_drive_file(
+        self,
+        *,
+        file_id: str,
+        user_id: str,
+        target_path: str,
+        on_conflict: str,
+        fallback_path: str | None,
+        now_ts: int,
+        etag: str | None,
+        expires_at: int,
+        rename_filename: bool,
+        supersede_vfs_path: str | None,
+    ) -> DrivePlacement | None:
+        """Turn a pending upload into a ready file at ``target_path`` (settled by ``on_conflict``).
+
+        ``fallback_path`` is used when the target cannot be taken at all (Orches files whose path collides with a
+        folder or sits under a file). ``supersede_vfs_path`` soft-deletes older ready versions of an Orches file.
+        Returns None when the reservation is gone (deleted meanwhile).
+        """
+        tbl = schema.drive_files
+        for attempt in range(3):
+            try:
+                async with self._engine.begin() as conn:
+                    ns = _DriveNamespace(conn, user_id, now_ts)
+                    await ns.lock()
+                    row = await ns.file(file_id)
+                    if row is None or row.user_id != user_id or row.status != "pending":
+                        return None
+                    try:
+                        final_path, replaced = await ns.claim(target_path, on_conflict)
+                    except ConflictError:
+                        if fallback_path is None or fallback_path == target_path:
+                            raise
+                        final_path, replaced = await ns.claim(fallback_path, "rename")
+                    superseded = {old.id: old for old in replaced}
+                    if supersede_vfs_path is not None:
+                        older = (
+                            await conn.execute(
+                                select(tbl).where(
+                                    tbl.c.user_id == user_id,
+                                    tbl.c.purpose == "assistant_vfs",
+                                    tbl.c.vfs_path == supersede_vfs_path,
+                                    tbl.c.status == "ready",
+                                    tbl.c.id != file_id,
+                                )
+                            )
+                        ).mappings().all()
+                        for item in older:
+                            superseded.setdefault(str(item["id"]), _to_drive_file(item))
+                        await ns.mark_deleted(list(superseded))
+                    values: dict[str, Any] = {
+                        "status": "ready",
+                        "path": final_path,
+                        "parent_path": drive_parent(final_path),
+                        "etag": etag,
+                        "expires_at": expires_at,
+                        "completed_at": ns.now_iso,
+                        "updated_at": ns.now_iso,
+                    }
+                    if rename_filename:
+                        values["filename"] = drive_basename(final_path)
+                    await conn.execute(update(tbl).where(tbl.c.id == file_id).values(**values))
+                    placed = await ns.file(file_id)
+                    assert placed is not None
+                    return DrivePlacement(file=placed, superseded=list(superseded.values()))
+            except IntegrityError as exc:
+                if attempt == 2:
+                    raise ConflictError(
+                        f"{target_path} changed while placing the file; try again",
+                        code="drive_path_conflict",
+                    ) from exc
+        return None
+
+    async def move_drive_file(
+        self,
+        *,
+        file_id: str,
+        user_id: str,
+        new_path: str,
+        now_ts: int,
+        rename_filename: bool,
+    ) -> DriveFileRow | None:
+        """Rename/move one ready file; a taken target is 409 drive_path_conflict. None when the file is gone."""
+        tbl = schema.drive_files
+        try:
+            async with self._engine.begin() as conn:
+                ns = _DriveNamespace(conn, user_id, now_ts)
+                await ns.lock()
+                row = await ns.file(file_id)
+                if row is None or row.user_id != user_id or row.status != "ready" or row.expires_at <= now_ts:
+                    return None
+                if row.path == new_path:
+                    return row
+                await ns.ensure_folders(new_path)
+                await ns.evict_expired(new_path)
+                if await ns.folder(new_path) is not None:
+                    raise _drive_conflict(new_path, "folder")
+                if await ns.live_file(new_path, exclude_id=file_id) is not None:
+                    raise _drive_conflict(new_path, "file")
+                values: dict[str, Any] = {
+                    "path": new_path,
+                    "parent_path": drive_parent(new_path),
+                    "updated_at": ns.now_iso,
+                }
+                if rename_filename:
+                    values["filename"] = drive_basename(new_path)
+                await conn.execute(update(tbl).where(tbl.c.id == file_id).values(**values))
+                return await ns.file(file_id)
+        except IntegrityError as exc:
+            raise ConflictError(f"{new_path} changed while moving; try again", code="drive_path_conflict") from exc
+
+    async def move_drive_folder(
+        self,
+        *,
+        folder_id: str,
+        user_id: str,
+        new_path: str,
+        now_ts: int,
+    ) -> DriveFolderMove | None:
+        """Rename/move a folder with its whole subtree (subfolders, files and pending uploads into it)."""
+        folders = schema.drive_folders
+        files = schema.drive_files
+        try:
+            async with self._engine.begin() as conn:
+                ns = _DriveNamespace(conn, user_id, now_ts)
+                await ns.lock()
+                folder = await ns.folder_by_id(folder_id)
+                if folder is None:
+                    return None
+                old_path = folder.path
+                if new_path == old_path:
+                    return DriveFolderMove(folder=folder, moved_folders=0, moved_files=0)
+                await ns.ensure_folders(new_path)
+                await ns.evict_expired(new_path, subtree=True)
+                if await ns.folder(new_path) is not None:
+                    raise _drive_conflict(new_path, "folder")
+                if await ns.live_file(new_path) is not None:
+                    raise _drive_conflict(new_path, "file")
+                leftovers = (
+                    await conn.execute(
+                        select(func.count())
+                        .select_from(files)
+                        .where(
+                            files.c.user_id == user_id,
+                            files.c.status == "ready",
+                            _path_below(files.c.path, new_path),
+                        )
+                    )
+                ).scalar_one()
+                if leftovers:
+                    raise ConflictError(
+                        f"{new_path} still holds files; pick another name",
+                        code="drive_path_conflict",
+                    )
+
+                subtree_folders = (
+                    await conn.execute(
+                        select(folders.c.id, folders.c.path).where(
+                            folders.c.user_id == user_id,
+                            _path_within(folders.c.path, old_path),
+                        )
+                    )
+                ).all()
+                subtree_files = (
+                    await conn.execute(
+                        select(files.c.id, files.c.path).where(
+                            files.c.user_id == user_id,
+                            files.c.status.in_(_DRIVE_ACTIVE_STATUSES),
+                            _path_below(files.c.path, old_path),
+                        )
+                    )
+                ).all()
+
+                def moved(path: str) -> str:
+                    return new_path + str(path)[len(old_path) :]
+
+                folder_updates = [
+                    {"b_id": fid, "b_path": moved(fpath), "b_parent": drive_parent(moved(fpath))}
+                    for fid, fpath in subtree_folders
+                ]
+                file_updates = [
+                    {"b_id": fid, "b_path": moved(fpath), "b_parent": drive_parent(moved(fpath))}
+                    for fid, fpath in subtree_files
+                ]
+                if folder_updates:
+                    await conn.execute(
+                        update(folders)
+                        .where(folders.c.id == bindparam("b_id"))
+                        .values(path=bindparam("b_path"), parent_path=bindparam("b_parent"), updated_at=ns.now_iso),
+                        folder_updates,
+                    )
+                if file_updates:
+                    await conn.execute(
+                        update(files)
+                        .where(files.c.id == bindparam("b_id"))
+                        .values(path=bindparam("b_path"), parent_path=bindparam("b_parent"), updated_at=ns.now_iso),
+                        file_updates,
+                    )
+                updated = await ns.folder_by_id(folder_id)
+                assert updated is not None
+                return DriveFolderMove(
+                    folder=updated,
+                    moved_folders=len(folder_updates),
+                    moved_files=len(file_updates),
+                )
+        except IntegrityError as exc:
+            raise ConflictError(f"{new_path} changed while moving; try again", code="drive_path_conflict") from exc
+
+    async def soft_delete_drive_folder(
+        self,
+        *,
+        folder_id: str,
+        user_id: str,
+        now_ts: int,
+    ) -> DriveFolderDeletion | None:
+        """Delete a folder recursively: its folder rows go, every file (and pending upload) below it is soft-deleted."""
+        folders = schema.drive_folders
+        files = schema.drive_files
+        async with self._engine.begin() as conn:
+            ns = _DriveNamespace(conn, user_id, now_ts)
+            await ns.lock()
+            folder = await ns.folder_by_id(folder_id)
+            if folder is None:
+                return None
+            below = and_(
+                files.c.user_id == user_id,
+                files.c.status.in_(_DRIVE_ACTIVE_STATUSES),
+                _path_below(files.c.path, folder.path),
+            )
+            doomed = (await conn.execute(select(files).where(below))).mappings().all()
+            await conn.execute(update(files).where(below).values(status="deleted", updated_at=ns.now_iso))
+            removed = await conn.execute(
+                delete(folders).where(folders.c.user_id == user_id, _path_within(folders.c.path, folder.path))
+            )
+            return DriveFolderDeletion(
+                deleted_folders=int(removed.rowcount),
+                deleted_files=[_to_drive_file(r) for r in doomed],
+            )
 
     # ------------------------------------------------------------------
     # Portable assistant conversation sync (T516)
@@ -1761,6 +2316,9 @@ def _to_drive_file(row: Any) -> DriveFileRow:
         filename=row["filename"],
         mime_type=row["mime_type"],
         vfs_path=row["vfs_path"],
+        path=str(row["path"]),
+        parent_path=str(row["parent_path"]),
+        on_conflict=row["on_conflict"],
         encryption_mode=str(row["encryption_mode"]),
         encryption_nonce=row["encryption_nonce"],
         encryption_key_version=(
@@ -1773,6 +2331,17 @@ def _to_drive_file(row: Any) -> DriveFileRow:
         expires_at=int(row["expires_at"]),
         created_at=str(row["created_at"]),
         completed_at=row["completed_at"],
+        updated_at=str(row["updated_at"]),
+    )
+
+
+def _to_drive_folder(row: Any) -> DriveFolderRow:
+    return DriveFolderRow(
+        id=str(row["id"]),
+        user_id=str(row["user_id"]),
+        path=str(row["path"]),
+        parent_path=str(row["parent_path"]),
+        created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"]),
     )
 
