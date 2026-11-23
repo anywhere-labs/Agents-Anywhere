@@ -1100,7 +1100,7 @@ export interface PreparedInfo {
 /** An agent of this device as `aa.v3.Device/agents` reports it (`busy` comes from the sessions service). */
 export interface AgentInfo {
   id: string;
-  /** Display name: the device's own if it set one, else the preset's. */
+  /** Its preset's name: the agent's product name. */
   name: string;
   /** One of the Connector's default presets. */
   builtin: boolean;
@@ -1110,7 +1110,7 @@ export interface AgentInfo {
   args: string[];
   /** Names of its extra environment variables; the values never leave the device. */
   envKeys: string[];
-  /** The name, command, args or environment differ from the preset. */
+  /** The command, args or environment differ from the preset. */
   customized: boolean;
   /** Agent processes running now: the sessions' agents, prepared ones and ones still starting. */
   running: number;
@@ -1157,7 +1157,9 @@ export class AcpRuntimeHost {
     this.#options = { ...options, onPushEvent: (event) => this.onPushEvent?.(event) };
     this.#preparedTtlMs = options.preparedTtlMs ?? DEFAULT_PREPARED_TTL_MS;
     this.#maxPrepared = Math.max(1, options.maxPrepared ?? DEFAULT_MAX_PREPARED);
-    this.#overrides = new Map(Object.entries(AgentOverridesSchema.parse(options.agentSettings ?? {})));
+    // An entry with nothing left once unknown keys are dropped (only a `name`, from an earlier Connector) is no change.
+    const saved = Object.entries(AgentOverridesSchema.parse(options.agentSettings ?? {}));
+    this.#overrides = new Map(saved.filter(([, override]) => Object.keys(override).length > 0));
     for (const preset of options.presets ?? []) this.registerPreset(preset);
     if (options.includeDefaultPresets ?? true) {
       for (const preset of options.defaultPresets ?? defaultAcpPresets()) {
@@ -1223,10 +1225,10 @@ export class AcpRuntimeHost {
   }
 
   /**
-   * Turn an agent on or off, or change its display name, command, args or extra environment variables (see
-   * `AgentUpdate`). Saved through `onAgentSettingsChange` before anything changes, then applied to agent processes
-   * started from now on: running ones keep their settings until stopped, and prepared agents whose launch settings
-   * changed (or that were turned off) are closed so the next `prepare` starts them anew.
+   * Turn an agent on or off, or change its command, args or extra environment variables (see `AgentUpdate`); its name
+   * stays the preset's. Saved through `onAgentSettingsChange` before anything changes, then applied to agent processes
+   * started from now on: running ones keep their settings until stopped, and prepared agents whose command, args or
+   * environment changed (or that were turned off) are closed so the next `prepare` starts them anew.
    */
   updateAgent(agentId: string, update: AgentUpdate): Promise<AgentInfo> {
     const run = async (): Promise<AgentInfo> => {
@@ -1238,7 +1240,7 @@ export class AcpRuntimeHost {
       const after = applyAgentUpdate(preset ?? bareSettings(runtime), before, parsed.data);
       const checked = AgentOverrideSchema.safeParse(after);
       if (!checked.success) throw invalidAgentSettings(checked.error);
-      if (preset === undefined && hasLaunchOrName(after)) {
+      if (preset === undefined && hasLaunchSettings(after)) {
         throw new MeshCallError("failed_precondition", `${runtime.name} has no settings to change, only its switch`, {
           details: { reason: "agent_not_configurable", agent: agentId },
         });
@@ -1291,7 +1293,7 @@ export class AcpRuntimeHost {
       command: effective.command,
       args: effective.args,
       envKeys: Object.keys(effective.env ?? {}),
-      customized: preset !== undefined && (effective.name !== preset.name || !sameLaunch(effective, preset)),
+      customized: preset !== undefined && !sameLaunch(effective, preset),
       running: this.#processCount(runtime),
     };
   }
@@ -1535,12 +1537,12 @@ function bareSettings(runtime: AgentRuntime): AcpRuntimePreset {
   return { id: runtime.id, name: runtime.name, command: "", args: [] };
 }
 
-/** The settings an agent runs with: its preset with this device's changes applied. */
+/** The settings an agent runs with: its preset with this device's changes applied (never to its name). */
 function effectivePreset(preset: AcpRuntimePreset, override: AgentOverride | undefined): AcpRuntimePreset {
   const env = override?.env ?? preset.env;
   return {
     id: preset.id,
-    name: override?.name ?? preset.name,
+    name: preset.name,
     command: override?.command ?? preset.command,
     args: [...(override?.args ?? preset.args ?? [])],
     ...(env !== undefined && Object.keys(env).length > 0 ? { env: { ...env } } : {}),
@@ -1555,7 +1557,6 @@ function effectivePreset(preset: AcpRuntimePreset, override: AgentOverride | und
 function applyAgentUpdate(preset: AcpRuntimePreset, current: AgentOverride, update: AgentUpdate): AgentOverride {
   const next: AgentOverride = update.reset ? (current.enabled === false ? { enabled: false } : {}) : { ...current };
   if (update.enabled != null) next.enabled = update.enabled;
-  if (update.name != null) next.name = update.name;
   if (update.command != null) next.command = update.command;
   if (update.args != null) next.args = [...update.args];
   if (update.env != null) {
@@ -1569,15 +1570,14 @@ function applyAgentUpdate(preset: AcpRuntimePreset, current: AgentOverride, upda
   }
   const kept: AgentOverride = {};
   if (next.enabled === false) kept.enabled = false;
-  if (next.name !== undefined && next.name !== preset.name) kept.name = next.name;
   if (next.command !== undefined && next.command !== preset.command) kept.command = next.command;
   if (next.args !== undefined && !sameArgs(next.args, preset.args ?? [])) kept.args = next.args;
   if (next.env !== undefined && !sameEnv(next.env, preset.env ?? {})) kept.env = next.env;
   return kept;
 }
 
-function hasLaunchOrName(override: AgentOverride): boolean {
-  return override.name !== undefined || override.command !== undefined || override.args !== undefined || override.env !== undefined;
+function hasLaunchSettings(override: AgentOverride): boolean {
+  return override.command !== undefined || override.args !== undefined || override.env !== undefined;
 }
 
 /** Same command, args and environment: a process started with either is the same. */

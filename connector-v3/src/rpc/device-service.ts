@@ -159,7 +159,7 @@ export const DeviceStatusResponseSchema = z.object({
 /** `agents` entry. Built field by field: the values of an agent's environment variables have no field to travel in. */
 export const AgentEntrySchema = z.object({
   id: z.string(),
-  /** The device's display name for it if set, else the preset's. */
+  /** Its preset's name: the agent's product name. */
   name: z.string(),
   /** One of the Connector's default presets. */
   builtin: z.boolean(),
@@ -169,7 +169,7 @@ export const AgentEntrySchema = z.object({
   args: z.array(z.string()),
   /** Names of its extra environment variables; the values never leave the device. */
   env_keys: z.array(z.string()),
-  /** The name, command, args or environment differ from the preset. */
+  /** The command, args or environment differ from the preset. */
   customized: z.boolean(),
   /** Agent processes running now: sessions whose agent is up, prepared ones, ones still starting. */
   running: z.number().int().nonnegative(),
@@ -387,7 +387,7 @@ export class DeviceService {
 
   @method({
     description:
-      "Turn an agent on or off, or change its display name, command, args and extra environment variables (a string sets one, null removes it); reset goes back to the preset first. Applies to agent processes started afterwards. Only from a client over a tunnel.",
+      "Turn an agent on or off, or change its command, args and extra environment variables (a string sets one, null removes it); reset goes back to the preset first. Its name is always the preset's. Applies to agent processes started afterwards. Only from a client over a tunnel.",
     idempotent: true,
     request: UpdateAgentRequestSchema,
     response: AgentEntrySchema,

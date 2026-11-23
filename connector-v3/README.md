@@ -91,12 +91,12 @@ src/
 
 ### Agent 管理（`agents` / `update_agent` / `stop_agent`）
 
-设备页列出这台设备上的每个 Agent：开关、运行状态和停止按钮，以及设置对话框（显示名、命令、参数、环境变量、恢复默认）。三个方法都在 `aa.v3.Device` 上。
+设备页列出这台设备上的每个 Agent：开关、运行状态和停止按钮，以及设置对话框（命令、参数、环境变量、恢复默认）。三个方法都在 `aa.v3.Device` 上。
 
 | 调用 | 请求 | 响应 / 行为 |
 | --- | --- | --- |
 | `agents`（只读） | `{}` | `{ agents: AgentEntry[] }`：每个已注册的 Agent 一项（内置预设和配置的预设，关闭的也在内），顺序与 `status.runtimes` 相同 |
-| `update_agent`（幂等） | `{ id, enabled?, name?, command?, args?, env?, reset? }` | 修改后的 `AgentEntry` |
+| `update_agent`（幂等） | `{ id, enabled?, command?, args?, env?, reset? }` | 修改后的 `AgentEntry` |
 | `stop_agent`（不可撤销，幂等） | `{ id, force? }` | `{ stopped }`：停掉的 Agent 进程数 |
 
 `AgentEntry`：
@@ -104,23 +104,23 @@ src/
 | 字段 | 含义 |
 | --- | --- |
 | `id` | Agent id |
-| `name` | 显示名：本机设置过就是设置的名字，否则是预设的 |
+| `name` | 预设的名称，即 Agent 的产品名（`--presets` 配置的预设用它自己的 `name`） |
 | `builtin` | 是不是 Connector 自带的默认预设（`--presets` 配置的为 `false`） |
 | `enabled` | 开关 |
 | `command`、`args` | 现在启动会用的命令和参数（含本机的修改） |
 | `env_keys` | 为它额外设置的环境变量的名字；值不离开设备 |
-| `customized` | 显示名、命令、参数或环境变量与预设不同（开关不算） |
+| `customized` | 命令、参数或环境变量与预设不同（开关不算） |
 | `running` | 正在运行的 Agent 进程数：进程在跑的会话 + 预热的 + 正在启动的 |
 | `busy` | 正在执行一轮的会话数（包括 Agent 还在启动的） |
 
 `update_agent`：
 
-- 不给或为 `null` 的字段保持不变。`name` 1–128 个字符，`command` 不能为空（两者都去掉首尾空白），`args` 是字符串数组（最多 256 个，可以有空字符串）；命令、参数和环境变量的值都不能含 NUL。
+- 不给或为 `null` 的字段保持不变，其他字段和所有请求一样被忽略。`command` 不能为空（去掉首尾空白），`args` 是字符串数组（最多 256 个，可以有空字符串）；命令、参数和环境变量的值都不能含 NUL。
 - `env`：值为字符串时设置该变量，为 `null` 时删除。变量名须匹配 `^[A-Za-z_][A-Za-z0-9_]*$`，每个 Agent 最多 128 个。这些变量加在 Connector 自身的环境之上传给 Agent，删不掉 Connector 进程继承来的变量。
-- `reset: true`：先丢掉对显示名、命令、参数和环境变量的修改（回到预设），再应用同一次调用里的其他字段。`reset` 不改开关，要同时打开就一起传 `enabled: true`。
+- `reset: true`：先丢掉对命令、参数和环境变量的修改（回到预设），再应用同一次调用里的其他字段。`reset` 不改开关，要同时打开就一起传 `enabled: true`。
 - 改回与预设相同的值等于没改：`customized` 为 `false`，这一项也不再保存。
 - 修改先写入数据目录的 `agents.json`（0600，目录 0700），写入失败则整个修改不生效。环境变量的值只保存在这个文件里，不会出现在任何 RPC 的返回（包括 `get_settings`）、日志或推送里。
-- **只影响之后启动的 Agent 进程**：正在运行的保持原来的设置，直到被停止（`stop_agent`）或自己退出。命令、参数或环境变量变了（或被关闭）的 Agent，它的预热 Agent 会被关闭，下一次 `prepare` 按新设置启动；只改显示名不影响预热的 Agent。新的显示名马上用在 `status.runtimes`、启动失败的错误消息和推送标题（会话没有标题时）里。
+- **只影响之后启动的 Agent 进程**：正在运行的保持原来的设置，直到被停止（`stop_agent`）或自己退出。命令、参数或环境变量变了（或被关闭）的 Agent，它的预热 Agent 会被关闭，下一次 `prepare` 按新设置启动。
 
 关闭的 Agent（`enabled: false`）：
 
@@ -144,7 +144,7 @@ src/
 | `mcp_not_allowed` | `permission_denied` | MCP 不能修改或停止 Agent |
 | `turns_running` | `failed_precondition` | `stop_agent` 时有会话正在执行一轮且没带 `force`；`details.count` 是会话数 |
 | `agent_disabled` | `failed_precondition` | Agent 已关闭：`prepare`、`create` 和已有会话的新一轮都被拒绝；`details.agent` 是 Agent id |
-| `agent_not_configurable` | `failed_precondition` | 嵌入方用 `registerRuntime` 注册、没有预设的 Runtime 只能开关，不能改显示名、命令、参数和环境变量 |
+| `agent_not_configurable` | `failed_precondition` | 嵌入方用 `registerRuntime` 注册、没有预设的 Runtime 只能开关，不能改命令、参数和环境变量 |
 
 ## 运行
 
@@ -229,7 +229,7 @@ node dist/src/cli.js start --router 'wss://router.example.com#mt_xxx'   # URL#TO
 [{ "id": "my-agent", "name": "My Agent", "command": "my-agent", "args": ["--acp"] }]
 ```
 
-每个预设的显示名、命令、参数和环境变量都可以在这台设备上单独修改，也可以关闭，见上面的「Agent 管理」。
+每个预设的命令、参数和环境变量都可以在这台设备上单独修改，也可以关闭，见上面的「Agent 管理」。
 
 ### 数据目录
 
@@ -239,7 +239,7 @@ node dist/src/cli.js start --router 'wss://router.example.com#mt_xxx'   # URL#TO
 | `settings.json` | 模式、MCP 开关、配对确认、RPC 文件上限、设备名 |
 | `paired-clients.json` | 已配对客户端公钥（加密模式的信任名单） |
 | `sessions.json` | 会话快照（防抖写入） |
-| `agents.json` | 每个 Agent 的开关和本机设置：显示名、命令、参数、环境变量（0600；环境变量的值只保存在这里）。内容损坏时 Connector 不启动并指出出错的字段，不会悄悄忽略（否则关掉的 Agent 会重新打开） |
+| `agents.json` | 每个 Agent 的开关和本机设置：命令、参数、环境变量（0600；环境变量的值只保存在这里）。不认识的键会被忽略；已知的值损坏时 Connector 不启动并指出出错的字段，不会悄悄忽略（否则关掉的 Agent 会重新打开） |
 | `attachments/<对话 id>/` | 对话没有工作目录或目录不可写时的附件（通常附件在项目的 `.agents-anywhere/attachments/<对话 id>/`） |
 
 ## 在 Desktop 中嵌入
@@ -271,7 +271,7 @@ yarn test
 
 `tests/acp-prepare.test.ts` 不需要 Router：用一个记录每次进程启动、`session/new` 和配置修改的模拟 Agent 覆盖 `prepare` 与 `create({ prepared_id })`——配置项的形状、并发共用一次启动、接管同一个进程（没有第二次 `session/new`）并回放预热期间的通知、不匹配 / 过期 / 已退出时退回原流程、TTL 与续期、上限淘汰、启动错误，以及停止时关闭。
 
-`tests/agent-settings.test.ts` 也不需要 Router：在初始化好的 `ConnectorHost` 上直接调用服务，模拟 Agent 记下每次启动时拿到的命令（argv0）、参数和一个环境变量。覆盖 `agents` 的形状与计数、开关（`status.runtimes`、`prepare` / `create` / 已有会话的新一轮被拒、预热 Agent 被关闭）、设置写入 `agents.json`（0600）并在重启后用于下一次启动、正在运行的进程保持旧设置、环境变量的值不出现在任何返回 / 日志 / 推送里、恢复默认、字段校验、只改显示名时保留预热 Agent、`stop_agent` 的计数与会话恢复、有轮次在跑时的 `turns_running` 与 `force`（含 Agent 还在启动、Agent 不理会取消的情况），以及控制面、MCP 和加密设备上的调用限制。
+`tests/agent-settings.test.ts` 也不需要 Router：在初始化好的 `ConnectorHost` 上直接调用服务，模拟 Agent 记下每次启动时拿到的命令（argv0）、参数和一个环境变量。覆盖 `agents` 的形状与计数、开关（`status.runtimes`、`prepare` / `create` / 已有会话的新一轮被拒、预热 Agent 被关闭）、设置写入 `agents.json`（0600）并在重启后用于下一次启动、正在运行的进程保持旧设置、环境变量的值不出现在任何返回 / 日志 / 推送里、恢复默认、字段校验、设置变了时关闭预热 Agent（没变时保留）、带旧字段的 `agents.json` 照常加载、`stop_agent` 的计数与会话恢复、有轮次在跑时的 `turns_running` 与 `force`（含 Agent 还在启动、Agent 不理会取消的情况），以及控制面、MCP 和加密设备上的调用限制。
 
 ## 已知限制
 

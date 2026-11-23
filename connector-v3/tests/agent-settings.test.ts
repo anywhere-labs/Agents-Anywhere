@@ -183,13 +183,18 @@ afterEach(async () => {
   await Promise.all(hosts.splice(0).map((host) => host.stop().catch(() => undefined)));
 });
 
-async function setup(): Promise<Fixture> {
+/** `agentsJson`: an `agents.json` already in the data directory when the Connector starts. */
+async function setup(options: { agentsJson?: unknown } = {}): Promise<Fixture> {
   const dir = await mkdtemp(path.join(root, "case-"));
   const logFile = path.join(dir, "agent.log");
   await writeFile(logFile, "");
   const dirs = { a: path.join(dir, "a"), b: path.join(dir, "b") };
   for (const project of Object.values(dirs)) await mkdir(project);
   const dataDir = path.join(dir, "state");
+  if (options.agentsJson !== undefined) {
+    await mkdir(dataDir, { recursive: true, mode: 0o700 });
+    await writeFile(path.join(dataDir, "agents.json"), JSON.stringify(options.agentsJson), { mode: 0o600 });
+  }
   const presets = {
     fake: { id: "fake", name: "Fake", command: process.execPath, args: [agentScript, logFile] },
     slow: { id: "slow", name: "Slow", command: process.execPath, args: [agentScript, logFile, "--slow-init=4000"] },
@@ -319,13 +324,10 @@ describe("Device/update_agent", () => {
     const first = await sessions.create({ agent: "fake", cwd: f.dirs.a }, TUNNEL);
     const customArgs = [agentScript, path.join(path.dirname(f.dataDir), "agent.log"), "--custom"];
 
-    const entry = await device.update_agent(
-      { id: "fake", name: "  My Fake  ", command: nodeAlias, args: customArgs, env: { AA_TEST_TOKEN: SECRET, EMPTY_OK: "" } },
-      TUNNEL,
-    );
+    const entry = await device.update_agent({ id: "fake", command: ` ${nodeAlias} `, args: customArgs, env: { AA_TEST_TOKEN: SECRET, EMPTY_OK: "" } }, TUNNEL);
     assert.deepEqual(entry, {
       id: "fake",
-      name: "My Fake",
+      name: "Fake",
       builtin: false,
       enabled: true,
       command: nodeAlias,
@@ -335,7 +337,7 @@ describe("Device/update_agent", () => {
       running: 1,
       busy: 0,
     });
-    assert.deepEqual(device.status({}, TUNNEL).runtimes[0], { id: "fake", name: "My Fake" });
+    assert.deepEqual(device.status({}, TUNNEL).runtimes[0], { id: "fake", name: "Fake" }, "the name stays the preset's");
 
     // The running agent keeps the settings it started with.
     const sent: Reply = await sessions.send({ id: first.id, client_msg_id: "m1", content: "still old", wait: true }, TUNNEL);
@@ -353,7 +355,7 @@ describe("Device/update_agent", () => {
     // On disk, 0600 in a 0700 directory, values included (that is where they live).
     const file = path.join(f.dataDir, "agents.json");
     const saved = JSON.parse(await readFile(file, "utf8")) as { agents: Record<string, Record<string, unknown>> };
-    assert.deepEqual(saved.agents.fake, { name: "My Fake", command: nodeAlias, args: customArgs, env: { AA_TEST_TOKEN: SECRET, EMPTY_OK: "" } });
+    assert.deepEqual(saved.agents.fake, { command: nodeAlias, args: customArgs, env: { AA_TEST_TOKEN: SECRET, EMPTY_OK: "" } });
     if (!IS_WINDOWS) {
       assert.equal((await stat(file)).mode & 0o777, 0o600);
       assert.equal((await stat(f.dataDir)).mode & 0o777, 0o700);
@@ -398,7 +400,7 @@ describe("Device/update_agent", () => {
   it("reset goes back to the preset, then applies the other fields; the switch stays as it is", async () => {
     const f = await setup();
     const { deviceService: device } = f.host;
-    await device.update_agent({ id: "fake", enabled: false, name: "Renamed", command: nodeAlias, args: ["--x"], env: { AA_TEST_TOKEN: SECRET } }, TUNNEL);
+    await device.update_agent({ id: "fake", enabled: false, command: nodeAlias, args: ["--x"], env: { AA_TEST_TOKEN: SECRET } }, TUNNEL);
 
     const reset = await device.update_agent({ id: "fake", reset: true }, TUNNEL);
     assert.deepEqual(
@@ -408,11 +410,11 @@ describe("Device/update_agent", () => {
     const saved = () => readFile(path.join(f.dataDir, "agents.json"), "utf8").then((text) => (JSON.parse(text) as { agents: Record<string, unknown> }).agents);
     assert.deepEqual((await saved()).fake, { enabled: false });
 
-    const again = await device.update_agent({ id: "fake", reset: true, enabled: true, name: "Again" }, TUNNEL);
-    assert.deepEqual([again.name, again.enabled, again.customized], ["Again", true, true]);
+    const again = await device.update_agent({ id: "fake", reset: true, enabled: true, args: ["--again"] }, TUNNEL);
+    assert.deepEqual([again.command, again.args, again.enabled, again.customized], [process.execPath, ["--again"], true, true]);
 
     // Set back to the preset's own values: not customized, and nothing kept for it.
-    const plain = await device.update_agent({ id: "fake", name: "Fake", command: process.execPath, args: f.presets.fake.args, env: {} }, TUNNEL);
+    const plain = await device.update_agent({ id: "fake", command: process.execPath, args: f.presets.fake.args, env: {} }, TUNNEL);
     assert.equal(plain.customized, false);
     assert.deepEqual(await saved(), {});
   });
@@ -424,18 +426,15 @@ describe("Device/update_agent", () => {
     await refusedWith(() => device.stop_agent({ id: "nope" }, TUNNEL), "invalid_argument", "unknown_agent");
 
     // On the wire MeshCall checks the request against the schema.
-    const ok = UpdateAgentRequestSchema.safeParse({ id: "fake", name: "  Named  ", command: " /bin/agent ", args: ["", "a b"], env: { _A1: "v", B: null } });
+    const ok = UpdateAgentRequestSchema.safeParse({ id: "fake", command: " /bin/agent ", args: ["", "a b"], env: { _A1: "v", B: null } });
     assert.ok(ok.success);
-    assert.deepEqual([ok.data.name, ok.data.command], ["Named", "/bin/agent"]);
+    assert.equal(ok.data.command, "/bin/agent");
     const bad: Record<string, unknown>[] = [
       { env: { "1BAD": "v" } },
       { env: { "A-B": "v" } },
       { env: { "": "v" } },
       { env: { A: "nul\u0000byte" } },
       { env: { A: 1 } },
-      { name: "" },
-      { name: "   " },
-      { name: "x".repeat(129) },
       { command: "" },
       { command: "  " },
       { args: [1] },
@@ -448,20 +447,28 @@ describe("Device/update_agent", () => {
     // A direct caller (no schema in between) gets the same checks.
     await refusedWith(() => f.host.updateAgent("fake", { env: { "BAD-NAME": "v" } }), "invalid_argument", "invalid_agent_settings");
     await refusedWith(() => f.host.updateAgent("fake", { command: "" }), "invalid_argument", "invalid_agent_settings");
+
+    // A name is not a setting: dropped like any other field the request does not have, on the wire and directly.
+    const named = UpdateAgentRequestSchema.safeParse({ id: "fake", name: "Renamed", enabled: true });
+    assert.ok(named.success);
+    assert.ok(!("name" in named.data));
+    const ignored = await device.update_agent({ id: "fake", name: "Renamed" } as unknown as Parameters<typeof device.update_agent>[0], TUNNEL);
+    assert.deepEqual([ignored.name, ignored.customized], ["Fake", false]);
     const nul = await refusedWith(() => f.host.updateAgent("fake", { env: { TOKEN: `${SECRET}\u0000` } }), "invalid_argument", "invalid_agent_settings");
     assert.equal(nul.details?.field, "env.TOKEN");
     assert.ok(!nul.message.includes(SECRET), nul.message);
     assert.equal(f.agent("fake").customized, false, "nothing changed");
   });
 
-  it("closes prepared agents whose launch settings changed; a new name alone keeps them", async () => {
+  it("closes prepared agents whose command, args or environment changed, so the next prepare uses the new ones", async () => {
     const f = await setup();
     const { deviceService: device, sessionsService: sessions } = f.host;
     const first = await sessions.prepare({ agent: "fake", cwd: f.dirs.a }, TUNNEL);
     const pid = (await f.spawns())[0]?.pid;
     assert.ok(pid);
 
-    await device.update_agent({ id: "fake", name: "Renamed" }, TUNNEL);
+    // Nothing that a process runs with changed (it is on already, nothing to reset): the prepared agent stays.
+    await device.update_agent({ id: "fake", enabled: true, reset: true }, TUNNEL);
     assert.deepEqual(f.host.runtimes.listPrepared().map((p) => p.id), [first.prepared_id]);
     assert.equal((await sessions.prepare({ agent: "fake", cwd: f.dirs.a }, TUNNEL)).prepared_id, first.prepared_id);
     assert.ok(alive(pid));
@@ -592,7 +599,7 @@ describe("who may manage agents", () => {
     assert.equal(f.agent("fake").command, process.execPath, "nothing changed");
 
     // A client over a tunnel may.
-    assert.equal((await device.update_agent({ id: "fake", name: "From the web" }, TUNNEL)).name, "From the web");
+    assert.deepEqual((await device.update_agent({ id: "fake", env: { FROM_WEB: "1" } }, TUNNEL)).env_keys, ["FROM_WEB"]);
     assert.deepEqual(await device.stop_agent({ id: "fake" }, TUNNEL), { stopped: 0 });
   });
 
@@ -642,5 +649,28 @@ describe("agents.json", () => {
     });
     await writeFile(file, JSON.stringify({ agents: { fake: { env: { "NOT-A-NAME": SECRET } } } }));
     await assert.rejects(store.loadAgentSettings(), (error: unknown) => error instanceof StateStoreError && !error.message.includes(SECRET));
+  });
+
+  it("written when agents could be renamed still loads: the name is ignored and the Connector starts", async () => {
+    // A `name` per agent, as the first version of this API saved it; one entry holds nothing else (and a name that
+    // would not pass any check).
+    const legacy = { agents: { fake: { name: "My Fake", enabled: false, command: nodeAlias }, builtin: { name: "" } } };
+    const store = new StateStore({ dataDir: await mkdtemp(path.join(root, "state-")) });
+    await writeFile(store.pathFor("agents.json"), JSON.stringify(legacy));
+    assert.deepEqual(await store.loadAgentSettings(), { fake: { enabled: false, command: nodeAlias }, builtin: {} });
+
+    const f = await setup({ agentsJson: legacy });
+    const fake = f.agent("fake");
+    assert.deepEqual([fake.name, fake.enabled, fake.command, fake.customized], ["Fake", false, nodeAlias, true]);
+    const builtin = f.agent("builtin");
+    assert.deepEqual([builtin.name, builtin.customized], ["Built-in", false]);
+    assert.deepEqual(f.host.deviceService.status({}, TUNNEL).runtimes, [
+      { id: "slow", name: "Slow" },
+      { id: "builtin", name: "Built-in" },
+    ]);
+
+    // The next save leaves the old keys (and the entry with nothing else) behind.
+    await f.host.deviceService.update_agent({ id: "fake", enabled: true }, TUNNEL);
+    assert.deepEqual(JSON.parse(await readFile(path.join(f.dataDir, "agents.json"), "utf8")), { agents: { fake: { command: nodeAlias } } });
   });
 });

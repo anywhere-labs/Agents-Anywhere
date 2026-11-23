@@ -465,7 +465,7 @@ export class ConnectorHost {
     const wasEnabled = !this.runtimes.isDisabled(id);
     const agent = await this.runtimes.updateAgent(id, update);
     // Which fields, never their values.
-    const fields: string[] = (["enabled", "name", "command", "args", "env"] as const).filter((field) => update[field] != null);
+    const fields: string[] = (["enabled", "command", "args", "env"] as const).filter((field) => update[field] != null);
     if (update.reset) fields.unshift("reset");
     this.#logger.info(`agent ${id} updated (${fields.join(", ") || "nothing"})`);
     // The control plane offers only the agents in presence: tell it now rather than at the next report.

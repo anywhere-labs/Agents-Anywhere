@@ -133,20 +133,20 @@ const noNul = (value: string): boolean => !value.includes("\u0000");
 const NO_NUL = "must not contain NUL characters";
 
 export const AgentIdSchema = z.string().min(1).max(64);
-export const AgentNameSchema = z.string().trim().min(1).max(128);
 export const AgentCommandSchema = z.string().trim().min(1).max(4096).refine(noNul, NO_NUL);
 export const AgentArgsSchema = z.array(z.string().max(4096).refine(noNul, NO_NUL)).max(256);
 export const AgentEnvNameSchema = z.string().max(256).regex(AGENT_ENV_NAME_PATTERN, "must match ^[A-Za-z_][A-Za-z0-9_]*$");
 export const AgentEnvValueSchema = z.string().max(32_768).refine(noNul, NO_NUL);
 
 /**
- * What this device changed about one agent against its preset: turned off, or another display name, command, args
- * or set of extra environment variables. `env`, when present, is the agent's whole set of extra variables (it takes
- * the place of the preset's). Kept only on the device (`agents.json`, 0600): the values of `env` never leave it.
+ * What this device changed about one agent against its preset: turned off, or another command, args or set of extra
+ * environment variables. The name is always the preset's (the agent's product name). `env`, when present, is the
+ * agent's whole set of extra variables (it takes the place of the preset's). Kept only on the device (`agents.json`,
+ * 0600): the values of `env` never leave it. Keys it does not know (a `name` saved by an earlier Connector) are
+ * dropped when it is read.
  */
 export const AgentOverrideSchema = z.object({
   enabled: z.boolean().optional(),
-  name: AgentNameSchema.optional(),
   command: AgentCommandSchema.optional(),
   args: AgentArgsSchema.optional(),
   env: z
@@ -157,7 +157,6 @@ export const AgentOverrideSchema = z.object({
 
 export interface AgentOverride {
   enabled?: boolean;
-  name?: string;
   command?: string;
   args?: string[];
   env?: Record<string, string>;
@@ -169,12 +168,12 @@ export type AgentOverrides = Record<string, AgentOverride>;
 
 /**
  * A change to one agent (`update_agent` without its `id`). Absent or `null` fields stay as they are; in `env` a
- * string sets the variable and `null` removes it. `reset` first drops the changes to the name, command, args and
- * environment (back to the preset), then applies the other fields; it leaves `enabled` alone.
+ * string sets the variable and `null` removes it. `reset` first drops the changes to the command, args and
+ * environment (back to the preset), then applies the other fields; it leaves `enabled` alone. Other fields are
+ * ignored, as in every request.
  */
 export const AgentUpdateSchema = z.object({
   enabled: z.boolean().nullish(),
-  name: AgentNameSchema.nullish(),
   command: AgentCommandSchema.nullish(),
   args: AgentArgsSchema.nullish(),
   env: z
@@ -186,7 +185,6 @@ export const AgentUpdateSchema = z.object({
 
 export interface AgentUpdate {
   enabled?: boolean | null;
-  name?: string | null;
   command?: string | null;
   args?: string[] | null;
   env?: Record<string, string | null> | null;
