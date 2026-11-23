@@ -1,5 +1,3 @@
-import { newQuickJSWASMModuleFromVariant, type QuickJSWASMModule } from "quickjs-emscripten-core"
-import variant from "@jitl/quickjs-singlefile-browser-release-sync"
 import { describe, expect, it } from "vitest"
 
 import { runScriptInQuickJs } from "@/lib/assistant/js-sandbox/engine"
@@ -15,14 +13,12 @@ import {
   type SandboxVfsCall,
   type WorkerToHostMessage,
 } from "@/lib/assistant/js-sandbox/protocol"
+import { loadSandboxQuickJs } from "@/lib/assistant/js-sandbox/quickjs"
 import {
   createWorkspaceBridge,
   resolveSandboxPath,
   type SandboxWorkspace,
 } from "@/lib/assistant/js-sandbox/workspace-bridge"
-
-// A fresh WASM instance per run, exactly like the one-run-per-Worker production setup.
-const freshModule = (): Promise<QuickJSWASMModule> => newQuickJSWASMModuleFromVariant(variant)
 
 function memoryWorkspace(initial: Record<string, string> = {}) {
   const files = new Map(Object.entries(initial))
@@ -51,11 +47,13 @@ const noVfs: SandboxVfsCall = async () => {
   throw new Error("no vfs in this test")
 }
 
+// A fresh WASM instance per run, exactly like the one-run-per-Worker production setup.
 async function run(code: string, opts: { limits?: Partial<SandboxLimits>; vfs?: SandboxVfsCall; input?: unknown } = {}) {
-  return runScriptInQuickJs(await freshModule(), {
+  const limits = resolveSandboxLimits(opts.limits)
+  return runScriptInQuickJs(await loadSandboxQuickJs(limits.memoryLimitBytes), {
     code,
     input: opts.input,
-    limits: resolveSandboxLimits(opts.limits),
+    limits,
     vfs: opts.vfs ?? noVfs,
   })
 }
@@ -102,12 +100,27 @@ describe("QuickJS sandbox engine", () => {
   })
 
   it("enforces the memory limit", async () => {
+    // The chunks stay reachable, so the error is reported while the heap is still full.
     const res = await run(
-      `const chunks = []; while (true) chunks.push(new Array(100000).fill("xxxxxxxx"))`,
+      `globalThis.chunks = []; while (true) chunks.push(new Array(100000).fill("xxxxxxxx"))`,
       { limits: { memoryLimitBytes: 8 * 1024 * 1024 } }
     )
     expect(res.ok).toBe(false)
     expect(res.error?.kind).toBe("memory")
+  })
+
+  it("holds the heap to about the memory limit", async () => {
+    // QuickJS can't see allocation sizes under Emscripten: without the capped WASM memory this loop would only stop
+    // when the 32-bit address space runs out, after about 1.5 GB.
+    const res = await run(
+      `const chunks = []
+      try { while (true) chunks.push(new ArrayBuffer(1024 * 1024)) } catch (e) { return [chunks.length, String(e)] }`,
+      { limits: { memoryLimitBytes: 32 * 1024 * 1024 } }
+    )
+    expect(res.value).toEqual([expect.any(Number), "InternalError: out of memory"])
+    const megabytes = (res.value as [number, string])[0]
+    expect(megabytes).toBeGreaterThanOrEqual(28)
+    expect(megabytes).toBeLessThanOrEqual(36)
   })
 
   it("stops deep recursion with a stack limit instead of crashing", async () => {
@@ -248,7 +261,7 @@ describe("sandbox host", () => {
           return
         }
         void (async () => {
-          const result = await runScriptInQuickJs(await freshModule(), {
+          const result = await runScriptInQuickJs(await loadSandboxQuickJs(msg.limits.memoryLimitBytes), {
             code: msg.code,
             input: msg.input,
             limits: msg.limits,

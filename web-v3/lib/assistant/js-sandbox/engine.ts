@@ -107,6 +107,8 @@ export async function runScriptInQuickJs(
   })
 
   const runtime = module.newRuntime()
+  // Under Emscripten this only refuses a single allocation larger than the limit: QuickJS can't see allocation sizes
+  // there. The instance's capped WASM memory (loadSandboxQuickJs) is what holds the heap to the limit.
   runtime.setMemoryLimit(limits.memoryLimitBytes)
   runtime.setMaxStackSize(limits.maxStackBytes)
   runtime.setInterruptHandler(() => Date.now() > deadline)
