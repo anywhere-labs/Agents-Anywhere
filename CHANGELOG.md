@@ -15,6 +15,10 @@
 - 在工作设备安装并配置对应 CLI 后，可以在 Web、Desktop、Android 和 iOS 选择 Command Code、OpenCode、Google Antigravity、MiniMax Code、CodeBuddy Code 和 MiMo Code 新建会话，并按 Agent 支持的能力发送消息、处理审批、中断和恢复 AA 会话。（[#629](https://github.com/anywhere-labs/Agents-Anywhere/pull/629)）
 - Pi 会话现在支持 `/plan`，可以从首条任务开始规划、审阅和修改计划，并在同意后按原有工具权限继续执行。（[#631](https://github.com/anywhere-labs/Agents-Anywhere/pull/631)）
 
+### Codex 与 Claude
+
+- Connector 上报的 Codex 会话时间线位置改为从 1 开始，2.2.0 之前的 Android 客户端不再把第一条消息排到最后、把回复显示在它回答的问题上方；其他客户端不受影响。（[#838](https://github.com/anywhere-labs/Agents-Anywhere/issues/838)）
+
 ### DSH 同步
 
 - DSH 0.2.3 在回复末尾附带的操作卡片（例如推荐启用某个插件）不再以一段 JSON 代码块出现在 Agents Anywhere 的会话里；卡片本身仍要在 DSH 中查看和操作。（[#829](https://github.com/anywhere-labs/Agents-Anywhere/pull/829)）
