@@ -162,17 +162,26 @@ class JsonSyncStateStore(SyncStateStore):
             return True
 
     def _read(self) -> dict[str, Any]:
-        if not self.path.exists():
-            return {"version": STATE_FILE_VERSION, "states": {}}
         try:
             content = self.path.read_text(encoding="utf-8")
-            # A zero-byte file holds no checkpoints, so it starts empty instead
-            # of failing startup. Any non-empty damaged document still fails
-            # rather than being silently replaced.
-            if content == "":
-                return {"version": STATE_FILE_VERSION, "states": {}}
+        except FileNotFoundError:
+            return {"version": STATE_FILE_VERSION, "states": {}}
+        except OSError as exc:
+            # An unreadable file may still hold checkpoints: it is not absent,
+            # and it is never replaced. Keep the OS cause in the message so a
+            # permission denial is not reported as damaged JSON.
+            raise RuntimeError(
+                "cannot read connector sync state file: "
+                f"{self.path} ({type(exc).__name__}: {exc.strerror or exc})"
+            ) from exc
+        # A zero-byte file holds no checkpoints, so it starts empty instead
+        # of failing startup. Any non-empty damaged document still fails
+        # rather than being silently replaced.
+        if content == "":
+            return {"version": STATE_FILE_VERSION, "states": {}}
+        try:
             document = json.loads(content)
-        except (OSError, json.JSONDecodeError) as exc:
+        except json.JSONDecodeError as exc:
             raise RuntimeError(
                 f"invalid connector sync state file: {self.path}"
             ) from exc
