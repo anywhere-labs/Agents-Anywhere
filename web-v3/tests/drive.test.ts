@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 import { driveErrorMessage, driveFolderLabel } from "@/components/drive/drive-labels"
 import { ControlApiError } from "@/lib/api/control-http"
 import {
+  appendDrivePage,
   canWriteInto,
   driveExpiry,
   driveRowActions,
@@ -27,7 +28,7 @@ import {
   systemFolderOf,
 } from "@/lib/drive/paths"
 import { messages, translate, type MessageKey, type Vars } from "@/lib/i18n"
-import type { DriveFileView, DriveFolderView, DriveQuotaView } from "@/lib/types/v3"
+import type { DriveEntriesResponse, DriveFileView, DriveFolderView, DriveQuotaView } from "@/lib/types/v3"
 
 const MiB = 1024 * 1024
 const HOUR = 3_600_000
@@ -96,6 +97,10 @@ function quota(patch: Partial<DriveQuotaView> = {}): DriveQuotaView {
   }
 }
 
+function listing(patch: Partial<DriveEntriesResponse> = {}): DriveEntriesResponse {
+  return { path: "/", ref: "drive:/", folder: null, folders: [], files: [], total_files: 0, quota: quota(), ...patch }
+}
+
 const t = (key: MessageKey, vars?: Vars) => translate("en", key, vars)
 
 describe("drive paths", () => {
@@ -156,6 +161,22 @@ describe("drive paths", () => {
     expect(driveStemLength("backup.tar.gz")).toBe(6)
     expect(driveStemLength(".env")).toBe(4)
     expect(driveStemLength("README")).toBe(6)
+  })
+})
+
+describe("drive paging", () => {
+  it("adds the next page of files, keeping the newest folders, total and quota", () => {
+    const page1 = { ...listing(), files: [file("/a.txt", { id: "f1" }), file("/b.txt", { id: "f2" })], total_files: 4 }
+    const page2 = {
+      ...listing(),
+      folders: [folder("/new")],
+      files: [file("/b.txt", { id: "f2" }), file("/c.txt", { id: "f3" }), file("/d.txt", { id: "f4" })],
+      total_files: 4,
+    }
+    const merged = appendDrivePage(page1, page2)
+    expect(merged.files.map((f) => f.id)).toEqual(["f1", "f2", "f3", "f4"])
+    expect(merged.folders.map((f) => f.path)).toEqual(["/new"])
+    expect(merged.total_files).toBe(4)
   })
 })
 

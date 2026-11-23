@@ -38,6 +38,7 @@ export const zhCNDrive: Record<keyof typeof enDrive, string> = {
   "drive.encryptedFile": "加密文件",
   "drive.expired": "已过期",
   "drive.moreFiles": "共 {total} 个文件，这里显示了 {shown} 个。",
+  "drive.showMore": "显示更多",
 
   // 空状态、找不到和不可用
   "drive.emptyTitle": "这个文件夹是空的",
