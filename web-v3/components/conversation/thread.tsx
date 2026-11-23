@@ -265,8 +265,10 @@ function AgentTurn({ turn, live, last, control, ctx: base }: { turn: TurnData; l
   const idleWhileRunning = live && !assistant.some((m) => !m.done) && !control?.pending.length && lastSegment?.kind !== 'steps'
   const text = replyText(turn.items)
   const error = last && control?.state === 'error' ? (control.error ?? '这一轮失败了') : null
-  // How long the turn took, on its last step group once it is done (from its first item to its last).
-  const turnMs = !live && assistant.length > 1 ? new Date(lastItem!.created_at).getTime() - new Date(assistant[0].created_at).getTime() : undefined
+  // How long the turn took, on its last step group once it is done (from its first item to its last). Under a second
+  // it is left out: item times only show when each item began, so a quick turn would read "0 秒".
+  const span = !live && assistant.length > 1 ? new Date(lastItem!.created_at).getTime() - new Date(assistant[0].created_at).getTime() : 0
+  const turnMs = span >= 1000 ? span : undefined
   const lastGroup = segments.findLast((s) => s.kind === 'steps')
   // The last reply can be asked for again (its prompt resent); a prompt with attachments cannot be resent as text.
   const canRegenerate = Boolean(
@@ -282,7 +284,7 @@ function AgentTurn({ turn, live, last, control, ctx: base }: { turn: TurnData; l
               const groupLive = live && (s === lastSegment || s.steps.some((m) => !m.done && m.parts[0].type !== 'plan'))
               return (
                 <Trace key={s.key}>
-                  <StepGroup steps={s.steps} live={groupLive} turnMs={s === lastGroup && turnMs && turnMs > 0 ? turnMs : undefined} ctx={ctx} />
+                  <StepGroup steps={s.steps} live={groupLive} turnMs={s === lastGroup ? turnMs : undefined} ctx={ctx} />
                 </Trace>
               )
             }
