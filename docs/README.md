@@ -23,6 +23,7 @@
 | DSH 慢速历史上传 | [实现与验证](dsh-slow-upload.md)、[2.1.0 发布说明](releases/2.1.0.md) |
 | 长会话流式更新卡顿 | [客户端优化方案与验证](performance/streaming-timeline-83.md) |
 | Runtime 和本机协议 | [Runtime protocol](runtime-protocol/README.md)、[Timeline 工具身份](runtime-protocol/timeline-identity.md)、[本机协议](../contracts/local-machine/2.0/README.md)、[Codex IPC 接管](codex-ipc-takeover.md) |
+| 讨论 Claude Desktop 本地 Code 会话接入 | [设计提案：同一活动会话的原生连接](claude-desktop-attach-proposal.md)（未实现，不是当前功能指南） |
 
 当前开发版本为 2.2，开发主线为 `main`。API 路径使用 `/api/v2`，数据库修订号独立管理，版本号含义见[版本号规则](versioning.md)。已发布安装包的功能范围见发布说明。
 
