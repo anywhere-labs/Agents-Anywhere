@@ -6,25 +6,7 @@
 // once output arrives and a reasoning while it is written; whatever the reader opens or closes by hand wins.
 import { memo, useEffect, useMemo, useState } from 'react'
 import type * as React from 'react'
-import {
-  BotIcon,
-  BrainIcon,
-  CircleCheckIcon,
-  CircleDotIcon,
-  CircleIcon,
-  FileIcon,
-  FilePenLineIcon,
-  FilePlusIcon,
-  FileTextIcon,
-  GlobeIcon,
-  LoaderCircleIcon,
-  MoveIcon,
-  RouteIcon,
-  SearchIcon,
-  TerminalIcon,
-  Trash2Icon,
-  WrenchIcon,
-} from 'lucide-react'
+import { CircleCheckIcon, CircleDotIcon, CircleIcon, FileIcon } from 'lucide-react'
 import type { AssistantMessage, PendingRequest, PlanPart, SubagentPart, ThinkingPart, ToolPart } from '@/lib/types/v3'
 import { Badge } from '@/components/ui/badge'
 import { CodeBlock, CodeBlockActions, CodeBlockContent, CodeBlockCopyButton, CodeBlockHeader, CodeBlockLine, CodeBlockTitle } from '@/components/ui/code-block'
@@ -236,9 +218,9 @@ const FLUSH = 'ml-0 border-l-0 pl-0 pr-0'
 function ReasoningStep({ message, part }: { message: AssistantMessage; part: ThinkingPart }) {
   const running = !message.done
   const state = useOpen(running)
+  // Text only, as ChatGPT's "Thought for …": while it runs the line shimmers, which says enough.
   const line = (
     <TraceLine status={running ? 'running' : undefined}>
-      <TraceIcon>{running ? <LoaderCircleIcon className="animate-spin" /> : <BrainIcon />}</TraceIcon>
       <TraceTitle>{running ? '正在思考' : '想了一下'}</TraceTitle>
     </TraceLine>
   )
@@ -249,7 +231,7 @@ function ReasoningStep({ message, part }: { message: AssistantMessage; part: Thi
       <TraceCollapsibleTrigger>{line}</TraceCollapsibleTrigger>
       {/* AI Elements › Reasoning keeps Streamdown for the text. */}
       <TraceCollapsibleContent className={FLUSH}>
-        <Markdown streaming={running} className="text-muted-foreground">
+        <Markdown streaming={running} size="compact" className="text-muted-foreground">
           {part.text}
         </Markdown>
       </TraceCollapsibleContent>
@@ -258,16 +240,6 @@ function ReasoningStep({ message, part }: { message: AssistantMessage; part: Thi
 }
 
 // ── Tool ───────────────────────────────────────────────────────────────────────────────────────────────────────────
-
-const KIND_ICON: Record<string, React.ReactNode> = {
-  execute: <TerminalIcon />,
-  read: <FileTextIcon />,
-  search: <SearchIcon />,
-  delete: <Trash2Icon />,
-  move: <MoveIcon />,
-  fetch: <GlobeIcon />,
-  think: <BrainIcon />,
-}
 
 /** The line's words: what the call did (or is doing), in Effi Cloud's wording. */
 function toolWords(part: ToolPart, phase: 'running' | 'done' | 'failed' | 'waiting' | 'unfinished') {
@@ -308,7 +280,9 @@ function ToolStep({ message, part, request }: { message: AssistantMessage; part:
   const live = !message.done
   const waiting = !!request
   const unfinished = part.status === 'pending' || part.status === 'in_progress'
-  const phase = waiting ? 'waiting' : part.status === 'failed' ? 'failed' : unfinished ? (live ? 'running' : 'unfinished') : 'done'
+  // A call that a stop cut off reads "没有…完", whether the agent left it running or failed it (Pi does on cancel).
+  const cutOff = !!message.interrupted && part.status === 'failed'
+  const phase = waiting ? 'waiting' : cutOff ? 'unfinished' : part.status === 'failed' ? 'failed' : unfinished ? (live ? 'running' : 'unfinished') : 'done'
   const output = outputText(part.output)
   const diffs = part.diffs ?? []
   const counts = diffs.reduce(
@@ -326,7 +300,6 @@ function ToolStep({ message, part, request }: { message: AssistantMessage; part:
 
   const line = (
     <TraceLine status={status}>
-      <TraceIcon>{KIND_ICON[part.kind] ?? (part.kind === 'edit' ? diffs.every((d) => !d.old_text) && diffs.length ? <FilePlusIcon /> : <FilePenLineIcon /> : <WrenchIcon />)}</TraceIcon>
       <TraceTitle>
         {words.verb && <>{words.verb} </>}
         <span className={cn(words.mono && 'font-mono text-[0.92em]')}>{words.subject}</span>
@@ -367,7 +340,9 @@ function ToolDetail({ part, output }: { part: ToolPart; output: string }) {
   const env = useThreadEnv()
   const diffs = part.diffs ?? []
   const command = part.kind === 'execute' ? commandOf(part) : undefined
-  const shown = new Set(diffs.map((d) => d.path))
+  // A read's excerpt and a diff name their file in their header: the location line would say it again.
+  const excerpt = !command && !!output && !diffs.length && part.kind === 'read'
+  const shown = new Set([...diffs.map((d) => d.path), ...(excerpt ? [fileOf(part) ?? ''] : [])])
   const locations = (part.locations ?? []).filter((l) => !shown.has(l.path))
   const tail = useLines(output, 'tail')
   return (
@@ -414,7 +389,7 @@ function ToolDetail({ part, output }: { part: ToolPart; output: string }) {
       {diffs.map((d, i) => (
         <DiffBlock key={i} path={d.path} oldText={d.old_text ?? ''} newText={d.new_text} />
       ))}
-      {!command && output && !diffs.length && (part.kind === 'read' ? <FileExcerpt part={part} text={output} /> : <OutputBlock text={output} />)}
+      {!command && output && !diffs.length && (excerpt ? <FileExcerpt part={part} text={output} /> : <OutputBlock text={output} />)}
     </>
   )
 }
@@ -533,9 +508,6 @@ export function PlanStep({ message, part }: { message: AssistantMessage; part: P
     <TraceCollapsible {...state}>
       <TraceCollapsibleTrigger>
         <TraceLine status={running ? 'running' : undefined}>
-          <TraceIcon>
-            <RouteIcon />
-          </TraceIcon>
           <TraceTitle>计划</TraceTitle>
           <TraceDescription>
             {done} / {part.entries.length} 已完成
@@ -570,7 +542,6 @@ function SubagentStep({ part, ctx }: { part: SubagentPart; ctx: StepContext }) {
     <TraceCollapsible {...state}>
       <TraceCollapsibleTrigger>
         <TraceLine status={running ? 'running' : failed ? 'error' : undefined}>
-          <TraceIcon>{running ? <LoaderCircleIcon className="animate-spin" /> : <BotIcon />}</TraceIcon>
           <TraceTitle>
             {running ? '正在运行' : failed ? '没能完成' : part.status === 'cancelled' ? '取消了' : '运行了'} {who}：{what}
           </TraceTitle>
@@ -586,11 +557,11 @@ function SubagentStep({ part, ctx }: { part: SubagentPart; ctx: StepContext }) {
           </Trace>
         )}
         {words.map((m) => (
-          <Markdown key={m.id} className="text-muted-foreground">
+          <Markdown key={m.id} size="compact" className="text-muted-foreground">
             {m.parts[0].type === 'text' ? m.parts[0].text : ''}
           </Markdown>
         ))}
-        {part.result && <Markdown className="text-muted-foreground">{part.result}</Markdown>}
+        {part.result && <Markdown size="compact" className="text-muted-foreground">{part.result}</Markdown>}
         {part.error && <p className="text-destructive">{part.error}</p>}
       </TraceCollapsibleContent>
     </TraceCollapsible>

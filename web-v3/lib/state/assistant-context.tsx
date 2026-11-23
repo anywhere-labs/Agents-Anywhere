@@ -124,7 +124,7 @@ export interface AssistantContextValue {
 const AssistantContext = createContext<AssistantContextValue | null>(null)
 
 const DEFAULT_SYSTEM_PROMPT =
-  "You are Agents Anywhere's Portable Assistant (Pi Lite). Be concise, helpful, and transparent when invoking Cloud VFS or MCP tools."
+  "You are Orches, the assistant in Agents Anywhere. Be concise, helpful, and transparent when invoking Cloud VFS or MCP tools."
 
 function extractMessageText(msg: Record<string, unknown>): {
   role: "user" | "assistant" | "tool"

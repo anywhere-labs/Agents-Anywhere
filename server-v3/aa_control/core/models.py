@@ -378,6 +378,11 @@ class DeviceRouterTokenResponse(BaseModel):
 DrivePurpose = Literal["transfer", "assistant_vfs"]
 DriveEncryptionMode = Literal["none", "account_dek", "ephemeral_key"]
 DriveFileStatus = Literal["pending", "ready"]
+# What an upload or a move does when its target path is taken: pick a free "name (1)" (rename), stop with
+# 409 drive_path_conflict (fail), or supersede the file already there (replace; never a folder).
+DriveConflictPolicy = Literal["rename", "fail", "replace"]
+DriveSystemFolder = Literal["transfers", "orches"]
+DriveEntryKind = Literal["file", "folder"]
 
 
 class PresignedHttpTarget(BaseModel):
@@ -397,6 +402,14 @@ class DriveFileView(BaseModel):
     filename: str | None = None
     mime_type: str | None = None
     vfs_path: str | None = None
+    # Normalized absolute drive path (for a pending upload: where it will land; the final path, possibly with a
+    # " (n)" suffix, comes back from /complete), its last name, parent folder and `drive:` text reference.
+    path: str
+    name: str
+    parent_path: str
+    ref: str
+    # Inside /Orches: written only by Orches' own sync; the drive API can list, download and delete it.
+    managed: bool = False
     encryption_mode: DriveEncryptionMode = "none"
     encryption_nonce: str | None = None
     encryption_key_version: int | None = None
@@ -406,6 +419,19 @@ class DriveFileView(BaseModel):
     created_at: str
     completed_at: str | None = None
     expires_at: str
+
+
+class DriveFolderView(BaseModel):
+    id: str
+    path: str
+    name: str
+    parent_path: str
+    ref: str
+    # "transfers" for /Transfers, "orches" for /Orches (clients show localized names); None for other folders.
+    system: DriveSystemFolder | None = None
+    managed: bool = False
+    created_at: str
+    updated_at: str
 
 
 class DriveQuotaView(BaseModel):
@@ -431,6 +457,13 @@ class CreateDriveUploadRequest(BaseModel):
     filename: str | None = Field(default=None, max_length=255)
     mime_type: str | None = Field(default=None, max_length=128)
     vfs_path: str | None = Field(default=None, max_length=512)
+    # Where a transfer upload lands. `path` names the file itself (plaintext uploads only: an encrypted upload
+    # never puts a name on the server); `folder` only picks the folder and keeps the file name (or the file id).
+    # Neither: /Transfers/<filename>. Missing parent folders are created. assistant_vfs uploads always land at
+    # /Orches/<vfs_path> and accept neither.
+    path: str | None = Field(default=None, min_length=1, max_length=2048)
+    folder: str | None = Field(default=None, min_length=1, max_length=2048)
+    on_conflict: DriveConflictPolicy | None = None
     ttl_seconds: int | None = Field(default=None, ge=60)
     encryption_mode: DriveEncryptionMode = "none"
     encryption_nonce: str | None = Field(default=None, max_length=64)
@@ -447,6 +480,8 @@ class CompleteDriveUploadRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     etag: str | None = Field(default=None, max_length=256)
+    # Retry a completion that hit 409 drive_path_conflict with another policy (e.g. "rename").
+    on_conflict: DriveConflictPolicy | None = None
 
 
 class DriveDownloadUrlResponse(BaseModel):
@@ -457,6 +492,54 @@ class DriveDownloadUrlResponse(BaseModel):
 class ListDriveFilesResponse(BaseModel):
     files: list[DriveFileView]
     quota: DriveQuotaView
+
+
+class DriveEntriesResponse(BaseModel):
+    """Direct children of one folder: subfolders, then live files (ready and not expired)."""
+
+    path: str
+    ref: str
+    folder: DriveFolderView | None = None  # None for the root
+    folders: list[DriveFolderView]
+    files: list[DriveFileView]
+    total_files: int
+    quota: DriveQuotaView
+
+
+class CreateDriveFolderRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(min_length=1, max_length=2048)
+    # Return the folder that is already there (HTTP 200) instead of 409 drive_path_conflict.
+    exist_ok: bool = False
+
+
+class MoveDriveEntryRequest(BaseModel):
+    """Rename and/or move a file or folder: `path` is its new full path."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(min_length=1, max_length=2048)
+
+
+class DriveFolderMoveResponse(BaseModel):
+    folder: DriveFolderView
+    moved_folders: int
+    moved_files: int
+
+
+class DriveFolderDeleteResponse(BaseModel):
+    ok: bool
+    deleted_folders: int
+    deleted_files: int
+
+
+class DriveResolveResponse(BaseModel):
+    kind: DriveEntryKind
+    path: str
+    ref: str
+    folder: DriveFolderView | None = None  # set for folders other than the root
+    file: DriveFileView | None = None
 
 
 class DrivePolicyOverrideView(BaseModel):

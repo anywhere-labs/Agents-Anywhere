@@ -1,0 +1,6259 @@
+{
+ "name": "conversation-pi",
+ "description": "Real aa.v3.Sessions/watch events of a pi session (two turns: reading files, then an edit), recorded 2026-11-22 from the local v3 stack.",
+ "steps": [
+  {
+   "at": 0,
+   "message": {
+    "v": 2,
+    "type": "view.conversation",
+    "device_id": "dev_615df603d8b28f5fbd67ebaf",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "agent": "pi",
+    "readonly": false,
+    "encrypted": false
+   }
+  },
+  {
+   "at": 50,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "snapshot",
+     "session": {
+      "id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+      "title": "embed fixture pi",
+      "agent": "pi",
+      "device": {
+       "id": "dev_615df603d8b28f5fbd67ebaf",
+       "name": "Dev Laptop"
+      },
+      "cwd": "/Users/dev/demo",
+      "created_at": "2026-11-22T16:32:46.577Z",
+      "updated_at": "2026-11-22T16:32:48.345Z",
+      "message_count": 1,
+      "config": [
+       {
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "current": "cc-switch-deep-seek/deepseek-v4-pro",
+        "options": [
+         {
+          "value": "cc-switch-deep-seek/deepseek-v4-pro",
+          "name": "DeepSeek V4 Pro",
+          "description": "cc-switch-deep-seek · deepseek-v4-pro",
+          "group": "cc-switch-deep-seek"
+         },
+         {
+          "value": "cc-switch-deep-seek/deepseek-flash",
+          "name": "DeepSeek V4.1 Flash",
+          "description": "cc-switch-deep-seek · deepseek-flash",
+          "group": "cc-switch-deep-seek"
+         },
+         {
+          "value": "tokensanywhere-1793609799988/gpt-6.1-sol",
+          "name": "gpt-6.1-sol",
+          "description": "tokensanywhere-1793609799988 · gpt-6.1-sol",
+          "group": "tokensanywhere-1793609799988"
+         }
+        ]
+       },
+       {
+        "id": "thinking",
+        "name": "Thinking",
+        "description": "Reasoning effort for this session",
+        "category": "thought_level",
+        "current": "high",
+        "options": [
+         {
+          "value": "off",
+          "name": "off"
+         },
+         {
+          "value": "high",
+          "name": "high"
+         },
+         {
+          "value": "max",
+          "name": "max"
+         }
+        ]
+       },
+       {
+        "id": "auto_compaction",
+        "name": "Auto-compaction",
+        "description": "Summarize context automatically when it nears the model's window",
+        "category": "model_config",
+        "current": "on",
+        "options": [
+         {
+          "value": "on",
+          "name": "On"
+         },
+         {
+          "value": "off",
+          "name": "Off"
+         }
+        ]
+       }
+      ]
+     },
+     "messages": [
+      {
+       "id": "eccc0edd-a836-4033-9222-43c47fa42889",
+       "created_at": "2026-11-22T16:32:48.345Z",
+       "seq": 0,
+       "done": false,
+       "role": "assistant",
+       "turn_id": "eccc0edd-a836-4033-9222-43c47fa42889",
+       "autonomous": true,
+       "parts": [
+        {
+         "type": "text",
+         "text": "**pi v1.6.0** via openma-pi-acp v0.1.8\n\n_(skills and extensions of the recording machine omitted)_"
+        }
+       ]
+      }
+     ],
+     "has_more": false,
+     "control": {
+      "state": "idle",
+      "steer": "interrupt",
+      "pending": [],
+      "queued": []
+     }
+    }
+   }
+  },
+  {
+   "at": 51,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "created_at": "2026-11-22T16:32:48.347Z",
+      "seq": 1,
+      "done": true,
+      "role": "user",
+      "client_msg_id": "rec_1795365168345",
+      "author": "user:usr_dev/client:embed-fixture-recorder",
+      "rewindable": true,
+      "parts": [
+       {
+        "type": "text",
+        "text": "Look at the files in the current directory (use your tools to list them and read README.md and math.ts), then explain in two short bullet points what the project does and show the add function in a fenced ts code block."
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 51,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "session",
+     "session": {
+      "id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+      "title": "embed fixture pi",
+      "agent": "pi",
+      "device": {
+       "id": "dev_615df603d8b28f5fbd67ebaf",
+       "name": "Dev Laptop"
+      },
+      "cwd": "/Users/dev/demo",
+      "created_at": "2026-11-22T16:32:46.577Z",
+      "updated_at": "2026-11-22T16:32:48.348Z",
+      "message_count": 2,
+      "config": [
+       {
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "current": "cc-switch-deep-seek/deepseek-v4-pro",
+        "options": [
+         {
+          "value": "cc-switch-deep-seek/deepseek-v4-pro",
+          "name": "DeepSeek V4 Pro",
+          "description": "cc-switch-deep-seek · deepseek-v4-pro",
+          "group": "cc-switch-deep-seek"
+         },
+         {
+          "value": "cc-switch-deep-seek/deepseek-flash",
+          "name": "DeepSeek V4.1 Flash",
+          "description": "cc-switch-deep-seek · deepseek-flash",
+          "group": "cc-switch-deep-seek"
+         },
+         {
+          "value": "tokensanywhere-1793609799988/gpt-6.1-sol",
+          "name": "gpt-6.1-sol",
+          "description": "tokensanywhere-1793609799988 · gpt-6.1-sol",
+          "group": "tokensanywhere-1793609799988"
+         }
+        ]
+       },
+       {
+        "id": "thinking",
+        "name": "Thinking",
+        "description": "Reasoning effort for this session",
+        "category": "thought_level",
+        "current": "high",
+        "options": [
+         {
+          "value": "off",
+          "name": "off"
+         },
+         {
+          "value": "high",
+          "name": "high"
+         },
+         {
+          "value": "max",
+          "name": "max"
+         }
+        ]
+       },
+       {
+        "id": "auto_compaction",
+        "name": "Auto-compaction",
+        "description": "Summarize context automatically when it nears the model's window",
+        "category": "model_config",
+        "current": "on",
+        "options": [
+         {
+          "value": "on",
+          "name": "On"
+         },
+         {
+          "value": "off",
+          "name": "Off"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 51,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "control",
+     "control": {
+      "state": "running",
+      "steer": "interrupt",
+      "pending": [],
+      "queued": []
+     }
+    }
+   }
+  },
+  {
+   "at": 51,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "eccc0edd-a836-4033-9222-43c47fa42889",
+      "created_at": "2026-11-22T16:32:48.345Z",
+      "seq": 0,
+      "done": true,
+      "role": "assistant",
+      "turn_id": "eccc0edd-a836-4033-9222-43c47fa42889",
+      "autonomous": true,
+      "parts": [
+       {
+        "type": "text",
+        "text": "**pi v1.6.0** via openma-pi-acp v0.1.8\n\n_(skills and extensions of the recording machine omitted)_"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 1057,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "edf41201-6faa-4e40-9122-12e11ffa11b3",
+      "created_at": "2026-11-22T16:32:49.355Z",
+      "seq": 2,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "thinking",
+        "text": "Let"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 1058,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "session",
+     "session": {
+      "id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+      "title": "embed fixture pi",
+      "agent": "pi",
+      "device": {
+       "id": "dev_615df603d8b28f5fbd67ebaf",
+       "name": "Dev Laptop"
+      },
+      "cwd": "/Users/dev/demo",
+      "created_at": "2026-11-22T16:32:46.577Z",
+      "updated_at": "2026-11-22T16:32:49.355Z",
+      "message_count": 3,
+      "config": [
+       {
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "current": "cc-switch-deep-seek/deepseek-v4-pro",
+        "options": [
+         {
+          "value": "cc-switch-deep-seek/deepseek-v4-pro",
+          "name": "DeepSeek V4 Pro",
+          "description": "cc-switch-deep-seek · deepseek-v4-pro",
+          "group": "cc-switch-deep-seek"
+         },
+         {
+          "value": "cc-switch-deep-seek/deepseek-flash",
+          "name": "DeepSeek V4.1 Flash",
+          "description": "cc-switch-deep-seek · deepseek-flash",
+          "group": "cc-switch-deep-seek"
+         },
+         {
+          "value": "tokensanywhere-1793609799988/gpt-6.1-sol",
+          "name": "gpt-6.1-sol",
+          "description": "tokensanywhere-1793609799988 · gpt-6.1-sol",
+          "group": "tokensanywhere-1793609799988"
+         }
+        ]
+       },
+       {
+        "id": "thinking",
+        "name": "Thinking",
+        "description": "Reasoning effort for this session",
+        "category": "thought_level",
+        "current": "high",
+        "options": [
+         {
+          "value": "off",
+          "name": "off"
+         },
+         {
+          "value": "high",
+          "name": "high"
+         },
+         {
+          "value": "max",
+          "name": "max"
+         }
+        ]
+       },
+       {
+        "id": "auto_compaction",
+        "name": "Auto-compaction",
+        "description": "Summarize context automatically when it nears the model's window",
+        "category": "model_config",
+        "current": "on",
+        "options": [
+         {
+          "value": "on",
+          "name": "On"
+         },
+         {
+          "value": "off",
+          "name": "Off"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 1151,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "edf41201-6faa-4e40-9122-12e11ffa11b3",
+      "created_at": "2026-11-22T16:32:49.355Z",
+      "seq": 2,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "thinking",
+        "text": "Let me"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 1181,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "edf41201-6faa-4e40-9122-12e11ffa11b3",
+      "created_at": "2026-11-22T16:32:49.355Z",
+      "seq": 2,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "thinking",
+        "text": "Let me look"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 1181,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "edf41201-6faa-4e40-9122-12e11ffa11b3",
+      "created_at": "2026-11-22T16:32:49.355Z",
+      "seq": 2,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "thinking",
+        "text": "Let me look at"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 1181,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "edf41201-6faa-4e40-9122-12e11ffa11b3",
+      "created_at": "2026-11-22T16:32:49.355Z",
+      "seq": 2,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "thinking",
+        "text": "Let me look at the current directory"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 1212,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "edf41201-6faa-4e40-9122-12e11ffa11b3",
+      "created_at": "2026-11-22T16:32:49.355Z",
+      "seq": 2,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "thinking",
+        "text": "Let me look at the current directory files"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 1212,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "edf41201-6faa-4e40-9122-12e11ffa11b3",
+      "created_at": "2026-11-22T16:32:49.355Z",
+      "seq": 2,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "thinking",
+        "text": "Let me look at the current directory files."
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 1330,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "edf41201-6faa-4e40-9122-12e11ffa11b3",
+      "created_at": "2026-11-22T16:32:49.355Z",
+      "seq": 2,
+      "done": true,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "thinking",
+        "text": "Let me look at the current directory files."
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 1330,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "78e6103e-e1d5-4371-9998-994bf2397623",
+      "created_at": "2026-11-22T16:32:49.627Z",
+      "seq": 3,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ICx3gvXLz4IUYGkxeMw76339",
+        "title": "bash",
+        "kind": "execute",
+        "status": "pending",
+        "input": {}
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 1330,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "session",
+     "session": {
+      "id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+      "title": "embed fixture pi",
+      "agent": "pi",
+      "device": {
+       "id": "dev_615df603d8b28f5fbd67ebaf",
+       "name": "Dev Laptop"
+      },
+      "cwd": "/Users/dev/demo",
+      "created_at": "2026-11-22T16:32:46.577Z",
+      "updated_at": "2026-11-22T16:32:49.627Z",
+      "message_count": 4,
+      "config": [
+       {
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "current": "cc-switch-deep-seek/deepseek-v4-pro",
+        "options": [
+         {
+          "value": "cc-switch-deep-seek/deepseek-v4-pro",
+          "name": "DeepSeek V4 Pro",
+          "description": "cc-switch-deep-seek · deepseek-v4-pro",
+          "group": "cc-switch-deep-seek"
+         },
+         {
+          "value": "cc-switch-deep-seek/deepseek-flash",
+          "name": "DeepSeek V4.1 Flash",
+          "description": "cc-switch-deep-seek · deepseek-flash",
+          "group": "cc-switch-deep-seek"
+         },
+         {
+          "value": "tokensanywhere-1793609799988/gpt-6.1-sol",
+          "name": "gpt-6.1-sol",
+          "description": "tokensanywhere-1793609799988 · gpt-6.1-sol",
+          "group": "tokensanywhere-1793609799988"
+         }
+        ]
+       },
+       {
+        "id": "thinking",
+        "name": "Thinking",
+        "description": "Reasoning effort for this session",
+        "category": "thought_level",
+        "current": "high",
+        "options": [
+         {
+          "value": "off",
+          "name": "off"
+         },
+         {
+          "value": "high",
+          "name": "high"
+         },
+         {
+          "value": "max",
+          "name": "max"
+         }
+        ]
+       },
+       {
+        "id": "auto_compaction",
+        "name": "Auto-compaction",
+        "description": "Summarize context automatically when it nears the model's window",
+        "category": "model_config",
+        "current": "on",
+        "options": [
+         {
+          "value": "on",
+          "name": "On"
+         },
+         {
+          "value": "off",
+          "name": "Off"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 1330,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "78e6103e-e1d5-4371-9998-994bf2397623",
+      "created_at": "2026-11-22T16:32:49.627Z",
+      "seq": 3,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ICx3gvXLz4IUYGkxeMw76339",
+        "title": "bash",
+        "kind": "execute",
+        "status": "pending",
+        "input": {}
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 1340,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "78e6103e-e1d5-4371-9998-994bf2397623",
+      "created_at": "2026-11-22T16:32:49.627Z",
+      "seq": 3,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ICx3gvXLz4IUYGkxeMw76339",
+        "title": "bash",
+        "kind": "execute",
+        "status": "pending",
+        "input": {}
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 1340,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "78e6103e-e1d5-4371-9998-994bf2397623",
+      "created_at": "2026-11-22T16:32:49.627Z",
+      "seq": 3,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ICx3gvXLz4IUYGkxeMw76339",
+        "title": "bash",
+        "kind": "execute",
+        "status": "pending",
+        "input": {}
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 1340,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "78e6103e-e1d5-4371-9998-994bf2397623",
+      "created_at": "2026-11-22T16:32:49.627Z",
+      "seq": 3,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ICx3gvXLz4IUYGkxeMw76339",
+        "title": "bash",
+        "kind": "execute",
+        "status": "pending",
+        "input": {}
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 1420,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "78e6103e-e1d5-4371-9998-994bf2397623",
+      "created_at": "2026-11-22T16:32:49.627Z",
+      "seq": 3,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ICx3gvXLz4IUYGkxeMw76339",
+        "title": "ls",
+        "kind": "execute",
+        "status": "pending",
+        "input": {
+         "command": "ls"
+        }
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 1420,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "78e6103e-e1d5-4371-9998-994bf2397623",
+      "created_at": "2026-11-22T16:32:49.627Z",
+      "seq": 3,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ICx3gvXLz4IUYGkxeMw76339",
+        "title": "ls -",
+        "kind": "execute",
+        "status": "pending",
+        "input": {
+         "command": "ls -"
+        }
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 1420,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "78e6103e-e1d5-4371-9998-994bf2397623",
+      "created_at": "2026-11-22T16:32:49.627Z",
+      "seq": 3,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ICx3gvXLz4IUYGkxeMw76339",
+        "title": "ls -la",
+        "kind": "execute",
+        "status": "pending",
+        "input": {
+         "command": "ls -la"
+        }
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 1420,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "78e6103e-e1d5-4371-9998-994bf2397623",
+      "created_at": "2026-11-22T16:32:49.627Z",
+      "seq": 3,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ICx3gvXLz4IUYGkxeMw76339",
+        "title": "ls -la",
+        "kind": "execute",
+        "status": "pending",
+        "input": {
+         "command": "ls -la"
+        }
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 1480,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "78e6103e-e1d5-4371-9998-994bf2397623",
+      "created_at": "2026-11-22T16:32:49.627Z",
+      "seq": 3,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ICx3gvXLz4IUYGkxeMw76339",
+        "title": "ls -la",
+        "kind": "execute",
+        "status": "pending",
+        "input": {
+         "command": "ls -la"
+        }
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 1483,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "78e6103e-e1d5-4371-9998-994bf2397623",
+      "created_at": "2026-11-22T16:32:49.627Z",
+      "seq": 3,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ICx3gvXLz4IUYGkxeMw76339",
+        "title": "ls -la",
+        "kind": "execute",
+        "status": "in_progress",
+        "input": {
+         "command": "ls -la"
+        }
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 1489,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "78e6103e-e1d5-4371-9998-994bf2397623",
+      "created_at": "2026-11-22T16:32:49.627Z",
+      "seq": 3,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ICx3gvXLz4IUYGkxeMw76339",
+        "title": "ls -la",
+        "kind": "execute",
+        "status": "in_progress",
+        "input": {
+         "command": "ls -la"
+        },
+        "output": "```sh\ntotal 16\ndrwx------@   4 dev  staff    128 Nov 23 00:32 .\ndrwx------@ 683 dev  staff  21856 Nov 23 00:32 ..\n-rw-r--r--@   1 dev  staff     86 Nov 23 00:32 README.md\n-rw-r--r--@   1 dev  staff     61 Nov 23 00:32 math.ts\n```\n"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 1490,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "78e6103e-e1d5-4371-9998-994bf2397623",
+      "created_at": "2026-11-22T16:32:49.627Z",
+      "seq": 3,
+      "done": true,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ICx3gvXLz4IUYGkxeMw76339",
+        "title": "ls -la",
+        "kind": "execute",
+        "status": "completed",
+        "input": {
+         "command": "ls -la"
+        },
+        "output": {
+         "content": [
+          {
+           "type": "text",
+           "text": "total 16\ndrwx------@   4 dev  staff    128 Nov 23 00:32 .\ndrwx------@ 683 dev  staff  21856 Nov 23 00:32 ..\n-rw-r--r--@   1 dev  staff     86 Nov 23 00:32 README.md\n-rw-r--r--@   1 dev  staff     61 Nov 23 00:32 math.ts\n"
+          }
+         ],
+         "structuredContent": {
+          "output": "total 16\ndrwx------@   4 dev  staff    128 Nov 23 00:32 .\ndrwx------@ 683 dev  staff  21856 Nov 23 00:32 ..\n-rw-r--r--@   1 dev  staff     86 Nov 23 00:32 README.md\n-rw-r--r--@   1 dev  staff     61 Nov 23 00:32 math.ts\n",
+          "truncated": false,
+          "exit_code": 0,
+          "wall_time_seconds": 0
+         }
+        }
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2393,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "ea9a8535-fbc1-4f80-b5a3-9073a1f16e11",
+      "created_at": "2026-11-22T16:32:50.691Z",
+      "seq": 4,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_VSQnf3y6i6esT2ERfube0064",
+        "title": "Read file",
+        "kind": "read",
+        "status": "pending",
+        "input": {}
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2393,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "session",
+     "session": {
+      "id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+      "title": "embed fixture pi",
+      "agent": "pi",
+      "device": {
+       "id": "dev_615df603d8b28f5fbd67ebaf",
+       "name": "Dev Laptop"
+      },
+      "cwd": "/Users/dev/demo",
+      "created_at": "2026-11-22T16:32:46.577Z",
+      "updated_at": "2026-11-22T16:32:50.691Z",
+      "message_count": 5,
+      "config": [
+       {
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "current": "cc-switch-deep-seek/deepseek-v4-pro",
+        "options": [
+         {
+          "value": "cc-switch-deep-seek/deepseek-v4-pro",
+          "name": "DeepSeek V4 Pro",
+          "description": "cc-switch-deep-seek · deepseek-v4-pro",
+          "group": "cc-switch-deep-seek"
+         },
+         {
+          "value": "cc-switch-deep-seek/deepseek-flash",
+          "name": "DeepSeek V4.1 Flash",
+          "description": "cc-switch-deep-seek · deepseek-flash",
+          "group": "cc-switch-deep-seek"
+         },
+         {
+          "value": "tokensanywhere-1793609799988/gpt-6.1-sol",
+          "name": "gpt-6.1-sol",
+          "description": "tokensanywhere-1793609799988 · gpt-6.1-sol",
+          "group": "tokensanywhere-1793609799988"
+         }
+        ]
+       },
+       {
+        "id": "thinking",
+        "name": "Thinking",
+        "description": "Reasoning effort for this session",
+        "category": "thought_level",
+        "current": "high",
+        "options": [
+         {
+          "value": "off",
+          "name": "off"
+         },
+         {
+          "value": "high",
+          "name": "high"
+         },
+         {
+          "value": "max",
+          "name": "max"
+         }
+        ]
+       },
+       {
+        "id": "auto_compaction",
+        "name": "Auto-compaction",
+        "description": "Summarize context automatically when it nears the model's window",
+        "category": "model_config",
+        "current": "on",
+        "options": [
+         {
+          "value": "on",
+          "name": "On"
+         },
+         {
+          "value": "off",
+          "name": "Off"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2393,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "ea9a8535-fbc1-4f80-b5a3-9073a1f16e11",
+      "created_at": "2026-11-22T16:32:50.691Z",
+      "seq": 4,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_VSQnf3y6i6esT2ERfube0064",
+        "title": "Read file",
+        "kind": "read",
+        "status": "pending",
+        "input": {}
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2437,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "ea9a8535-fbc1-4f80-b5a3-9073a1f16e11",
+      "created_at": "2026-11-22T16:32:50.691Z",
+      "seq": 4,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_VSQnf3y6i6esT2ERfube0064",
+        "title": "Read file",
+        "kind": "read",
+        "status": "pending",
+        "input": {}
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2437,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "ea9a8535-fbc1-4f80-b5a3-9073a1f16e11",
+      "created_at": "2026-11-22T16:32:50.691Z",
+      "seq": 4,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_VSQnf3y6i6esT2ERfube0064",
+        "title": "Read file",
+        "kind": "read",
+        "status": "pending",
+        "input": {}
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2437,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "ea9a8535-fbc1-4f80-b5a3-9073a1f16e11",
+      "created_at": "2026-11-22T16:32:50.691Z",
+      "seq": 4,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_VSQnf3y6i6esT2ERfube0064",
+        "title": "Read file",
+        "kind": "read",
+        "status": "pending",
+        "input": {}
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2461,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "ea9a8535-fbc1-4f80-b5a3-9073a1f16e11",
+      "created_at": "2026-11-22T16:32:50.691Z",
+      "seq": 4,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_VSQnf3y6i6esT2ERfube0064",
+        "title": "Read README",
+        "kind": "read",
+        "status": "pending",
+        "input": {
+         "path": "README"
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/README"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2461,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "ea9a8535-fbc1-4f80-b5a3-9073a1f16e11",
+      "created_at": "2026-11-22T16:32:50.691Z",
+      "seq": 4,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_VSQnf3y6i6esT2ERfube0064",
+        "title": "Read README.md",
+        "kind": "read",
+        "status": "pending",
+        "input": {
+         "path": "README.md"
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/README.md"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2461,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "ea9a8535-fbc1-4f80-b5a3-9073a1f16e11",
+      "created_at": "2026-11-22T16:32:50.691Z",
+      "seq": 4,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_VSQnf3y6i6esT2ERfube0064",
+        "title": "Read README.md",
+        "kind": "read",
+        "status": "pending",
+        "input": {
+         "path": "README.md"
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/README.md"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2495,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "ea9a8535-fbc1-4f80-b5a3-9073a1f16e11",
+      "created_at": "2026-11-22T16:32:50.691Z",
+      "seq": 4,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_VSQnf3y6i6esT2ERfube0064",
+        "title": "Read README.md",
+        "kind": "read",
+        "status": "pending",
+        "input": {
+         "path": "README.md"
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/README.md"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2555,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "92b951e2-1353-478d-861d-54bcd8207096",
+      "created_at": "2026-11-22T16:32:50.852Z",
+      "seq": 5,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_01_ET_eJ3VUJfnnLgCF9tCqgsP9151",
+        "title": "Read file",
+        "kind": "read",
+        "status": "pending",
+        "input": {}
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2555,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "session",
+     "session": {
+      "id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+      "title": "embed fixture pi",
+      "agent": "pi",
+      "device": {
+       "id": "dev_615df603d8b28f5fbd67ebaf",
+       "name": "Dev Laptop"
+      },
+      "cwd": "/Users/dev/demo",
+      "created_at": "2026-11-22T16:32:46.577Z",
+      "updated_at": "2026-11-22T16:32:50.852Z",
+      "message_count": 6,
+      "config": [
+       {
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "current": "cc-switch-deep-seek/deepseek-v4-pro",
+        "options": [
+         {
+          "value": "cc-switch-deep-seek/deepseek-v4-pro",
+          "name": "DeepSeek V4 Pro",
+          "description": "cc-switch-deep-seek · deepseek-v4-pro",
+          "group": "cc-switch-deep-seek"
+         },
+         {
+          "value": "cc-switch-deep-seek/deepseek-flash",
+          "name": "DeepSeek V4.1 Flash",
+          "description": "cc-switch-deep-seek · deepseek-flash",
+          "group": "cc-switch-deep-seek"
+         },
+         {
+          "value": "tokensanywhere-1793609799988/gpt-6.1-sol",
+          "name": "gpt-6.1-sol",
+          "description": "tokensanywhere-1793609799988 · gpt-6.1-sol",
+          "group": "tokensanywhere-1793609799988"
+         }
+        ]
+       },
+       {
+        "id": "thinking",
+        "name": "Thinking",
+        "description": "Reasoning effort for this session",
+        "category": "thought_level",
+        "current": "high",
+        "options": [
+         {
+          "value": "off",
+          "name": "off"
+         },
+         {
+          "value": "high",
+          "name": "high"
+         },
+         {
+          "value": "max",
+          "name": "max"
+         }
+        ]
+       },
+       {
+        "id": "auto_compaction",
+        "name": "Auto-compaction",
+        "description": "Summarize context automatically when it nears the model's window",
+        "category": "model_config",
+        "current": "on",
+        "options": [
+         {
+          "value": "on",
+          "name": "On"
+         },
+         {
+          "value": "off",
+          "name": "Off"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2556,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "92b951e2-1353-478d-861d-54bcd8207096",
+      "created_at": "2026-11-22T16:32:50.852Z",
+      "seq": 5,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_01_ET_eJ3VUJfnnLgCF9tCqgsP9151",
+        "title": "Read file",
+        "kind": "read",
+        "status": "pending",
+        "input": {}
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2590,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "92b951e2-1353-478d-861d-54bcd8207096",
+      "created_at": "2026-11-22T16:32:50.852Z",
+      "seq": 5,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_01_ET_eJ3VUJfnnLgCF9tCqgsP9151",
+        "title": "Read file",
+        "kind": "read",
+        "status": "pending",
+        "input": {}
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2590,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "92b951e2-1353-478d-861d-54bcd8207096",
+      "created_at": "2026-11-22T16:32:50.852Z",
+      "seq": 5,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_01_ET_eJ3VUJfnnLgCF9tCqgsP9151",
+        "title": "Read file",
+        "kind": "read",
+        "status": "pending",
+        "input": {}
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2591,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "92b951e2-1353-478d-861d-54bcd8207096",
+      "created_at": "2026-11-22T16:32:50.852Z",
+      "seq": 5,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_01_ET_eJ3VUJfnnLgCF9tCqgsP9151",
+        "title": "Read file",
+        "kind": "read",
+        "status": "pending",
+        "input": {}
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2621,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "92b951e2-1353-478d-861d-54bcd8207096",
+      "created_at": "2026-11-22T16:32:50.852Z",
+      "seq": 5,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_01_ET_eJ3VUJfnnLgCF9tCqgsP9151",
+        "title": "Read math",
+        "kind": "read",
+        "status": "pending",
+        "input": {
+         "path": "math"
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2621,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "92b951e2-1353-478d-861d-54bcd8207096",
+      "created_at": "2026-11-22T16:32:50.852Z",
+      "seq": 5,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_01_ET_eJ3VUJfnnLgCF9tCqgsP9151",
+        "title": "Read math.ts",
+        "kind": "read",
+        "status": "pending",
+        "input": {
+         "path": "math.ts"
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2621,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "92b951e2-1353-478d-861d-54bcd8207096",
+      "created_at": "2026-11-22T16:32:50.852Z",
+      "seq": 5,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_01_ET_eJ3VUJfnnLgCF9tCqgsP9151",
+        "title": "Read math.ts",
+        "kind": "read",
+        "status": "pending",
+        "input": {
+         "path": "math.ts"
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2654,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "92b951e2-1353-478d-861d-54bcd8207096",
+      "created_at": "2026-11-22T16:32:50.852Z",
+      "seq": 5,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_01_ET_eJ3VUJfnnLgCF9tCqgsP9151",
+        "title": "Read math.ts",
+        "kind": "read",
+        "status": "pending",
+        "input": {
+         "path": "math.ts"
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2719,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "ea9a8535-fbc1-4f80-b5a3-9073a1f16e11",
+      "created_at": "2026-11-22T16:32:50.691Z",
+      "seq": 4,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_VSQnf3y6i6esT2ERfube0064",
+        "title": "Read README.md",
+        "kind": "read",
+        "status": "pending",
+        "input": {
+         "path": "README.md"
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/README.md"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2721,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "92b951e2-1353-478d-861d-54bcd8207096",
+      "created_at": "2026-11-22T16:32:50.852Z",
+      "seq": 5,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_01_ET_eJ3VUJfnnLgCF9tCqgsP9151",
+        "title": "Read math.ts",
+        "kind": "read",
+        "status": "pending",
+        "input": {
+         "path": "math.ts"
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2721,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "ea9a8535-fbc1-4f80-b5a3-9073a1f16e11",
+      "created_at": "2026-11-22T16:32:50.691Z",
+      "seq": 4,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_VSQnf3y6i6esT2ERfube0064",
+        "title": "Read README.md",
+        "kind": "read",
+        "status": "in_progress",
+        "input": {
+         "path": "README.md"
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/README.md"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2721,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "92b951e2-1353-478d-861d-54bcd8207096",
+      "created_at": "2026-11-22T16:32:50.852Z",
+      "seq": 5,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_01_ET_eJ3VUJfnnLgCF9tCqgsP9151",
+        "title": "Read math.ts",
+        "kind": "read",
+        "status": "in_progress",
+        "input": {
+         "path": "math.ts"
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2725,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "92b951e2-1353-478d-861d-54bcd8207096",
+      "created_at": "2026-11-22T16:32:50.852Z",
+      "seq": 5,
+      "done": true,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_01_ET_eJ3VUJfnnLgCF9tCqgsP9151",
+        "title": "Read math.ts",
+        "kind": "read",
+        "status": "completed",
+        "input": {
+         "path": "math.ts"
+        },
+        "output": {
+         "content": [
+          {
+           "type": "text",
+           "text": "export function add(a: number, b: number) {\n  return a + b\n}\n"
+          }
+         ],
+         "structuredContent": "export function add(a: number, b: number) {\n  return a + b\n}\n"
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 2725,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "ea9a8535-fbc1-4f80-b5a3-9073a1f16e11",
+      "created_at": "2026-11-22T16:32:50.691Z",
+      "seq": 4,
+      "done": true,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_VSQnf3y6i6esT2ERfube0064",
+        "title": "Read README.md",
+        "kind": "read",
+        "status": "completed",
+        "input": {
+         "path": "README.md"
+        },
+        "output": {
+         "content": [
+          {
+           "type": "text",
+           "text": "# Demo\n\nA tiny project used to record renderer fixtures.\n\n- add(a, b) returns the sum\n"
+          }
+         ],
+         "structuredContent": "# Demo\n\nA tiny project used to record renderer fixtures.\n\n- add(a, b) returns the sum\n"
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/README.md"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 3925,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "-"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 3925,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "session",
+     "session": {
+      "id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+      "title": "embed fixture pi",
+      "agent": "pi",
+      "device": {
+       "id": "dev_615df603d8b28f5fbd67ebaf",
+       "name": "Dev Laptop"
+      },
+      "cwd": "/Users/dev/demo",
+      "created_at": "2026-11-22T16:32:46.577Z",
+      "updated_at": "2026-11-22T16:32:52.324Z",
+      "message_count": 7,
+      "config": [
+       {
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "current": "cc-switch-deep-seek/deepseek-v4-pro",
+        "options": [
+         {
+          "value": "cc-switch-deep-seek/deepseek-v4-pro",
+          "name": "DeepSeek V4 Pro",
+          "description": "cc-switch-deep-seek · deepseek-v4-pro",
+          "group": "cc-switch-deep-seek"
+         },
+         {
+          "value": "cc-switch-deep-seek/deepseek-flash",
+          "name": "DeepSeek V4.1 Flash",
+          "description": "cc-switch-deep-seek · deepseek-flash",
+          "group": "cc-switch-deep-seek"
+         },
+         {
+          "value": "tokensanywhere-1793609799988/gpt-6.1-sol",
+          "name": "gpt-6.1-sol",
+          "description": "tokensanywhere-1793609799988 · gpt-6.1-sol",
+          "group": "tokensanywhere-1793609799988"
+         }
+        ]
+       },
+       {
+        "id": "thinking",
+        "name": "Thinking",
+        "description": "Reasoning effort for this session",
+        "category": "thought_level",
+        "current": "high",
+        "options": [
+         {
+          "value": "off",
+          "name": "off"
+         },
+         {
+          "value": "high",
+          "name": "high"
+         },
+         {
+          "value": "max",
+          "name": "max"
+         }
+        ]
+       },
+       {
+        "id": "auto_compaction",
+        "name": "Auto-compaction",
+        "description": "Summarize context automatically when it nears the model's window",
+        "category": "model_config",
+        "current": "on",
+        "options": [
+         {
+          "value": "on",
+          "name": "On"
+         },
+         {
+          "value": "off",
+          "name": "Off"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 3954,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 3955,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 3955,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 3988,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4018,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4019,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4019,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4051,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4051,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to record"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4051,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to record renderer fixtures"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4086,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to record renderer fixtures.\n"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4086,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to record renderer fixtures.\n-"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4086,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to record renderer fixtures.\n- It provides"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4086,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to record renderer fixtures.\n- It provides an"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4122,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to record renderer fixtures.\n- It provides an `"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4122,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to record renderer fixtures.\n- It provides an `add"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4122,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to record renderer fixtures.\n- It provides an `add(a, b"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4284,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to record renderer fixtures.\n- It provides an `add(a, b)`"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4284,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to record renderer fixtures.\n- It provides an `add(a, b)` function"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4284,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to record renderer fixtures.\n- It provides an `add(a, b)` function that returns the"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4290,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to record renderer fixtures.\n- It provides an `add(a, b)` function that returns the sum"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4290,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to record renderer fixtures.\n- It provides an `add(a, b)` function that returns the sum of"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4290,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to record renderer fixtures.\n- It provides an `add(a, b)` function that returns the sum of two"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4290,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to record renderer fixtures.\n- It provides an `add(a, b)` function that returns the sum of two numbers.\n\n```"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4292,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to record renderer fixtures.\n- It provides an `add(a, b)` function that returns the sum of two numbers.\n\n```ts"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4293,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to record renderer fixtures.\n- It provides an `add(a, b)` function that returns the sum of two numbers.\n\n```ts\n"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4293,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to record renderer fixtures.\n- It provides an `add(a, b)` function that returns the sum of two numbers.\n\n```ts\nexport function add"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4293,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to record renderer fixtures.\n- It provides an `add(a, b)` function that returns the sum of two numbers.\n\n```ts\nexport function add(a"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4294,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to record renderer fixtures.\n- It provides an `add(a, b)` function that returns the sum of two numbers.\n\n```ts\nexport function add(a:"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4294,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to record renderer fixtures.\n- It provides an `add(a, b)` function that returns the sum of two numbers.\n\n```ts\nexport function add(a: number"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4294,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to record renderer fixtures.\n- It provides an `add(a, b)` function that returns the sum of two numbers.\n\n```ts\nexport function add(a: number,"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4294,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to record renderer fixtures.\n- It provides an `add(a, b)` function that returns the sum of two numbers.\n\n```ts\nexport function add(a: number, b: number"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4294,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to record renderer fixtures.\n- It provides an `add(a, b)` function that returns the sum of two numbers.\n\n```ts\nexport function add(a: number, b: number)"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4294,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to record renderer fixtures.\n- It provides an `add(a, b)` function that returns the sum of two numbers.\n\n```ts\nexport function add(a: number, b: number) {\n"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4294,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to record renderer fixtures.\n- It provides an `add(a, b)` function that returns the sum of two numbers.\n\n```ts\nexport function add(a: number, b: number) {\n  return"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4295,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to record renderer fixtures.\n- It provides an `add(a, b)` function that returns the sum of two numbers.\n\n```ts\nexport function add(a: number, b: number) {\n  return a"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4295,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to record renderer fixtures.\n- It provides an `add(a, b)` function that returns the sum of two numbers.\n\n```ts\nexport function add(a: number, b: number) {\n  return a +"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4345,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to record renderer fixtures.\n- It provides an `add(a, b)` function that returns the sum of two numbers.\n\n```ts\nexport function add(a: number, b: number) {\n  return a + b"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4345,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to record renderer fixtures.\n- It provides an `add(a, b)` function that returns the sum of two numbers.\n\n```ts\nexport function add(a: number, b: number) {\n  return a + b\n"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4345,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to record renderer fixtures.\n- It provides an `add(a, b)` function that returns the sum of two numbers.\n\n```ts\nexport function add(a: number, b: number) {\n  return a + b\n}\n```"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4351,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to record renderer fixtures.\n- It provides an `add(a, b)` function that returns the sum of two numbers.\n\n```ts\nexport function add(a: number, b: number) {\n  return a + b\n}\n```"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4351,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "0727a0f8-ff01-4ead-a930-3ee5169b1314",
+      "created_at": "2026-11-22T16:32:52.324Z",
+      "seq": 6,
+      "done": true,
+      "role": "assistant",
+      "turn_id": "15236f9b-3efc-4134-a72f-19ea85f00b48",
+      "parts": [
+       {
+        "type": "text",
+        "text": "- This is a tiny demo project used to record renderer fixtures.\n- It provides an `add(a, b)` function that returns the sum of two numbers.\n\n```ts\nexport function add(a: number, b: number) {\n  return a + b\n}\n```"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 4352,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "control",
+     "control": {
+      "state": "idle",
+      "steer": "interrupt",
+      "pending": [],
+      "queued": []
+     }
+    }
+   }
+  },
+  {
+   "at": 5552,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "created_at": "2026-11-22T16:32:54.255Z",
+      "seq": 7,
+      "done": true,
+      "role": "user",
+      "client_msg_id": "rec_1795365174254",
+      "author": "user:usr_dev/client:embed-fixture-recorder",
+      "rewindable": true,
+      "parts": [
+       {
+        "type": "text",
+        "text": "Now add a `sub(a, b)` function to math.ts next to add, then reply with one sentence."
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 5552,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "session",
+     "session": {
+      "id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+      "title": "embed fixture pi",
+      "agent": "pi",
+      "device": {
+       "id": "dev_615df603d8b28f5fbd67ebaf",
+       "name": "Dev Laptop"
+      },
+      "cwd": "/Users/dev/demo",
+      "created_at": "2026-11-22T16:32:46.577Z",
+      "updated_at": "2026-11-22T16:32:54.255Z",
+      "message_count": 8,
+      "config": [
+       {
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "current": "cc-switch-deep-seek/deepseek-v4-pro",
+        "options": [
+         {
+          "value": "cc-switch-deep-seek/deepseek-v4-pro",
+          "name": "DeepSeek V4 Pro",
+          "description": "cc-switch-deep-seek · deepseek-v4-pro",
+          "group": "cc-switch-deep-seek"
+         },
+         {
+          "value": "cc-switch-deep-seek/deepseek-flash",
+          "name": "DeepSeek V4.1 Flash",
+          "description": "cc-switch-deep-seek · deepseek-flash",
+          "group": "cc-switch-deep-seek"
+         },
+         {
+          "value": "tokensanywhere-1793609799988/gpt-6.1-sol",
+          "name": "gpt-6.1-sol",
+          "description": "tokensanywhere-1793609799988 · gpt-6.1-sol",
+          "group": "tokensanywhere-1793609799988"
+         }
+        ]
+       },
+       {
+        "id": "thinking",
+        "name": "Thinking",
+        "description": "Reasoning effort for this session",
+        "category": "thought_level",
+        "current": "high",
+        "options": [
+         {
+          "value": "off",
+          "name": "off"
+         },
+         {
+          "value": "high",
+          "name": "high"
+         },
+         {
+          "value": "max",
+          "name": "max"
+         }
+        ]
+       },
+       {
+        "id": "auto_compaction",
+        "name": "Auto-compaction",
+        "description": "Summarize context automatically when it nears the model's window",
+        "category": "model_config",
+        "current": "on",
+        "options": [
+         {
+          "value": "on",
+          "name": "On"
+         },
+         {
+          "value": "off",
+          "name": "Off"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 5552,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "control",
+     "control": {
+      "state": "running",
+      "steer": "interrupt",
+      "pending": [],
+      "queued": []
+     }
+    }
+   }
+  },
+  {
+   "at": 6629,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit file",
+        "kind": "edit",
+        "status": "pending",
+        "input": {}
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6629,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "session",
+     "session": {
+      "id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+      "title": "embed fixture pi",
+      "agent": "pi",
+      "device": {
+       "id": "dev_615df603d8b28f5fbd67ebaf",
+       "name": "Dev Laptop"
+      },
+      "cwd": "/Users/dev/demo",
+      "created_at": "2026-11-22T16:32:46.577Z",
+      "updated_at": "2026-11-22T16:32:55.332Z",
+      "message_count": 9,
+      "config": [
+       {
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "current": "cc-switch-deep-seek/deepseek-v4-pro",
+        "options": [
+         {
+          "value": "cc-switch-deep-seek/deepseek-v4-pro",
+          "name": "DeepSeek V4 Pro",
+          "description": "cc-switch-deep-seek · deepseek-v4-pro",
+          "group": "cc-switch-deep-seek"
+         },
+         {
+          "value": "cc-switch-deep-seek/deepseek-flash",
+          "name": "DeepSeek V4.1 Flash",
+          "description": "cc-switch-deep-seek · deepseek-flash",
+          "group": "cc-switch-deep-seek"
+         },
+         {
+          "value": "tokensanywhere-1793609799988/gpt-6.1-sol",
+          "name": "gpt-6.1-sol",
+          "description": "tokensanywhere-1793609799988 · gpt-6.1-sol",
+          "group": "tokensanywhere-1793609799988"
+         }
+        ]
+       },
+       {
+        "id": "thinking",
+        "name": "Thinking",
+        "description": "Reasoning effort for this session",
+        "category": "thought_level",
+        "current": "high",
+        "options": [
+         {
+          "value": "off",
+          "name": "off"
+         },
+         {
+          "value": "high",
+          "name": "high"
+         },
+         {
+          "value": "max",
+          "name": "max"
+         }
+        ]
+       },
+       {
+        "id": "auto_compaction",
+        "name": "Auto-compaction",
+        "description": "Summarize context automatically when it nears the model's window",
+        "category": "model_config",
+        "current": "on",
+        "options": [
+         {
+          "value": "on",
+          "name": "On"
+         },
+         {
+          "value": "off",
+          "name": "Off"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6629,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit file",
+        "kind": "edit",
+        "status": "pending",
+        "input": {}
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6629,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit file",
+        "kind": "edit",
+        "status": "pending",
+        "input": {}
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6629,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit file",
+        "kind": "edit",
+        "status": "pending",
+        "input": {}
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6629,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit file",
+        "kind": "edit",
+        "status": "pending",
+        "input": {}
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6696,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math"
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6696,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts"
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6696,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts"
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6731,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts"
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6732,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts"
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6732,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts"
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6743,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": []
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6743,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {}
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6743,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {}
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6743,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {}
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6743,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {}
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6778,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6779,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6779,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a:"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6810,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number,"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6810,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6810,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6810,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number)"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6845,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6845,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n "
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6845,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n  return"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6848,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n  return a +"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6848,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n  return a +"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6914,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n  return a + b\n"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6914,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n  return a + b\n}"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6914,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n  return a + b\n}"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6915,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n  return a + b\n}",
+           "newText": ""
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6915,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n  return a + b\n}",
+           "newText": "export"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6915,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n  return a + b\n}",
+           "newText": "export function add(a"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6936,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n  return a + b\n}",
+           "newText": "export function add(a: number"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6936,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n  return a + b\n}",
+           "newText": "export function add(a: number,"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6936,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n  return a + b\n}",
+           "newText": "export function add(a: number, b: number"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6972,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n  return a + b\n}",
+           "newText": "export function add(a: number, b: number) {"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6972,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n  return a + b\n}",
+           "newText": "export function add(a: number, b: number) {\n"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6972,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n  return a + b\n}",
+           "newText": "export function add(a: number, b: number) {\n  return a"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7005,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n  return a + b\n}",
+           "newText": "export function add(a: number, b: number) {\n  return a + b"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7005,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n  return a + b\n}",
+           "newText": "export function add(a: number, b: number) {\n  return a + b\n"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7005,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n  return a + b\n}",
+           "newText": "export function add(a: number, b: number) {\n  return a + b\n}\n"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7033,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n  return a + b\n}",
+           "newText": "export function add(a: number, b: number) {\n  return a + b\n}\n\nexport"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7033,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n  return a + b\n}",
+           "newText": "export function add(a: number, b: number) {\n  return a + b\n}\n\nexport function"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7033,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n  return a + b\n}",
+           "newText": "export function add(a: number, b: number) {\n  return a + b\n}\n\nexport function sub(a:"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7068,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n  return a + b\n}",
+           "newText": "export function add(a: number, b: number) {\n  return a + b\n}\n\nexport function sub(a: number,"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7069,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n  return a + b\n}",
+           "newText": "export function add(a: number, b: number) {\n  return a + b\n}\n\nexport function sub(a: number, b"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7069,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n  return a + b\n}",
+           "newText": "export function add(a: number, b: number) {\n  return a + b\n}\n\nexport function sub(a: number, b: number)"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7097,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n  return a + b\n}",
+           "newText": "export function add(a: number, b: number) {\n  return a + b\n}\n\nexport function sub(a: number, b: number) {\n"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7098,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n  return a + b\n}",
+           "newText": "export function add(a: number, b: number) {\n  return a + b\n}\n\nexport function sub(a: number, b: number) {\n "
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7098,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n  return a + b\n}",
+           "newText": "export function add(a: number, b: number) {\n  return a + b\n}\n\nexport function sub(a: number, b: number) {\n  return a -"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7135,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n  return a + b\n}",
+           "newText": "export function add(a: number, b: number) {\n  return a + b\n}\n\nexport function sub(a: number, b: number) {\n  return a - b\n"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7135,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n  return a + b\n}",
+           "newText": "export function add(a: number, b: number) {\n  return a + b\n}\n\nexport function sub(a: number, b: number) {\n  return a - b\n}"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7135,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n  return a + b\n}",
+           "newText": "export function add(a: number, b: number) {\n  return a + b\n}\n\nexport function sub(a: number, b: number) {\n  return a - b\n}"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7162,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n  return a + b\n}",
+           "newText": "export function add(a: number, b: number) {\n  return a + b\n}\n\nexport function sub(a: number, b: number) {\n  return a - b\n}"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7232,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "pending",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n  return a + b\n}",
+           "newText": "export function add(a: number, b: number) {\n  return a + b\n}\n\nexport function sub(a: number, b: number) {\n  return a - b\n}"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7234,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "in_progress",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n  return a + b\n}",
+           "newText": "export function add(a: number, b: number) {\n  return a + b\n}\n\nexport function sub(a: number, b: number) {\n  return a - b\n}"
+          }
+         ]
+        },
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts",
+          "line": 1
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7249,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "d05dfceb-6771-4722-810f-3618126ff564",
+      "created_at": "2026-11-22T16:32:55.332Z",
+      "seq": 8,
+      "done": true,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_00_ET_I2vfNsILCCVzYdIb0lTK2222",
+        "title": "Edit math.ts",
+        "kind": "edit",
+        "status": "completed",
+        "input": {
+         "path": "math.ts",
+         "edits": [
+          {
+           "oldText": "export function add(a: number, b: number) {\n  return a + b\n}",
+           "newText": "export function add(a: number, b: number) {\n  return a + b\n}\n\nexport function sub(a: number, b: number) {\n  return a - b\n}"
+          }
+         ]
+        },
+        "output": {
+         "content": [
+          {
+           "type": "text",
+           "text": "Successfully replaced 1 block(s) in math.ts."
+          }
+         ],
+         "details": {
+          "diff": " 1 export function add(a: number, b: number) {\n 2   return a + b\n 3 }\n+4 \n+5 export function sub(a: number, b: number) {\n+6   return a - b\n+7 }",
+          "patch": "--- math.ts\n+++ math.ts\n@@ -1,3 +1,7 @@\n export function add(a: number, b: number) {\n   return a + b\n }\n+\n+export function sub(a: number, b: number) {\n+  return a - b\n+}\n",
+          "firstChangedLine": 4
+         }
+        },
+        "diffs": [
+         {
+          "path": "/Users/dev/demo/math.ts",
+          "old_text": "export function add(a: number, b: number) {\n  return a + b\n}\n",
+          "new_text": "export function add(a: number, b: number) {\n  return a + b\n}\n\nexport function sub(a: number, b: number) {\n  return a - b\n}\n"
+         }
+        ],
+        "locations": [
+         {
+          "path": "/Users/dev/demo/math.ts",
+          "line": 4
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7742,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "ef668299-ea6f-4f75-a852-e667246af848",
+      "created_at": "2026-11-22T16:32:56.445Z",
+      "seq": 9,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "text",
+        "text": "Added"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7742,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "session",
+     "session": {
+      "id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+      "title": "embed fixture pi",
+      "agent": "pi",
+      "device": {
+       "id": "dev_615df603d8b28f5fbd67ebaf",
+       "name": "Dev Laptop"
+      },
+      "cwd": "/Users/dev/demo",
+      "created_at": "2026-11-22T16:32:46.577Z",
+      "updated_at": "2026-11-22T16:32:56.445Z",
+      "message_count": 10,
+      "config": [
+       {
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "current": "cc-switch-deep-seek/deepseek-v4-pro",
+        "options": [
+         {
+          "value": "cc-switch-deep-seek/deepseek-v4-pro",
+          "name": "DeepSeek V4 Pro",
+          "description": "cc-switch-deep-seek · deepseek-v4-pro",
+          "group": "cc-switch-deep-seek"
+         },
+         {
+          "value": "cc-switch-deep-seek/deepseek-flash",
+          "name": "DeepSeek V4.1 Flash",
+          "description": "cc-switch-deep-seek · deepseek-flash",
+          "group": "cc-switch-deep-seek"
+         },
+         {
+          "value": "tokensanywhere-1793609799988/gpt-6.1-sol",
+          "name": "gpt-6.1-sol",
+          "description": "tokensanywhere-1793609799988 · gpt-6.1-sol",
+          "group": "tokensanywhere-1793609799988"
+         }
+        ]
+       },
+       {
+        "id": "thinking",
+        "name": "Thinking",
+        "description": "Reasoning effort for this session",
+        "category": "thought_level",
+        "current": "high",
+        "options": [
+         {
+          "value": "off",
+          "name": "off"
+         },
+         {
+          "value": "high",
+          "name": "high"
+         },
+         {
+          "value": "max",
+          "name": "max"
+         }
+        ]
+       },
+       {
+        "id": "auto_compaction",
+        "name": "Auto-compaction",
+        "description": "Summarize context automatically when it nears the model's window",
+        "category": "model_config",
+        "current": "on",
+        "options": [
+         {
+          "value": "on",
+          "name": "On"
+         },
+         {
+          "value": "off",
+          "name": "Off"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7787,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "ef668299-ea6f-4f75-a852-e667246af848",
+      "created_at": "2026-11-22T16:32:56.445Z",
+      "seq": 9,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "text",
+        "text": "Added the"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7788,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "ef668299-ea6f-4f75-a852-e667246af848",
+      "created_at": "2026-11-22T16:32:56.445Z",
+      "seq": 9,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "text",
+        "text": "Added the `"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7788,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "ef668299-ea6f-4f75-a852-e667246af848",
+      "created_at": "2026-11-22T16:32:56.445Z",
+      "seq": 9,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "text",
+        "text": "Added the `sub(a,"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7817,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "ef668299-ea6f-4f75-a852-e667246af848",
+      "created_at": "2026-11-22T16:32:56.445Z",
+      "seq": 9,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "text",
+        "text": "Added the `sub(a, b"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7817,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "ef668299-ea6f-4f75-a852-e667246af848",
+      "created_at": "2026-11-22T16:32:56.445Z",
+      "seq": 9,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "text",
+        "text": "Added the `sub(a, b)`"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7817,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "ef668299-ea6f-4f75-a852-e667246af848",
+      "created_at": "2026-11-22T16:32:56.445Z",
+      "seq": 9,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "text",
+        "text": "Added the `sub(a, b)` function to math.ts"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7845,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "ef668299-ea6f-4f75-a852-e667246af848",
+      "created_at": "2026-11-22T16:32:56.445Z",
+      "seq": 9,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "text",
+        "text": "Added the `sub(a, b)` function to math.ts right"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7845,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "ef668299-ea6f-4f75-a852-e667246af848",
+      "created_at": "2026-11-22T16:32:56.445Z",
+      "seq": 9,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "text",
+        "text": "Added the `sub(a, b)` function to math.ts right after"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7845,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "ef668299-ea6f-4f75-a852-e667246af848",
+      "created_at": "2026-11-22T16:32:56.445Z",
+      "seq": 9,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "text",
+        "text": "Added the `sub(a, b)` function to math.ts right after `add`."
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7884,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "ef668299-ea6f-4f75-a852-e667246af848",
+      "created_at": "2026-11-22T16:32:56.445Z",
+      "seq": 9,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "text",
+        "text": "Added the `sub(a, b)` function to math.ts right after `add`."
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7885,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "ef668299-ea6f-4f75-a852-e667246af848",
+      "created_at": "2026-11-22T16:32:56.445Z",
+      "seq": 9,
+      "done": true,
+      "role": "assistant",
+      "turn_id": "d5a42a7a-2f66-4ec0-896f-f8bbccaa9ebf",
+      "parts": [
+       {
+        "type": "text",
+        "text": "Added the `sub(a, b)` function to math.ts right after `add`."
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 7885,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "366cdc67-a0b8-49ed-bb37-ecf5f227ba29",
+    "event": {
+     "type": "control",
+     "control": {
+      "state": "idle",
+      "steer": "interrupt",
+      "pending": [],
+      "queued": []
+     }
+    }
+   }
+  }
+ ],
+ "responders": {
+  "older": {
+   "messages": [],
+   "page_size": 0
+  },
+  "files": {}
+ }
+}

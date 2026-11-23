@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agents-anywhere.dev/contracts/aa-v3/1.0/pairing.schema.json",
   "title": "AA v3 Encrypted Device Pairing and Client Trust Contract",
-  "description": "Out-of-band QR pairing payload (Noise_IKpsk2_25519_AESGCM_SHA256), local client trust records, lock-badge trust tiers (green vs grey), and error codes.",
+  "description": "Out-of-band pairing (Noise_IKpsk2_25519_AESGCM_SHA256): the QR / link payload or a typed pairing code, local client trust records, lock-badge trust tiers (green vs grey), and error codes.",
   "$defs": {
     "Base64Url32": {
       "type": "string",
@@ -26,6 +26,11 @@
         "psk": { "$ref": "#/$defs/Base64Url32" },
         "expires_at": { "$ref": "#/$defs/Instant" }
       }
+    },
+    "PairingCode": {
+      "type": "string",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{5}-[0-9A-HJKMNP-TV-Z]{5}$",
+      "description": "A pairing code as the work device shows it: 10 Crockford base32 characters (50 random bits) as XXXXX-XXXXX. One live code per device, valid 10 minutes, one use, at most 8 handshake attempts. Clients normalize input (upper-case, drop spaces and dashes, read O as 0 and I / L as 1). The handshake uses pairing_id \"pairing-code\" and psk = base64url(PBKDF2-HMAC-SHA256(code, \"aa-v3/pairing-code/v1:\" + instance_id, 200000 iterations, 32 bytes)). The device key comes from the control plane (e2e_public_key_hint) and is pinned only after the PSK handshake succeeds. Vectors: fixtures/pairing-code.json."
     },
     "TrustTier": {
       "type": "string",
@@ -68,6 +73,7 @@
       "type": "string",
       "enum": [
         "invalid_pairing_uri",
+        "invalid_pairing_code",
         "pairing_expired",
         "pairing_used",
         "e2e_handshake_failed",

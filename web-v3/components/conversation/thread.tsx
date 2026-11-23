@@ -4,9 +4,10 @@
 // Bubble, Attachment and the step patterns. Items become turns (turns.ts); each turn is one scroller item, anchored on
 // the person's message as Chat says. Who scrolls is the caller's: the web wraps these in Message Scroller, the renderer
 // in the document scroller (renderer/document-scroller.tsx). Everything that acts goes out through ThreadEnv.
-import { memo, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
 import type * as React from 'react'
-import { CopyIcon, FileIcon, GitForkIcon, LoaderCircleIcon, Undo2Icon } from 'lucide-react'
+import { CopyIcon, FileIcon, GitForkIcon, ImageIcon, RefreshCwIcon, Undo2Icon } from 'lucide-react'
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import type { AssistantMessage, CompactPart, Control, FilePart, ImagePart, PendingRequest, UserMessage } from '@/lib/types/v3'
 import { Attachment, AttachmentContent, AttachmentDescription, AttachmentMedia, AttachmentTitle, AttachmentTrigger } from '@/components/ui/attachment'
 import { Bubble, BubbleContent } from '@/components/ui/bubble'
@@ -14,7 +15,7 @@ import { Button } from '@/components/ui/button'
 import { Marker, MarkerContent } from '@/components/ui/marker'
 import { Message, MessageContent, MessageFooter, MessageHeader } from '@/components/ui/message'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { Trace, TraceIcon, TraceLine, TraceTitle } from '@/components/ui/trace'
+import { Trace, TraceLine, TraceTitle } from '@/components/ui/trace'
 import { cn } from '@/lib/utils'
 import type { TimelineState } from '@/lib/timeline/store'
 import { useThreadEnv } from './env'
@@ -133,11 +134,12 @@ const Turn = memo(function Turn({ turn, live, last, control, ctx }: { turn: Turn
 function UserTurn({ message, outgoing }: { message: UserMessage; outgoing?: boolean }) {
   const env = useThreadEnv()
   const text = userText(message)
+  const authorName = !message.author ? null : env.whoIs ? env.whoIs(message.author) : message.author !== env.me ? message.author : null
   const files = message.parts.filter((p): p is ImagePart | FilePart => p.type === 'image' || p.type === 'file')
   return (
     <Message align="end" className="group/user">
       <MessageContent>
-        {message.author && message.author !== env.me && <MessageHeader className="justify-end">{message.author}</MessageHeader>}
+        {authorName && <MessageHeader className="justify-end">{authorName}</MessageHeader>}
         {files.length > 0 && (
           <div className="flex max-w-[80%] flex-wrap justify-end gap-2 self-end">
             {files.map((f, i) => (
@@ -147,7 +149,7 @@ function UserTurn({ message, outgoing }: { message: UserMessage; outgoing?: bool
         )}
         {text && (
           <Bubble align="end" variant="muted" className={cn(outgoing && 'opacity-70')}>
-            <BubbleContent className="whitespace-pre-wrap">{text}</BubbleContent>
+            <BubbleContent className="px-4 py-2.5 text-reading whitespace-pre-wrap">{text}</BubbleContent>
           </Bubble>
         )}
         <MessageFooter className="gap-0.5 transition-opacity pointer-fine:opacity-0 pointer-fine:group-hover/user:opacity-100 pointer-fine:focus-within:opacity-100">
@@ -173,28 +175,68 @@ function UserTurn({ message, outgoing }: { message: UserMessage; outgoing?: bool
   )
 }
 
+/** An image attachment's bytes: the host's immediate source (a local thumbnail), else read from the device once. */
+function DeviceImage({ part, className }: { part: ImagePart; className?: string }) {
+  const env = useThreadEnv()
+  const immediate = env.imageSrc(part.path, part.mime, part.name)
+  const [loaded, setLoaded] = useState<{ path: string; url: string | null } | null>(null)
+  useEffect(() => {
+    if (immediate || !env.loadImage) return
+    let alive = true
+    void env.loadImage(part.path, part.mime).then((url) => {
+      if (alive) setLoaded({ path: part.path, url })
+    })
+    return () => {
+      alive = false
+    }
+  }, [env, immediate, part.mime, part.path])
+  const src = immediate || (loaded?.path === part.path ? loaded.url : null)
+  if (!src) return <ImageIcon className="m-auto size-6 text-muted-foreground" />
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src={src} alt={part.name} loading="lazy" className={className} />
+}
+
 function UserAttachment({ part }: { part: ImagePart | FilePart }) {
   const env = useThreadEnv()
+  const [zoomed, setZoomed] = useState(false)
   const open = () => {
     env.haptic?.('light')
     env.open({ kind: 'file', path: part.path })
   }
   if (part.type === 'image')
     return (
-      <Attachment orientation="vertical" className="w-40">
-        <AttachmentMedia variant="image">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={env.imageSrc(part.path, part.mime, part.name)} alt={part.name} loading="lazy" />
-        </AttachmentMedia>
-        <AttachmentContent>
-          <AttachmentTitle>{part.name}</AttachmentTitle>
-          <AttachmentDescription>{formatBytes(part.size)}</AttachmentDescription>
-        </AttachmentContent>
-        <AttachmentTrigger aria-label={`打开 ${part.name}`} onClick={open} />
-      </Attachment>
+      <>
+        <button
+          type="button"
+          title={part.name}
+          aria-label={`打开 ${part.name}`}
+          onClick={() => {
+            env.haptic?.('light')
+            setZoomed(true)
+          }}
+          className="flex size-28 overflow-hidden rounded-2xl bg-card focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:outline-none"
+        >
+          <DeviceImage part={part} className="size-full object-cover" />
+        </button>
+        <Dialog open={zoomed} onOpenChange={setZoomed}>
+          <DialogContent className="max-w-[min(92vw,64rem)] gap-2 p-2 sm:max-w-[min(92vw,64rem)]">
+            <DialogTitle className="sr-only">{part.name}</DialogTitle>
+            <DeviceImage part={part} className="max-h-[80vh] w-full rounded-[calc(var(--radius-card)-0.5rem)] object-contain" />
+            <div className="flex items-center gap-2 px-2 pb-1 text-xs text-muted-foreground">
+              <span className="min-w-0 flex-1 truncate">
+                {part.name} · {formatBytes(part.size)}
+              </span>
+              <Button variant="ghost" size="xs" onClick={open}>
+                <FileIcon />
+                {part.path.split(/[\\/]/).slice(-2).join('/')}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      </>
     )
   return (
-    <Attachment>
+    <Attachment className="min-w-44 border-0 bg-card">
       <AttachmentMedia>
         <FileIcon />
       </AttachmentMedia>
@@ -223,9 +265,15 @@ function AgentTurn({ turn, live, last, control, ctx: base }: { turn: TurnData; l
   const idleWhileRunning = live && !assistant.some((m) => !m.done) && !control?.pending.length && lastSegment?.kind !== 'steps'
   const text = replyText(turn.items)
   const error = last && control?.state === 'error' ? (control.error ?? '这一轮失败了') : null
-  // How long the turn took, on its last step group once it is done (from its first item to its last).
-  const turnMs = !live && assistant.length > 1 ? new Date(lastItem!.created_at).getTime() - new Date(assistant[0].created_at).getTime() : undefined
+  // How long the turn took, on its last step group once it is done (from its first item to its last). Under a second
+  // it is left out: item times only show when each item began, so a quick turn would read "0 秒".
+  const span = !live && assistant.length > 1 ? new Date(lastItem!.created_at).getTime() - new Date(assistant[0].created_at).getTime() : 0
+  const turnMs = span >= 1000 ? span : undefined
   const lastGroup = segments.findLast((s) => s.kind === 'steps')
+  // The last reply can be asked for again (its prompt resent); a prompt with attachments cannot be resent as text.
+  const canRegenerate = Boolean(
+    env.regenerate && turn.user?.rewindable && !turn.outgoing && turn.user.parts.every((p) => p.type === 'text'),
+  )
   return (
     <Message>
       <MessageContent className="gap-4">
@@ -236,7 +284,7 @@ function AgentTurn({ turn, live, last, control, ctx: base }: { turn: TurnData; l
               const groupLive = live && (s === lastSegment || s.steps.some((m) => !m.done && m.parts[0].type !== 'plan'))
               return (
                 <Trace key={s.key}>
-                  <StepGroup steps={s.steps} live={groupLive} turnMs={s === lastGroup && turnMs && turnMs > 0 ? turnMs : undefined} ctx={ctx} />
+                  <StepGroup steps={s.steps} live={groupLive} turnMs={s === lastGroup ? turnMs : undefined} ctx={ctx} />
                 </Trace>
               )
             }
@@ -250,7 +298,7 @@ function AgentTurn({ turn, live, last, control, ctx: base }: { turn: TurnData; l
                   <MessageContent>
                     <MessageHeader className="justify-end">插话</MessageHeader>
                     <Bubble align="end" variant="muted">
-                      <BubbleContent className="whitespace-pre-wrap">{userText(s.message)}</BubbleContent>
+                      <BubbleContent className="px-4 py-2.5 text-reading whitespace-pre-wrap">{userText(s.message)}</BubbleContent>
                     </Bubble>
                   </MessageContent>
                 </Message>
@@ -260,9 +308,6 @@ function AgentTurn({ turn, live, last, control, ctx: base }: { turn: TurnData; l
         {idleWhileRunning && (
           <Trace>
             <TraceLine status="running">
-              <TraceIcon>
-                <LoaderCircleIcon className="animate-spin" />
-              </TraceIcon>
               <TraceTitle>正在处理</TraceTitle>
             </TraceLine>
           </Trace>
@@ -273,11 +318,18 @@ function AgentTurn({ turn, live, last, control, ctx: base }: { turn: TurnData; l
             <BubbleContent>{error}</BubbleContent>
           </Bubble>
         )}
-        {!live && text && (
+        {!live && (text || (last && canRegenerate)) && (
           <MessageFooter className="-ml-1.5 gap-0.5 px-0">
-            <MessageAction label="复制" onClick={() => env.copy(text)}>
-              <CopyIcon />
-            </MessageAction>
+            {text && (
+              <MessageAction label="复制" onClick={() => env.copy(text)}>
+                <CopyIcon />
+              </MessageAction>
+            )}
+            {last && canRegenerate && (
+              <MessageAction label="重新生成" onClick={() => env.regenerate!(turn.user!.id)}>
+                <RefreshCwIcon />
+              </MessageAction>
+            )}
             {env.fork && lastItem && (
               <MessageAction label="从这里分叉" onClick={() => env.fork!(lastItem.id)}>
                 <GitForkIcon />

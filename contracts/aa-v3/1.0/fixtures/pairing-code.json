@@ -1,0 +1,50 @@
+{
+  "description": "Pairing code test vectors (pairing.schema.json PairingCode). psk = base64url(PBKDF2-HMAC-SHA256(code, 'aa-v3/pairing-code/v1:' + instance_id, 200000, 32)) after normalization (upper-case, drop spaces and dashes, O->0, I/L->1). fingerprint = first 16 bytes of SHA-256 over the raw 32-byte key, upper-case hex in groups of four.",
+  "kdf": {
+    "algorithm": "PBKDF2-HMAC-SHA256",
+    "salt_prefix": "aa-v3/pairing-code/v1:",
+    "iterations": 200000,
+    "length": 32
+  },
+  "pairing_id": "pairing-code",
+  "valid": [
+    {
+      "input": "7KQ2M-X9PTA",
+      "instance_id": "dev_fa7dce281d0548fc2d52a53f",
+      "code": "7KQ2MX9PTA",
+      "psk": "i_9rB4Qk4eF4KEi8X8IozFlFdCEpIMDkx0Ttlx7PXQQ"
+    },
+    {
+      "input": "7kq2m x9pta",
+      "instance_id": "dev_fa7dce281d0548fc2d52a53f",
+      "code": "7KQ2MX9PTA",
+      "psk": "i_9rB4Qk4eF4KEi8X8IozFlFdCEpIMDkx0Ttlx7PXQQ"
+    },
+    {
+      "input": "0123456789",
+      "instance_id": "dev_0000000000000000000000aa",
+      "code": "0123456789",
+      "psk": "_c_2OkN-_Fr22FMStkwUdhQZbT_vCFy1q4m6ppKTMGE"
+    },
+    {
+      "input": "OILZZ-ZZZZZ",
+      "instance_id": "dev_0000000000000000000000aa",
+      "code": "011ZZZZZZZ",
+      "psk": "typK8EfGoMlSBRgJ1fxrLY7Ft9d6YqyNJ1VJtB2wXww"
+    }
+  ],
+  "invalid": [
+    "",
+    "7KQ2M-X9PT",
+    "7KQ2M-X9PTAA",
+    "7KQ2M-X9PTU",
+    "7KQ2M_X9PTA",
+    "аKQ2M-X9PTA"
+  ],
+  "fingerprints": [
+    {
+      "public_key": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+      "fingerprint": "AE21 6C2E F524 7A37 82C1 35EF A279 A3E4"
+    }
+  ]
+}

@@ -4,18 +4,22 @@
 //   1. Single-device operations ALWAYS go over a MeshCall tunnel (normal or E2E).
 //   2. If a device is locally pinned in IndexedDB (`require_e2ee: true`) OR reports `mode_hint === "encrypted"`:
 //      - NEVER downgrade to a plain tunnel, even if the server lies and sends a plain `mtun_` credential.
-//      - ONLY use the locally pinned `device_pub` from QR / `aa-pair://v1/...`, never server hints.
+//      - ONLY use the locally pinned `device_pub` (from a QR / `aa-pair://v1/...` link, or a server hint that a
+//        pairing-code handshake proved), never an unproven server hint.
 //      - First-time pairing persists trust in IndexedDB BEFORE opening the `Noise_IKpsk2` tunnel.
 //      - Subsequent connections use `Noise_IK` with the browser's persistent X25519 private key.
 
 import { Mesh, Router, UnauthenticatedError, type RpcDuplex } from "meshcall/web"
 
 import type { ControlPlaneClient } from "@/lib/mesh/control-client"
-import { buildWebTrustRecord, PairingError, parsePairingUri } from "@/lib/mesh/pairing"
+import { buildCodePairingPayload, buildWebTrustRecord, PairingError, parsePairingUri } from "@/lib/mesh/pairing"
 import { vault } from "@/lib/storage/idb"
 import type {
+  AgentEntry,
+  AgentUpdate,
   DeviceMode,
   DeviceRecord,
+  PairingPayload,
   DeviceSettings,
   DeviceStatus,
   ListDirsResult,
@@ -23,28 +27,21 @@ import type {
   OpenTunnelResponse,
   PairedClientEntry,
   ReadFileResult,
+  PreparedAgent,
   Session,
   SessionListPayload,
+  TerminalAttachRequest,
   TerminalInfo,
+  TerminalInputFrame,
+  TerminalOutputFrame,
   WatchEvent,
 } from "@/lib/types/v3"
+
+export type { TerminalAttachRequest, TerminalInputFrame, TerminalOutputFrame } from "@/lib/types/v3"
 
 const SESSIONS_SVC = "aa.v3.Sessions"
 const DEVICE_SVC = "aa.v3.Device"
 const TERMINALS_SVC = "aa.v3.Terminals"
-
-export interface TerminalInputFrame {
-  type: "input" | "resize"
-  data?: string
-  cols?: number
-  rows?: number
-}
-
-export interface TerminalOutputFrame {
-  type: "output" | "exit"
-  data?: string
-  exit_code?: number | null
-}
 
 interface PooledTunnel {
   deviceId: string
@@ -86,14 +83,33 @@ export class DeviceTunnelManager {
   }
 
   /**
-   * First-time out-of-band pairing (`Noise_IKpsk2_25519_AESGCM_SHA256`).
+   * First-time out-of-band pairing (`Noise_IKpsk2_25519_AESGCM_SHA256`) with a pasted `aa-pair://v1/` link.
    * Persists `require_e2ee: true` + `device_pub` to IndexedDB BEFORE opening the tunnel.
    */
   async pairEncryptedDevice(
     rawUri: string,
     deviceNameHint?: string
   ): Promise<{ deviceId: string; status: DeviceStatus; trustPub: string }> {
-    const payload = parsePairingUri(rawUri)
+    return this.pairWith(parsePairingUri(rawUri), deviceNameHint, "link")
+  }
+
+  /**
+   * First-time pairing with a code typed by the user (e2ee-admission-proposal §4.1). The device key is the
+   * control plane's hint; the PSK handshake authenticates it, and it is pinned only after that handshake succeeds.
+   */
+  async pairEncryptedDeviceWithCode(
+    device: Pick<DeviceRecord, "id" | "name" | "e2e_public_key_hint">,
+    code: string
+  ): Promise<{ deviceId: string; status: DeviceStatus; trustPub: string }> {
+    const payload = await buildCodePairingPayload(code, device)
+    return this.pairWith(payload, device.name, "code")
+  }
+
+  private async pairWith(
+    payload: PairingPayload,
+    deviceNameHint: string | undefined,
+    source: "link" | "code"
+  ): Promise<{ deviceId: string; status: DeviceStatus; trustPub: string }> {
     const deviceId = payload.instance_id
 
     // A pin is never replaced by a pasted link: a different key could be a forged link or a lying server.
@@ -107,11 +123,14 @@ export class DeviceTunnelManager {
       )
     }
 
-    // Step 1: Lock local trust record BEFORE contacting server or opening tunnel, so nothing in between can
-    // talk plaintext to this device. It is rolled back below if the pairing does not complete.
+    // Step 1 (link): lock the local trust record BEFORE contacting the server or opening the tunnel, so nothing in
+    // between can talk plaintext to this device; it is rolled back below if the pairing does not complete.
+    // A code's key comes from the server and must not be pinned before the PSK handshake proves it (a pin left
+    // behind by a crash would let whoever holds that key pass the later IK handshakes), so it is saved after.
     const trustRecord = buildWebTrustRecord(payload, deviceNameHint)
-    await vault.saveDeviceTrust(this.accountId, trustRecord)
+    if (source === "link") await vault.saveDeviceTrust(this.accountId, trustRecord)
     const rollback = async () => {
+      if (source === "code") return
       if (previous) await vault.saveDeviceTrust(this.accountId, previous)
       else await vault.removeDeviceTrust(this.accountId, deviceId)
     }
@@ -145,7 +164,9 @@ export class DeviceTunnelManager {
         },
       })
       await mesh.connect()
+      // An encrypted device serves only paired peers: an answer means the device accepted the pairing.
       const status = await mesh.unary<Record<string, never>, DeviceStatus>(DEVICE_SVC, "status", {})
+      if (source === "code") await vault.saveDeviceTrust(this.accountId, trustRecord)
       const pooled: PooledTunnel = {
         deviceId,
         mode: "encrypted",
@@ -193,7 +214,7 @@ export class DeviceTunnelManager {
       if (requireE2ee && !trust) {
         throw new PairingError(
           "e2e_not_paired",
-          "This encrypted device is not paired with this browser yet; scan or paste its pairing link."
+          "This encrypted device is not paired with this browser yet; enter its pairing code or paste its pairing link."
         )
       }
 
@@ -294,15 +315,16 @@ export class DeviceTunnelManager {
     device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">,
     service: string,
     method: string,
-    req: Req
+    req: Req,
+    options?: { timeoutMs?: number }
   ): Promise<Res> {
     try {
       const pooled = await this.openTunnelForDevice(device, false)
-      return await pooled.mesh.unary<Req, Res>(service, method, req)
+      return await pooled.mesh.unary<Req, Res>(service, method, req, options)
     } catch (err) {
       if (err instanceof UnauthenticatedError) {
         const pooled = await this.openTunnelForDevice(device, true)
-        return await pooled.mesh.unary<Req, Res>(service, method, req)
+        return await pooled.mesh.unary<Req, Res>(service, method, req, options)
       }
       throw err
     }
@@ -317,9 +339,20 @@ export class DeviceTunnelManager {
     return this.callUnary(device, SESSIONS_SVC, "list", limit != null ? { limit } : {})
   }
 
+  /**
+   * Start the agent before the conversation exists, for its options (see `PreparedAgent`). The first start of an
+   * `npx` agent can take minutes: on a deadline, prepare again and it joins the start still in progress.
+   */
+  prepareSession(
+    device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">,
+    payload: { agent: string; cwd?: string }
+  ): Promise<PreparedAgent> {
+    return this.callUnary(device, SESSIONS_SVC, "prepare", payload, { timeoutMs: 120_000 })
+  }
+
   createSession(
     device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">,
-    payload: { agent: string; cwd?: string; title?: string; config?: Record<string, string> }
+    payload: { agent: string; cwd?: string; title?: string; config?: Record<string, string>; prepared_id?: string }
   ): Promise<Session> {
     return this.callUnary(device, SESSIONS_SVC, "create", payload)
   }
@@ -431,14 +464,27 @@ export class DeviceTunnelManager {
     })
   }
 
+  /** Remove a queued message (`aa.v3.Sessions/unqueue`). */
   cancelQueued(
     device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">,
     id: string,
     clientMsgId: string
   ): Promise<{ ok: true }> {
-    return this.callUnary(device, SESSIONS_SVC, "cancel_queued", {
+    return this.callUnary(device, SESSIONS_SVC, "unqueue", {
       id,
       client_msg_id: clientMsgId,
+    })
+  }
+
+  /** Ask the agent to compact its context (agents that offer `/compact`). */
+  compactSession(
+    device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">,
+    id: string,
+    instructions?: string
+  ): Promise<{ message_id: string }> {
+    return this.callUnary(device, SESSIONS_SVC, "compact", {
+      id,
+      ...(instructions ? { instructions } : {}),
     })
   }
 
@@ -472,6 +518,24 @@ export class DeviceTunnelManager {
     patch: Partial<DeviceSettings>
   ): Promise<DeviceSettings> {
     return this.callUnary(device, DEVICE_SVC, "update_settings", patch)
+  }
+
+  /** The device's agents with their settings and how many of their processes are running. */
+  listAgents(device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">): Promise<{ agents: AgentEntry[] }> {
+    return this.callUnary(device, DEVICE_SVC, "agents", {})
+  }
+
+  updateAgent(device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">, update: AgentUpdate): Promise<AgentEntry> {
+    return this.callUnary(device, DEVICE_SVC, "update_agent", update)
+  }
+
+  /** Stop an agent's processes; its conversations start it again with their next message. */
+  stopAgent(
+    device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">,
+    id: string,
+    force = false
+  ): Promise<{ stopped: number }> {
+    return this.callUnary(device, DEVICE_SVC, "stop_agent", force ? { id, force } : { id })
   }
 
   listDirs(
@@ -512,11 +576,34 @@ export class DeviceTunnelManager {
     })
   }
 
+  /**
+   * Store an attachment (≤ the device's `max_rpc_file_bytes`) on the device. With `session_id` the device files it
+   * under the conversation's project (`.agents-anywhere/attachments/<id>/`, client-experience-proposal §3.1).
+   */
   saveAttachment(
     device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">,
-    payload: { name: string; base64: string; mime?: string }
+    payload: { name: string; base64: string; mime?: string; session_id?: string }
   ): Promise<{ id: string; path: string; name: string; mime: string; size: number }> {
     return this.callUnary(device, DEVICE_SVC, "save_attachment", payload)
+  }
+
+  /**
+   * Have the device download a Cloud Drive transfer into the conversation's attachment folder (verifying `sha256`,
+   * decrypting with `file_key` when the file was encrypted for an E2EE device). Older Connectors answer
+   * `method_not_found`.
+   */
+  fetchDriveFile(
+    device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">,
+    payload: {
+      session_id: string
+      file_id: string
+      name: string
+      mime?: string
+      sha256?: string
+      file_key?: string
+    }
+  ): Promise<{ path: string; name: string; mime: string; size: number }> {
+    return this.callUnary(device, DEVICE_SVC, "fetch_drive_file", payload)
   }
 
   listPairedClients(
@@ -534,10 +621,16 @@ export class DeviceTunnelManager {
     })
   }
 
+  /** A one-time pairing for another client: a code to type in (`kind: "code"`) or an `aa-pair://` link. */
   createPairing(
     device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">,
-    options?: { ttl_ms?: number; label?: string; platform?: "ios" | "android" | "desktop" | "web" }
-  ): Promise<{ uri: string; pairing_id: string; expires_at: string }> {
+    options?: {
+      kind?: "link" | "code"
+      ttl_ms?: number
+      label?: string
+      platform?: "ios" | "android" | "desktop" | "web"
+    }
+  ): Promise<{ uri?: string; code?: string; pairing_id: string; expires_at: string; fingerprint?: string }> {
     return this.callUnary(device, DEVICE_SVC, "create_pairing", options ?? {})
   }
 
@@ -563,16 +656,20 @@ export class DeviceTunnelManager {
     return this.callUnary(device, TERMINALS_SVC, "close", { id })
   }
 
+  /**
+   * Open the `attach` duplex (thin transport only). Control rules, seq tracking and reconnects live in
+   * `lib/terminal/session.ts`; `lib/terminal/mesh-transport.ts` adapts this call to it.
+   */
   async attachTerminal(
     device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">,
-    terminalId: string,
+    request: TerminalAttachRequest,
     signal?: AbortSignal
   ): Promise<RpcDuplex<TerminalInputFrame, TerminalOutputFrame>> {
     const pooled = await this.openTunnelForDevice(device, false)
-    const duplex = pooled.mesh.duplex<{ id: string }, TerminalInputFrame, TerminalOutputFrame>(
+    const duplex = pooled.mesh.duplex<TerminalAttachRequest, TerminalInputFrame, TerminalOutputFrame>(
       TERMINALS_SVC,
       "attach",
-      { id: terminalId },
+      request,
       signal ? { signal } : undefined
     )
     // The call opens lazily, so a refused credential only shows while reading: evict the tunnel then, and the

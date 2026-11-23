@@ -7,11 +7,14 @@
  *   settings.json        device-local settings (mode, MCP toggle, limits, name)
  *   paired-clients.json  device-gate trust list (PairedClientEntry[])
  *   sessions.json        opaque SessionStore snapshot array
+ *   agents.json          per-agent switch and settings (name, command, args,
+ *                        extra environment variables) — `{ agents: { <id>: AgentOverride } }`
  *
  * Every file is written atomically (temp file in the same directory, fsync,
  * rename) and with 0600 permissions on POSIX: identity holds secrets, the
- * paired-clients list is integrity-critical, and sessions hold conversation
- * data that never leaves this machine.
+ * paired-clients list is integrity-critical, sessions hold conversation
+ * data that never leaves this machine, and agents.json holds the agents'
+ * environment variables (API keys, say) and the programs the device runs.
  *
  * The shapes here are intentionally self-contained and structurally match
  * `contracts/aa-v3/1.0/control.schema.json` (`DeviceMode`) and
@@ -23,6 +26,8 @@ import { constants as fsConstants } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+
+import { AgentOverridesSchema, type AgentOverrides } from "../core/config.js";
 
 /** `DeviceMode` in control.schema.json. */
 export type DeviceMode = "normal" | "encrypted";
@@ -66,6 +71,7 @@ export const STATE_FILES = {
   settings: "settings.json",
   pairedClients: "paired-clients.json",
   sessions: "sessions.json",
+  agents: "agents.json",
 } as const;
 
 const SECRET_FILE_MODE = 0o600;
@@ -272,6 +278,25 @@ export class StateStore {
     await this.#writeJson(STATE_FILES.sessions, snapshot);
   }
 
+  // -- agents --------------------------------------------------------------
+
+  /**
+   * Every agent's override (`aa.v3.Device/update_agent`); missing file → none. Like identity.json it can hold
+   * secrets (environment variables), so a loosened file is tightened back to 0600 on load.
+   */
+  async loadAgentSettings(): Promise<AgentOverrides> {
+    const file = this.pathFor(STATE_FILES.agents);
+    const raw = await this.#readJson(file);
+    if (raw === undefined) return {};
+    await tightenMode(file);
+    return parseAgentSettings(raw, file);
+  }
+
+  async saveAgentSettings(overrides: AgentOverrides): Promise<void> {
+    const agents = parseAgentSettings({ agents: overrides }, undefined);
+    await this.#writeJson(STATE_FILES.agents, { agents });
+  }
+
   // -- internals -----------------------------------------------------------
 
   async #readJson(file: string): Promise<unknown> {
@@ -394,6 +419,22 @@ function parseSettings(
       "a non-empty string (≤ 128 chars)",
     ),
   };
+}
+
+/**
+ * `{ agents: { <id>: AgentOverride } }`. A present-but-invalid entry is an error, never skipped: a dropped
+ * `enabled: false` would quietly turn an agent back on. Messages name the field, never its value.
+ */
+function parseAgentSettings(raw: unknown, file: string | undefined): AgentOverrides {
+  if (!isRecord(raw)) throw invalid(file, "agent settings must be a JSON object");
+  if (raw.agents === undefined) return {};
+  const parsed = AgentOverridesSchema.safeParse(raw.agents);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    const where = ["agents", ...(issue?.path ?? []).map(String)].join(".");
+    throw invalid(file, `${where}: ${issue?.message ?? "invalid"}`);
+  }
+  return parsed.data;
 }
 
 function parsePairedClients(raw: unknown, file: string | undefined): PairedClientEntry[] {

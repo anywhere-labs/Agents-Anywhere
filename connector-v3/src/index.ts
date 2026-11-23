@@ -34,9 +34,19 @@ export {
 
 // RPC services
 export { DeviceAdminService, TunnelStreamTracker, type DeviceAdminHooks, type TrackedStream } from "./rpc/device-admin-service.js";
-export { DeviceService, rpcGuard, toRpcError, type DeviceServiceHost } from "./rpc/device-service.js";
+export {
+  AgentEntrySchema,
+  DeviceService,
+  rpcGuard,
+  StopAgentRequestSchema,
+  toRpcError,
+  UpdateAgentRequestSchema,
+  type AgentEntry,
+  type AgentStatus,
+  type DeviceServiceHost,
+} from "./rpc/device-service.js";
 export { SessionsService, type SessionsServiceDeps } from "./rpc/sessions-service.js";
-export { TerminalsService, type TerminalsServiceDeps } from "./rpc/terminals-service.js";
+export { terminalClientIdentity, TerminalsService, type TerminalClientIdentity, type TerminalsServiceDeps } from "./rpc/terminals-service.js";
 
 // Runtime
 export {
@@ -48,8 +58,13 @@ export {
   turnReplyText,
   type AcpRuntimeHostOptions,
   type AcpRuntimeOptions,
+  type AgentInfo,
   type AgentRuntime,
+  type PreparedAgent,
+  type PreparedInfo,
   type PushEvent,
+  type RestoreMethod,
+  type RuntimeLogger,
   type StartedSession,
   type StartSessionInput,
   type TurnResult,
@@ -65,7 +80,22 @@ export {
   type ConnectorSettings,
   type DeviceIdentity,
 } from "./runtime/state-store.js";
-export { TerminalError, TerminalManager, type CreateTerminalOptions, type TerminalEvent, type TerminalInfo } from "./runtime/terminal-manager.js";
+export {
+  loadNodePty,
+  TerminalError,
+  TerminalManager,
+  type AttachOptions,
+  type ClaimOptions,
+  type CreateTerminalOptions,
+  type PtyModule,
+  type PtyProcess,
+  type TerminalAttachment,
+  type TerminalController,
+  type TerminalEvent,
+  type TerminalInfo,
+  type TerminalManagerOptions,
+  type TerminalMode,
+} from "./runtime/terminal-manager.js";
 
 // Core (portable)
 export * from "./core/config.js";

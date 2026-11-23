@@ -3,22 +3,15 @@ from __future__ import annotations
 import secrets
 
 from aa_control.core.errors import ForbiddenError, NotFoundError
-from aa_control.core.models import PushEventType, PushNotificationAck, PushNotificationRequest
+from aa_control.core.models import PushNotificationAck, PushNotificationRequest
+from aa_control.core.push import (
+    DEFAULT_NORMAL_TITLES,
+    ENCRYPTED_PUSH_TITLE,
+    GENERIC_ENCRYPTED_ALERTS,
+)
 from aa_control.core.utc import utc_now_iso
 from aa_control.infra.db.repositories import ControlRepository
 from aa_control.infra.redis_store import RedisControlStore
-
-GENERIC_ENCRYPTED_ALERTS: dict[PushEventType, str] = {
-    "approval": "您有一条待处理的审批请求，请打开客户端查看。",
-    "activity": "加密设备有新动态，请打开客户端查看。",
-    "error": "加密设备有状态提醒，请打开客户端查看。",
-}
-
-DEFAULT_NORMAL_TITLES: dict[PushEventType, str] = {
-    "approval": "待处理审批",
-    "activity": "会话更新",
-    "error": "运行异常",
-}
 
 
 class PushService:
@@ -55,7 +48,7 @@ class PushService:
 
         if is_encrypted:
             # Strictly strip all content and session identifiers for encrypted devices.
-            title = "Agents Anywhere"
+            title = ENCRYPTED_PUSH_TITLE
             body: str | None = GENERIC_ENCRYPTED_ALERTS[req.event_type]
             session_id: str | None = None
             content_stripped = True

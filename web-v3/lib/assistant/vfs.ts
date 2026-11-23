@@ -18,6 +18,7 @@ import {
   sha256Hex,
 } from "@/lib/assistant/crypto"
 import { vault, type StoredVfsEntry } from "@/lib/storage/idb"
+import type { DriveFileView, DriveQuotaView } from "@/lib/types/v3"
 
 export interface VfsFileView {
   path: string
@@ -107,6 +108,39 @@ async function tryDeleteOpfs(accountId: string, vfsPath: string): Promise<void> 
     // ignore missing OPFS file
   }
 }
+
+/** `/drive/files` returns at most this many files per call. */
+const REMOTE_PAGE = 200
+/** Stop after this many pages even if a server keeps answering full pages (it ignores `offset`, say). */
+const MAX_REMOTE_PAGES = 100
+
+/** Every `assistant_vfs` file in the cloud drive, page by page. */
+async function listRemoteVfsFiles(
+  serverUrl: string,
+  token: string
+): Promise<{ files: DriveFileView[]; quota: DriveQuotaView }> {
+  const files: DriveFileView[] = []
+  const seen = new Set<string>()
+  let quota: DriveQuotaView | null = null
+  for (let page = 0; page < MAX_REMOTE_PAGES; page++) {
+    const res = await listDriveFiles(serverUrl, token, {
+      purpose: "assistant_vfs",
+      limit: REMOTE_PAGE,
+      offset: page * REMOTE_PAGE,
+    })
+    quota = res.quota
+    if (!quota.enabled) return { files: [], quota }
+    for (const f of res.files) {
+      if (seen.has(f.id)) continue
+      seen.add(f.id)
+      files.push(f)
+    }
+    if (res.files.length < REMOTE_PAGE) break
+  }
+  return { files, quota: quota! }
+}
+
+const fileTime = (f: DriveFileView) => Date.parse(f.completed_at ?? f.created_at) || 0
 
 function toView(entry: StoredVfsEntry): VfsFileView {
   const name = entry.path.split("/").filter(Boolean).at(-1) ?? entry.path
@@ -222,10 +256,7 @@ export class AssistantVfsManager {
    */
   async syncWithCloudDrive(): Promise<{ uploaded: number; downloaded: number; enabled: boolean }> {
     const token = await this.ctx.getAccessToken()
-    const remote = await listDriveFiles(this.ctx.serverUrl, token, {
-      purpose: "assistant_vfs",
-      limit: 200,
-    })
+    const remote = await listRemoteVfsFiles(this.ctx.serverUrl, token)
     if (!remote.quota.enabled) {
       return { uploaded: 0, downloaded: 0, enabled: false }
     }
@@ -243,11 +274,25 @@ export class AssistantVfsManager {
     let uploaded = 0
     let downloaded = 0
 
-    const localEntries = await vault.listVfsEntries(this.ctx.accountId)
+    // The server keeps vfs_path relative ("workspace/notes.md"); locally it is absolute ("/workspace/notes.md"),
+    // and an encrypted file's ciphertext is bound to the local form. Everything below compares and stores the local
+    // form: comparing the server's spelling made every pull look new, saved a second, unreachable copy under it, and
+    // failed to decrypt encrypted files.
+    const localEntries = await this.dropMisspelledCopies(await vault.listVfsEntries(this.ctx.accountId))
     const localByPath = new Map(localEntries.map((e) => [e.path, e]))
-    const remoteByPath = new Map(
-      remote.files.filter((f) => f.vfs_path).map((f) => [f.vfs_path!, f])
-    )
+    const remoteByPath = new Map<string, DriveFileView>()
+    for (const file of remote.files) {
+      if (!file.vfs_path) continue
+      let path: string
+      try {
+        path = normalizeWorkspacePath(file.vfs_path)
+      } catch {
+        continue
+      }
+      // Several versions of one path: the newest wins.
+      const seen = remoteByPath.get(path)
+      if (!seen || fileTime(file) > fileTime(seen)) remoteByPath.set(path, file)
+    }
 
     // 1. Push dirty local files
     for (const entry of localEntries) {
@@ -351,5 +396,34 @@ export class AssistantVfsManager {
     }
 
     return { uploaded, downloaded, enabled: true }
+  }
+
+  /**
+   * Local entries an earlier pull saved under the server's spelling of the path (no leading slash). No tool can reach
+   * them (every path they use is normalized) and they were never edited, so they go; the pull brings the file back
+   * under its real path. One that does hold changes and has no copy under the real path is moved there instead.
+   */
+  private async dropMisspelledCopies(entries: StoredVfsEntry[]): Promise<StoredVfsEntry[]> {
+    const kept = entries.filter((e) => e.path.startsWith("/"))
+    const paths = new Set(kept.map((e) => e.path))
+    for (const entry of entries) {
+      if (entry.path.startsWith("/")) continue
+      let path: string | null = null
+      try {
+        path = normalizeWorkspacePath(entry.path)
+      } catch {
+        path = null
+      }
+      if (path && entry.syncedSha256 !== entry.sha256 && !paths.has(path)) {
+        const moved: StoredVfsEntry = { ...entry, key: `${this.ctx.accountId}::${path}`, path }
+        await vault.saveVfsEntry(moved)
+        await tryWriteOpfs(this.ctx.accountId, path, base64ToBytes(entry.contentBase64))
+        kept.push(moved)
+        paths.add(path)
+      }
+      await vault.deleteVfsEntry(this.ctx.accountId, entry.path)
+      await tryDeleteOpfs(this.ctx.accountId, entry.path)
+    }
+    return kept.sort((a, b) => a.path.localeCompare(b.path))
   }
 }

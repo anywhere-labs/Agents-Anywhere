@@ -173,6 +173,7 @@ export type LockBadge = "green" | "grey"
 
 export type PairingErrorCode =
   | "invalid_pairing_uri"
+  | "invalid_pairing_code"
   | "pairing_expired"
   | "pairing_used"
   | "e2e_handshake_failed"
@@ -234,6 +235,50 @@ export interface ConfigOption {
   category?: "mode" | "model" | "thought_level" | "model_config" | (string & {})
   current: string
   options: { value: string; name: string; description?: string; group?: string }[]
+}
+
+/**
+ * aa.v3.Device/agents: an agent on the device with its settings (connector-v3 README › Agent 管理). A disabled agent
+ * is not offered for new conversations; settings apply to agent processes started afterwards. Environment values never
+ * leave the device: only their names come back.
+ */
+export interface AgentEntry {
+  id: string
+  name: string
+  builtin: boolean
+  enabled: boolean
+  command: string
+  args: string[]
+  env_keys: string[]
+  customized: boolean
+  /** Live processes of this agent (conversations whose agent is up, and the one started for a new conversation). */
+  running: number
+  /** Conversations of this agent with a turn running now. */
+  busy: number
+}
+
+/** aa.v3.Device/update_agent: `reset` first drops every override; `env` values of null remove a variable. */
+export interface AgentUpdate {
+  id: string
+  enabled?: boolean
+  name?: string
+  command?: string
+  args?: string[]
+  env?: Record<string, string | null>
+  reset?: boolean
+}
+
+/**
+ * aa.v3.Sessions/prepare: the agent started ahead of the conversation (as soon as the new-conversation page has an
+ * agent and a directory), so its options can be chosen before the first message; `create({ prepared_id })` takes it
+ * over. Preparing again before `expires_at` returns the same id and pushes the expiry back.
+ */
+export interface PreparedAgent {
+  prepared_id: string
+  agent: AgentKind
+  cwd: string
+  config: ConfigOption[]
+  expires_at: Instant
 }
 
 export interface Session {
@@ -496,8 +541,57 @@ export interface TerminalInfo {
   exit_signal: string | null
   exited_at: string | null
   pid: number | null
-  mode: "pipe" | "script"
+  mode: TerminalMode
+  owner: "user" | "agent"
+  controller: TerminalController | null
+  generation: number
+  viewers: number
 }
+
+// aa.v3.Terminals attach protocol (contracts/aa-v3/1.0/terminals.schema.json, docs/v3/terminal-proposal.md).
+// Terminal bytes travel as standard base64.
+
+export type TerminalMode = "pty" | "pipe" | "script"
+
+export interface TerminalController {
+  /** `e2e:<peer_key>` on encrypted devices, the tunnel principal on normal devices. */
+  client_id: string
+  label: string
+  /** false while the controller's attach is gone but its 10 s grace period has not ended. */
+  connected: boolean
+  since: string
+}
+
+export interface TerminalAttachRequest {
+  id: string
+  mode?: "view" | "control"
+  cols?: number
+  rows?: number
+  resume_seq?: number
+  label?: string
+}
+
+export type TerminalInputFrame =
+  | { type: "input"; data: string; generation: number }
+  | { type: "resize"; cols: number; rows: number; generation: number }
+  | { type: "claim"; cols?: number; rows?: number; keep_size?: boolean }
+  | { type: "release" }
+
+export type TerminalRejectReason = "not_controller" | "stale_generation" | "agent_owned"
+
+export type TerminalOutputFrame =
+  | { type: "snapshot"; data: string; seq: number; cols: number; rows: number }
+  | { type: "output"; data: string; seq: number }
+  | {
+      type: "control"
+      controller: TerminalController | null
+      generation: number
+      you: boolean
+      cols: number
+      rows: number
+    }
+  | { type: "rejected"; reason: TerminalRejectReason; generation: number }
+  | { type: "exit"; exit_code: number | null; exit_signal?: string | null }
 
 export interface McpGrantView {
   id: string
@@ -510,12 +604,38 @@ export interface McpGrantView {
   created_at: string
 }
 
+/** `GET /oauth/authorize` (Bearer) consent preview from `server-v3` `McpService.consent_preview`. */
+export interface McpConsentScopeView {
+  scope: McpScope
+  default_checked: boolean
+  high_risk: boolean
+}
+
+export interface McpConsentPreview {
+  client_id: string
+  client_name: string
+  redirect_uri: string
+  scopes: McpConsentScopeView[]
+  eligible_devices: { id: string; name: string; platform: DevicePlatform }[]
+  note?: string
+}
+
+/** `POST /oauth/authorize` (Bearer) approval result. */
+export interface McpAuthorizeApproveResponse {
+  code: string
+  redirect_url: string
+}
+
 // ---------------------------------------------------------------------------
 // Cloud Drive (T517)
 // ---------------------------------------------------------------------------
 
 export type DrivePurpose = "transfer" | "assistant_vfs"
 export type DriveEncryptionMode = "none" | "account_dek" | "ephemeral_key"
+/** What an upload does when its target path is taken: "name (1)" (rename), 409 (fail) or supersede (replace). */
+export type DriveConflictPolicy = "rename" | "fail" | "replace"
+/** The two server-created folders: /Transfers and /Orches (Orches' cloud workspace). */
+export type DriveSystemFolder = "transfers" | "orches"
 
 export interface PresignedHttpTarget {
   method: "PUT" | "GET"
@@ -534,6 +654,14 @@ export interface DriveFileView {
   filename: string | null
   mime_type: string | null
   vfs_path: string | null
+  /** Normalized absolute drive path, e.g. "/报告/2026/q3.pdf" (for a pending upload: where it will land). */
+  path: string
+  name: string
+  parent_path: string
+  /** Canonical text reference, e.g. "drive:/报告/2026/q3.pdf". */
+  ref: string
+  /** Inside /Orches: only Orches' own sync writes there (list, download, delete only). */
+  managed: boolean
   encryption_mode: DriveEncryptionMode
   encryption_nonce: string | null
   encryption_key_version: number | null
@@ -543,6 +671,51 @@ export interface DriveFileView {
   created_at: string
   completed_at: string | null
   expires_at: string
+}
+
+export interface DriveFolderView {
+  id: string
+  path: string
+  name: string
+  parent_path: string
+  ref: string
+  system: DriveSystemFolder | null
+  managed: boolean
+  created_at: string
+  updated_at: string
+}
+
+/** `GET /drive/entries`: one folder's subfolders and live files (each with its expiry). */
+export interface DriveEntriesResponse {
+  path: string
+  ref: string
+  /** null for the root folder. */
+  folder: DriveFolderView | null
+  folders: DriveFolderView[]
+  files: DriveFileView[]
+  total_files: number
+  quota: DriveQuotaView
+}
+
+export interface DriveFolderMoveResponse {
+  folder: DriveFolderView
+  moved_folders: number
+  moved_files: number
+}
+
+export interface DriveFolderDeleteResponse {
+  ok: boolean
+  deleted_folders: number
+  deleted_files: number
+}
+
+/** `GET /drive/resolve?path=…|ref=drive:/…`. */
+export interface DriveResolveResponse {
+  kind: "file" | "folder"
+  path: string
+  ref: string
+  folder: DriveFolderView | null
+  file: DriveFileView | null
 }
 
 export interface DriveQuotaView {

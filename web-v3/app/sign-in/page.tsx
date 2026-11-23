@@ -6,7 +6,7 @@ import { ArrowRightIcon, RefreshCwIcon, ServerIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { PasswordInput } from "@/components/auth/password-input"
-import { Field } from "@/components/field"
+import { Field, Notice } from "@/components/field"
 import { useI18n } from "@/components/i18n-provider"
 import { LanguageButton } from "@/components/language-menu"
 import { SignInShell, StepHeading } from "@/components/sign-in/sign-in-shell"
@@ -15,7 +15,9 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { fetchAuthConfig, normalizeServerUrl } from "@/lib/api/control-http"
 import { startOidcLogin } from "@/lib/auth/oidc"
+import { SESSION_EXPIRED_FLAG } from "@/lib/auth/session"
 import { APP_CONFIG } from "@/lib/config"
+import { safeNextPath } from "@/lib/oauth/consent"
 import { useWorkbench } from "@/lib/state/workbench-context"
 import type { AuthConfigResponse } from "@/lib/types/v3"
 
@@ -24,6 +26,8 @@ function SignInInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const isAddingAccount = searchParams.get("add") === "1"
+  // Where to go after signing in, e.g. back to an MCP consent page (`/oauth/authorize?...`).
+  const nextPath = safeNextPath(searchParams.get("next")) ?? "/"
 
   const {
     ready,
@@ -47,13 +51,30 @@ function SignInInner() {
   const [setupToken, setSetupToken] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [showServerInput, setShowServerInput] = useState(false)
+  // Sent back here because the server refused the saved session (lib/state/workbench-context.tsx `expireSession`).
+  const [sessionExpired, setSessionExpired] = useState(false)
+
+  useEffect(() => {
+    let expiredEmail: string | null = null
+    try {
+      expiredEmail = sessionStorage.getItem(SESSION_EXPIRED_FLAG)
+      sessionStorage.removeItem(SESSION_EXPIRED_FLAG)
+    } catch {
+      return
+    }
+    if (expiredEmail === null) return
+    queueMicrotask(() => {
+      setSessionExpired(true)
+      if (expiredEmail) setEmail(expiredEmail)
+    })
+  }, [])
 
   useEffect(() => {
     if (!ready) return
     if (activeAccount && !isAddingAccount) {
-      router.replace("/")
+      router.replace(nextPath)
     }
-  }, [ready, activeAccount, isAddingAccount, router])
+  }, [ready, activeAccount, isAddingAccount, nextPath, router])
 
   const loadConfig = async (url: string) => {
     if (!url.trim()) return
@@ -92,7 +113,7 @@ function SignInInner() {
       const authorizeUrl = await startOidcLogin({
         serverUrl,
         oidc: config.oidc,
-        returnTo: "/",
+        returnTo: nextPath,
       })
       window.location.assign(authorizeUrl)
     } catch (err) {
@@ -117,7 +138,7 @@ function SignInInner() {
       } else {
         await signInLocal({ serverUrl, email: email.trim(), password })
       }
-      router.replace("/")
+      router.replace(nextPath)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
     } finally {
@@ -142,6 +163,7 @@ function SignInInner() {
     >
       <div className="w-full max-w-sm space-y-6">
         <StepHeading title={title} />
+        {sessionExpired && <Notice tone="warning">{t("signIn.sessionExpired")}</Notice>}
         {/* Control plane server switcher (subtle disclosure) */}
         <div className="space-y-2">
           <div className="flex items-center justify-between text-xs text-muted-foreground">

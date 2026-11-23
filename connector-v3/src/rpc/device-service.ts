@@ -1,9 +1,11 @@
 /**
- * `aa.v3.Device`: this device's status, settings, files, git and pairing management.
+ * `aa.v3.Device`: this device's status, settings, agents, files, git and pairing management.
  *
  * Every method passes the device gate first (`gate.assertBusinessCallAllowed`): on an encrypted device only paired
  * end-to-end clients get here. Settings and pairing are further limited: never from MCP, and pairing management
  * only from an authenticated, paired E2E client (the device's own CLI uses the local admin socket instead).
+ * Changing or stopping agents (`update_agent`, `stop_agent`) runs or ends programs of the caller's choosing, so only
+ * a client over a tunnel may: never the control plane's direct calls, never MCP.
  */
 
 import {
@@ -18,10 +20,12 @@ import {
   type RpcContext,
 } from "meshcall";
 
-import { ClientPlatformSchema, PairedClientEntrySchema, type PairedClientEntry } from "../core/config.js";
-import type { DeviceGate, GateDecision } from "../core/gate.js";
+import { AgentIdSchema, AgentUpdateSchema, ClientPlatformSchema, PairedClientEntrySchema, type AgentUpdate, type PairedClientEntry } from "../core/config.js";
+import { PAIRING_CODE_ID, type DeviceGate, type GateDecision } from "../core/gate.js";
+import type { AgentInfo } from "../runtime/acp-host.js";
 import {
   DeviceOpsError,
+  fetchDriveFile,
   getDeviceStatus,
   gitDiff,
   gitStatus,
@@ -29,6 +33,8 @@ import {
   readFile,
   saveAttachment,
   writeFile,
+  type AttachmentLocation,
+  type DriveDownload,
 } from "../runtime/device-ops.js";
 import type { ConnectorSettings } from "../runtime/state-store.js";
 import { TerminalError } from "../runtime/terminal-manager.js";
@@ -49,7 +55,12 @@ export function toRpcError(error: unknown): unknown {
       case "attachment_too_large":
         return new ResourceExhaustedError(error.message, options);
       case "git_unavailable":
+      case "drive_unavailable":
         return new UnavailableError(error.message, options);
+      case "drive_failed":
+        return new UnavailableError(error.message, options);
+      case "integrity_failed":
+        return new MeshCallError("data_loss", error.message, options);
       case "git_failed":
         return new MeshCallError("failed_precondition", error.message, options);
       default:
@@ -62,6 +73,8 @@ export function toRpcError(error: unknown): unknown {
       case "terminal_not_found":
         return new MeshCallError("not_found", error.message, options);
       case "terminal_not_running":
+      case "not_controller":
+      case "agent_owned":
         return new MeshCallError("failed_precondition", error.message, options);
       case "terminal_limit_reached":
         return new ResourceExhaustedError(error.message, options);
@@ -84,6 +97,11 @@ export async function rpcGuard<T>(run: () => Promise<T> | T): Promise<T> {
 
 // ── Host ────────────────────────────────────────────────────────────────────────────────────────────────────────
 
+/** An agent with how many of its sessions run a turn now. */
+export interface AgentStatus extends AgentInfo {
+  busy: number;
+}
+
 export interface DeviceServiceHost {
   readonly gate: DeviceGate;
   readonly deviceId: string;
@@ -93,7 +111,18 @@ export interface DeviceServiceHost {
   settings(): ConnectorSettings;
   /** Persist a settings change; a mode change is applied with the safe switch after this call answered. */
   updateSettings(patch: Partial<ConnectorSettings>): Promise<ConnectorSettings>;
+  /** The agents that can be used here (turned-off ones left out). */
   runtimes(): { id: string; name: string }[];
+  /** Every agent, turned-off ones included, in the order of `runtimes()`. */
+  agents(): AgentStatus[];
+  /** Change an agent (`invalid_argument` / `unknown_agent` for an id not registered here); resolves with it afterwards. */
+  updateAgent(id: string, update: AgentUpdate): Promise<AgentStatus>;
+  /** Stop an agent's processes (`failed_precondition` / `turns_running` while turns run, unless `force`); how many. */
+  stopAgent(id: string, options: { force: boolean }): Promise<number>;
+  /** A conversation's working directory (its attachments go to `<cwd>/.agents-anywhere/attachments/<id>/`). */
+  sessionCwd?(sessionId: string): string | undefined;
+  /** Cloud-drive download link for `fileId` as this device; undefined when the device has no control plane. */
+  driveDownload?: ((fileId: string) => Promise<DriveDownload>) | undefined;
   /** Remove a client from the allowlist and end its live streams. */
   revokePairedClient(clientPub: string): boolean;
 }
@@ -128,6 +157,32 @@ export const DeviceStatusResponseSchema = z.object({
   allow_mcp: z.boolean(),
   runtimes: z.array(RuntimeSchema),
 });
+
+/** `agents` entry. Built field by field: the values of an agent's environment variables have no field to travel in. */
+export const AgentEntrySchema = z.object({
+  id: z.string(),
+  /** Its preset's name: the agent's product name. */
+  name: z.string(),
+  /** One of the Connector's default presets. */
+  builtin: z.boolean(),
+  enabled: z.boolean(),
+  /** What a process started now runs. */
+  command: z.string(),
+  args: z.array(z.string()),
+  /** Names of its extra environment variables; the values never leave the device. */
+  env_keys: z.array(z.string()),
+  /** The command, args or environment differ from the preset. */
+  customized: z.boolean(),
+  /** Agent processes running now: sessions whose agent is up, prepared ones, ones still starting. */
+  running: z.number().int().nonnegative(),
+  /** Its sessions with a turn running now. */
+  busy: z.number().int().nonnegative(),
+});
+export type AgentEntry = z.output<typeof AgentEntrySchema>;
+const AgentsResponseSchema = z.object({ agents: z.array(AgentEntrySchema) });
+export const UpdateAgentRequestSchema = AgentUpdateSchema.extend({ id: AgentIdSchema });
+export const StopAgentRequestSchema = z.object({ id: AgentIdSchema, force: z.boolean().nullish() });
+const StopAgentResponseSchema = z.object({ stopped: z.number().int().nonnegative() });
 
 const UpdateSettingsSchema = z.object({
   mode: ModeSchema.nullish(),
@@ -192,21 +247,44 @@ const GitDiffResponseSchema = z.object({
   bytes: z.number().optional(),
 });
 
-const SaveAttachmentRequestSchema = z.object({ name: z.string().min(1).max(255), base64: z.string(), mime: z.string().max(128).nullish() });
+const SaveAttachmentRequestSchema = z.object({
+  name: z.string().min(1).max(255),
+  base64: z.string(),
+  mime: z.string().max(128).nullish(),
+  /** The conversation it is for: stored in that conversation's attachment folder. */
+  session_id: z.string().min(1).max(128).nullish(),
+});
+const FetchDriveFileRequestSchema = z.object({
+  file_id: z.string().min(1).max(128),
+  session_id: z.string().min(1).max(128).nullish(),
+  name: z.string().min(1).max(255).nullish(),
+  mime: z.string().max(128).nullish(),
+  /** Hex SHA-256 of the stored drive object (ciphertext for encrypted files). */
+  sha256: z.string().regex(/^[0-9a-fA-F]{64}$/).nullish(),
+  /** base64url 32-byte AES-256-GCM key for `ephemeral_key` files (only over an E2E tunnel). */
+  file_key: z.string().regex(/^[A-Za-z0-9_-]{43}$/).nullish(),
+});
 const SaveAttachmentResponseSchema = z.object({ id: z.string(), path: z.string(), name: z.string(), mime: z.string(), size: z.number() });
 
 const PairedClientsResponseSchema = z.object({ clients: z.array(PairedClientEntrySchema) });
 const RevokeRequestSchema = z.object({ client_pub: z.string().min(1) });
 const RevokeResponseSchema = z.object({ ok: z.literal(true), revoked: z.boolean() });
 const CreatePairingRequestSchema = z.object({
+  /** `link` (default): an `aa-pair://` link for a QR code; `code`: a short code to type in. */
+  kind: z.enum(["link", "code"]).nullish(),
   ttl_ms: z.number().int().positive().max(60 * 60 * 1000).nullish(),
   label: z.string().trim().min(1).max(128).nullish(),
   platform: ClientPlatformSchema.nullish(),
 });
 const CreatePairingResponseSchema = z.object({
-  uri: z.string(),
+  /** The `aa-pair://v1/…` link (kind `link`). */
+  uri: z.string().optional(),
+  /** The pairing code, XXXXX-XXXXX (kind `code`). */
+  code: z.string().optional(),
   pairing_id: z.string(),
   expires_at: z.string(),
+  /** Device key fingerprint, as the paired client shows it. */
+  fingerprint: z.string(),
 });
 
 // ── Service ─────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -215,6 +293,33 @@ function denyAdmin(decision: GateDecision, what: string): void {
   if (decision.via === "mcp") {
     throw new PermissionDeniedError(`external agents (MCP) cannot ${what}`, { details: { reason: "mcp_not_allowed" } });
   }
+}
+
+/**
+ * Only a client over a tunnel: a plain tunnel on a normal device, a paired end-to-end session on an encrypted one
+ * (the gate lets nothing else through there). Never the control plane's direct calls, never MCP.
+ */
+function requireClientTunnel(decision: GateDecision, what: string): void {
+  denyAdmin(decision, what);
+  if (decision.via !== "tunnel") {
+    throw new PermissionDeniedError(`only a client connected through a tunnel can ${what}`, { details: { reason: "tunnel_required" } });
+  }
+}
+
+/** The wire shape: every field named, so nothing else (an environment value, say) can ride along. */
+function toAgentEntry(agent: AgentStatus): AgentEntry {
+  return {
+    id: agent.id,
+    name: agent.name,
+    builtin: agent.builtin,
+    enabled: agent.enabled,
+    command: agent.command,
+    args: [...agent.args],
+    env_keys: [...agent.envKeys],
+    customized: agent.customized,
+    running: agent.running,
+    busy: agent.busy,
+  };
 }
 
 function requirePairedPeer(gate: DeviceGate, decision: GateDecision, what: string): string {
@@ -228,13 +333,15 @@ function requirePairedPeer(gate: DeviceGate, decision: GateDecision, what: strin
   return peer;
 }
 
-@service("aa.v3.Device", { targeted: true, description: "Status, settings, files, git and pairing of this device." })
+@service("aa.v3.Device", { targeted: true, description: "Status, settings, agents, files, git and pairing of this device." })
 export class DeviceService {
   readonly #host: DeviceServiceHost;
 
   constructor(host: DeviceServiceHost) {
     this.#host = host;
   }
+
+  // ── Status and settings ──
 
   @method({ description: "Device status, mode and available agent runtimes.", readOnly: true, request: EmptySchema, response: DeviceStatusResponseSchema })
   status(_request: z.output<typeof EmptySchema>, ctx: RpcContext) {
@@ -273,6 +380,49 @@ export class DeviceService {
     if (request.device_name != null) patch.device_name = request.device_name;
     return rpcGuard(() => this.#host.updateSettings(patch));
   }
+
+  // ── Agents ──
+
+  @method({
+    description: "Every agent of this device, turned-off ones included, with its effective settings and running processes. Environment variable values never leave the device: only their names.",
+    readOnly: true,
+    request: EmptySchema,
+    response: AgentsResponseSchema,
+  })
+  agents(_request: z.output<typeof EmptySchema>, ctx: RpcContext) {
+    this.#host.gate.assertBusinessCallAllowed(ctx);
+    return { agents: this.#host.agents().map(toAgentEntry) };
+  }
+
+  @method({
+    description:
+      "Turn an agent on or off, or change its command, args and extra environment variables (a string sets one, null removes it); reset goes back to the preset first. Its name is always the preset's. Applies to agent processes started afterwards. Only from a client over a tunnel.",
+    idempotent: true,
+    request: UpdateAgentRequestSchema,
+    response: AgentEntrySchema,
+  })
+  async update_agent(request: z.output<typeof UpdateAgentRequestSchema>, ctx: RpcContext) {
+    const decision = this.#host.gate.assertBusinessCallAllowed(ctx);
+    requireClientTunnel(decision, "change agents");
+    const { id, ...update } = request;
+    return toAgentEntry(await rpcGuard(() => this.#host.updateAgent(id, update)));
+  }
+
+  @method({
+    description:
+      "Stop an agent's processes, prepared ones included; its conversations stay and start it again on their next message. Refused while turns run unless force, which cancels them first. Only from a client over a tunnel.",
+    destructive: true,
+    idempotent: true,
+    request: StopAgentRequestSchema,
+    response: StopAgentResponseSchema,
+  })
+  async stop_agent(request: z.output<typeof StopAgentRequestSchema>, ctx: RpcContext) {
+    const decision = this.#host.gate.assertBusinessCallAllowed(ctx);
+    requireClientTunnel(decision, "stop agents");
+    return { stopped: await rpcGuard(() => this.#host.stopAgent(request.id, { force: request.force === true })) };
+  }
+
+  // ── Files, git and attachments ──
 
   @method({ description: "List a directory (home when no path).", readOnly: true, request: ListDirsRequestSchema, response: ListDirsResponseSchema })
   async list_dirs(request: z.output<typeof ListDirsRequestSchema>, ctx: RpcContext) {
@@ -325,9 +475,51 @@ export class DeviceService {
         base64: request.base64,
         maxBytes: this.#host.settings().max_rpc_file_bytes,
         ...(request.mime != null ? { mime: request.mime } : {}),
+        location: this.#location(request.session_id),
       }),
     );
   }
+
+  @method({
+    description: "Download a large attachment from the cloud drive into a conversation's attachment folder.",
+    idempotent: false,
+    request: FetchDriveFileRequestSchema,
+    response: SaveAttachmentResponseSchema,
+  })
+  async fetch_drive_file(request: z.output<typeof FetchDriveFileRequestSchema>, ctx: RpcContext) {
+    this.#host.gate.assertBusinessCallAllowed(ctx);
+    const driveDownload = this.#host.driveDownload;
+    if (!driveDownload) {
+      throw new UnavailableError("this device is not connected to a control plane, so it cannot reach the cloud drive", {
+        details: { reason: "drive_unavailable" },
+      });
+    }
+    if (request.file_key != null && ctx.e2e == null) {
+      throw new InvalidArgumentError("file_key may only be sent over an end-to-end encrypted tunnel", { details: { reason: "file_key_needs_e2e" } });
+    }
+    return rpcGuard(() =>
+      fetchDriveFile(
+        this.#host.dataDir,
+        {
+          fileId: request.file_id,
+          ...(request.name != null ? { name: request.name } : {}),
+          ...(request.mime != null ? { mime: request.mime } : {}),
+          ...(request.sha256 != null ? { sha256: request.sha256 } : {}),
+          ...(request.file_key != null ? { fileKey: request.file_key } : {}),
+          location: this.#location(request.session_id),
+        },
+        driveDownload,
+      ),
+    );
+  }
+
+  #location(sessionId: string | null | undefined): AttachmentLocation {
+    if (sessionId == null) return {};
+    const cwd = this.#host.sessionCwd?.(sessionId);
+    return { sessionId, ...(cwd ? { projectDir: cwd } : {}) };
+  }
+
+  // ── Pairing ──
 
   @method({ description: "Clients paired with this device.", readOnly: true, request: EmptySchema, response: PairedClientsResponseSchema })
   list_paired_clients(_request: z.output<typeof EmptySchema>, ctx: RpcContext) {
@@ -344,7 +536,7 @@ export class DeviceService {
   }
 
   @method({
-    description: "Create a one-time pairing for another client. Only from a paired end-to-end client: the link carries the pairing secret.",
+    description: "Create a one-time pairing (link or code) for another client. Only from a paired end-to-end client: it carries the pairing secret.",
     idempotent: false,
     request: CreatePairingRequestSchema,
     response: CreatePairingResponseSchema,
@@ -358,7 +550,12 @@ export class DeviceService {
     const hint: { label?: string; platform?: z.output<typeof ClientPlatformSchema> } = {};
     if (request.label != null) hint.label = request.label;
     if (request.platform != null) hint.platform = request.platform;
-    const { uri, payload } = await this.#host.gate.createPairing(request.ttl_ms ?? undefined, hint);
-    return { uri, pairing_id: payload.pairing_id, expires_at: payload.expires_at };
+    const gate = this.#host.gate;
+    if (request.kind === "code") {
+      const created = await gate.createPairingCode(request.ttl_ms ?? undefined, hint);
+      return { code: created.code, pairing_id: PAIRING_CODE_ID, expires_at: created.expires_at, fingerprint: created.fingerprint };
+    }
+    const { uri, payload } = await gate.createPairing(request.ttl_ms ?? undefined, hint);
+    return { uri, pairing_id: payload.pairing_id, expires_at: payload.expires_at, fingerprint: await gate.fingerprint() };
   }
 }

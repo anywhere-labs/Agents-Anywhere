@@ -1,0 +1,689 @@
+{
+ "name": "conversation-showcase",
+ "description": "Synthetic: every part the thread draws (thinking, plan, tools, diff, subagent, compaction, table, code, math, file links, image and file attachments, a queued message) with a pending approval that is answered, then streamed to the end. has_more pages back twice.",
+ "steps": [
+  {
+   "at": 0,
+   "message": {
+    "v": 2,
+    "type": "view.conversation",
+    "device_id": "dev_demo",
+    "session_id": "ses_showcase",
+    "agent": "claude",
+    "readonly": false,
+    "encrypted": true,
+    "me": "dev@aa.local"
+   }
+  },
+  {
+   "at": 50,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "ses_showcase",
+    "event": {
+     "type": "snapshot",
+     "session": {
+      "id": "ses_showcase",
+      "title": "Fix header overlap",
+      "agent": "claude",
+      "device": {
+       "id": "dev_demo",
+       "name": "Dev Laptop"
+      },
+      "cwd": "/Users/dev/demo",
+      "created_at": "2026-11-22T09:00:00.000Z",
+      "updated_at": "2026-11-22T09:10:10.000Z",
+      "message_count": 21,
+      "config": []
+     },
+     "messages": [
+      {
+       "id": "u100",
+       "seq": 100,
+       "done": true,
+       "role": "user",
+       "created_at": "2026-11-22T09:01:41.000Z",
+       "author": "dev@aa.local",
+       "parts": [
+        {
+         "type": "text",
+         "text": "帮我看看这张截图里的布局问题，顺便把 `README.md` 里的安装步骤整理成表格。"
+        },
+        {
+         "type": "image",
+         "path": "/Users/dev/demo/.agents-anywhere/attachments/ses_showcase/a1b2-screenshot.png",
+         "mime": "image/png",
+         "name": "screenshot.png",
+         "size": 48213
+        },
+        {
+         "type": "file",
+         "path": "/Users/dev/demo/.agents-anywhere/attachments/ses_showcase/c3d4-spec.pdf",
+         "mime": "application/pdf",
+         "name": "spec.pdf",
+         "size": 1284000
+        }
+       ]
+      },
+      {
+       "id": "a101",
+       "seq": 101,
+       "done": true,
+       "role": "assistant",
+       "turn_id": "u100",
+       "created_at": "2026-11-22T09:05:06.000Z",
+       "parts": [
+        {
+         "type": "thinking",
+         "text": "The screenshot shows the header overlapping the list. Let me check the layout file and the README first."
+        }
+       ]
+      },
+      {
+       "id": "a102",
+       "seq": 102,
+       "done": true,
+       "role": "assistant",
+       "turn_id": "u100",
+       "created_at": "2026-11-22T09:05:09.000Z",
+       "parts": [
+        {
+         "type": "plan",
+         "entries": [
+          {
+           "content": "Read the layout component",
+           "status": "completed"
+          },
+          {
+           "content": "Fix the header overlap",
+           "status": "in_progress"
+          },
+          {
+           "content": "Turn the install steps into a table",
+           "status": "pending"
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "id": "a103",
+       "seq": 103,
+       "done": true,
+       "role": "assistant",
+       "turn_id": "u100",
+       "created_at": "2026-11-22T09:05:12.000Z",
+       "parts": [
+        {
+         "type": "tool",
+         "id": "call_read",
+         "title": "Read src/layout.tsx",
+         "kind": "read",
+         "status": "completed",
+         "input": {
+          "path": "/Users/dev/demo/src/layout.tsx",
+          "offset": 10,
+          "limit": 12
+         },
+         "output": "export function Layout({ children }) {\n  return (\n    <div className=\"min-h-dvh\">\n      <Header className=\"fixed top-0\" />\n      <main>{children}</main>\n    </div>\n  )\n}\n",
+         "locations": [
+          {
+           "path": "/Users/dev/demo/src/layout.tsx",
+           "line": 10
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "id": "a104",
+       "seq": 104,
+       "done": true,
+       "role": "assistant",
+       "turn_id": "u100",
+       "created_at": "2026-11-22T09:05:15.000Z",
+       "parts": [
+        {
+         "type": "tool",
+         "id": "call_search",
+         "title": "Search \"fixed top-0\"",
+         "kind": "search",
+         "status": "completed",
+         "input": {
+          "pattern": "fixed top-0"
+         },
+         "output": "src/layout.tsx:13\nsrc/nav.tsx:4"
+        }
+       ]
+      },
+      {
+       "id": "a105",
+       "seq": 105,
+       "done": true,
+       "role": "assistant",
+       "turn_id": "u100",
+       "created_at": "2026-11-22T09:05:18.000Z",
+       "parts": [
+        {
+         "type": "tool",
+         "id": "call_edit",
+         "title": "Edit src/layout.tsx",
+         "kind": "edit",
+         "status": "completed",
+         "input": {
+          "path": "/Users/dev/demo/src/layout.tsx"
+         },
+         "diffs": [
+          {
+           "path": "/Users/dev/demo/src/layout.tsx",
+           "old_text": "      <Header className=\"fixed top-0\" />\n      <main>{children}</main>\n",
+           "new_text": "      <Header className=\"sticky top-0 z-10\" />\n      <main className=\"pt-2\">{children}</main>\n"
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "id": "a106",
+       "seq": 106,
+       "done": true,
+       "role": "assistant",
+       "turn_id": "u100",
+       "created_at": "2026-11-22T09:05:21.000Z",
+       "parts": [
+        {
+         "type": "subagent",
+         "id": "sub_1",
+         "title": "Check other pages for the same overlap",
+         "agent_type": "explorer",
+         "status": "completed",
+         "started_at": "2026-11-22T09:06:40.000Z",
+         "ended_at": "2026-11-22T09:07:10.000Z",
+         "tool_count": 2,
+         "parts": [],
+         "result": "Only `src/settings.tsx` uses the same fixed header; it needs the same change."
+        }
+       ]
+      },
+      {
+       "id": "a107",
+       "seq": 107,
+       "done": true,
+       "role": "assistant",
+       "turn_id": "u100",
+       "created_at": "2026-11-22T09:05:24.000Z",
+       "parts": [
+        {
+         "type": "tool",
+         "id": "call_sub_grep",
+         "title": "grep -rn \"<Header\" src",
+         "kind": "execute",
+         "status": "completed",
+         "input": {
+          "command": "grep -rn \"<Header\" src"
+         },
+         "output": {
+          "stdout": "src/layout.tsx:13:      <Header className=\"sticky top-0 z-10\" />\nsrc/settings.tsx:8:      <Header className=\"fixed top-0\" />\n",
+          "exit_code": 0
+         }
+        }
+       ],
+       "subagent_id": "sub_1"
+      },
+      {
+       "id": "a108",
+       "seq": 108,
+       "done": true,
+       "role": "assistant",
+       "turn_id": "u100",
+       "created_at": "2026-11-22T09:05:27.000Z",
+       "parts": [
+        {
+         "type": "text",
+         "text": "布局问题出在 `Header` 用了 `fixed`，内容被盖住了。我改成了 `sticky`，并给主区加了一点上边距。\n\n安装步骤整理如下：\n\n| 步骤 | 命令 | 说明 |\n| --- | --- | --- |\n| 1 | `npm i -g @anywhere-labs/connector` | 安装 Connector |\n| 2 | `aa login` | 登录账号 |\n| 3 | `aa pair` | 扫码配对手机 |\n\n```ts\nexport function Layout({ children }: { children: React.ReactNode }) {\n  return <Header className=\"sticky top-0 z-10\" />\n}\n```\n\n复杂度大约是 $O(n \\log n)$。另见 [settings.tsx](file:///Users/dev/demo/src/settings.tsx#L8) 和 [文档](https://example.com/docs)。"
+        }
+       ]
+      },
+      {
+       "id": "u109",
+       "seq": 109,
+       "done": true,
+       "role": "user",
+       "created_at": "2026-11-22T09:01:50.000Z",
+       "author": "dev@aa.local",
+       "parts": [
+        {
+         "type": "text",
+         "text": "顺便跑一下测试"
+        }
+       ]
+      },
+      {
+       "id": "a111",
+       "seq": 111,
+       "done": true,
+       "role": "assistant",
+       "turn_id": "u109",
+       "created_at": "2026-11-22T09:05:36.000Z",
+       "parts": [
+        {
+         "type": "compaction",
+         "id": "cmp_1",
+         "status": "completed",
+         "trigger": "auto",
+         "tokens_before": 182000,
+         "tokens_after": 41000,
+         "at": "2026-11-22T09:10:00.000Z",
+         "ended_at": "2026-11-22T09:10:05.000Z"
+        }
+       ]
+      },
+      {
+       "id": "a112",
+       "seq": 112,
+       "done": true,
+       "role": "assistant",
+       "turn_id": "u109",
+       "created_at": "2026-11-22T09:05:39.000Z",
+       "parts": [
+        {
+         "type": "tool",
+         "id": "call_fetch",
+         "title": "Fetch https://example.com/changelog",
+         "kind": "fetch",
+         "status": "failed",
+         "input": {
+          "url": "https://example.com/changelog"
+         },
+         "output": "network unreachable"
+        }
+       ]
+      },
+      {
+       "id": "a110",
+       "seq": 110,
+       "done": false,
+       "role": "assistant",
+       "turn_id": "u109",
+       "created_at": "2026-11-22T09:05:33.000Z",
+       "parts": [
+        {
+         "type": "tool",
+         "id": "call_test",
+         "title": "npm test",
+         "kind": "execute",
+         "status": "pending",
+         "input": {
+          "command": "npm test -- --run",
+          "cwd": "/Users/dev/demo"
+         }
+        }
+       ]
+      }
+     ],
+     "has_more": true,
+     "control": {
+      "state": "running",
+      "steer": "native",
+      "pending": [
+       {
+        "request_id": "perm_1",
+        "message_id": "a110",
+        "tool_call_id": "call_test",
+        "title": "npm test -- --run",
+        "options": [
+         {
+          "id": "allow",
+          "name": "允许",
+          "kind": "allow_once"
+         },
+         {
+          "id": "always",
+          "name": "总是允许",
+          "kind": "allow_always"
+         },
+         {
+          "id": "reject",
+          "name": "拒绝",
+          "kind": "reject_once"
+         }
+        ]
+       }
+      ],
+      "answered": [],
+      "queued": [
+       {
+        "client_msg_id": "q1",
+        "author": "dev@aa.local",
+        "content": "测试通过后帮我提交一下"
+       }
+      ],
+      "usage": {
+       "used": 41000,
+       "size": 200000,
+       "updated_at": "2026-11-22T09:10:10.000Z"
+      }
+     }
+    }
+   }
+  },
+  {
+   "at": 4000,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "ses_showcase",
+    "event": {
+     "type": "control",
+     "control": {
+      "state": "running",
+      "steer": "native",
+      "pending": [],
+      "answered": [
+       {
+        "request_id": "perm_1",
+        "by": "dev@aa.local",
+        "device": "iPhone",
+        "option_id": "allow",
+        "at": "2026-11-22T09:10:20.000Z"
+       }
+      ],
+      "queued": [
+       {
+        "client_msg_id": "q1",
+        "author": "dev@aa.local",
+        "content": "测试通过后帮我提交一下"
+       }
+      ],
+      "usage": {
+       "used": 41000,
+       "size": 200000,
+       "updated_at": "2026-11-22T09:10:10.000Z"
+      }
+     }
+    }
+   }
+  },
+  {
+   "at": 4200,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "ses_showcase",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "a110",
+      "seq": 110,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "u109",
+      "created_at": "2026-11-22T09:05:33.000Z",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_test",
+        "title": "npm test",
+        "kind": "execute",
+        "status": "in_progress",
+        "input": {
+         "command": "npm test -- --run",
+         "cwd": "/Users/dev/demo"
+        }
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 5200,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "ses_showcase",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "a110",
+      "seq": 110,
+      "done": true,
+      "role": "assistant",
+      "turn_id": "u109",
+      "created_at": "2026-11-22T09:05:33.000Z",
+      "parts": [
+       {
+        "type": "tool",
+        "id": "call_test",
+        "title": "npm test",
+        "kind": "execute",
+        "status": "completed",
+        "input": {
+         "command": "npm test -- --run",
+         "cwd": "/Users/dev/demo"
+        },
+        "output": {
+         "stdout": " ✓ src/layout.test.tsx (3 tests) 41ms\n ✓ src/nav.test.tsx (2 tests) 12ms\n\n Test Files  2 passed (2)\n      Tests  5 passed (5)\n",
+         "exit_code": 0
+        }
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 5600,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "ses_showcase",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "a113",
+      "seq": 113,
+      "done": false,
+      "role": "assistant",
+      "turn_id": "u109",
+      "created_at": "2026-11-22T09:11:40.000Z",
+      "parts": [
+       {
+        "type": "text",
+        "text": "测试全部通过（5 个用例）。"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6000,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "ses_showcase",
+    "event": {
+     "type": "message",
+     "message": {
+      "id": "a113",
+      "seq": 113,
+      "done": true,
+      "role": "assistant",
+      "turn_id": "u109",
+      "created_at": "2026-11-22T09:11:40.000Z",
+      "parts": [
+       {
+        "type": "text",
+        "text": "测试全部通过（5 个用例）。要我顺便把 `settings.tsx` 也改了吗？"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "at": 6200,
+   "message": {
+    "v": 2,
+    "type": "conversation.event",
+    "session_id": "ses_showcase",
+    "event": {
+     "type": "control",
+     "control": {
+      "state": "idle",
+      "steer": "native",
+      "pending": [],
+      "answered": [
+       {
+        "request_id": "perm_1",
+        "by": "dev@aa.local",
+        "device": "iPhone",
+        "option_id": "allow",
+        "at": "2026-11-22T09:10:20.000Z"
+       }
+      ],
+      "queued": [
+       {
+        "client_msg_id": "q1",
+        "author": "dev@aa.local",
+        "content": "测试通过后帮我提交一下"
+       }
+      ],
+      "usage": {
+       "used": 41000,
+       "size": 200000,
+       "updated_at": "2026-11-22T09:10:10.000Z"
+      }
+     }
+    }
+   }
+  }
+ ],
+ "responders": {
+  "older": {
+   "messages": [
+    {
+     "id": "old-u0",
+     "seq": 10,
+     "done": true,
+     "role": "user",
+     "created_at": "2026-11-22T09:00:00.000Z",
+     "author": "dev@aa.local",
+     "parts": [
+      {
+       "type": "text",
+       "text": "Earlier question #1: what does step 1 of the setup do?"
+      }
+     ]
+    },
+    {
+     "id": "old-a0",
+     "seq": 11,
+     "done": true,
+     "role": "assistant",
+     "turn_id": "old-u0",
+     "created_at": "2026-11-22T09:00:01.000Z",
+     "parts": [
+      {
+       "type": "text",
+       "text": "Step 1 installs the Connector and pairs it with your account. Nothing else changes on the machine."
+      }
+     ]
+    },
+    {
+     "id": "old-u1",
+     "seq": 12,
+     "done": true,
+     "role": "user",
+     "created_at": "2026-11-22T09:00:01.000Z",
+     "author": "dev@aa.local",
+     "parts": [
+      {
+       "type": "text",
+       "text": "Earlier question #2: what does step 2 of the setup do?"
+      }
+     ]
+    },
+    {
+     "id": "old-a1",
+     "seq": 13,
+     "done": true,
+     "role": "assistant",
+     "turn_id": "old-u1",
+     "created_at": "2026-11-22T09:00:02.000Z",
+     "parts": [
+      {
+       "type": "text",
+       "text": "Step 2 installs the Connector and pairs it with your account. Nothing else changes on the machine."
+      }
+     ]
+    },
+    {
+     "id": "old-u2",
+     "seq": 14,
+     "done": true,
+     "role": "user",
+     "created_at": "2026-11-22T09:00:02.000Z",
+     "author": "dev@aa.local",
+     "parts": [
+      {
+       "type": "text",
+       "text": "Earlier question #3: what does step 3 of the setup do?"
+      }
+     ]
+    },
+    {
+     "id": "old-a2",
+     "seq": 15,
+     "done": true,
+     "role": "assistant",
+     "turn_id": "old-u2",
+     "created_at": "2026-11-22T09:00:03.000Z",
+     "parts": [
+      {
+       "type": "text",
+       "text": "Step 3 installs the Connector and pairs it with your account. Nothing else changes on the machine."
+      }
+     ]
+    },
+    {
+     "id": "old-u3",
+     "seq": 16,
+     "done": true,
+     "role": "user",
+     "created_at": "2026-11-22T09:00:03.000Z",
+     "author": "dev@aa.local",
+     "parts": [
+      {
+       "type": "text",
+       "text": "Earlier question #4: what does step 4 of the setup do?"
+      }
+     ]
+    },
+    {
+     "id": "old-a3",
+     "seq": 17,
+     "done": true,
+     "role": "assistant",
+     "turn_id": "old-u3",
+     "created_at": "2026-11-22T09:00:04.000Z",
+     "parts": [
+      {
+       "type": "text",
+       "text": "Step 4 installs the Connector and pairs it with your account. Nothing else changes on the machine."
+      }
+     ]
+    }
+   ],
+   "page_size": 4
+  },
+  "files": {
+   "/Users/dev/demo/.agents-anywhere/attachments/ses_showcase/a1b2-screenshot.png": {
+    "mime": "image/png",
+    "base64": "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"
+   }
+  }
+ }
+}

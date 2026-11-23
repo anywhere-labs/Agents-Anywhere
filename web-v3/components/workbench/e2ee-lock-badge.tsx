@@ -5,6 +5,7 @@ import { LockIcon, ShieldAlertIcon } from "lucide-react"
 import { useI18n } from "@/components/i18n-provider"
 import { Badge } from "@/components/ui/badge"
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
+import { isDesktopApp } from "@/lib/platform/desktop"
 import { cn } from "@/lib/utils"
 
 /**
@@ -54,6 +55,11 @@ export function E2eeLockBadge({
     )
   }
 
+  // The desktop app ships this UI in its own bundle (verified app): green lock. A browser: grey lock.
+  const verified = isDesktopApp()
+  const tone = verified ? "text-success" : "text-muted-foreground"
+  const title = t(verified ? "devices.greenLockTitle" : "devices.greyLockTitle")
+
   return (
     <HoverCard>
       <HoverCardTrigger
@@ -62,25 +68,28 @@ export function E2eeLockBadge({
         render={
           <span
             className={cn(
-              "inline-flex cursor-help items-center gap-1 text-muted-foreground",
+              "inline-flex cursor-help items-center gap-1",
+              tone,
               className
             )}
           />
         }
       >
-        <LockIcon className="size-3.5 shrink-0 text-muted-foreground" />
+        <LockIcon className={cn("size-3.5 shrink-0", tone)} />
         {!compact && (
-          <Badge variant="secondary" className="text-muted-foreground">
-            {t("devices.greyLockTitle")}
+          <Badge variant="secondary" className={tone}>
+            {title}
           </Badge>
         )}
       </HoverCardTrigger>
       <HoverCardContent align="start" className="w-80 space-y-1.5 text-xs">
         <p className="flex items-center gap-1.5 font-medium text-foreground">
-          <LockIcon className="size-3.5 text-muted-foreground" />
-          {t("devices.greyLockTitle")}
+          <LockIcon className={cn("size-3.5", tone)} />
+          {title}
         </p>
-        <p className="text-muted-foreground leading-relaxed">{t("devices.greyLockDesc")}</p>
+        <p className="text-muted-foreground leading-relaxed">
+          {t(verified ? "devices.greenLockDesc" : "devices.greyLockDesc")}
+        </p>
       </HoverCardContent>
     </HoverCard>
   )

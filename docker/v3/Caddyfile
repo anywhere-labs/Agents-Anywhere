@@ -1,0 +1,29 @@
+# One host each for the Web app, the control plane (HTTP API, OAuth, MCP) and the MeshCall Router (WebSocket).
+# Certificates are issued automatically (Let's Encrypt / ZeroSSL); point the DNS names at this machine first.
+
+{$AA_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy web:3000
+}
+
+{$AA_API_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy control:8080 {
+		# MCP and SSE responses stream; do not buffer them.
+		flush_interval -1
+	}
+}
+
+{$AA_ROUTER_DOMAIN} {
+	reverse_proxy router:8765 {
+		flush_interval -1
+	}
+}
+
+# Cloud drive (profile "drive"): presigned S3 URLs point here, straight to the bundled S3.
+{$AA_FILES_DOMAIN} {
+	request_body {
+		max_size 1GB
+	}
+	reverse_proxy s3:9000
+}

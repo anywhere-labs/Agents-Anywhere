@@ -2,9 +2,9 @@
 // `session/update` stream into aa.v3 timeline items in a `SessionStore`.
 //
 // Only the parts of ACP the Connector uses are typed here (https://agentclientprotocol.com): initialize,
-// session/new, session/load, session/prompt, session/cancel, session/set_config_option, session/set_mode, the
-// `session/update` notification and the agent → client `session/request_permission` / `fs/*` requests. Unknown
-// fields and update kinds are tolerated: agents add them faster than the spec moves.
+// session/new, session/resume, session/load, session/prompt, session/cancel, session/set_config_option,
+// session/set_mode, the `session/update` notification and the agent → client `session/request_permission` / `fs/*`
+// requests. Unknown fields and update kinds are tolerated: agents add them faster than the spec moves.
 //
 // Portable: no Node built-ins. Spawning the agent and framing stdio is `src/runtime/*`'s job.
 
@@ -218,9 +218,16 @@ export interface AcpClientCapabilities {
 }
 
 export interface AcpAgentCapabilities {
+  /** `session/load`: the agent reopens a session and replays it as `session/update`s before it answers. */
   loadSession?: boolean;
   promptCapabilities?: { image?: boolean; audio?: boolean; embeddedContext?: boolean };
   mcpCapabilities?: { http?: boolean; sse?: boolean };
+  /** Session methods beyond new / load / prompt; each is supported when present (`{}`), not when absent or null. */
+  sessionCapabilities?: {
+    /** `session/resume`: reopen a session without replaying it. */
+    resume?: Record<string, unknown> | null;
+    close?: Record<string, unknown> | null;
+  } | null;
 }
 
 export interface AcpInitializeParams {
@@ -261,6 +268,15 @@ export interface AcpLoadSessionResult {
   modes?: AcpSessionModeState | null;
   configOptions?: AcpSessionConfigOption[] | null;
 }
+
+/** `session/resume` (agents with `sessionCapabilities.resume`): like `session/load`, without the replay. */
+export interface AcpResumeSessionParams {
+  sessionId: string;
+  cwd: string;
+  mcpServers?: AcpMcpServer[];
+}
+
+export type AcpResumeSessionResult = AcpLoadSessionResult;
 
 export interface AcpPromptParams {
   sessionId: string;
@@ -333,6 +349,7 @@ export interface AcpAgentMethods {
   initialize: { params: AcpInitializeParams; result: AcpInitializeResult };
   "session/new": { params: AcpNewSessionParams; result: AcpNewSessionResult };
   "session/load": { params: AcpLoadSessionParams; result: AcpLoadSessionResult | null };
+  "session/resume": { params: AcpResumeSessionParams; result: AcpResumeSessionResult | null };
   "session/prompt": { params: AcpPromptParams; result: AcpPromptResult };
   "session/set_config_option": { params: AcpSetConfigOptionParams; result: AcpSetConfigOptionResult };
   "session/set_mode": { params: AcpSetModeParams; result: Record<string, never> | null };
@@ -372,6 +389,14 @@ function toolStatus(value: unknown): ToolStatus | undefined {
 }
 
 /** Markdown-ish text of a content block (images and audio have none). */
+/** The URI a link, image or embedded resource points at. */
+function blockUri(block: AcpContentBlock): string | undefined {
+  if (block.type === "resource_link") return block.uri;
+  if (block.type === "image") return block.uri;
+  if (block.type === "resource") return block.resource.uri;
+  return undefined;
+}
+
 export function contentBlockText(block: AcpContentBlock | undefined): string {
   if (block === undefined) return "";
   switch (block.type) {
@@ -427,12 +452,17 @@ export function configOptionFromModes(modes: AcpSessionModeState): ConfigOption 
   };
 }
 
-/** Config options of a `session/new` / `session/load` result. */
+/** Config options of a `session/new` / `session/resume` / `session/load` result. */
 export function configFromSessionResult(result: AcpNewSessionResult | AcpLoadSessionResult | null | undefined): ConfigOption[] {
   if (result == null) return [];
   if (result.configOptions) return configOptionsFromAcp(result.configOptions);
   if (result.modes) return [configOptionFromModes(result.modes)];
   return [];
+}
+
+/** `current_mode_update`: the mode setting (the `mode` option, or any option of the `mode` category) now reads `modeId`. */
+export function configWithMode(config: readonly ConfigOption[], modeId: string): ConfigOption[] {
+  return config.map((option) => (option.id === MODE_CONFIG_ID || option.category === "mode" ? { ...option, current: modeId } : option));
 }
 
 function planEntries(entries: readonly AcpPlanEntry[]): PlanEntry[] {
@@ -537,6 +567,8 @@ interface PendingPermission {
  * Every item of a turn carries the turn's `turn_id` (the user message that started it). Output arriving outside a
  * turn opens an autonomous one whose `turn_id` is its first item's id.
  */
+const CONTENT_UPDATES = new Set<string>(["agent_message_chunk", "agent_thought_chunk", "tool_call", "tool_call_update", "plan"]);
+
 export class AcpTimelineProjector {
   readonly sessionId: string;
   availableCommands: AcpAvailableCommand[] = [];
@@ -548,6 +580,11 @@ export class AcpTimelineProjector {
 
   private turnId: string | undefined;
   private autonomous = false;
+  /**
+   * The turn's latest item (highest seq). A cancelled turn marks it interrupted even when the agent already closed
+   * every item itself (Pi fails its running tool call on cancel), so the thread still shows the turn was stopped.
+   */
+  private turnLast: AssistantMessage | undefined;
   private stretch: OpenStretch | undefined;
   private planId: string | undefined;
   private plan: PlanEntry[] = [];
@@ -555,6 +592,8 @@ export class AcpTimelineProjector {
   private readonly permissions = new Map<string, PendingPermission>();
   private replayUser: { text: string } | undefined;
   private replayCount = 0;
+  /** What is left of this turn's prompt that the agent may still echo back as `user_message_chunk`s. */
+  private echo: { text: string; uris: Set<string> } | undefined;
 
   constructor(options: AcpTimelineProjectorOptions) {
     this.store = options.store;
@@ -575,20 +614,35 @@ export class AcpTimelineProjector {
     return this.turnId;
   }
 
-  /** Start a turn for the user message `turnId` (call before `session/prompt`). */
-  beginTurn(turnId: string): void {
+  /**
+   * Start a turn for the user message `turnId` (call before `session/prompt`). Pass the prompt so that agents which
+   * echo it back as `user_message_chunk` (Antigravity does) don't get it recorded as a second user message.
+   */
+  beginTurn(turnId: string, prompt?: readonly AcpContentBlock[]): void {
     this.flushReplayUser();
     if (this.turnId !== undefined) this.closeTurnItems(false);
     this.turnId = turnId;
+    this.turnLast = undefined;
     this.autonomous = false;
+    // Text is matched by prefix; links and images by URI (agents echo them with their own names).
+    const text = prompt?.filter((block) => block.type === "text").map((block) => contentBlockText(block)).join("") ?? "";
+    const uris = new Set((prompt ?? []).map(blockUri).filter((uri): uri is string => uri !== undefined));
+    this.echo = text.trim().length > 0 || uris.size > 0 ? { text, uris } : undefined;
     this.store.updateControl(this.sessionId, { state: "running", error: undefined });
   }
 
   /** The `session/prompt` result (or a failure): close the turn's items and cancel waiting permissions. */
   endTurn(stopReason: AcpStopReason | "error" = "end_turn", error?: string): void {
+    this.echo = undefined;
     this.flushReplayUser();
     const interrupted = stopReason === "cancelled" || stopReason === "error";
     this.closeTurnItems(interrupted);
+    const last = this.turnLast;
+    this.turnLast = undefined;
+    if (interrupted && last !== undefined) {
+      const current = this.store.getMessage(this.sessionId, last.id);
+      if (current?.role === "assistant" && !current.interrupted) this.markInterrupted(current);
+    }
     this.cancelPermissions();
     this.turnId = undefined;
     this.autonomous = false;
@@ -598,6 +652,8 @@ export class AcpTimelineProjector {
 
   /** A `session/update` notification's `update`. */
   handleUpdate(update: AcpSessionUpdate): void {
+    // Only real output ends the window in which a prompt echo is expected; metadata updates may come first.
+    if (CONTENT_UPDATES.has(update.sessionUpdate)) this.echo = undefined;
     switch (update.sessionUpdate) {
       case "user_message_chunk":
         this.userChunk(update.content);
@@ -679,7 +735,9 @@ export class AcpTimelineProjector {
     const turnId = this.ensureTurn(id);
     const item: AssistantItemInput = { id, turn_id: turnId, done, parts: [part] };
     if (this.autonomous) item.autonomous = true;
-    return this.store.upsertAssistantItem(this.sessionId, item);
+    const message = this.store.upsertAssistantItem(this.sessionId, item);
+    if (this.turnLast === undefined || message.seq >= this.turnLast.seq) this.turnLast = message;
+    return message;
   }
 
   private appendStretch(kind: OpenStretch["kind"], text: string): void {
@@ -732,14 +790,30 @@ export class AcpTimelineProjector {
   private setMode(modeId: string): void {
     const session = this.store.get(this.sessionId);
     if (session === undefined) return;
-    const config = session.config.map((option) =>
-      option.id === MODE_CONFIG_ID || option.category === "mode" ? { ...option, current: modeId } : option,
-    );
-    this.store.updateSession(this.sessionId, { config });
+    this.store.updateSession(this.sessionId, { config: configWithMode(session.config, modeId) });
   }
 
   /** `session/load` replays history: user chunks become one user message that opens the next turn. */
   private userChunk(block: AcpContentBlock): void {
+    if (this.echo !== undefined && this.replayUser === undefined && this.turnId !== undefined && !this.autonomous) {
+      // The agent echoing the prompt of the turn we started: already recorded.
+      const echo = this.echo;
+      const uri = blockUri(block);
+      if (block.type !== "text" && uri !== undefined && echo.uris.delete(uri)) {
+        if (echo.text.trim().length === 0 && echo.uris.size === 0) this.echo = undefined;
+        return;
+      }
+      if (block.type === "text") {
+        const rest = echo.text.trimStart();
+        const chunk = block.text.trimStart();
+        if (chunk.length === 0 || rest.startsWith(chunk)) {
+          echo.text = rest.slice(chunk.length);
+          if (echo.text.trim().length === 0 && echo.uris.size === 0) this.echo = undefined;
+          return;
+        }
+      }
+      this.echo = undefined;
+    }
     if (this.replayUser === undefined) {
       if (this.turnId !== undefined) this.closeTurnItems(false);
       this.turnId = undefined;
