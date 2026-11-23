@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>aa.render/2 harness</title>
+    <style>
+      :root { color-scheme: light dark; font: 13px/1.4 ui-sans-serif, system-ui, -apple-system, sans-serif; }
+      body { margin: 0; display: flex; gap: 16px; padding: 16px; min-height: 100vh; box-sizing: border-box; background: Canvas; }
+      #panel { width: 360px; flex: none; display: flex; flex-direction: column; gap: 10px; }
+      fieldset { border: 1px solid color-mix(in oklab, CanvasText 18%, transparent); border-radius: 10px; padding: 8px 10px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+      legend { font-weight: 600; padding: 0 4px; }
+      label { display: inline-flex; gap: 4px; align-items: center; }
+      input[type="number"] { width: 56px; }
+      button { border-radius: 999px; border: 1px solid color-mix(in oklab, CanvasText 25%, transparent); background: transparent; padding: 3px 10px; cursor: pointer; color: CanvasText; }
+      button:hover { background: color-mix(in oklab, CanvasText 8%, transparent); }
+      #desc { color: GrayText; margin: 0; }
+      #log { flex: 1; min-height: 200px; overflow: auto; font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; word-break: break-all; border: 1px solid color-mix(in oklab, CanvasText 18%, transparent); border-radius: 10px; padding: 8px; margin: 0; }
+      #log .in { color: #2f7dd1; }
+      #log .out { color: #c2410c; }
+      #stage { position: relative; flex: none; }
+      #phone { width: 390px; height: 844px; border-radius: 44px; overflow: hidden; border: 10px solid #111; box-shadow: 0 20px 60px rgb(0 0 0 / 0.25); position: relative; background: #000; }
+      #phone iframe { width: 100%; height: 100%; border: 0; display: block; background: white; }
+      /* Stand-ins for the native glass bars, so insets can be judged. */
+      .glass { position: absolute; left: 0; right: 0; pointer-events: none; backdrop-filter: blur(18px) saturate(1.6); -webkit-backdrop-filter: blur(18px) saturate(1.6); background: color-mix(in oklab, Canvas 55%, transparent); border-color: color-mix(in oklab, CanvasText 10%, transparent); border-style: solid; border-width: 0; display: flex; align-items: center; justify-content: center; color: GrayText; font-size: 12px; }
+      #glass-top { top: 0; border-bottom-width: 1px; }
+      #glass-bottom { bottom: 0; border-top-width: 1px; }
+      .hide-glass .glass { display: none; }
+    </style>
+  </head>
+  <body>
+    <div id="panel">
+      <fieldset>
+        <legend>Fixture</legend>
+        <select id="fixture"></select>
+        <button id="play">▶ Play</button>
+        <button id="instant">⇥ All at once</button>
+        <button id="step">Step</button>
+        <label>speed <select id="speed"><option>0.5</option><option selected>1</option><option>2</option><option>5</option></select>×</label>
+        <p id="desc"></p>
+      </fieldset>
+      <fieldset>
+        <legend>Bundle</legend>
+        <label><input type="radio" name="bundle" value="../index.html" checked /> dev (HMR)</label>
+        <label><input type="radio" name="bundle" value="../dist/aa-render.html" /> built dist/aa-render.html</label>
+        <button id="reload">Reload</button>
+      </fieldset>
+      <fieldset>
+        <legend>theme</legend>
+        <label><input type="checkbox" id="dark" /> dark</label>
+        <label>top <input type="number" id="inset-top" value="59" /></label>
+        <label>bottom <input type="number" id="inset-bottom" value="96" /></label>
+        <label>font <input type="number" id="font" value="1" step="0.1" /></label>
+        <label><input type="checkbox" id="motion" /> reduce motion</label>
+        <label><input type="checkbox" id="contrast" /> high contrast</label>
+        <label><input type="checkbox" id="glass" checked /> glass bars</label>
+        <label>locale <select id="locale"><option>zh-CN</option><option>en</option></select></label>
+      </fieldset>
+      <fieldset>
+        <legend>Native</legend>
+        <label><input type="checkbox" id="batching" checked /> batch per frame (16 ms)</label>
+        <label><input type="checkbox" id="respond" checked /> answer load_older / file.read</label>
+        <label><input type="checkbox" id="readonly" /> readonly</label>
+        <button data-scroll="bottom">scroll ↓</button>
+        <button data-scroll="top">scroll ↑</button>
+      </fieldset>
+      <fieldset id="keys">
+        <legend>term.key</legend>
+      </fieldset>
+      <pre id="log"></pre>
+    </div>
+    <div id="stage">
+      <div id="phone">
+        <iframe id="frame" title="render bundle"></iframe>
+        <div class="glass" id="glass-top">native top bar</div>
+        <div class="glass" id="glass-bottom">native composer</div>
+      </div>
+    </div>
+    <script type="module" src="./harness.ts"></script>
+  </body>
+</html>

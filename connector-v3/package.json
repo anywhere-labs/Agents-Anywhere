@@ -19,7 +19,12 @@
     "test": "yarn build && node --test dist/tests/*.test.js"
   },
   "dependencies": {
+    "@xterm/addon-serialize": "^0.14.0",
+    "@xterm/headless": "^6.0.0",
     "meshcall": "^0.4.0"
+  },
+  "optionalDependencies": {
+    "@lydell/node-pty": "^1.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",

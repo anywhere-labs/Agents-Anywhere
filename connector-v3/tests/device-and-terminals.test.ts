@@ -23,7 +23,7 @@ import {
   StateStoreError,
   type PairedClientEntry,
 } from "../src/runtime/state-store.js";
-import { TerminalManager, type TerminalEvent } from "../src/runtime/terminal-manager.js";
+import { TerminalManager, type TerminalEvent, type TerminalMode } from "../src/runtime/terminal-manager.js";
 
 const IS_WINDOWS = process.platform === "win32";
 const KEY_A = "A".repeat(43);
@@ -442,8 +442,8 @@ async function collectUntil(
   const timer = setTimeout(() => void events.return?.(), timeoutMs);
   try {
     for await (const event of events) {
-      if (event.type === "output") text += Buffer.from(event.data, "base64").toString("utf8");
-      else exitCode = event.exit_code;
+      if (event.type === "output" || event.type === "snapshot") text += Buffer.from(event.data, "base64").toString("utf8");
+      else if (event.type === "exit") exitCode = event.exit_code;
       if (predicate(text, exitCode !== undefined)) break;
     }
   } finally {
@@ -485,18 +485,24 @@ describe("TerminalManager", () => {
         [info.id],
       );
 
-      const live = manager.subscribe(info.id);
+      const live = manager.attach(info.id);
       await manager.write(info.id, "echo hello-aa-v3\n");
       const { text } = await collectUntil(live, (t) => t.includes("hello-aa-v3"));
       assert.match(text, /hello-aa-v3/);
       await live.return?.();
 
-      // A late subscriber starts with the buffered history snapshot.
-      const late = manager.subscribe(info.id);
-      const first = await late.next();
-      assert.equal(first.done, false);
-      assert.ok(first.value?.type === "output");
-      assert.match(Buffer.from(first.value.data, "base64").toString("utf8"), /hello-aa-v3/);
+      // A late subscriber starts with a snapshot of the screen (retry: the emulator parses asynchronously).
+      let late = manager.attach(info.id);
+      for (let attempt = 0; ; attempt++) {
+        const first = await late.next();
+        assert.equal(first.done, false);
+        assert.ok(first.value?.type === "snapshot");
+        if (/hello-aa-v3/.test(Buffer.from(first.value.data, "base64").toString("utf8"))) break;
+        assert.ok(attempt < 100, "snapshot never contained the output");
+        await late.return?.();
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        late = manager.attach(info.id);
+      }
 
       const resized = manager.resize(info.id, 120, 40);
       assert.equal(resized.cols, 120);
@@ -509,7 +515,7 @@ describe("TerminalManager", () => {
       assert.notEqual(rest.exitCode, undefined);
       assert.equal(await waitForDeath(info.pid!), true);
       assert.deepEqual(manager.list(), []);
-      assert.throws(() => manager.subscribe(info.id), /terminal_not_found/);
+      assert.throws(() => manager.attach(info.id), /terminal_not_found/);
     } finally {
       await manager.closeAll();
     }
@@ -519,7 +525,7 @@ describe("TerminalManager", () => {
     const manager = new TerminalManager();
     try {
       const info = await manager.create({ shell: TEST_SHELL, cwd: await freshDir("term") });
-      const events = manager.subscribe(info.id);
+      const events = manager.attach(info.id);
       await manager.write(info.id, "exit 7\n");
       const { exitCode } = await collectUntil(events, (_t, exited) => exited);
       assert.equal(exitCode, 7);
@@ -528,8 +534,8 @@ describe("TerminalManager", () => {
       assert.equal(exited.exit_code, 7);
       await assert.rejects(manager.write(info.id, "echo nope\n"), /terminal_not_running/);
 
-      // Subscribing after exit yields history then the exit event.
-      const replay = await collectUntil(manager.subscribe(info.id), () => false);
+      // Attaching after exit yields the snapshot, control, then the exit event.
+      const replay = await collectUntil(manager.attach(info.id), () => false);
       assert.equal(replay.exitCode, 7);
     } finally {
       await manager.closeAll();
@@ -547,13 +553,13 @@ describe("TerminalManager", () => {
     }
   });
 
-  test("closeAll leaves no child processes behind", { skip: IS_WINDOWS }, async () => {
+  for (const mode of ["pty", "pipe"] satisfies TerminalMode[]) test(`closeAll leaves no child processes behind (${mode})`, { skip: IS_WINDOWS }, async () => {
     const manager = new TerminalManager({ killGraceMs: 500 });
     const pids: number[] = [];
     for (let i = 0; i < 3; i++) {
-      const info = await manager.create({ shell: TEST_SHELL, cwd: await freshDir("term") });
+      const info = await manager.create({ shell: TEST_SHELL, cwd: await freshDir("term"), mode });
       pids.push(info.pid!);
-      const events = manager.subscribe(info.id, { skipHistory: true });
+      const events = manager.attach(info.id);
       // A background job keeps running after the shell exits unless the
       // whole process group is killed.
       await manager.write(info.id, "sleep 60 & echo bgpid=$!\n");
@@ -580,7 +586,7 @@ describe("TerminalManager", () => {
         return;
       }
       const info = await manager.create({ shell: TEST_SHELL, cwd, mode: "script" });
-      const events = manager.subscribe(info.id);
+      const events = manager.attach(info.id);
       // `test -t 0` succeeds only when stdin is a terminal; arithmetic keeps the
       // tty's input echo from matching the expected output.
       await manager.write(info.id, "test -t 0 && echo tty-$((40+2)) || echo notty-$((40+2))\n");

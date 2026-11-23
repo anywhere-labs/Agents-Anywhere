@@ -1,6 +1,7 @@
 import { setImmediate as yieldLoop } from 'node:timers/promises'
 import { createHash } from 'node:crypto'
 import type { ContentBlock, StreamChunk } from '@deepseek-ai/dsh-llm'
+import { withoutActionCards } from './action-cards.js'
 import { receiptKey, type AttachmentSnapshot, type AttachmentReceipt } from './attachments.js'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { canonicalJson, clientMessageId, contentHash, itemId } from './identity.js'
@@ -104,9 +105,16 @@ export function createProjection(externalId: string, platformId: string, fingerp
   function block(block: ContentBlock | LegacyToolResultBlock, key: string, index: number, event: ProjectionEvent,
     role: string, status: ItemStatus, anchor?: number) {
     switch (block.type) {
-      case 'text':
+      case 'text': {
+        // DSH shows a card in place of an answer's action-card block; AA shows neither the block nor the card.
+        const text = role === 'assistant' ? withoutActionCards(block.text) : block.text
+        if (text !== block.text && !text.trim()) {
+          remove(itemId(externalId, 'message', `${key}:${index}`))
+          return
+        }
         return put('message', `${key}:${index}`, event, role === 'system' ? 'system' : 'message', status, role,
-          { kind: role === 'system' ? 'notice' : 'markdown', format: 'markdown', text: block.text }, index, anchor)
+          { kind: role === 'system' ? 'notice' : 'markdown', format: 'markdown', text }, index, anchor)
+      }
       case 'reasoning':
         return put('reasoning', `${key}:${index}`, event, 'system', status, 'assistant',
           { kind: 'reasoning', text: block.text }, index, anchor)
