@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { useParams, useRouter, useSearchParams } from "next/navigation"
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react"
 import {
   ActivityIcon,
   ArrowUpIcon,
@@ -15,10 +15,8 @@ import {
   LockIcon,
   PlusIcon,
   RefreshCwIcon,
-  TerminalIcon,
   Trash2Icon,
 } from "lucide-react"
-import type { RpcDuplex } from "meshcall/web"
 import { toast } from "sonner"
 
 import { ConfirmDialog } from "@/components/console/confirm-dialog"
@@ -37,7 +35,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { E2eeLockBadge } from "@/components/workbench/e2ee-lock-badge"
 import { PairDeviceDialog } from "@/components/workbench/pair-device-dialog"
 import { WorkbenchShell } from "@/components/workbench/workbench-shell"
-import type { TerminalInputFrame, TerminalOutputFrame } from "@/lib/mesh/device-tunnel"
+import { TerminalsPanel } from "@/components/terminal/terminals-panel"
 import { formatKeyFingerprint, PairingError } from "@/lib/mesh/pairing"
 import { useWorkbench } from "@/lib/state/workbench-context"
 import type {
@@ -46,26 +44,7 @@ import type {
   ListDirsResult,
   PairedClientEntry,
   ReadFileResult,
-  TerminalInfo,
 } from "@/lib/types/v3"
-
-function utf8ToBase64(text: string): string {
-  const bytes = new TextEncoder().encode(text)
-  let binary = ""
-  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
-  return btoa(binary)
-}
-
-function base64ToUtf8(b64: string): string {
-  try {
-    const binary = atob(b64)
-    const bytes = new Uint8Array(binary.length)
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-    return new TextDecoder().decode(bytes)
-  } catch {
-    return b64
-  }
-}
 
 function DeviceWorkbenchPageInner() {
   const params = useParams<{ deviceId: string }>()
@@ -131,12 +110,6 @@ function DeviceWorkbenchPageInner() {
   const [gitInfo, setGitInfo] = useState<Record<string, unknown> | null>(null)
   const [loadingFiles, setLoadingFiles] = useState(false)
 
-  // Terminals state
-  const [terminals, setTerminals] = useState<TerminalInfo[]>([])
-  const [activeTerminalId, setActiveTerminalId] = useState<string | null>(null)
-  const [terminalOutput, setTerminalOutput] = useState("")
-  const [terminalCommand, setTerminalCommand] = useState("")
-  const duplexRef = useRef<RpcDuplex<TerminalInputFrame, TerminalOutputFrame> | null>(null)
 
   // Security & Pairing state
   const [pairOpen, setPairOpen] = useState(false)
@@ -256,81 +229,18 @@ function DeviceWorkbenchPageInner() {
     }
   }, [tunnelDevice, dirPath, tunnelManager])
 
-  const loadTerminals = useCallback(async () => {
-    if (!tunnelDevice || !tunnelManager || tunnelDevice.presence === "offline") return
-    try {
-      const res = await tunnelManager.listTerminals(tunnelDevice)
-      setTerminals(res.terminals)
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
-    }
-  }, [tunnelDevice, tunnelManager])
-
   useEffect(() => {
     let active = true
     queueMicrotask(() => {
       if (!active) return
       if (tab === "files" && !dirListing && tunnelDevice?.presence === "online") {
         void loadDirectory(dirPath || undefined)
-      } else if (tab === "terminals" && tunnelDevice?.presence === "online") {
-        void loadTerminals()
       }
     })
     return () => {
       active = false
     }
-  }, [tunnelDevice?.presence, dirListing, dirPath, loadDirectory, loadTerminals, tab])
-
-  // Duplex terminal attachment
-  useEffect(() => {
-    if (!tunnelDevice || !tunnelManager || !activeTerminalId) return
-    const abort = new AbortController()
-    let duplex: RpcDuplex<TerminalInputFrame, TerminalOutputFrame> | null = null
-    ;(async () => {
-      setTerminalOutput("")
-      try {
-        duplex = await tunnelManager.attachTerminal(tunnelDevice, activeTerminalId, abort.signal)
-        if (abort.signal.aborted) {
-          void duplex.closeSend().catch(() => undefined)
-          return
-        }
-        duplexRef.current = duplex
-        for await (const frame of duplex) {
-          if (abort.signal.aborted) break
-          if (frame.type === "output" && frame.data) {
-            setTerminalOutput((prev) => (prev + base64ToUtf8(frame.data!)).slice(-48_000))
-          } else if (frame.type === "exit") {
-            setTerminalOutput((prev) => `${prev}\n[process exited: ${frame.exit_code ?? 0}]\n`)
-          }
-        }
-      } catch (err) {
-        if (!abort.signal.aborted) {
-          toast.error(err instanceof Error ? err.message : String(err))
-        }
-      } finally {
-        // Only clear the ref if it is still ours: a newer attachment may already own it.
-        if (duplexRef.current === duplex) duplexRef.current = null
-      }
-    })()
-
-    return () => {
-      abort.abort()
-      void duplex?.closeSend().catch(() => undefined)
-      if (duplexRef.current === duplex) duplexRef.current = null
-    }
-  }, [activeTerminalId, tunnelDevice, tunnelManager])
-
-  const sendTerminalLine = async () => {
-    const duplex = duplexRef.current
-    if (!duplex) return
-    const line = `${terminalCommand}\n`
-    setTerminalCommand("")
-    try {
-      await duplex.send({ type: "input", data: utf8ToBase64(line) })
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
-    }
-  }
+  }, [tunnelDevice?.presence, dirListing, dirPath, loadDirectory, tab])
 
   const handlePing = async () => {
     if (!controlClient || !device) return
@@ -391,30 +301,6 @@ function DeviceWorkbenchPageInner() {
       const updated = await tunnelManager.updateDeviceSettings(device, { allow_mcp: checked })
       setSettings(updated)
       toast.success(t("common.saved"))
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
-    }
-  }
-
-  const handleCreateTerminal = async () => {
-    if (!tunnelManager || !device) return
-    try {
-      const created = await tunnelManager.createTerminal(device, {
-        cwd: dirPath || status?.cwd || undefined,
-      })
-      await loadTerminals()
-      setActiveTerminalId(created.id)
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
-    }
-  }
-
-  const handleCloseTerminal = async (termId: string) => {
-    if (!tunnelManager || !device) return
-    try {
-      await tunnelManager.closeTerminal(device, termId)
-      if (activeTerminalId === termId) setActiveTerminalId(null)
-      await loadTerminals()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
     }
@@ -778,81 +664,12 @@ function DeviceWorkbenchPageInner() {
                 </TabsContent>
 
                 {/* Terminals Tab */}
-                <TabsContent value="terminals" className="mt-6 space-y-5">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm text-muted-foreground">{t("devices.tabTerminals")}</p>
-                    <Button size="sm" onClick={() => void handleCreateTerminal()}>
-                      <PlusIcon className="size-3.5" />
-                      {t("devices.createTerminal")}
-                    </Button>
-                  </div>
-
-                  {terminals.length === 0 ? (
-                    <div className="rounded-card bg-card p-10 text-center">
-                      <TerminalIcon className="mx-auto size-7 text-muted-foreground" />
-                      <p className="mt-3 text-sm text-muted-foreground">
-                        {t("devices.noTerminals")}
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="grid gap-5 lg:grid-cols-3">
-                      <div className="space-y-2 rounded-card bg-card p-4">
-                        {terminals.map((term) => (
-                          <div
-                            key={term.id}
-                            className="flex items-center justify-between gap-2 rounded-xl bg-background px-3 py-2"
-                          >
-                            <button
-                              type="button"
-                              className="min-w-0 flex-1 text-left"
-                              onClick={() => setActiveTerminalId(term.id)}
-                            >
-                              <p className="truncate font-mono text-xs font-medium text-foreground">
-                                {term.shell} · {term.id.slice(0, 8)}
-                              </p>
-                              <p className="truncate font-mono text-[11px] text-muted-foreground">
-                                {term.cwd}
-                              </p>
-                            </button>
-                            <Button
-                              variant="ghost"
-                              size="icon-xs"
-                              onClick={() => void handleCloseTerminal(term.id)}
-                            >
-                              <Trash2Icon className="size-3.5" />
-                            </Button>
-                          </div>
-                        ))}
-                      </div>
-
-                      <div className="flex flex-col gap-3 rounded-card bg-card p-4 lg:col-span-2">
-                        <pre className="min-h-[300px] max-h-[420px] flex-1 overflow-auto rounded-xl bg-background p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap text-foreground">
-                          {activeTerminalId
-                            ? terminalOutput || "Connected. Type a command below…"
-                            : "Select a terminal on the left to attach."}
-                        </pre>
-                        {activeTerminalId && (
-                          <form
-                            className="flex gap-2"
-                            onSubmit={(e) => {
-                              e.preventDefault()
-                              void sendTerminalLine()
-                            }}
-                          >
-                            <Input
-                              value={terminalCommand}
-                              onChange={(e) => setTerminalCommand(e.target.value)}
-                              className="font-mono text-xs"
-                              placeholder="$ ls -la"
-                            />
-                            <Button type="submit" size="sm">
-                              Run
-                            </Button>
-                          </form>
-                        )}
-                      </div>
-                    </div>
-                  )}
+                <TabsContent value="terminals" className="mt-6">
+                  <TerminalsPanel
+                    tunnelManager={tunnelManager}
+                    device={tunnelDevice}
+                    defaultCwd={dirPath || status?.cwd || undefined}
+                  />
                 </TabsContent>
 
                 {/* E2EE & Pairing Tab */}

@@ -478,8 +478,57 @@ export interface TerminalInfo {
   exit_signal: string | null
   exited_at: string | null
   pid: number | null
-  mode: "pipe" | "script"
+  mode: TerminalMode
+  owner: "user" | "agent"
+  controller: TerminalController | null
+  generation: number
+  viewers: number
 }
+
+// aa.v3.Terminals attach protocol (contracts/aa-v3/1.0/terminals.schema.json, docs/v3/terminal-proposal.md).
+// Terminal bytes travel as standard base64.
+
+export type TerminalMode = "pty" | "pipe" | "script"
+
+export interface TerminalController {
+  /** `e2e:<peer_key>` on encrypted devices, the tunnel principal on normal devices. */
+  client_id: string
+  label: string
+  /** false while the controller's attach is gone but its 10 s grace period has not ended. */
+  connected: boolean
+  since: string
+}
+
+export interface TerminalAttachRequest {
+  id: string
+  mode?: "view" | "control"
+  cols?: number
+  rows?: number
+  resume_seq?: number
+  label?: string
+}
+
+export type TerminalInputFrame =
+  | { type: "input"; data: string; generation: number }
+  | { type: "resize"; cols: number; rows: number; generation: number }
+  | { type: "claim"; cols?: number; rows?: number; keep_size?: boolean }
+  | { type: "release" }
+
+export type TerminalRejectReason = "not_controller" | "stale_generation" | "agent_owned"
+
+export type TerminalOutputFrame =
+  | { type: "snapshot"; data: string; seq: number; cols: number; rows: number }
+  | { type: "output"; data: string; seq: number }
+  | {
+      type: "control"
+      controller: TerminalController | null
+      generation: number
+      you: boolean
+      cols: number
+      rows: number
+    }
+  | { type: "rejected"; reason: TerminalRejectReason; generation: number }
+  | { type: "exit"; exit_code: number | null; exit_signal?: string | null }
 
 export interface McpGrantView {
   id: string
