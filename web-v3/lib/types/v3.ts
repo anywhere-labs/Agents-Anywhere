@@ -570,6 +570,10 @@ export interface McpAuthorizeApproveResponse {
 
 export type DrivePurpose = "transfer" | "assistant_vfs"
 export type DriveEncryptionMode = "none" | "account_dek" | "ephemeral_key"
+/** What an upload does when its target path is taken: "name (1)" (rename), 409 (fail) or supersede (replace). */
+export type DriveConflictPolicy = "rename" | "fail" | "replace"
+/** The two server-created folders: /Transfers and /Orches (Orches' cloud workspace). */
+export type DriveSystemFolder = "transfers" | "orches"
 
 export interface PresignedHttpTarget {
   method: "PUT" | "GET"
@@ -588,6 +592,14 @@ export interface DriveFileView {
   filename: string | null
   mime_type: string | null
   vfs_path: string | null
+  /** Normalized absolute drive path, e.g. "/报告/2026/q3.pdf" (for a pending upload: where it will land). */
+  path: string
+  name: string
+  parent_path: string
+  /** Canonical text reference, e.g. "drive:/报告/2026/q3.pdf". */
+  ref: string
+  /** Inside /Orches: only Orches' own sync writes there (list, download, delete only). */
+  managed: boolean
   encryption_mode: DriveEncryptionMode
   encryption_nonce: string | null
   encryption_key_version: number | null
@@ -597,6 +609,51 @@ export interface DriveFileView {
   created_at: string
   completed_at: string | null
   expires_at: string
+}
+
+export interface DriveFolderView {
+  id: string
+  path: string
+  name: string
+  parent_path: string
+  ref: string
+  system: DriveSystemFolder | null
+  managed: boolean
+  created_at: string
+  updated_at: string
+}
+
+/** `GET /drive/entries`: one folder's subfolders and live files (each with its expiry). */
+export interface DriveEntriesResponse {
+  path: string
+  ref: string
+  /** null for the root folder. */
+  folder: DriveFolderView | null
+  folders: DriveFolderView[]
+  files: DriveFileView[]
+  total_files: number
+  quota: DriveQuotaView
+}
+
+export interface DriveFolderMoveResponse {
+  folder: DriveFolderView
+  moved_folders: number
+  moved_files: number
+}
+
+export interface DriveFolderDeleteResponse {
+  ok: boolean
+  deleted_folders: number
+  deleted_files: number
+}
+
+/** `GET /drive/resolve?path=…|ref=drive:/…`. */
+export interface DriveResolveResponse {
+  kind: "file" | "folder"
+  path: string
+  ref: string
+  folder: DriveFolderView | null
+  file: DriveFileView | null
 }
 
 export interface DriveQuotaView {

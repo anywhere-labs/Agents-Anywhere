@@ -186,7 +186,6 @@ export const zhCNWorkbench: Record<keyof typeof enWorkbench, string> = {
   "device.pickFile": "选一个文件来预览。",
   "device.agentNotReported": "设备已不再上报",
   "device.removePin": "移除本地钉扎",
-  "device.pairingLinkExpires": "一次性配对链接（{time} 过期）",
   "wb.retry": "重试",
   "conv.approvalShow": "查看",
   "conv.offlineEmpty": "设备离线，回到在线后会加载这段对话。",

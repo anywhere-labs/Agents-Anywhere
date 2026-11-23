@@ -1,0 +1,112 @@
+// 云盘页文案（docs/v3/client-experience-proposal.md §2.6），与 en-drive.ts 的键和 {占位符} 保持一致
+// （tests/i18n.test.ts）。产品名在各语言里都不翻译：助手统一写 Orches。
+import type { enDrive } from "./en-drive"
+
+export const zhCNDrive: Record<keyof typeof enDrive, string> = {
+  // 页面
+  "drive.title": "云盘",
+  "drive.description": "账号里的文件和文件夹，每个文件到期后自动删除。",
+  "drive.usage": "已用 {used}，共 {quota}",
+  "drive.usageUnlimited": "已用 {used}",
+  "drive.retention": "文件保留 {duration}",
+  "drive.newFolder": "新建文件夹",
+  "drive.upload": "上传",
+
+  // 服务器创建的文件夹
+  "drive.root": "云盘",
+  "drive.transfers": "临时中转",
+  "drive.orches": "Orches",
+  "drive.breadcrumb": "文件夹路径",
+  "drive.orchesNotice": "这是 Orches 的工作区，由 Orches 自己同步。这里的文件可以打开、复制引用或删除，但不能上传、重命名或移动。",
+
+  // 列表
+  "drive.colName": "名称",
+  "drive.colSize": "大小",
+  "drive.colModified": "修改时间",
+  "drive.colExpires": "到期",
+  "drive.colActions": "操作",
+  "drive.moreActions": "{name} 的更多操作",
+  "drive.open": "打开",
+  "drive.download": "下载",
+  "drive.downloadName": "下载 {name}",
+  "drive.rename": "重命名",
+  "drive.move": "移动到…",
+  "drive.copyRef": "复制引用",
+  "drive.copyFolderRef": "复制这个文件夹的引用",
+  "drive.refCopied": "已复制引用",
+  "drive.encrypted": "端到端加密",
+  "drive.encryptedFile": "加密文件",
+  "drive.expired": "已过期",
+  "drive.moreFiles": "共 {total} 个文件，这里显示了 {shown} 个。",
+  "drive.showMore": "显示更多",
+
+  // 空状态、找不到和不可用
+  "drive.emptyTitle": "这个文件夹是空的",
+  "drive.emptyDesc": "上传文件，或者把文件拖到这里。",
+  "drive.emptyOrches": "Orches 同步到云端的文件会出现在这里。",
+  "drive.rootEmptyTitle": "云盘里还没有文件",
+  "drive.rootEmptyDesc": "可以上传文件或新建文件夹。发给设备的大附件也会存在这里的「临时中转」中。",
+  "drive.disabledTitle": "云盘不可用",
+  "drive.disabledDesc": "这台服务器没有配置对象存储，暂时不能存放文件。请联系管理员配置。",
+  "drive.notFoundTitle": "找不到这个文件夹",
+  "drive.notFoundDesc": "它可能已被移动、重命名或删除。",
+  "drive.backToRoot": "回到云盘",
+  "drive.loadFailed": "无法加载这个文件夹",
+
+  // 新建文件夹、重命名、移动
+  "drive.newFolderTitle": "新建文件夹",
+  "drive.newFolderIn": "位于「{folder}」",
+  "drive.folderName": "文件夹名称",
+  "drive.folderCreated": "已新建「{name}」",
+  "drive.renameTitle": "重命名",
+  "drive.newName": "新名称",
+  "drive.renameSubmit": "重命名",
+  "drive.renamed": "已重命名为「{name}」",
+  "drive.moveTitle": "移动「{name}」",
+  "drive.moveDesc": "打开要移入的文件夹，再选「移到这里」。",
+  "drive.moveNoFolders": "这里没有文件夹。",
+  "drive.moveHere": "移到这里",
+  "drive.moved": "已移到「{folder}」",
+  "drive.nameEmpty": "请输入名称。",
+  "drive.nameSlash": "名称里不能有 / 或 \\。",
+  "drive.nameDots": "不能用「.」或「..」作名称。",
+  "drive.nameControl": "名称里不能有控制字符。",
+  "drive.nameTooLong": "名称最多 255 个字符。",
+
+  // 删除
+  "drive.deleteFileTitle": "删除「{name}」？",
+  "drive.deleteFileDesc": "文件会从云盘中删除，无法恢复。",
+  "drive.deleteFolderTitle": "删除文件夹「{name}」？",
+  "drive.deleteFolderDesc": "里面的子文件夹和文件会一起删除，无法恢复。",
+  "drive.deleteTransfersNote": "下次发送大附件时会重新创建这个文件夹。还没取走附件的设备将无法再获取它。",
+  "drive.deleteOrchesNote": "只删除云端的副本，Orches 已经同步到设备上的副本不受影响。",
+  "drive.deletedFile": "已删除文件",
+  "drive.deletedFolder": "已删除文件夹",
+  "drive.deletedFolderFiles": "已删除文件夹及其中的 {count} 个文件",
+
+  // 上传
+  "drive.dropHere": "松开即可上传到「{folder}」",
+  "drive.uploadsTitle": "上传",
+  "drive.uploadsClear": "清除",
+  "drive.uploadQueued": "等待中",
+  "drive.uploadDone": "已上传",
+  "drive.uploadCancelled": "已取消",
+  "drive.uploadFailed": "失败",
+  "drive.uploadCancel": "取消上传 {name}",
+  "drive.uploadEmpty": "「{name}」是空文件，没有上传。",
+  "drive.uploadTooLarge": "「{name}」太大了，单个文件最多 {limit}。",
+  "drive.uploadNoSpace": "云盘空间不够上传「{name}」（还剩 {limit}）。",
+
+  // 错误
+  "drive.errorConflict": "这个文件夹里已经有「{name}」了。",
+  "drive.errorParentIsFile": "路径中有一段是文件而不是文件夹。",
+  "drive.errorManaged": "这个文件夹由 Orches 管理，不能在这里添加、重命名或移动文件。",
+  "drive.errorSystem": "这个文件夹由服务器创建，不能重命名或移动。",
+  "drive.errorIntoSelf": "不能把文件夹移到它自己里面。",
+  "drive.errorEncryptedName": "加密文件只能保留上传时的名称。",
+  "drive.errorInvalid": "名称或路径无效。",
+  "drive.errorGone": "它已经不在了，可能已被移动、删除或已过期。",
+  "drive.errorQuota": "云盘空间不够。",
+  "drive.errorTooLarge": "文件超过了云盘允许的大小。",
+  "drive.errorUpload": "上传没有完成，请重新上传这个文件。",
+}

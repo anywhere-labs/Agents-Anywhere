@@ -1,0 +1,113 @@
+// Cloud drive page strings (docs/v3/client-experience-proposal.md §2.6): folders, uploads, references and errors.
+// Keep keys and {placeholders} identical to zh-CN-drive.ts (tests/i18n.test.ts). The product names stay as they
+// are in every language: "Orches" (the assistant) is never translated.
+export const enDrive = {
+  // Page
+  "drive.title": "Cloud Drive",
+  "drive.description": "Your files and folders. Each file is kept until it expires.",
+  "drive.usage": "{used} of {quota} used",
+  "drive.usageUnlimited": "{used} used",
+  "drive.retention": "Files kept for {duration}",
+  "drive.newFolder": "New folder",
+  "drive.upload": "Upload",
+
+  // Folders the server names
+  "drive.root": "Cloud Drive",
+  "drive.transfers": "Transfers",
+  "drive.orches": "Orches",
+  "drive.breadcrumb": "Folder path",
+  "drive.orchesNotice":
+    "This is Orches' workspace, kept in sync by Orches. You can open, reference and delete files here, but not upload, rename or move them.",
+
+  // List
+  "drive.colName": "Name",
+  "drive.colSize": "Size",
+  "drive.colModified": "Modified",
+  "drive.colExpires": "Expires",
+  "drive.colActions": "Actions",
+  "drive.moreActions": "More actions for {name}",
+  "drive.open": "Open",
+  "drive.download": "Download",
+  "drive.downloadName": "Download {name}",
+  "drive.rename": "Rename",
+  "drive.move": "Move to…",
+  "drive.copyRef": "Copy reference",
+  "drive.copyFolderRef": "Copy this folder's reference",
+  "drive.refCopied": "Reference copied",
+  "drive.encrypted": "End-to-end encrypted",
+  "drive.encryptedFile": "Encrypted file",
+  "drive.expired": "Expired",
+  "drive.moreFiles": "Showing {shown} of {total} files.",
+  "drive.showMore": "Show more",
+
+  // Empty, missing and unavailable
+  "drive.emptyTitle": "This folder is empty",
+  "drive.emptyDesc": "Upload files, or drop them here.",
+  "drive.emptyOrches": "Files that Orches syncs to the cloud show up here.",
+  "drive.rootEmptyTitle": "Nothing in your cloud drive yet",
+  "drive.rootEmptyDesc": "Upload files or create folders. Large attachments you send to devices are kept here too, in Transfers.",
+  "drive.disabledTitle": "Cloud drive is not available",
+  "drive.disabledDesc": "This server has no object storage set up, so it cannot keep files. Ask your administrator to configure it.",
+  "drive.notFoundTitle": "Folder not found",
+  "drive.notFoundDesc": "It may have been moved, renamed or deleted.",
+  "drive.backToRoot": "Back to Cloud Drive",
+  "drive.loadFailed": "Could not load this folder",
+
+  // New folder, rename, move
+  "drive.newFolderTitle": "New folder",
+  "drive.newFolderIn": "In {folder}",
+  "drive.folderName": "Folder name",
+  "drive.folderCreated": "Created “{name}”",
+  "drive.renameTitle": "Rename",
+  "drive.newName": "New name",
+  "drive.renameSubmit": "Rename",
+  "drive.renamed": "Renamed to “{name}”",
+  "drive.moveTitle": "Move “{name}”",
+  "drive.moveDesc": "Open the folder to move it into, then choose Move here.",
+  "drive.moveNoFolders": "No folders in here.",
+  "drive.moveHere": "Move here",
+  "drive.moved": "Moved to {folder}",
+  "drive.nameEmpty": "Enter a name.",
+  "drive.nameSlash": "A name cannot contain / or \\.",
+  "drive.nameDots": "“.” and “..” cannot be used as names.",
+  "drive.nameControl": "A name cannot contain control characters.",
+  "drive.nameTooLong": "A name can be at most 255 characters.",
+
+  // Delete
+  "drive.deleteFileTitle": "Delete “{name}”?",
+  "drive.deleteFileDesc": "The file is removed from your cloud drive. This cannot be undone.",
+  "drive.deleteFolderTitle": "Delete folder “{name}”?",
+  "drive.deleteFolderDesc": "Everything inside it, subfolders included, is deleted too. This cannot be undone.",
+  "drive.deleteTransfersNote":
+    "The folder comes back the next time a large attachment is sent. Devices that have not fetched an attachment yet can no longer get it.",
+  "drive.deleteOrchesNote": "Only the cloud copy is deleted; copies Orches has already synced to a device stay there.",
+  "drive.deletedFile": "File deleted",
+  "drive.deletedFolder": "Folder deleted",
+  "drive.deletedFolderFiles": "Folder deleted, with {count} files in it",
+
+  // Uploads
+  "drive.dropHere": "Drop files to upload to {folder}",
+  "drive.uploadsTitle": "Uploads",
+  "drive.uploadsClear": "Clear",
+  "drive.uploadQueued": "Waiting",
+  "drive.uploadDone": "Uploaded",
+  "drive.uploadCancelled": "Cancelled",
+  "drive.uploadFailed": "Failed",
+  "drive.uploadCancel": "Cancel upload of {name}",
+  "drive.uploadEmpty": "“{name}” is empty and was not uploaded.",
+  "drive.uploadTooLarge": "“{name}” is too large: files can be at most {limit}.",
+  "drive.uploadNoSpace": "Not enough space for “{name}” ({limit} left).",
+
+  // Errors
+  "drive.errorConflict": "“{name}” already exists in this folder.",
+  "drive.errorParentIsFile": "A file is in the way: part of this path is a file, not a folder.",
+  "drive.errorManaged": "Orches manages this folder; files here cannot be added, renamed or moved.",
+  "drive.errorSystem": "This folder is created by the server and cannot be renamed or moved.",
+  "drive.errorIntoSelf": "A folder cannot be moved into itself.",
+  "drive.errorEncryptedName": "An encrypted file keeps the name it was uploaded with.",
+  "drive.errorInvalid": "This name or path is not valid.",
+  "drive.errorGone": "It is no longer there; it may have been moved, deleted or expired.",
+  "drive.errorQuota": "Not enough cloud drive space.",
+  "drive.errorTooLarge": "The file is larger than your cloud drive allows.",
+  "drive.errorUpload": "The upload did not finish. Try uploading the file again.",
+} as const

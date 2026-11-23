@@ -20,6 +20,7 @@ Read [`.agents/skills/anywhere-ui/SKILL.md`](./.agents/skills/anywhere-ui/SKILL.
 - `components/workbench/*` & `components/conversation/*` — Workbench chrome (`WorkbenchShell`, dual-mode `WorkbenchSidebar`, ⌘K `CommandPalette`, `NewConversation`, `FileBrowser`, `E2eeLockBadge`, `AssistantPanel`, dialogs) and the conversation (timeline renderer shared with the mobile bundle, `Composer`, `ConfigPickers`, `ApprovalDock` (only a jump-to reminder: approvals are answered inline in the thread), `QueueRows`, `SidePanel`, `ConversationHeader`, `ShortcutsDialog`). Interaction logic follows the v2 Web client (`web-next/`) and, where they differ, the familiar patterns of mainstream agent apps (ChatGPT, Claude, Codex, Cursor: centred composer on an empty conversation, inline approvals, regenerate, drop anywhere, ⌘K / ⌘⇧O / ⌘/); layout follows `docs/v3/client-experience-proposal.md`.
 - `lib/workbench/*` — Device → agent → project tree, per-account local UI memory (pins, last start, panel), cached device status/settings and drive quota, unified-diff parser.
 - `lib/attachments/*` — Attachment transfer (RPC ≤ device cap, Cloud Drive + `fetch_drive_file` above it, one-time AES-GCM key for encrypted devices) and image preview cache.
+- `lib/drive/*` & `components/drive/*` — The Cloud Drive page (`app/drive/page.tsx`, folder in the query string `?path=` so the static export needs no dynamic route): path helpers mirroring `server-v3` `core/drive.py` (names, joins, the server-created `/Transfers` and `/Orches` folders, `driveHref`), the row model and what each row allows, expiry / retention formatting, the upload pre-check and presigned upload into a folder, and the page components (`DriveBrowser`, entry table, breadcrumbs, name / move dialogs, upload queue). The server stays the authority on paths; client checks only give friendlier messages.
 
 ## Hard Product & Design Guardrails
 
@@ -32,7 +33,7 @@ Read [`.agents/skills/anywhere-ui/SKILL.md`](./.agents/skills/anywhere-ui/SKILL.
   - Keep sidebar wordmark hover-free (`components/console/section-switcher.tsx`) and mobile sidebar trigger standalone (`components/console/collapsed-nav-bar.tsx`).
   - Language switcher lives ONLY inside Settings › Appearance (never duplicated in the sidebar).
   - Never expose raw dotted claim keys (like `aa.drive_quota_mb`) to end users; render allowances with `DetailCard` / `DetailList` using rich localized copy.
-  - Keep `lib/locales/en.ts` and `lib/locales/zh-CN.ts` in exact key + placeholder parity.
+  - Keep `lib/locales/en.ts` and `lib/locales/zh-CN.ts` in exact key + placeholder parity, and likewise each page module pair merged in `lib/i18n.ts` (`en-drive.ts` / `zh-CN-drive.ts`).
 - **No Lockfile Commits**: Never commit `yarn.lock`.
 
 - **Desktop static export**: `desktop-v3` ships this app as a static export (`AA_DESKTOP_EXPORT=1 corepack yarn build`). Do not add server-only features (route handlers, middleware/proxy, server actions, `cookies()`/`headers()`); new dynamic routes need a `layout.tsx` with `generateStaticParams() { return exportPlaceholderParams(...) }` plus `PathKeyed`, and their pages must use `useRouteParams`.

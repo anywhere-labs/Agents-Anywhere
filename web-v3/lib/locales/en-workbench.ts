@@ -186,7 +186,6 @@ export const enWorkbench = {
   "device.pickFile": "Pick a file to preview it.",
   "device.agentNotReported": "no longer reported by the device",
   "device.removePin": "Remove local pin",
-  "device.pairingLinkExpires": "One-time pairing link (expires {time})",
   "wb.retry": "Retry",
   "conv.approvalShow": "Show",
   "conv.offlineEmpty": "This device is offline. The conversation loads when it is back online.",
