@@ -2,6 +2,7 @@ import { Context } from '@deepseek-ai/cordis'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import * as JsonlPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import SqliteQuery from '@deepseek-ai/dsh-session-query-sqlite'
+import SessionProjection from '@deepseek-ai/dsh-session-projection'
 import Storage from '@deepseek-ai/dsh-storage'
 import * as StorageJson from '@deepseek-ai/dsh-storage-json'
 import * as StorageDomain from '@deepseek-ai/dsh-storage-domain'
@@ -22,6 +23,8 @@ export async function commandRuntime(home: string) {
   try {
     await ctx.plugin(SessionStore).await()
     await ctx.plugin(Reflect.get(JsonlPersistence, 'default') ?? JsonlPersistence, { root: join(home, 'sessions'), compression: 'none' }).await()
+    // 0.2.3 SessionQuery injects sessionProjections.
+    await ctx.plugin(SessionProjection).await()
     await ctx.plugin(SqliteQuery, { path: ':memory:', openAt: 'never' }).await()
     await ctx.plugin(Storage).await()
     await ctx.plugin(StorageJson, { root: join(home, 'storage') }).await()

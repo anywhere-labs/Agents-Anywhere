@@ -2,6 +2,7 @@ import { Context } from '@deepseek-ai/cordis'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import * as JsonlPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import SqliteQuery from '@deepseek-ai/dsh-session-query-sqlite'
+import SessionProjection from '@deepseek-ai/dsh-session-projection'
 import { createAssistantMessage, createUserMessage, createToolResultMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import TypertRegistry from '@deepseek-ai/dsh-typert-registry'
 import Gateway from '@deepseek-ai/dsh-api-gateway'
@@ -45,6 +46,8 @@ export async function nativeRuntime(home: string, beforeHost?: (ctx: Context) =>
         finally { await handle.close() }
       }
     }
+    // 0.2.3 SessionQuery injects sessionProjections; without it the query and the Host never start.
+    await ctx.plugin(SessionProjection).await()
     const query = ctx.plugin(SqliteQuery, { path: ':memory:', openAt: 'never' })
     await query.await()
     await ctx.plugin(Storage).await()

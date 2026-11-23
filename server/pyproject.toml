@@ -16,7 +16,9 @@ dependencies = [
     "loguru>=0.7.3",
     "pillow>=11.0.0",
     "python-multipart>=0.0.20",
-    "redis>=6.0.0",
+    # fakeredis (2.40.0) cannot create a client with redis-py 8.2.0, released 2026-11-23, so the tests fail.
+    # Lift the cap once a fakeredis release supports it.
+    "redis>=6.0.0,<8.2",
     "sqlalchemy[asyncio]>=2.0.36",
     "uvicorn>=0.47.0",
     "websockets>=16.0",

@@ -392,7 +392,7 @@ describe("ConnectorHost against a real meshcall-router", { skip: SKIP, timeout: 
     await host?.stop().catch(() => undefined);
     await router?.close().catch(() => undefined);
     // maxRetries: a debounced state write (e.g. after the revocation above) may land while the directory is removed.
-    if (tmp) await rm(tmp, { recursive: true, force: true, maxRetries: 5 });
+    if (tmp) await rm(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   it("normal mode: control plane, MCP policy, tunnel sessions with a real ACP agent", async () => {

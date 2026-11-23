@@ -1,0 +1,616 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "streamdown/styles.css";
+@source "../node_modules/streamdown/dist/*.js";
+@source "../node_modules/@streamdown/code/dist/*.js";
+@source "../node_modules/@streamdown/math/dist/*.js";
+@source "../node_modules/@streamdown/mermaid/dist/*.js";
+@source "../node_modules/@streamdown/cjk/dist/*.js";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-heading: var(--font-display);
+  --font-sans: var(--font-sans);
+  --font-script: var(--font-script);
+  --color-surface-raised: var(--surface-raised);
+  --color-series-1: var(--series-1);
+  --color-series-2: var(--series-2);
+  --color-series-3: var(--series-3);
+  --color-series-4: var(--series-4);
+  --color-series-5: var(--series-5);
+  --color-series-6: var(--series-6);
+  --color-series-7: var(--series-7);
+  --color-series-8: var(--series-8);
+  --color-series-other: var(--series-other);
+  --color-surface-hover: var(--surface-hover);
+  --color-border-strong: var(--border-strong);
+  --color-header-menu: var(--header-menu);
+  --color-foreground-secondary: var(--foreground-secondary);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-banner: var(--banner);
+  --color-banner-foreground: var(--banner-foreground);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+  --radius-card: min(var(--radius-4xl), var(--radius-card-max));
+  /* Public page type scale (AA-landingpage): hero titles and section titles. */
+  --text-display: clamp(2.75rem, 6.25vw, 6rem);
+  --text-display--line-height: 1.08;
+  --text-display--letter-spacing: -0.05em;
+  --text-heading: clamp(2.25rem, 4.4vw, 4.5rem);
+  --text-heading--line-height: 1.12;
+  --text-heading--letter-spacing: -0.045em;
+}
+
+:root {
+  /* Agents Anywhere type stack: CJK-only HarmonyOS Sans SC first (its
+     unicode-range omits ASCII/Latin, so English falls straight through to
+     SF Pro on Apple / Segoe UI on Windows while Chinese uses HarmonyOS Sans
+     even on macOS instead of being intercepted by -apple-system's PingFang). */
+  --font-sans:
+    "HarmonyOS Sans SC", "SF Pro Text", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-display:
+    "HarmonyOS Sans SC", "SF Pro Display", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  /* The brand wordmark's handwriting for custom brand names (self-hosted
+     via @fontsource/caveat); "Agents Anywhere" is a pre-shaped SVG path. */
+  --font-script: "Caveat", "Segoe Script", cursive;
+  /* The public frame, shared by the header and the page content so their
+       edges line up (AA --dsh-page-width/--dsh-page-gutter). The gutter
+       grows with a quarter of the viewport, so the measured header never
+       loses width as the window widens. */
+  --header-width: 1140px;
+  --header-gutter: clamp(24px, calc(25vw - 120px), 72px);
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  /* Page cards are borderless filled surfaces here too. What sits on a card
+       steps down from it as dark steps up: muted, then secondary, then hover. */
+  --card: #f3f3f3;
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: #e4e4e4;
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: #ececec;
+  /* Keeps 4.5:1 on every surface up to --secondary. */
+  --muted-foreground: #666666;
+  --accent: #e4e4e4;
+  --accent-foreground: oklch(0.205 0 0);
+  /* Status colors are text too: each keeps 4.5:1 on --card. */
+  --destructive: oklch(0.55 0.245 27.325);
+  --success: oklch(0.51 0.15 150);
+  --warning: oklch(0.54 0.15 70);
+  --banner: #6b6b6b;
+  --banner-foreground: #ffffff;
+  /* Translucent like dark's, so they hold up on the page and on cards. */
+  --border: rgb(0 0 0 / 10%);
+  --input: rgb(0 0 0 / 12%);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  /* Generous card/panel scale: 12px base -> nested panels ~17px (xl),
+       tiles ~22px (2xl), popovers ~26px (3xl), cards/dialogs ~31px (card). */
+  --radius: 0.75rem;
+  --radius-card-max: 32px;
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.92 0 0);
+  --sidebar-accent-foreground: oklch(0.145 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+  /* Chart categorical slots: the dataviz skill's validated palette, in its
+       fixed order (validate_palette.js on #f3f3f3 / #141414). Never cycle. */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #6250d6;
+  --series-8: #e34948;
+  --series-other: #a3a3a3;
+  --surface-raised: #ececec;
+  --surface-hover: #e4e4e4;
+  --border-strong: #d0d0d0;
+  --header-menu: var(--background);
+  --foreground-secondary: oklch(0.4 0 0);
+  --silver: linear-gradient(
+    110deg,
+    #3c3c44 0%,
+    #6a6a76 22%,
+    #9a9aa6 36%,
+    #4a4a54 49%,
+    #7a7a86 65%,
+    #44444e 82%,
+    #7a7a86 100%
+  );
+  /* The hero's one color accent (HeadlineLines): pale, low saturation. */
+  --gradient-connect: linear-gradient(
+    100deg,
+    #6e7c9b 0%,
+    #827a9c 55%,
+    #9a8090 100%
+  );
+  /* Champagne gold for prices, darkened to read on white. */
+  --gold: linear-gradient(
+    110deg,
+    #8f8571 0%,
+    #6f6550 28%,
+    #8a7f69 50%,
+    #645a46 72%,
+    #8f8571 100%
+  );
+}
+
+/*
+ * Dark is the brand theme. Values follow the AA-landingpage tokens.css palette
+ * (see ANYWHERE_API_NOTES.md Part 4 §3.1): pure black canvas, #101010 surfaces,
+ * hairline white borders, and white pill buttons with black text.
+ */
+.dark {
+  --background: #000000;
+  --foreground: #ffffff;
+  /* Page cards are borderless filled surfaces, so they sit one visible
+       step above the pure black canvas. */
+  --card: #141414;
+  --card-foreground: #ffffff;
+  --popover: #191919;
+  --popover-foreground: #ffffff;
+  --primary: #ffffff;
+  --primary-foreground: #000000;
+  /* Secondary buttons often sit on cards, one step above --card. */
+  --secondary: #262626;
+  --secondary-foreground: #ffffff;
+  --muted: #191919;
+  --muted-foreground: #929292;
+  --accent: #252525;
+  --accent-foreground: #ffffff;
+  --destructive: oklch(0.704 0.191 22.216);
+  --success: oklch(0.76 0.16 152);
+  --warning: oklch(0.8 0.15 80);
+  --banner: #404040;
+  --banner-foreground: #ffffff;
+  --border: rgb(255 255 255 / 10%);
+  --input: rgb(255 255 255 / 12%);
+  --ring: #929292;
+  --chart-1: #ffffff;
+  --chart-2: #b5b5b5;
+  --chart-3: #929292;
+  --chart-4: #5c5c5c;
+  --chart-5: #303030;
+  --sidebar: #000000;
+  --sidebar-foreground: #ffffff;
+  --sidebar-primary: #ffffff;
+  --sidebar-primary-foreground: #000000;
+  --sidebar-accent: #191919;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: rgb(255 255 255 / 10%);
+  --sidebar-ring: #929292;
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #008300;
+  --series-7: #9085e9;
+  --series-8: #e66767;
+  --series-other: #5c5c5c;
+  --surface-raised: #191919;
+  --surface-hover: #252525;
+  --border-strong: #303030;
+  /* The header while its menu is open (AA .site-header[data-menu-open]). */
+  --header-menu: #090909;
+  --foreground-secondary: #b5b5b5;
+  /* The metallic second line of hero titles (AA-landingpage .secondary-line). */
+  --silver: linear-gradient(
+    110deg,
+    #686872 0%,
+    #92929e 22%,
+    #c5c5ce 36%,
+    #777783 49%,
+    #aaaab5 65%,
+    #6f6f7a 82%,
+    #aaaab5 100%
+  );
+  --gradient-connect: linear-gradient(
+    100deg,
+    #c0c9dc 0%,
+    #c9c2dc 55%,
+    #d6c5d0 100%
+  );
+  /* AA-landingpage's enterprise gold (enterprise-page.module.css .gold). */
+  --gold: linear-gradient(
+    110deg,
+    #d8d3c9 0%,
+    #b8ae9b 28%,
+    #cec5b5 50%,
+    #a89e8b 72%,
+    #d8d3c9 100%
+  );
+}
+
+/* The public pages' content column. */
+@media (min-width: 1560px) {
+  :root {
+    --header-width: 1280px;
+    --header-gutter: 80px;
+  }
+}
+
+@utility header-frame {
+  width: min(var(--header-width), calc(100% - var(--header-gutter) * 2));
+  margin-inline: auto;
+}
+
+/* Page content in the header's frame. */
+@utility page-wrap {
+  width: min(var(--header-width), calc(100% - var(--header-gutter) * 2));
+  margin-inline: auto;
+}
+
+/* Headline text in the --gradient-connect accent; gradient-text is the base
+   for any line painted by its background (with text-silver too). */
+@utility gradient-text-connect {
+  background-image: var(--gradient-connect);
+}
+@utility gradient-text {
+  color: var(--foreground);
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  /* Chinese punctuation hangs outside the line box; keep it painted. */
+  padding-inline-end: 0.5em;
+  margin-inline-end: -0.5em;
+}
+
+/* Text in the --silver gradient, slowly sweeping across it. */
+@utility text-silver {
+  color: var(--muted-foreground);
+  background-image: var(--silver);
+  background-size: 240% 100%;
+  background-position: 0% 50%;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: silver-sheen 4.5s ease-in-out infinite alternate;
+
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+    background-position: 50% 50%;
+  }
+}
+
+/* Text in the --gold gradient, flowing slowly as on AA's enterprise page. */
+@utility text-gold {
+  color: var(--muted-foreground);
+  background-image: var(--gold);
+  background-size: 220% 100%;
+  background-position: 0% 50%;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: silver-sheen 12s ease-in-out infinite alternate;
+
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+  }
+}
+
+/*
+ * A row that scrolls sideways fades out at each edge it can still scroll
+ * past: set data-fade-start / data-fade-end while there is more that way.
+ */
+@property --fade-start {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@property --fade-end {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@utility scroll-fade {
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    black var(--fade-start),
+    black calc(100% - var(--fade-end)),
+    transparent
+  );
+  transition:
+    --fade-start 200ms ease,
+    --fade-end 200ms ease;
+
+  &[data-fade-start] {
+    --fade-start: 56px;
+  }
+  &[data-fade-end] {
+    --fade-end: 56px;
+  }
+}
+
+@keyframes silver-sheen {
+  from {
+    background-position: 0% 50%;
+  }
+  to {
+    background-position: 100% 50%;
+  }
+}
+
+/*
+ * A row that scrolls by itself. Its content is the list twice over, so
+ * moving it by half its width loops without a seam; with reduced motion it
+ * stands still and the viewport scrolls by hand instead.
+ */
+@utility marquee-track {
+  animation: marquee var(--marquee-duration, 60s) linear infinite;
+
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+  }
+}
+
+@utility marquee-fade {
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    black 10%,
+    black 90%,
+    transparent
+  );
+}
+
+@keyframes marquee {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+}
+
+/*
+ * Shape hierarchy (CSS Borders Level 4 `corner-shape`):
+ * 1. Circles and capsules/pills (`rounded-full`, buttons, single-line inputs,
+ *    badges, switches, pill tabs, sidebar & menu pills) stay strictly circular
+ *    (`corner-shape: round`) — any symmetric `superellipse(K > 1)` flattens
+ *    the vertical equator when radius equals half-height, turning a pill into
+ *    a rounded rectangle.
+ * 2. Multi-line rounded rectangles (cards, dialogs, popovers, multi-item
+ *    menus, textareas, nested panels, tiles) use `superellipse(1.35)` (n ≈
+ *    2.55): G2-continuous yet closer to a circular arc than a boxy full
+ *    `squircle` (`superellipse(2)`, n = 4), preserving `--radius` verbatim.
+ */
+@supports (corner-shape: superellipse(1.35)) {
+  :where([class*="rounded-"]) {
+    corner-shape: superellipse(1.35);
+  }
+
+  :where(
+    [class*="rounded-full"],
+    [data-slot="button"],
+    [data-slot="input"],
+    [data-slot="input-group"]:not(:has(textarea)),
+    [data-slot="badge"],
+    [data-slot="switch"],
+    [data-slot="switch-thumb"],
+    [data-slot="sidebar-menu-button"],
+    [data-slot="tabs-list"]:not([data-variant="line"]),
+    [data-slot="tabs-trigger"],
+    [data-slot="user-avatar"],
+    [data-slot="avatar"],
+    [data-slot="radio-group-item"],
+    [data-slot="radio-group-indicator"]
+  ) {
+    corner-shape: round;
+  }
+}
+
+/*
+ * Directional page transitions for the console content area (React
+ * <ViewTransition> with `nav-forward` / `nav-back` types, see
+ * components/console/page-transition.tsx). Going deeper slides the old page
+ * out to the left and the new page in from the right; going back reverses it.
+ */
+::view-transition {
+  pointer-events: none;
+}
+
+/* React starts a view transition for every navigation. Only the named
+   regions above should move; the browser's default crossfade of the rest of
+   the page would replay a stale frame, such as a mobile drawer that is
+   already closing. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+}
+
+::view-transition-old(.nav-forward) {
+  --slide-offset: -48px;
+  animation:
+    150ms ease-in both page-fade reverse,
+    320ms cubic-bezier(0.22, 1, 0.36, 1) both page-slide reverse;
+}
+::view-transition-new(.nav-forward) {
+  --slide-offset: 48px;
+  animation:
+    210ms ease-out 90ms both page-fade,
+    320ms cubic-bezier(0.22, 1, 0.36, 1) both page-slide;
+}
+::view-transition-old(.nav-back) {
+  --slide-offset: 48px;
+  animation:
+    150ms ease-in both page-fade reverse,
+    320ms cubic-bezier(0.22, 1, 0.36, 1) both page-slide reverse;
+}
+::view-transition-new(.nav-back) {
+  --slide-offset: -48px;
+  animation:
+    210ms ease-out 90ms both page-fade,
+    320ms cubic-bezier(0.22, 1, 0.36, 1) both page-slide;
+}
+
+/* Untyped moves within the console (sidebar pages, history): the arriving
+   page rises a little, as the public pages' does (components/landing/
+   public-page.tsx); the old one leaves with the rest of the frame. */
+::view-transition-new(.nav-rise) {
+  animation: 360ms cubic-bezier(0.22, 1, 0.36, 1) both page-rise;
+}
+
+/* Arriving in the console from elsewhere: the whole console fades up into
+   view, a different motion from the moves within it. */
+::view-transition-new(.nav-enter) {
+  animation: 420ms cubic-bezier(0.22, 1, 0.36, 1) both console-enter;
+}
+
+@keyframes console-enter {
+  from {
+    opacity: 0;
+    scale: 0.98;
+  }
+}
+@keyframes page-rise {
+  from {
+    opacity: 0.25;
+    translate: 0 10px;
+  }
+}
+@keyframes page-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes page-slide {
+  from {
+    translate: var(--slide-offset);
+  }
+  to {
+    translate: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(*),
+  ::view-transition-new(*),
+  ::view-transition-group(*) {
+    animation-duration: 0s !important;
+    animation-delay: 0s !important;
+  }
+}
+
+/* AA-landingpage's enterprise slide, between the home page and a standalone
+   page (pricing, the docs): all content moves together, a short way. */
+html[data-page-motion] {
+  --page-slide: clamp(16px, 2.5vw, 36px);
+}
+html[data-page-motion]::view-transition-old(root),
+html[data-page-motion]::view-transition-new(root) {
+  animation-duration: 380ms;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  animation-fill-mode: both;
+  mix-blend-mode: normal;
+}
+html[data-page-motion="forward"]::view-transition-old(root) {
+  animation-name: page-out-left;
+}
+html[data-page-motion="forward"]::view-transition-new(root) {
+  animation-name: page-in-right;
+}
+html[data-page-motion="back"]::view-transition-old(root) {
+  animation-name: page-out-right;
+}
+html[data-page-motion="back"]::view-transition-new(root) {
+  animation-name: page-in-left;
+}
+@keyframes page-out-left {
+  to {
+    transform: translateX(calc(-1 * var(--page-slide)));
+    opacity: 0;
+  }
+}
+@keyframes page-out-right {
+  to {
+    transform: translateX(var(--page-slide));
+    opacity: 0;
+  }
+}
+@keyframes page-in-right {
+  from {
+    transform: translateX(var(--page-slide));
+    opacity: 0;
+  }
+}
+@keyframes page-in-left {
+  from {
+    transform: translateX(calc(-1 * var(--page-slide)));
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-page-motion]::view-transition-old(root),
+  html[data-page-motion]::view-transition-new(root) {
+    animation: none;
+  }
+}
+
+/* See LANGUAGE_PENDING_SCRIPT (optional SSR flash guard). */
+html[data-language-pending] body {
+  visibility: hidden;
+}
