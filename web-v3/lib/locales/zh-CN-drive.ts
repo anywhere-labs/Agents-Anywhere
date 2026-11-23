@@ -39,6 +39,8 @@ export const zhCNDrive: Record<keyof typeof enDrive, string> = {
   "drive.expired": "已过期",
   "drive.moreFiles": "共 {total} 个文件，这里显示了 {shown} 个。",
   "drive.showMore": "显示更多",
+  "drive.refNotFound": "云盘里找不到 {ref}",
+  "drive.refFailed": "打不开 {ref}：{error}",
 
   // 空状态、找不到和不可用
   "drive.emptyTitle": "这个文件夹是空的",

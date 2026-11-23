@@ -64,7 +64,13 @@ export function ConversationView({
       reduceMotion: appearance.reduceMotion,
       imageSrc: (path, mime) => files.url(path, mime) ?? PLACEHOLDER_IMAGE,
       answer: (requestId, optionId) => controller.answer(requestId, optionId),
-      open: (target: OpenTarget) => (target.kind === "url" ? controller.openLink(target.url) : controller.openFile(target.path, target.line)),
+      // A drive reference goes out as a link (`open_link` with `drive:/…`, docs/v3/mobile-bridge.md).
+      open: (target: OpenTarget) =>
+        target.kind === "url"
+          ? controller.openLink(target.url)
+          : target.kind === "drive"
+            ? controller.openLink(target.ref)
+            : controller.openFile(target.path, target.line),
       copy: (text) => controller.copy(text),
       haptic: (style) => controller.haptic(style),
       // Native has its own sheets: no in-page fullscreen or downloads (a WebView cannot save files).

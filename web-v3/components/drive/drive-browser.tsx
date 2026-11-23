@@ -82,7 +82,16 @@ function useDialogSubject<T>() {
 
 const isFileDrag = (event: DragEvent) => Array.from(event.dataTransfer.types).includes("Files")
 
-export function DriveBrowser({ path, onNavigate }: { path: string; onNavigate: (path: string) => void }) {
+export function DriveBrowser({
+  path,
+  highlight = null,
+  onNavigate,
+}: {
+  path: string
+  /** A file of the folder to point out (by id), e.g. one a reply linked to. */
+  highlight?: string | null
+  onNavigate: (path: string) => void
+}) {
   const { t, locale } = useI18n()
   const { activeAccount, getFreshAccessToken } = useWorkbench()
   const serverUrl = activeAccount?.serverUrl ?? null
@@ -380,7 +389,7 @@ export function DriveBrowser({ path, onNavigate }: { path: string; onNavigate: (
   } else {
     body = (
       <div className="flex flex-col gap-3">
-        <DriveEntryTable rows={rows} now={current?.at ?? 0} handlers={handlers} />
+        <DriveEntryTable rows={rows} now={current?.at ?? 0} highlight={highlight} handlers={handlers} />
         {listing.files.length < listing.total_files && (
           <div className="flex items-center gap-3 px-2">
             <p className="text-sm text-muted-foreground">

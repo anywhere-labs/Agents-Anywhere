@@ -36,7 +36,7 @@
 | `ready` | `version`, `capabilities: string[]` | |
 | `load_older` | `session_id`, `before_seq` | 滚到顶部时请求更早的消息 |
 | `answer` | `session_id`, `request_id`, `option_id` | 消息流里的审批卡片被点击（原生审批区也能答，二者等价） |
-| `open_link` | `url` | 外部链接交给系统打开 |
+| `open_link` | `url` | 外部链接交给系统打开。`url` 也可能是云盘引用 `drive:/…`（[assistant-and-files-proposal.md](assistant-and-files-proposal.md) 6.3）：应在 App 的云盘页打开，还没有云盘页时忽略 |
 | `open_file` | `path`, `line?` | 打开设备上的文件（原生层推出文件页） |
 | `file.read` | `request_id`, `path`, `max_bytes?` | 预览附件或图片时取字节；原生层经隧道 `read_file`（大文件走云盘） |
 | `copy` | `text` | |

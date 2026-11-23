@@ -127,6 +127,9 @@ def test_drive_references_format_canonically() -> None:
     assert format_drive_ref("/a/Bob's \"plan\".md") == "drive:/a/Bob%27s%20%22plan%22.md"
     assert format_drive_ref("/a/b\u3000c") == "drive:/a/b%E3%80%80c"  # ideographic space
     assert format_drive_ref("/a/\u202etxt.exe") == "drive:/a/%E2%80%AEtxt.exe"  # bidi override
+    # Full-width sentence punctuation ends a reference in Chinese text; full-width brackets stay readable
+    assert format_drive_ref("/纪要，第二版.md") == "drive:/纪要%EF%BC%8C第二版.md"
+    assert format_drive_ref("/报告（终版）.pdf") == "drive:/报告（终版）.pdf"
 
 
 @pytest.mark.parametrize(
@@ -141,6 +144,7 @@ def test_drive_references_format_canonically() -> None:
         "/emoji/🚀 launch.md",
         "/a/Bob's [draft] (v2).md",
         "/a/tab\u3000space.md",
+        "/纪要，第二版。定稿！.md",
     ],
 )
 def test_drive_references_round_trip(path: str) -> None:
@@ -153,6 +157,7 @@ def test_parse_drive_ref_is_lenient_with_hand_written_references() -> None:
     assert parse_drive_ref("drive:/100%.txt") == "/100%.txt"  # a stray % stays literal
     assert parse_drive_ref("drive:/%E6%8A%A5%E5%91%8A/") == "/报告"
     assert parse_drive_ref("drive:/a//b") == "/a/b"
+    assert parse_drive_ref("drive:/纪要，第二版.md") == "/纪要，第二版.md"  # written out, not encoded
 
 
 @pytest.mark.parametrize(

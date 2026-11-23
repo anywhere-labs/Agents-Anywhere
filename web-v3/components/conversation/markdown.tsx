@@ -4,13 +4,15 @@
 // (https://streamdown.ai) with its own styles, streaming repair of unterminated Markdown (remend) and word fade-in
 // (`animated` + `isAnimating`), and the standard plugins: code (Shiki), math (KaTeX), mermaid, cjk. Fenced code goes
 // to AI Elements' Code Block through `components.code`, as Code Block › Markdown shows; mermaid fences stay with
-// Streamdown, which draws the diagram. Links never navigate: they go to the host (`open`).
+// Streamdown, which draws the diagram. Links never navigate: they go to the host (`open`). `drive:/…` references
+// become links too (see `remarkDriveRefs`).
 import { memo, useEffect, useMemo, useSyncExternalStore } from 'react'
 import type * as React from 'react'
 import { cjk } from '@streamdown/cjk'
-import { defaultComponents, Streamdown, useIsCodeFenceIncomplete, type ExtraProps, type PluginConfig, type StreamdownTranslations } from 'streamdown'
+import { defaultComponents, defaultRemarkPlugins, Streamdown, useIsCodeFenceIncomplete, type ExtraProps, type PluginConfig, type StreamdownTranslations } from 'streamdown'
 import { CodeBlock, CodeBlockActions, CodeBlockContent, CodeBlockCopyButton, CodeBlockHeader, CodeBlockLine, CodeBlockTitle } from '@/components/ui/code-block'
 import { useHighlightedCode } from '@/hooks/use-highlighted-code'
+import { driveRefOfHref, remarkDriveRefs } from '@/lib/drive/refs'
 import { codeHighlighter } from '@/lib/highlighter'
 import { cn } from '@/lib/utils'
 import { useThreadEnv } from './env'
@@ -37,6 +39,7 @@ function loadLazy(name: 'math' | 'mermaid') {
     for (const fn of lazyListeners) fn()
   })
 }
+const lazyVersionNow = () => lazyVersion
 const subscribeLazy = (fn: () => void) => {
   lazyListeners.add(fn)
   return () => lazyListeners.delete(fn)
@@ -49,7 +52,7 @@ function usePlugins(text: string): PluginConfig {
     if (needsMath) loadLazy('math')
     if (needsMermaid) loadLazy('mermaid')
   }, [needsMath, needsMermaid])
-  const v = useSyncExternalStore(subscribeLazy, () => lazyVersion)
+  const v = useSyncExternalStore(subscribeLazy, lazyVersionNow, lazyVersionNow)
   return useMemo(
     () => ({ code: codeHighlighter, cjk, math: needsMath ? lazy.math : undefined, mermaid: needsMermaid ? lazy.mermaid : undefined }),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `v` is the lazy modules' version
@@ -139,7 +142,9 @@ function MarkdownLink({ href, children, node: _node, ...rest }: React.ComponentP
       className="wrap-anywhere font-medium text-primary underline"
       onClick={(e) => {
         e.preventDefault()
-        if (href) env.open({ kind: 'url', url: href })
+        if (!href) return
+        const ref = driveRefOfHref(href)
+        env.open(ref !== null ? { kind: 'drive', ref } : { kind: 'url', url: href })
       }}
     >
       {children}
@@ -148,6 +153,8 @@ function MarkdownLink({ href, children, node: _node, ...rest }: React.ComponentP
 }
 
 const components = { code: MarkdownCode, a: MarkdownLink }
+// Streamdown's own (GFM, code fence meta), then drive references.
+const remarkPlugins = [...Object.values(defaultRemarkPlugins), remarkDriveRefs]
 
 /**
  * `reading` is the size of a conversation (15px, line height 1.7, headings only a step above the text);
@@ -162,6 +169,7 @@ function MarkdownImpl({ children, streaming = false, className, size = 'reading'
     <Streamdown
       className={cn('aa-md min-w-0', size === 'compact' && 'aa-md-compact', className)}
       plugins={plugins}
+      remarkPlugins={remarkPlugins}
       components={components}
       translations={translations}
       animated={!env.reduceMotion}

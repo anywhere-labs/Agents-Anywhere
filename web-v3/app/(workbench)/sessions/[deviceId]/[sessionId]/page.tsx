@@ -49,6 +49,7 @@ import { Dock } from "@/components/workbench/dock"
 import { useElementWidth } from "@/hooks/use-element-width"
 import type { PanelWidthSpec } from "@/hooks/use-panel-width"
 import { loadDeviceImage, sentPreview } from "@/lib/attachments/previews"
+import { driveRefHref } from "@/lib/drive/refs"
 import { PairingError } from "@/lib/mesh/pairing"
 import { useRouteParams } from "@/lib/platform/route-params"
 import { useWorkbench } from "@/lib/state/workbench-context"
@@ -467,6 +468,10 @@ export default function SessionWorkspacePage() {
         )
       },
       open: (target) => {
+        if (target.kind === "drive") {
+          router.push(driveRefHref(target.ref))
+          return
+        }
         let path: string
         if (target.kind === "url") {
           // Web links open in a new tab; a path the agent linked (absolute, ~/…, relative to the conversation's
@@ -505,7 +510,7 @@ export default function SessionWorkspacePage() {
       },
       fork: forkAt,
     }),
-    [call, copy, cwd, forkAt, myId, myName, myPub, pairedClientLabel, runRewind, sessionId, setPanel, store, tunnelDevice, tunnelManager]
+    [call, copy, cwd, forkAt, myId, myName, myPub, pairedClientLabel, router, runRewind, sessionId, setPanel, store, tunnelDevice, tunnelManager]
   )
 
   const commands = useMemo<ComposerCommand[]>(() => {
