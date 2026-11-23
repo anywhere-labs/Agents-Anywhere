@@ -41,7 +41,10 @@ class CodexTimelineAccumulator:
     ) -> None:
         self._order_by_id: dict[str, int] = {}
         self._projection_by_id: dict[str, codex_timeline.CodexTimelineProjection] = {}
-        self._next_order = 0
+        # Timeline positions are 1-based like the Claude runtime: clients older
+        # than 2.2.0 treat orderSeq = 0 as unassigned and move that item to the
+        # end, which reverses the conversation (#568, #838).
+        self._next_order = 1
         self._pending_messages = pending_messages
         self._active_turn_positions: dict[tuple[str, str], ActiveTurnPositions] = {}
         self._async_input_call_ids_by_thread: dict[str, set[str]] = {}
@@ -318,7 +321,7 @@ class CodexTimelineAccumulator:
                     projection=projection,
                     event="thread/read",
                     fallback_index=fallback_index,
-                    order_seq=len(items),
+                    order_seq=len(items) + 1,
                 )
             )
         return tuple(items)

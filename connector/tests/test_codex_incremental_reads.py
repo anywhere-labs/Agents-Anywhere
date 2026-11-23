@@ -105,7 +105,9 @@ def test_restart_reads_zero_history_and_append_reads_one_page_with_retry(tmp_pat
         added = await prepare(runtime)
         assert len(client.pages) == 1
         assert len(added.snapshot.items) == 1
-        assert added.snapshot.items[0].order_seq == 240
+        # Timeline positions are 1-based: the first item after the 240-item
+        # prefix continues at 241.
+        assert added.snapshot.items[0].order_seq == 241
         assert added.snapshot.complete is False
         # No ingestion ACK: the durable checkpoint must still describe the old history.
         retry = await prepare(runtime)
@@ -116,6 +118,45 @@ def test_restart_reads_zero_history_and_append_reads_one_page_with_retry(tmp_pat
         client.pages.clear()
         assert (await prepare(runtime)).snapshot is None
         assert client.pages == []
+    asyncio.run(run())
+
+
+def test_upgrade_from_zero_based_checkpoint_replaces_positions(tmp_path):
+    async def run():
+        client = FakeCodexClient()
+        runtime, _host, store = boot(tmp_path / "checkpoint.json", client)
+        session = (await runtime.list_sessions())[0]
+        initial = await runtime.prepare_session_timeline_sync(
+            session.session_id, "thread_1"
+        )
+        assert initial.snapshot is not None
+        await initial.commit()
+        store.flush()
+
+        # A checkpoint written by the 0-based Connector holds the same item ids
+        # at positions one lower, and its content fingerprints include the old
+        # orderSeq, so the whole checkpoint looks stale after the upgrade.
+        key = ("codex", "conn_test", "codex/timeline-sync/thread_1")
+        checkpoint = dict(store.get(*key).cursor)
+        checkpoint["order"] = [
+            [item_id, order_seq - 1] for item_id, order_seq in checkpoint["order"]
+        ]
+        checkpoint["items"] = {item_id: "stale" for item_id in checkpoint["items"]}
+        store.set(*key, cursor=checkpoint)
+        store.flush()
+
+        runtime, _host, _store = boot(tmp_path / "checkpoint.json", client)
+        session = (await runtime.list_sessions())[0]
+        upgraded = await runtime.prepare_session_timeline_sync(
+            session.session_id, "thread_1"
+        )
+
+        # The next sync after the upgrade must replace the stored timeline so
+        # already-synced conversations stop exposing the 0-based position.
+        assert upgraded.snapshot is not None
+        assert upgraded.snapshot.complete is True
+        assert [item.order_seq for item in upgraded.snapshot.items] == [1, 2]
+
     asyncio.run(run())
 
 
