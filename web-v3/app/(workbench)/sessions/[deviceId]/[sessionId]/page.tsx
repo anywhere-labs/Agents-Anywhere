@@ -577,6 +577,7 @@ export default function SessionWorkspacePage() {
             title={title}
             deviceId={deviceId}
             deviceName={device?.name}
+            agent={agentId || undefined}
             agentName={agentId ? agentName : undefined}
             cwd={cwd}
             state={control?.state ?? summary?.state}

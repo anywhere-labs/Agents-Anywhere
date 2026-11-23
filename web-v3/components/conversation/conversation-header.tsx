@@ -2,9 +2,9 @@
 
 // The conversation's top bar (client-experience-proposal §2.4; v2 session-view-header): the sidebar button (on phones,
 // and with a new-conversation button while the sidebar is folded away);
-// the title (click to rename in place: Enter saves, Esc cancels), its state and lock, then where it runs (agent ·
-// device · project) in quieter type; then the side-panel toggle and the menu — rename, pin, fork, compact context, details, copy ID, export,
-// open device, delete.
+// the agent's icon and the title (click to rename in place: Enter saves, Esc cancels), its state and lock, then where it
+// runs (device · project) in quieter type; then the side-panel toggle and the menu — rename, pin, fork, compact context,
+// details, copy ID, export, open device, delete.
 import Link from "next/link"
 import { useState } from "react"
 import {
@@ -33,6 +33,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { AgentIcon } from "@/components/workbench/agent-icon"
 import { E2eeLockBadge } from "@/components/workbench/e2ee-lock-badge"
 import { SidebarReopen } from "@/components/workbench/sidebar-reopen"
 import type { SessionState } from "@/lib/types/v3"
@@ -54,6 +55,7 @@ export function ConversationHeader({
   title,
   deviceId,
   deviceName,
+  agent,
   agentName,
   cwd,
   state,
@@ -70,6 +72,8 @@ export function ConversationHeader({
   title: string
   deviceId: string
   deviceName?: string
+  /** The agent's id, for its icon before the title; `agentName` names it (tooltip). */
+  agent?: string
   agentName?: string
   cwd?: string
   state?: SessionState
@@ -96,7 +100,12 @@ export function ConversationHeader({
     <header className="flex h-14 shrink-0 items-center gap-2 px-3 sm:px-4">
       <SidebarReopen />
       <div className="flex min-w-0 flex-1 items-center gap-2">
-        {/* The conversation first, like any chat app; where it runs follows in quieter type. */}
+        {/* The conversation first, like any chat app, behind its agent's icon; where it runs follows in quieter type. */}
+        {agent && (
+          <span role="img" aria-label={agentName ?? agent} title={agentName ?? agent} className="-mr-1.5 flex shrink-0 pl-1">
+            <AgentIcon agent={agent} name={agentName} className="text-foreground" />
+          </span>
+        )}
         {editing !== null ? (
           <input
             autoFocus
@@ -144,8 +153,6 @@ export function ConversationHeader({
           aria-label={t("conv.details")}
           className="hidden min-w-0 shrink-[2] items-center gap-1.5 text-sm text-muted-foreground md:flex"
         >
-          {agentName && <span className="shrink-0">{agentName}</span>}
-          <span aria-hidden className="shrink-0">·</span>
           <Link href={deviceHref(deviceId)} className="min-w-0 truncate transition-colors hover:text-foreground">
             {deviceName ?? deviceId}
           </Link>
