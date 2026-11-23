@@ -23,7 +23,12 @@ from aa_control.infra.db.engine import create_engine
 from aa_control.infra.db.repositories import ControlRepository
 from aa_control.infra.object_store import DriveCleanupWorker, ObjectStorePort, S3ObjectStore
 from aa_control.infra.oidc import OidcJwksVerifier, OidcVerifierPort
-from aa_control.infra.push import LoggingPushProvider, PushProvider, PushRetryWorker
+from aa_control.infra.push import (
+    PlatformPushProvider,
+    PushProvider,
+    PushRetryWorker,
+    build_push_provider,
+)
 from aa_control.infra.redis_store import RedisControlStore
 from aa_control.infra.router_pool import MeshCallRouterPool, RouterPoolPort
 from aa_control.infra.tokens_client import HttpTokensAnywhereClient, TokensAnywhereClientPort
@@ -79,7 +84,8 @@ def create_app(
     redis_conn = redis_client or Redis.from_url(cfg.redis_url, decode_responses=False)
     redis_store = RedisControlStore(redis_conn, presence_ttl_seconds=cfg.presence_ttl_seconds)
     pool: RouterPoolPort = router_pool if router_pool is not None else MeshCallRouterPool(cfg.routers)
-    provider: PushProvider = push_provider or LoggingPushProvider()
+    owns_push_provider = push_provider is None
+    provider: PushProvider = push_provider if push_provider is not None else build_push_provider(cfg.push)
 
     repo = ControlRepository(db_engine)
     auth_service = AuthService(
@@ -122,9 +128,11 @@ def create_app(
     push_worker = PushRetryWorker(
         redis_store=redis_store,
         provider=provider,
+        token_store=repo,
         max_attempts=cfg.push_max_attempts,
         base_backoff_seconds=cfg.push_base_backoff_seconds,
     )
+    push_status = provider.status() if isinstance(provider, PlatformPushProvider) else {"provider": "custom"}
     drive_cleanup_worker = DriveCleanupWorker(
         sweep_fn=drive_service.cleanup_expired,
         interval_seconds=cfg.drive.cleanup_interval_seconds,
@@ -148,7 +156,12 @@ def create_app(
                     drive_cleanup_worker.run_forever(),
                     name="aa-control-drive-cleanup-worker",
                 )
-            logger.info("aa-control-plane started routers={} drive_enabled={}", pool.router_ids, drive_service.enabled)
+            logger.info(
+                "aa-control-plane started routers={} drive_enabled={} push={}",
+                pool.router_ids,
+                drive_service.enabled,
+                push_status,
+            )
             yield
         finally:
             for bg_task in (push_task, cleanup_task):
@@ -164,6 +177,8 @@ def create_app(
                 await store.close()
             if owns_tokens_client:
                 await tc.close()
+            if owns_push_provider and isinstance(provider, PlatformPushProvider):
+                await provider.close()
             if owns_redis:
                 await redis_store.close()
             if owns_engine:
@@ -203,6 +218,8 @@ def create_app(
     app.state.mcp_service = mcp_service
     app.state.control_rpc = control_rpc
     app.state.push_worker = push_worker
+    app.state.push_provider = provider
+    app.state.push_status = push_status
     app.state.drive_cleanup_worker = drive_cleanup_worker
 
     app.include_router(health_api.router)

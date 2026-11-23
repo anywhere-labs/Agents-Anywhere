@@ -28,7 +28,11 @@ Agents Anywhere v3 的轻控制面后端，实现定稿架构文档中定义的 
 - **推送通知管线**：
   - `clients` 表登记移动端/桌面端 `push_token`；
   - **加密设备强制无正文推送**（服务端彻底剥离 `title`、`body`、`session_id`，只发通用提醒）；
-  - Redis 队列 + 指数退避重试与死信队列；可插拔 `PushProvider` 接口（真实 APNs / FCM 发货客户端在 T513 联调补齐）。
+  - Redis 队列 + 指数退避重试与死信队列；可插拔 `PushProvider` 接口；
+  - **APNs 发送**（iOS）：HTTP/2 Provider API + `.p8` Token 认证（ES256 JWT 缓存、50 分钟内自动重签），支持 `sandbox` / `production`，按事件类型设置 `apns-push-type`、`apns-priority`、`apns-expiration` 与 `apns-collapse-id`；
+  - **FCM HTTP v1 发送**（Android）：服务账号 JWT Bearer 换取 OAuth2 Access Token 并缓存，调用 `projects/<id>/messages:send`；
+  - 平台响应分类：token 失效（APNs 410 / `Unregistered` / `BadDeviceToken`，FCM `UNREGISTERED` / token 字段 `INVALID_ARGUMENT`）自动清除该客户端 `push_token`；429 / 5xx / 网络错误按指数退避重试（尊重 `Retry-After`）；其他 4xx 直接进死信队列；日志不记录 token 与通知内容；
+  - 未配置的平台（以及 `desktop` / `web`）保持只记日志不投递，启动日志与 `/readyz` 的 `push` 字段会显示 `configured` / `disabled`；客户端载荷字段见[跨端契约](../contracts/aa-v3/1.0/README.md#推送通知载荷apns--fcm)。
 - **MCP（`/mcp` Streamable HTTP）**：
   - OAuth 2.1 发现元数据、RFC 7591 动态客户端注册、PKCE S256 授权码、授权预览（`approvals:answer` 默认不勾选、加密设备不可选）、授权查询与撤销；
   - 浏览器授权：配置 `AA_CONTROL_WEB_ORIGIN` 后，元数据里的 `authorization_endpoint` 指向 Web 的 `/oauth/authorize` 授权页；不带 `Authorization` 头访问控制面 `/oauth/authorize`（浏览器跳转）会 302 到该页面并原样保留查询参数，带 Bearer 的调用仍返回 JSON 预览 / 批准结果；未配置时 Claude、Cursor 等外部 MCP 客户端无法在浏览器里完成授权；
@@ -53,7 +57,7 @@ Agents Anywhere v3 的轻控制面后端，实现定稿架构文档中定义的 
 | --- | --- | --- |
 | `aa_control/core/` | 配置、契约模型、密码与凭据原语、错误定义 | 不依赖 FastAPI、SQLAlchemy、Redis、MeshCall 或外层模块 |
 | `aa_control/services/` | 用例编排（认证、设备、隧道、扇出、推送、MCP） | 不依赖 FastAPI / Starlette / 传输层 |
-| `aa_control/infra/` | PostgreSQL 仓储、Redis 协调与重试队列、MeshCall Router 池、Push Worker | 依赖 `core` |
+| `aa_control/infra/` | PostgreSQL 仓储、Redis 协调与重试队列、MeshCall Router 池、Push Worker 与 APNs / FCM 发送器 | 依赖 `core` |
 | `aa_control/rpc/` | MeshCall `aa.v3.Control` 服务宿主（含 WorkerLoop→主事件循环桥接） | 依赖 `core`、`services` |
 | `aa_control/api/` | FastAPI HTTP 路由（登录/OAuth/设备注册/MCP/健康检查） | 依赖 `core`、`services` |
 
@@ -95,6 +99,14 @@ Agents Anywhere v3 的轻控制面后端，实现定稿架构文档中定义的 
 | `AA_CONTROL_ASSISTANT_ALLOWED_TOKENS_CLIENT_IDS` | 可选：OIDC 模式下允许读取 Tokens Anywhere 托管 Key 的一等客户端 ID（逗号分隔，默认回退到 `AA_CONTROL_OIDC_CLIENT_ID`） | `aa-v3` |
 | `AA_CONTROL_TOKENS_URL` / `AA_CONTROL_TOKENS_CLIENT_ID` | 可选：Tokens Anywhere 站点地址（默认 `https://tokens-anywhere.com`）与 OAuth Client ID（默认 `agents-anywhere`） | `https://tokens-anywhere.com` / `agents-anywhere` |
 | `AA_CONTROL_TOKENS_REFRESH_INTERVAL_DAYS` / `AA_CONTROL_TOKENS_ENCRYPTION_SECRET` | 可选：Tokens refresh token 自动续期周期（默认 `30` 天）与独立加密密钥（默认从 `AA_CONTROL_SECRET` 派生） | `30` / — |
+| `AA_CONTROL_APNS_KEY_PATH` / `AA_CONTROL_APNS_KEY` | APNs `.p8` 认证密钥文件路径，或直接填 PEM 内容（单行可用 `\n` 转义，二选一）；与下面三项同时配置后启用 iOS 推送 | `/run/secrets/AuthKey_ABC123.p8` |
+| `AA_CONTROL_APNS_KEY_ID` / `AA_CONTROL_APNS_TEAM_ID` | `.p8` 密钥的 Key ID 与 Apple Developer Team ID | `ABC123DEFG` / `TEAM123456` |
+| `AA_CONTROL_APNS_BUNDLE_ID` | iOS App Bundle ID（`apns-topic`） | `dev.anywhere.agents` |
+| `AA_CONTROL_APNS_ENVIRONMENT` | 可选：`production`（默认）或 `sandbox`（开发版/调试证书安装的 App）；填错会让 APNs 返回 `BadDeviceToken` 并清除 token | `production` |
+| `AA_CONTROL_FCM_CREDENTIALS_PATH` / `AA_CONTROL_FCM_CREDENTIALS_JSON` | Google 服务账号 JSON 文件路径，或直接填 JSON 内容（二选一）；配置后启用 Android 推送 | `/run/secrets/fcm-sa.json` |
+| `AA_CONTROL_FCM_PROJECT_ID` | 可选：Firebase 项目 ID（默认取服务账号里的 `project_id`） | `aa-prod` |
+| `AA_CONTROL_APNS_TIMEOUT` / `AA_CONTROL_FCM_TIMEOUT` | 可选：单次推送请求超时秒数（默认 `10`） | `10` |
+| `AA_CONTROL_PUSH_MAX_ATTEMPTS` / `AA_CONTROL_PUSH_BASE_BACKOFF` | 可选：推送最大尝试次数（默认 `5`）与指数退避基数秒（默认 `5`） | `5` / `5` |
 | `AA_CONTROL_REGISTRATION_OPEN` | `local` 模式：是否开放自助注册（首账号始终为 admin） | `true` / `false` |
 | `AA_CONTROL_SETUP_TOKEN` | `local` 模式可选：限制首次管理员注册所需的一次性 token | — |
 

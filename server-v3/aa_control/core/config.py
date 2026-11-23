@@ -219,6 +219,79 @@ class AssistantConfig:
         object.__setattr__(self, "allowed_tokens_client_ids", cleaned_ids)
 
 
+ApnsEnvironment = Literal["production", "sandbox"]
+
+APNS_HOSTS: dict[str, str] = {
+    "production": "https://api.push.apple.com",
+    "sandbox": "https://api.sandbox.push.apple.com",
+}
+
+DEFAULT_GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
+DEFAULT_FCM_ENDPOINT = "https://fcm.googleapis.com"
+
+
+@dataclass(frozen=True)
+class ApnsConfig:
+    """APNs HTTP/2 provider API with token-based (``.p8`` ES256) authentication."""
+
+    key_id: str
+    team_id: str
+    bundle_id: str
+    private_key_pem: str = field(repr=False)
+    environment: ApnsEnvironment = "production"
+    request_timeout_seconds: float = 10.0
+
+    def __post_init__(self) -> None:
+        for name in ("key_id", "team_id", "bundle_id", "private_key_pem"):
+            value = getattr(self, name).strip()
+            if not value:
+                raise ValueError(f"APNs {name} must be non-empty")
+            object.__setattr__(self, name, value)
+        if self.environment not in APNS_HOSTS:
+            raise ValueError(
+                f"APNs environment must be 'production' or 'sandbox', got {self.environment!r}"
+            )
+        if self.request_timeout_seconds <= 0:
+            raise ValueError("APNs request_timeout_seconds must be > 0")
+
+    @property
+    def host(self) -> str:
+        return APNS_HOSTS[self.environment]
+
+
+@dataclass(frozen=True)
+class FcmConfig:
+    """FCM HTTP v1 sender authenticated with a Google service account (JWT bearer grant)."""
+
+    project_id: str
+    client_email: str
+    private_key_pem: str = field(repr=False)
+    private_key_id: str | None = None
+    token_uri: str = DEFAULT_GOOGLE_TOKEN_URI
+    endpoint: str = DEFAULT_FCM_ENDPOINT
+    request_timeout_seconds: float = 10.0
+
+    def __post_init__(self) -> None:
+        for name in ("project_id", "client_email", "private_key_pem", "token_uri", "endpoint"):
+            value = getattr(self, name).strip()
+            if not value:
+                raise ValueError(f"FCM {name} must be non-empty")
+            object.__setattr__(self, name, value)
+        object.__setattr__(self, "endpoint", self.endpoint.rstrip("/"))
+        cleaned_key_id = self.private_key_id.strip() if self.private_key_id else ""
+        object.__setattr__(self, "private_key_id", cleaned_key_id or None)
+        if self.request_timeout_seconds <= 0:
+            raise ValueError("FCM request_timeout_seconds must be > 0")
+
+
+@dataclass(frozen=True)
+class PushConfig:
+    """Platform push senders; a platform left unconfigured is logged and skipped."""
+
+    apns: ApnsConfig | None = None
+    fcm: FcmConfig | None = None
+
+
 @dataclass(frozen=True)
 class ControlSettings:
     database_url: str
@@ -232,6 +305,7 @@ class ControlSettings:
     default_entitlements: EntitlementMap = field(default_factory=dict)
     drive: DriveConfig = field(default_factory=DriveConfig)
     assistant: AssistantConfig = field(default_factory=AssistantConfig)
+    push: PushConfig = field(default_factory=PushConfig)
     registration_open: bool = True
     bootstrap_setup_token: str | None = field(default=None, repr=False)
     access_token_ttl_seconds: int = 3600
@@ -288,6 +362,7 @@ class ControlSettings:
         default_entitlements = _parse_default_entitlements_env()
         drive = _parse_drive_env()
         assistant = _parse_assistant_env()
+        push = _parse_push_env()
         registration_open = _env_bool("AA_CONTROL_REGISTRATION_OPEN", default=True)
         password_iterations = int(
             os.environ.get(
@@ -310,6 +385,7 @@ class ControlSettings:
             default_entitlements=default_entitlements,
             drive=drive,
             assistant=assistant,
+            push=push,
             registration_open=registration_open,
             bootstrap_setup_token=os.environ.get("AA_CONTROL_SETUP_TOKEN") or None,
             access_token_ttl_seconds=int(os.environ.get("AA_CONTROL_ACCESS_TOKEN_TTL", "3600")),
@@ -321,6 +397,8 @@ class ControlSettings:
             fanout_timeout_seconds=float(os.environ.get("AA_CONTROL_FANOUT_TIMEOUT", "3.0")),
             token_issue_rate_limit_per_min=int(os.environ.get("AA_CONTROL_TOKEN_RATE_LIMIT", "60")),
             tunnel_open_rate_limit_per_min=int(os.environ.get("AA_CONTROL_TUNNEL_RATE_LIMIT", "120")),
+            push_max_attempts=max(1, int(os.environ.get("AA_CONTROL_PUSH_MAX_ATTEMPTS", "5"))),
+            push_base_backoff_seconds=max(0.1, float(os.environ.get("AA_CONTROL_PUSH_BASE_BACKOFF", "5.0"))),
             password_iterations=password_iterations,
             cors_origins=cors_origins,
             oauth_provider=oauth_provider,
@@ -410,6 +488,124 @@ def _parse_assistant_env() -> AssistantConfig:
         allowed_tokens_client_ids=_env_csv("AA_CONTROL_ASSISTANT_ALLOWED_TOKENS_CLIENT_IDS"),
         tokens=tokens,
     )
+
+
+def _read_secret_env(*, path_var: str, inline_var: str, unescape_newlines: bool = False) -> str | None:
+    """Read a credential from a file path (preferred) or an inline env value; never logged."""
+    path = os.environ.get(path_var, "").strip()
+    inline = os.environ.get(inline_var, "")
+    if path and inline.strip():
+        raise ValueError(f"set only one of {path_var} or {inline_var}")
+    if path:
+        try:
+            with open(os.path.expanduser(path), encoding="utf-8") as fh:
+                return fh.read()
+        except OSError as exc:
+            raise ValueError(f"{path_var} could not be read: {exc.strerror or type(exc).__name__}") from None
+    if not inline.strip():
+        return None
+    if unescape_newlines:
+        # Allow PEM keys passed through single-line env values with literal "\n" escapes.
+        return inline.replace("\\n", "\n")
+    return inline
+
+
+def _parse_apns_env() -> ApnsConfig | None:
+    key_pem = _read_secret_env(
+        path_var="AA_CONTROL_APNS_KEY_PATH",
+        inline_var="AA_CONTROL_APNS_KEY",
+        unescape_newlines=True,
+    )
+    key_id = os.environ.get("AA_CONTROL_APNS_KEY_ID", "").strip()
+    team_id = os.environ.get("AA_CONTROL_APNS_TEAM_ID", "").strip()
+    bundle_id = os.environ.get("AA_CONTROL_APNS_BUNDLE_ID", "").strip()
+    if key_pem is None and not (key_id or team_id or bundle_id):
+        return None
+    missing = [
+        name
+        for name, value in (
+            ("AA_CONTROL_APNS_KEY_PATH or AA_CONTROL_APNS_KEY", key_pem),
+            ("AA_CONTROL_APNS_KEY_ID", key_id),
+            ("AA_CONTROL_APNS_TEAM_ID", team_id),
+            ("AA_CONTROL_APNS_BUNDLE_ID", bundle_id),
+        )
+        if not value
+    ]
+    if missing:
+        raise ValueError(f"APNs is partially configured; missing {', '.join(missing)}")
+    assert key_pem is not None
+    environment = os.environ.get("AA_CONTROL_APNS_ENVIRONMENT", "production").strip().lower()
+    if environment not in APNS_HOSTS:
+        raise ValueError(
+            f"AA_CONTROL_APNS_ENVIRONMENT must be 'production' or 'sandbox', got {environment!r}"
+        )
+    return ApnsConfig(
+        key_id=key_id,
+        team_id=team_id,
+        bundle_id=bundle_id,
+        private_key_pem=key_pem,
+        environment=environment,  # type: ignore[arg-type]
+        request_timeout_seconds=float(os.environ.get("AA_CONTROL_APNS_TIMEOUT", "10")),
+    )
+
+
+def parse_fcm_service_account(
+    raw: str,
+    *,
+    project_id_override: str | None = None,
+    request_timeout_seconds: float = 10.0,
+) -> FcmConfig:
+    """Build an :class:`FcmConfig` from a Google service-account JSON document."""
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        raise ValueError("FCM service account credentials are not valid JSON") from None
+    if not isinstance(data, dict):
+        raise ValueError("FCM service account credentials must be a JSON object")
+    account_type = data.get("type")
+    if account_type is not None and account_type != "service_account":
+        raise ValueError("FCM credentials must be a Google service account key (type=service_account)")
+    client_email = data.get("client_email")
+    private_key = data.get("private_key")
+    if not isinstance(client_email, str) or not isinstance(private_key, str):
+        raise ValueError("FCM service account credentials must contain client_email and private_key")
+    project_id = (project_id_override or "").strip() or data.get("project_id")
+    if not isinstance(project_id, str) or not project_id.strip():
+        raise ValueError("FCM project id missing: set AA_CONTROL_FCM_PROJECT_ID or use a key with project_id")
+    token_uri = data.get("token_uri")
+    private_key_id = data.get("private_key_id")
+    return FcmConfig(
+        project_id=project_id,
+        client_email=client_email,
+        private_key_pem=private_key,
+        private_key_id=private_key_id if isinstance(private_key_id, str) else None,
+        token_uri=token_uri if isinstance(token_uri, str) and token_uri.strip() else DEFAULT_GOOGLE_TOKEN_URI,
+        request_timeout_seconds=request_timeout_seconds,
+    )
+
+
+def _parse_fcm_env() -> FcmConfig | None:
+    raw = _read_secret_env(
+        path_var="AA_CONTROL_FCM_CREDENTIALS_PATH",
+        inline_var="AA_CONTROL_FCM_CREDENTIALS_JSON",
+    )
+    project_id = os.environ.get("AA_CONTROL_FCM_PROJECT_ID", "").strip() or None
+    if raw is None:
+        if project_id:
+            raise ValueError(
+                "AA_CONTROL_FCM_PROJECT_ID is set but AA_CONTROL_FCM_CREDENTIALS_PATH / "
+                "AA_CONTROL_FCM_CREDENTIALS_JSON is missing"
+            )
+        return None
+    return parse_fcm_service_account(
+        raw,
+        project_id_override=project_id,
+        request_timeout_seconds=float(os.environ.get("AA_CONTROL_FCM_TIMEOUT", "10")),
+    )
+
+
+def _parse_push_env() -> PushConfig:
+    return PushConfig(apns=_parse_apns_env(), fcm=_parse_fcm_env())
 
 
 def _parse_oidc_auth_env(*, required: bool) -> OidcAuthConfig | None:

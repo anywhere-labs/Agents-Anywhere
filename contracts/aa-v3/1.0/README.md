@@ -41,6 +41,22 @@ Web / Desktop（TypeScript）、iOS（Swift）、Android（Kotlin）在合并控
    - 更新时间倒序：`updated_at`（RFC 3339 时间戳）较新的在前；
    - 稳定破平：时间相同时，按 `device_id` 升序，再按 `id` 升序（ASCII 字典序）。
 
+## 推送通知载荷（APNs / FCM）
+
+客户端用 `aa.v3.Control/register_client_push_token` 登记的 token 按 `platform` 投递：`ios` 走 APNs，`android` 走 FCM HTTP v1；`desktop` / `web` 目前不投递。客户端从下列固定字段读取跳转信息，不依赖通知文字：
+
+| 字段 | APNs（顶层自定义键 `aa`） | FCM（`message.data`，值均为字符串） | 说明 |
+| --- | --- | --- | --- |
+| 载荷版本 | `aa.v`（整数 `1`） | `aa_v`（`"1"`） | 结构变化时递增 |
+| 事件类型 | `aa.event_type` | `aa_event_type` | `approval` / `activity` / `error` |
+| 设备 | `aa.device_id` | `aa_device_id` | 产生事件的设备 |
+| 是否加密设备 | `aa.encrypted`（布尔） | `aa_encrypted`（`"1"` / `"0"`） | |
+| 会话 | `aa.session_id` | `aa_session_id` | **仅普通设备**，可缺省 |
+
+- 通知标题/正文在 APNs 的 `aps.alert`、FCM 的 `message.notification` 中；普通设备为 Connector 提供的摘要，缺省时用事件类型的默认标题。
+- **加密设备**：标题固定为 `Agents Anywhere`，正文为按事件类型固定的通用提醒，载荷中**不存在** `session_id`、会话标题或消息正文；控制面发送时按固定文案重建载荷，不读取任务里的任何内容字段。客户端需打开加密隧道后再拉取详情。
+- 同一设备的同类加密提醒、同一会话的 `activity` 提醒会互相覆盖（APNs `apns-collapse-id`、FCM `collapse_key` / 通知 `tag`）；`approval` 与 `error` 以高优先级投递并保留 24 小时，`activity` 以普通优先级投递并保留 1 小时。
+
 ## 校验命令
 
 ```bash
