@@ -15,6 +15,7 @@ import {
 import { listMcpServerTools, requiresToolConfirmation, resetMcpSessions } from "@/lib/assistant/mcp-client"
 import { resolveSyncDecision } from "@/lib/assistant/sync"
 import { AssistantVfsManager, normalizeWorkspacePath } from "@/lib/assistant/vfs"
+import { vault } from "@/lib/storage/idb"
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -325,5 +326,174 @@ describe("Streamable HTTP MCP client", () => {
       vi.unstubAllGlobals()
       resetMcpSessions()
     }
+  })
+})
+
+// ── Pulling from the cloud drive ──────────────────────────────────────────────────────────────────────────────────
+
+const QUOTA = {
+  enabled: true,
+  rpc_direct_max_bytes: 8 * 1024 * 1024,
+  quota_bytes: 512 * 1024 * 1024,
+  used_bytes: 0,
+  reserved_bytes: 0,
+  remaining_bytes: 512 * 1024 * 1024,
+  max_file_bytes: 64 * 1024 * 1024,
+  default_ttl_seconds: 604800,
+  max_ttl_seconds: 2592000,
+  file_count: 0,
+  policy_source: "default",
+}
+
+interface RemoteFile {
+  id: string
+  vfs_path: string
+  bytes: Uint8Array<ArrayBuffer>
+  encryption_mode?: "none" | "account_dek"
+  encryption_nonce?: string | null
+  completed_at?: string
+}
+
+/** A cloud drive holding `files`, listed the way server-v3 does: vfs_path without the leading slash, 200 a page. */
+function stubDrive(files: RemoteFile[]) {
+  const listed: string[] = []
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input))
+      if (url.pathname === "/drive/files") {
+        listed.push(url.search)
+        const offset = Number(url.searchParams.get("offset") ?? 0)
+        const limit = Number(url.searchParams.get("limit") ?? 50)
+        const page = files.slice(offset, offset + limit).map((f) => ({
+          id: f.id,
+          purpose: "assistant_vfs",
+          status: "ready",
+          size_bytes: f.bytes.byteLength,
+          sha256: "x",
+          etag: null,
+          filename: null,
+          mime_type: "text/plain",
+          vfs_path: f.vfs_path,
+          encryption_mode: f.encryption_mode ?? "none",
+          encryption_nonce: f.encryption_nonce ?? null,
+          encryption_key_version: f.encryption_mode === "account_dek" ? 1 : null,
+          encrypted_meta: null,
+          source_device_id: null,
+          ttl_seconds: 0,
+          created_at: "2026-11-20T00:00:00Z",
+          completed_at: f.completed_at ?? "2026-11-20T00:00:01Z",
+          expires_at: "2026-12-20T00:00:00Z",
+        }))
+        return Response.json({ files: page, quota: QUOTA })
+      }
+      const dl = url.pathname.match(/^\/drive\/files\/([^/]+)\/download-url$/)
+      if (dl) {
+        return Response.json({ file: { id: dl[1] }, download: { method: "GET", url: `https://s3.mock/dl/${dl[1]}`, headers: {}, expires_at: "" } })
+      }
+      const blob = url.href.match(/^https:\/\/s3\.mock\/dl\/(.+)$/)
+      if (blob) {
+        const f = files.find((x) => x.id === blob[1])
+        return f ? new Response(f.bytes) : new Response("missing", { status: 404 })
+      }
+      return new Response("not found", { status: 404 })
+    })
+  )
+  return { listed }
+}
+
+describe("Cloud VFS pulling from the drive", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  const manager = (accountId: string, enc: { dek: Uint8Array<ArrayBuffer> | null } = { dek: null }) =>
+    new AssistantVfsManager({
+      accountId,
+      userId: "u-pull",
+      serverUrl: "https://aa.local",
+      getAccessToken: async () => "token-1",
+      getEncryptionContext: () => ({ enabled: enc.dek !== null, dek: enc.dek, keyVersion: enc.dek ? 1 : null }),
+    })
+
+  it("keeps a file the server lists as workspace/… under its local path, once", async () => {
+    stubDrive([{ id: "df_notes", vfs_path: "workspace/notes.md", bytes: new TextEncoder().encode("hello") }])
+    const vfs = manager("https://aa.local::u-pull-plain")
+
+    expect((await vfs.syncWithCloudDrive()).downloaded).toBe(1)
+    expect((await vfs.listFiles()).map((f) => f.path)).toEqual(["/workspace/notes.md"])
+    expect(await vfs.readText("notes.md")).toBe("hello")
+
+    // Already here: a second sync neither downloads nor adds a copy.
+    expect((await vfs.syncWithCloudDrive()).downloaded).toBe(0)
+    const all = await vault.listVfsEntries("https://aa.local::u-pull-plain")
+    expect(all.map((e) => e.path)).toEqual(["/workspace/notes.md"])
+  })
+
+  it("decrypts an encrypted file: its ciphertext is bound to the local path", async () => {
+    const dek = generateDek()
+    const plain = new TextEncoder().encode("encrypted note")
+    const sealed = await encryptVfsFile(dek, "u-pull", "/workspace/secret.md", plain, "secret.md")
+    stubDrive([
+      {
+        id: "df_secret",
+        vfs_path: "workspace/secret.md",
+        bytes: sealed.ciphertext,
+        encryption_mode: "account_dek",
+        encryption_nonce: sealed.nonce,
+      },
+    ])
+    const vfs = manager("https://aa.local::u-pull-enc", { dek })
+
+    expect((await vfs.syncWithCloudDrive()).downloaded).toBe(1)
+    expect(await vfs.readText("/workspace/secret.md")).toBe("encrypted note")
+  })
+
+  it("drops copies an earlier pull saved under the server's spelling", async () => {
+    const accountId = "https://aa.local::u-pull-legacy"
+    const content = btoa("old")
+    await vault.saveVfsEntry({
+      key: `${accountId}::workspace/old.md`,
+      accountId,
+      path: "workspace/old.md",
+      contentBase64: content,
+      sha256: "s",
+      size: 3,
+      updatedAt: 1,
+      syncedSha256: "s",
+      driveFileId: "df_old",
+      encrypted: false,
+    })
+    stubDrive([{ id: "df_old", vfs_path: "workspace/old.md", bytes: new TextEncoder().encode("old") }])
+    const vfs = manager(accountId)
+
+    await vfs.syncWithCloudDrive()
+    const all = await vault.listVfsEntries(accountId)
+    expect(all.map((e) => e.path)).toEqual(["/workspace/old.md"])
+  })
+
+  it("takes the newest version when the server lists one path twice", async () => {
+    stubDrive([
+      { id: "df_v2", vfs_path: "workspace/log.md", bytes: new TextEncoder().encode("v2"), completed_at: "2026-11-21T00:00:00Z" },
+      { id: "df_v1", vfs_path: "workspace/log.md", bytes: new TextEncoder().encode("v1"), completed_at: "2026-11-20T00:00:00Z" },
+    ])
+    const vfs = manager("https://aa.local::u-pull-versions")
+
+    await vfs.syncWithCloudDrive()
+    expect(await vfs.readText("log.md")).toBe("v2")
+  })
+
+  it("reads every page of the drive listing", async () => {
+    const files = Array.from({ length: 205 }, (_, i) => ({
+      id: `df_${i}`,
+      vfs_path: `workspace/many/${i}.md`,
+      bytes: new TextEncoder().encode(String(i)),
+    }))
+    const { listed } = stubDrive(files)
+    const vfs = manager("https://aa.local::u-pull-pages")
+
+    expect((await vfs.syncWithCloudDrive()).downloaded).toBe(205)
+    expect(listed.length).toBe(2)
+    expect(await vfs.readText("many/204.md")).toBe("204")
   })
 })
