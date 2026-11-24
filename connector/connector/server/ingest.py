@@ -41,6 +41,11 @@ SNAPSHOT_PAGE_RETRY_BACKOFF_SECONDS = 0.5
 # retry one dropped connection fails the whole DSH feed and forces a resync.
 SYNC_BATCH_RETRIES = 3
 SYNC_BATCH_RETRY_BACKOFF_SECONDS = 1.0
+# The backend closes an idle keep-alive connection after 5 s. A request written just as the
+# connection is closed fails before any response (RemoteProtocolError); it is sent again
+# this many times on a fresh connection before the caller sees the failure. Items are
+# upserts, so at-least-once delivery already covers the duplicate.
+TRANSPORT_REOPEN_ATTEMPTS = 1
 # Upload timeouts. The read timeout has to outlast the upload itself: a local
 # proxy accepts the whole body at once and forwards it at its own pace, so the
 # client finishes writing and starts waiting for an answer that cannot arrive
@@ -225,6 +230,9 @@ class ConnectorIngestClient:
                         client, token, snapshot, start, end, first, on_progress, read_timeouts,
                     ),
                     token, size=snapshot.page_size(start, end, first=first),
+                    # This loop already retries a page and falls back to the legacy size; an
+                    # extra same-size attempt would only delay both.
+                    reopen=False,
                 )
                 return
             except ConnectorNetworkError as exc:
@@ -360,13 +368,13 @@ class ConnectorIngestClient:
             if owned:
                 await client.aclose()
 
-    async def _send_with_auth(self, send, token, *, size: int):
+    async def _send_with_auth(self, send, token, *, size: int, reopen: bool = True):
         started = time.monotonic()
         try:
-            response = await send(token)
+            response = await self._send_reopening(send, token, reopen=reopen)
             if getattr(response, "status_code", None) == 401:
                 token = await self._access_token_provider(True)
-                response = await send(token)
+                response = await self._send_reopening(send, token, reopen=reopen)
                 if getattr(response, "status_code", None) == 401:
                     raise ConnectorAuthenticationError("connector credential no longer valid")
         except httpx.RequestError as exc:
@@ -382,6 +390,25 @@ class ConnectorIngestClient:
         response.raise_for_status()
         _raise_for_rejected_notifications(response)
         return response
+
+    async def _send_reopening(self, send, token, *, reopen: bool):
+        """Send, once more on a fresh connection when the backend closed the old one under the request.
+
+        uvicorn drops an idle keep-alive connection after 5 s. A request written just as the
+        server closes it fails with RemoteProtocolError before any response ("Server
+        disconnected without sending a response"). Only that failure is retried here; the pool
+        expires idle connections first (network.py), so this is the remainder, and the caller
+        sees the failure when the reopened attempt fails too. Other transport failures keep
+        their contract: an unreachable backend is covered by the retry loop above."""
+        if not reopen:
+            return await send(token)
+        for attempt in range(TRANSPORT_REOPEN_ATTEMPTS + 1):
+            try:
+                return await send(token)
+            except httpx.RemoteProtocolError:
+                if attempt == TRANSPORT_REOPEN_ATTEMPTS:
+                    raise
+                logger.info("connector ingest transport reopened after the backend closed an idle connection")
 
     async def _post_ingest_batch(
         self,

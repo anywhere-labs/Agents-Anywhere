@@ -213,8 +213,10 @@ class FakeTransport(httpx.AsyncBaseTransport):
 
     built: ClassVar[list[FakeTransport]] = []
 
-    def __init__(self, *, verify: object, trust_env: bool, proxy: httpx.Proxy | None) -> None:
-        self.verify, self.trust_env, self.proxy = verify, trust_env, proxy
+    def __init__(
+        self, *, verify: object, trust_env: bool, proxy: httpx.Proxy | None, limits: httpx.Limits
+    ) -> None:
+        self.verify, self.trust_env, self.proxy, self.limits = verify, trust_env, proxy, limits
         self.requests: list[httpx.Request] = []
         self.closed = False
         self.gate: asyncio.Event | None = None
@@ -239,6 +241,20 @@ def pools(monkeypatch: pytest.MonkeyPatch) -> list[FakeTransport]:
     FakeTransport.built.clear()
     monkeypatch.setattr(network.httpx, "AsyncHTTPTransport", FakeTransport)
     return FakeTransport.built
+
+
+def test_pooled_connections_expire_before_the_backend_closes_them(pools: list[FakeTransport]) -> None:
+    async def scenario() -> None:
+        egress = NetworkEgress(SERVER)
+        client = egress.http_client(5)
+        await client.get(f"{SERVER}/a")
+        await client.aclose()
+
+    asyncio.run(scenario())
+    # uvicorn closes an idle keep-alive connection after 5 s, starting when it finishes
+    # sending the response; the pool starts its own timer when the response arrives.
+    expiry = pools[0].limits.keepalive_expiry
+    assert expiry == network.KEEPALIVE_EXPIRY_SECONDS and 0 < expiry < 5.0, expiry
 
 
 def test_a_route_change_keeps_clients_usable_and_finishes_requests_in_progress(

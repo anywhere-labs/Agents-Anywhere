@@ -202,6 +202,14 @@ def test_a_large_page_whose_connection_keeps_dropping_is_sent_at_the_legacy_size
     assert client._snapshot_page_bytes == 8192, "a dropped connection is no proof of a size limit"
 
 
+def test_a_page_the_backend_closed_is_retried_by_the_page_loop_alone():
+    closed = Uplink(fail={1: [httpx.RemoteProtocolError("Server disconnected without sending a response.")]})
+    _run(closed)
+    attempts = [closed.attempts.count(page) for page in range(len(closed.bodies))]
+    # Batch sends reopen once on that failure; a page must not, or a large page that keeps
+    # dropping would be sent twice at the refused size before the legacy-size fallback.
+    assert attempts[0] == 1 and attempts[1] == 2 and all(count == 1 for count in attempts[2:]), attempts
+
 @pytest.mark.parametrize("outage", [httpx.Response(503), httpx.ConnectError("refused"), httpx.ReadTimeout("slow")])
 def test_a_server_outage_never_shrinks_the_pages(monkeypatch, outage):
     import connector.server.ingest as module
