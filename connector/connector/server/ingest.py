@@ -189,9 +189,9 @@ class ConnectorIngestClient:
         # back to back and the first is never sent again once accepted (on such
         # a Server it would drop the pages after it). A page the transport
         # refuses as too large, or a page above the legacy size whose connection
-        # keeps getting dropped, is cut smaller and the remaining items are
-        # re-paged. Only a 413 says something about the deployment, so only that
-        # size sticks for later snapshots.
+        # keeps getting dropped or whose body keeps stalling, is cut smaller
+        # and the remaining items are re-paged. Only a 413 says something
+        # about the deployment, so only that size sticks for later snapshots.
         start, first = 0, True
         page_bytes = self._snapshot_page_bytes
         while first or start < len(snapshot):
@@ -434,10 +434,13 @@ def _smaller_page_bytes(size: int, error: Exception) -> int | None:
         smaller = size // 2
         return smaller if smaller >= SNAPSHOT_MIN_PAGE_BYTES else None
     if size > SNAPSHOT_LEGACY_PAGE_BYTES and isinstance(
-        error.__cause__, httpx.WriteError | httpx.ReadError | httpx.RemoteProtocolError,
+        error.__cause__, httpx.WriteError | httpx.ReadError | httpx.RemoteProtocolError | httpx.WriteTimeout,
     ):
-        # Some proxies drop an oversized upload instead of answering 413. A
-        # Server that is down, slow or answering 5xx is not a size problem.
+        # Some proxies drop an oversized upload instead of answering 413; others
+        # stop reading it, which shows up as a write timeout after the body has
+        # been streaming for a while. A Server that is down, slow or answering
+        # 5xx is not a size problem, and neither is a write timeout on a page
+        # that is not oversized.
         return SNAPSHOT_LEGACY_PAGE_BYTES
     return None
 

@@ -202,6 +202,31 @@ def test_a_large_page_whose_connection_keeps_dropping_is_sent_at_the_legacy_size
     assert client._snapshot_page_bytes == 8192, "a dropped connection is no proof of a size limit"
 
 
+def test_a_large_page_whose_body_keeps_stalling_is_sent_at_the_legacy_size(monkeypatch, _no_backoff):
+    import connector.server.ingest as module
+
+    monkeypatch.setattr(module, "SNAPSHOT_LEGACY_PAGE_BYTES", 2048)
+    # A proxy that stops reading an oversized body instead of dropping the
+    # connection leaves the upload waiting on every write until it times out.
+    stalled = Uplink(fail={0: [httpx.WriteTimeout("stalled")] * (module.SNAPSHOT_PAGE_RETRIES + 1)})
+    client = _run(stalled, page_bytes=8192)
+    assert stalled.attempts.count(0) == module.SNAPSHOT_PAGE_RETRIES + 2
+    assert all(length <= 2048 for length in stalled.lengths) and len(stalled.bodies) > 1
+    assert _replacements(stalled.bodies) == 1
+    assert _items(stalled.bodies) == [item["id"] for item in ITEMS]
+    assert client._snapshot_page_bytes == 8192, "a stalled body is no proof of a size limit"
+
+
+def test_a_stalled_page_that_is_not_oversized_is_only_retried(monkeypatch, _no_backoff):
+    import connector.server.ingest as module
+
+    monkeypatch.setattr(module, "SNAPSHOT_LEGACY_PAGE_BYTES", 2048)
+    stalled = Uplink(fail={0: [httpx.WriteTimeout("stalled")] * (module.SNAPSHOT_PAGE_RETRIES + 1)})
+    with pytest.raises(ConnectorNetworkError):
+        _run(stalled, page_bytes=2048)
+    assert stalled.attempts == [0] * (module.SNAPSHOT_PAGE_RETRIES + 1) and stalled.bodies == []
+
+
 @pytest.mark.parametrize("outage", [httpx.Response(503), httpx.ConnectError("refused"), httpx.ReadTimeout("slow")])
 def test_a_server_outage_never_shrinks_the_pages(monkeypatch, outage):
     import connector.server.ingest as module
