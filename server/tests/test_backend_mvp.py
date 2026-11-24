@@ -4569,6 +4569,59 @@ def test_notice_upsert_relays_live_notice_without_persisting_to_snapshot(tmp_pat
     assert snapshot.json()["notices"] == []
 
 
+def test_invalid_notice_in_a_batch_only_rejects_that_notification(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, access_token, session_id, headers = create_connector_and_session(client)
+    ticket = ws_ticket(client, session_id, headers)
+
+    def notice(notice_id: str, title: str) -> dict:
+        return {
+            "noticeId": notice_id,
+            "type": "notification",
+            "sessionId": session_id,
+            "source": {"runtime": "codex", "component": "codex"},
+            "title": title,
+            "severity": "success",
+            "status": "open",
+        }
+
+    # A runtime that has not adopted the NoticeAction shape yet sends actions
+    # keyed by id; such a notice does not validate.
+    invalid = notice("notice_broken", "Broken")
+    invalid["actions"] = [{"id": "open", "label": "Open", "kind": "primary"}]
+    notifications = [
+        {"method": "notice.upsert", "params": notice("notice_first", "First")},
+        {"method": "notice.upsert", "params": invalid},
+        {"method": "notice.upsert", "params": notice("notice_last", "Last")},
+    ]
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={"notifications": notifications},
+        )
+        assert response.status_code == 200, response.text
+        relayed = [receive_session_ws_event(ws, "runtime.notice.updated") for _ in range(2)]
+
+    # Each notice is relayed as its own event; the order between them is not guaranteed.
+    assert sorted(event["payload"]["notice"]["noticeId"] for event in relayed) == ["notice_first", "notice_last"]
+    body = response.json()
+    assert body["accepted"] == 2
+    assert [(item["index"], item["code"]) for item in body["rejected"]] == [(1, "invalid_notice")]
+    assert "actionId" in body["rejected"][0]["message"]
+
+    # On its own the same notification keeps the single-notification 400.
+    alone = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={"notifications": notifications[1:2]},
+    )
+    assert alone.status_code == 400, alone.text
+    assert alone.json()["detail"]["code"] == "invalid_notice"
+
+
 @pytest.mark.skip(reason="legacy persisted notice behavior was removed; notices are runtime-owned live facts")
 def test_notice_upsert_projects_open_interaction_through_application_service(tmp_path):
     client = make_client(tmp_path)
