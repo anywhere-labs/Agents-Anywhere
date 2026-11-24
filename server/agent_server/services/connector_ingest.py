@@ -179,9 +179,12 @@ class ConnectorIngestService:
                     notification,
                 )
             except NotificationValidationError as exc:
-                # Preserve the single-notification 400 response, but do not
-                # let an invalid timeline order discard unrelated batched work.
-                if exc.code != "invalid_order_seq" or len(payload.notifications) == 1:
+                # Preserve the single-notification 400 response. Inside a batch a
+                # notification the server cannot validate is rejected on its own:
+                # raising here abandons the batch halfway: the notifications before
+                # it were applied but none of the batch's session events is
+                # published, and the ones after it are never applied.
+                if len(payload.notifications) == 1:
                     raise
                 rejected.append(
                     ConnectorIngestRejectedNotification(
