@@ -31,7 +31,7 @@
 
 ### Web 与 Desktop 界面
 
-- Web 会话中点击带行号的文件链接，会直接定位到目标行；连续点击同一文件的不同位置也会跳转，并保留未保存的编辑。
+- Web 会话中点击带行号的文件链接，会直接定位到目标行；连续点击同一文件的不同位置也会跳转，并保留未保存的编辑。（[#849](https://github.com/anywhere-labs/Agents-Anywhere/pull/849)）
 
 ### Android
 
