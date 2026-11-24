@@ -43,6 +43,10 @@ _DEFAULT_PROXY_PORTS = {"http": 80, "https": 443, "socks5": 1080, "socks5h": 108
 _DOMAIN = re.compile(r"^[a-z0-9_-]+(\.[a-z0-9_-]+)*$")
 _BRACKETED_IPV6 = re.compile(r"^\[([^\]]+)\](?::(\d+))?$")
 _LOOPBACK_PROBE_SECONDS = 0.5
+# The backend (uvicorn) closes an idle keep-alive connection after 5 s. A request written just
+# as the server closes the connection fails before any response, so pooled connections
+# expire on our side first.
+KEEPALIVE_EXPIRY_SECONDS = 4.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,7 +117,14 @@ class _Route:
         # Belongs to this pool: a late result from a retired pool never counts
         # against the pool that replaced it.
         self.pool_timeouts = 0
-        self.transport = httpx.AsyncHTTPTransport(verify=tls_context(), trust_env=False, proxy=_httpx_proxy(egress.proxy))
+        # The expiry belongs to the transport that owns the pool: a client-level limits=
+        # is ignored once a transport is supplied.
+        self.transport = httpx.AsyncHTTPTransport(
+            verify=tls_context(),
+            trust_env=False,
+            proxy=_httpx_proxy(egress.proxy),
+            limits=httpx.Limits(keepalive_expiry=KEEPALIVE_EXPIRY_SECONDS),
+        )
 
 
 def _httpx_proxy(url: str | None) -> httpx.Proxy | None:
