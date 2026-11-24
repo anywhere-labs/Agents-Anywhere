@@ -42,11 +42,13 @@ import { useViewportWidth } from "@/hooks/use-viewport-width"
 import { useAssistant } from "@/lib/state/assistant-context"
 import { useWorkbench } from "@/lib/state/workbench-context"
 
+/** The narrowest the sidebar gets: its header (wordmark, search, fold) needs 226px with its padding. */
+const SIDEBAR_MIN = 240
 const SIDEBAR_WIDTH: PanelWidthSpec = {
   key: "aa.sidebar.width",
   initial: 256,
-  min: 208,
-  max: () => Math.max(208, Math.min(420, Math.round(window.innerWidth * 0.32))),
+  min: SIDEBAR_MIN,
+  max: () => Math.max(SIDEBAR_MIN, Math.min(420, Math.round(window.innerWidth * 0.32))),
 }
 const SIDEBAR_OPEN_KEY = "aa.sidebar.open"
 
