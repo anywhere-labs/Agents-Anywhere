@@ -617,6 +617,7 @@
       "agentRuntimes": "Agent runtimes",
       "configuredRuntimes": "Configured",
       "unconfiguredRuntimes": "Instances to configure",
+      "runtimeHealthCounters": "{subscriptions} subscriptions · {seen} batches · {replays} replays · {gaps} gaps, at last discovery",
       "availableRuntimeTypes": "Available to add",
       "beta": "Beta",
       "discoveredRuntimes": "Discovered, not configured",

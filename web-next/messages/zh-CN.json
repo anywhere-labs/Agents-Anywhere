@@ -617,6 +617,7 @@
       "agentRuntimes": "Agent Runtime",
       "configuredRuntimes": "已配置",
       "unconfiguredRuntimes": "待配置实例",
+      "runtimeHealthCounters": "{subscriptions} 个订阅 · 已收 {seen} 批 · 重放 {replays} · 断档 {gaps}（截至上次发现）",
       "availableRuntimeTypes": "可添加",
       "beta": "Beta",
       "discoveredRuntimes": "已发现但未配置",

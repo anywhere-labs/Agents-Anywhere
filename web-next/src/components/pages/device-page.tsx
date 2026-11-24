@@ -77,6 +77,7 @@ import {
 import {
   runtimeErrorCode,
   runtimeErrorReason,
+  runtimeHealthCounters,
   runtimePhaseMessage,
   runtimeShowsErrorBadge,
   runtimeIsNotStarted,
@@ -835,6 +836,11 @@ export function DevicePage() {
                               {(runtime.status === "starting" || runtime.status === "running") && runtimePhaseMessage(runtime) ? (
                                 <span className="truncate text-xs text-muted-foreground">
                                   {runtimePhaseMessage(runtime)}
+                                </span>
+                              ) : null}
+                              {runtimeHealthCounters(runtime) ? (
+                                <span className="shrink-0 text-xs text-muted-foreground">
+                                  {t("runtimeHealthCounters", runtimeHealthCounters(runtime) ?? {})}
                                 </span>
                               ) : null}
                               {runtimeShowsErrorBadge(runtime) ? (

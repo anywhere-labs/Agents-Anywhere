@@ -4,6 +4,7 @@ import test from "node:test"
 import {
   isRuntimeNotRunningCode,
   runtimeErrorReason,
+  runtimeHealthCounters,
   runtimeIsNotStarted,
   runtimeIsSelectable,
   runtimeStatusTone,
@@ -79,4 +80,22 @@ test("not-running codes are recognised and unknown errors fall back to the code"
   assert.equal(isRuntimeNotRunningCode("runtime_conflict"), false)
   assert.equal(isRuntimeNotRunningCode(null), false)
   assert.equal(runtimeErrorReason(runtime({ status: "error", error: { code: "runtime_conflict" } })), "runtime_conflict")
+})
+
+test("runtimeHealthCounters: what the runtime published with its last discovery, or nothing", () => {
+  const health = { subscriptions: 2, seen: 31, recent: 4, replays: 1, gaps: 0 }
+  assert.deepEqual(runtimeHealthCounters(runtime({ metadata: { health } })), {
+    subscriptions: 2,
+    seen: 31,
+    replays: 1,
+    gaps: 0,
+  })
+
+  // Published nothing, or could not read its counters: no numbers are shown.
+  assert.equal(runtimeHealthCounters(runtime()), null)
+  assert.equal(runtimeHealthCounters(runtime({ metadata: { health: { error: "stats unavailable" } } })), null)
+  // A value that is not a non-negative finite number is not shown as a counter.
+  assert.equal(runtimeHealthCounters(runtime({ metadata: { health: { ...health, gaps: -1 } } })), null)
+  assert.equal(runtimeHealthCounters(runtime({ metadata: { health: { ...health, seen: Number.NaN } } })), null)
+  assert.equal(runtimeHealthCounters(runtime({ metadata: { health: { ...health, replays: "1" } } })), null)
 })
