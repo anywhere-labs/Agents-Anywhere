@@ -5,10 +5,12 @@
 // queue and put back into the composer), or removed.
 import { PencilIcon, SendIcon, XIcon } from "lucide-react"
 
+import { FLOATING_SURFACE } from "@/components/conversation/composer"
 import { useI18n } from "@/components/i18n-provider"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import type { QueuedMessage } from "@/lib/types/v3"
+import { cn } from "@/lib/utils"
 
 export function QueueRows({
   queued,
@@ -38,7 +40,8 @@ export function QueueRows({
     </Tooltip>
   )
   return (
-    <div className="mb-2 space-y-1 rounded-card bg-card p-2">
+    // Above the composer and floating with it, on the same see-through surface.
+    <div className={cn("mb-2 space-y-1 rounded-card p-2", FLOATING_SURFACE)}>
       <p className="px-2 pt-0.5 pb-1 text-xs text-muted-foreground">{t("conv.queueTitle")}</p>
       {queued.map((q) => (
         <div key={q.client_msg_id} className="flex items-center gap-2 rounded-full bg-background py-1 pr-1.5 pl-3.5">

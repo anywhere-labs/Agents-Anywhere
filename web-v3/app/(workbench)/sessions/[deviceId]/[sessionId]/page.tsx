@@ -419,6 +419,18 @@ export default function SessionWorkspacePage() {
     [t]
   )
 
+  // ── Composer ──
+  // It floats over the thread (Effi Cloud). Its height, which grows with the text, attachments, the queue and
+  // approvals, is kept on the column as --composer-h: the thread leaves that much room at its end and the jump-to-end
+  // button sits above it. Written by the observer itself, so nothing waits for a React render.
+  const composerRef = useCallback((node: HTMLDivElement | null) => {
+    const column = node?.parentElement
+    if (!node || !column) return
+    const observer = new ResizeObserver(() => column.style.setProperty("--composer-h", `${node.offsetHeight}px`))
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [])
+
   // ── Side panel ──
   const isMobile = useIsMobile()
   // The room the conversation has (the sidebar and Orches take theirs): the panel docks while the thread keeps
@@ -546,11 +558,10 @@ export default function SessionWorkspacePage() {
     },
   }
 
+  // While the agent works, the composer says what Enter does instead.
   const placeholder = offline
     ? t("composer.placeholderOffline")
-    : running
-      ? t("composer.placeholderRunning")
-      : t("composer.placeholder", { agent: agentName || "Agent" })
+    : t("composer.placeholder", { agent: agentName || "Agent" })
 
   const panel = (
     <SidePanel
@@ -652,8 +663,8 @@ export default function SessionWorkspacePage() {
               <ScrollRootContext.Provider key="thread" value={getScrollRoot}>
                 <ThreadEnvContext.Provider value={threadEnv}>
                   <MessageScroller className="min-h-0 flex-1">
-                    <MessageScrollerViewport ref={viewportRef} className="px-4 pt-4 pb-6 sm:px-6">
-                      <MessageScrollerContent className="mx-auto w-full max-w-3xl pb-6">
+                    <MessageScrollerViewport ref={viewportRef} className="px-4 pt-4 sm:px-6">
+                      <MessageScrollerContent className="mx-auto w-full max-w-3xl pb-[calc(var(--composer-h,0px)+1.5rem)]">
                         {timeline.loadingOlder && (
                           <div className="flex justify-center py-2">
                             <LoaderCircleIcon className="size-4 animate-spin text-muted-foreground" />
@@ -673,13 +684,21 @@ export default function SessionWorkspacePage() {
                         )}
                       </MessageScrollerContent>
                     </MessageScrollerViewport>
-                    <MessageScrollerButton direction="end" />
+                    <MessageScrollerButton direction="end" className="bottom-[calc(var(--composer-h,0px)+1rem)]" />
                   </MessageScroller>
                 </ThreadEnvContext.Provider>
               </ScrollRootContext.Provider>
               )}
 
-              <div key="composer" className="shrink-0 px-3 pb-3 sm:px-6 sm:pb-4">
+              <div
+                key="composer"
+                ref={composerRef}
+                className={cn(
+                  "px-3 pb-3 sm:px-6 sm:pb-4",
+                  // Over the thread, which scrolls under it; the see-through room around the box lets clicks through.
+                  centered ? "shrink-0" : "pointer-events-none absolute inset-x-0 bottom-0 z-10 *:pointer-events-auto"
+                )}
+              >
                 <div className="mx-auto w-full max-w-3xl">
                   {connectError && (
                     <div className="mb-2 flex items-center gap-2 rounded-full bg-surface-raised py-1 pr-1 pl-3.5 text-xs">

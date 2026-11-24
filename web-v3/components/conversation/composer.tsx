@@ -1,13 +1,13 @@
 "use client"
 
 // The conversation's input. Look after Effi's PromptInput / Effi Cloud's Composer (in Anywhere UI): attachments above
-// a borderless field that grows with its text; "+" (upload image / file — also paste or drop), the model chip, then on
-// the right the permission chip, the context ring and the primary button. Behaviour after AA v2 (web-next
-// session-composer.tsx):
+// a see-through, frosted card (on the conversation page the thread scrolls under it) whose field grows with its text;
+// "+" (upload image / file — also paste or drop), the model chip, then on the right the permission chip, the context
+// ring and the primary button. Behaviour after AA v2 (web-next session-composer.tsx):
 //   - Enter sends, Shift+Enter is a new line, nothing happens while an IME composes;
 //   - while the agent works, Enter queues the message for after the turn and ⌘/Ctrl+Enter steers it in now (when the
-//     agent takes steering); the primary button is Stop while the input is empty and Queue once there is text, with a
-//     menu for Steer now / Stop;
+//     agent takes steering), as the placeholder says; the primary button is Stop while the input is empty and Queue
+//     once there is text, with a menu for Steer now / Stop;
 //   - "/" at the start opens the command menu (↑ ↓, Tab completes, Enter runs, Esc closes);
 //   - the draft is kept per conversation (localStorage) until it is sent;
 //   - sending waits for attachments to finish uploading and refuses ones that cannot go.
@@ -42,8 +42,16 @@ import {
   InputGroupTextarea,
 } from "@/components/ui/input-group"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { useIsMobile } from "@/hooks/use-mobile"
 import type { ConfigOption } from "@/lib/types/v3"
 import { cn } from "@/lib/utils"
+
+/**
+ * What floats over the conversation (Effi Cloud): see-through enough to show the thread scrolling under it, frosted so
+ * that it stays legible, edged like an input and lifted by a soft shadow.
+ */
+export const FLOATING_SURFACE =
+  "border border-input bg-card/75 shadow-[0_10px_30px_-18px_rgb(0_0_0/0.35)] backdrop-blur-xl backdrop-saturate-150 dark:bg-card/70 dark:shadow-[0_12px_32px_-16px_rgb(0_0_0/0.9)]"
 
 export type Delivery = "auto" | "steer" | "queue"
 
@@ -191,6 +199,18 @@ export function Composer({
   const canSend = !disabled && !sending && (hasText || hasFiles) && uploadsReady
   const canSteer = steer !== "none"
   const mod = isMac() ? "⌘" : "Ctrl"
+  const phone = useIsMobile()
+  // While the agent works the field says what Enter does (Effi Cloud keeps this in the placeholder too): a hint line
+  // under the box pushed it up whenever a turn started or ended. An empty field is as tall as its placeholder, so that
+  // stays one line: phones, which have no shortcuts, get the short one.
+  const shownPlaceholder =
+    running && !disabled
+      ? phone
+        ? t("composer.placeholderRunningShort")
+        : canSteer
+          ? t("composer.placeholderRunning", { mod })
+          : t("composer.placeholderRunningQueue")
+      : placeholder
 
   // The "/" menu: built-in commands whose name starts with what is typed.
   const token = commandToken(text)
@@ -301,7 +321,8 @@ export function Composer({
       >
         <InputGroup
           className={cn(
-            "h-auto rounded-card border-transparent bg-card shadow-none transition-shadow has-[[data-slot=input-group-control]:focus-visible]:border-transparent has-[[data-slot=input-group-control]:focus-visible]:ring-2 has-[[data-slot=input-group-control]:focus-visible]:ring-ring/25",
+            "h-auto rounded-card transition-shadow has-[[data-slot=input-group-control]:focus-visible]:border-input has-[[data-slot=input-group-control]:focus-visible]:ring-2 has-[[data-slot=input-group-control]:focus-visible]:ring-ring/25",
+            FLOATING_SURFACE,
             dragging && "ring-2 ring-ring/40"
           )}
         >
@@ -321,8 +342,8 @@ export function Composer({
               e.preventDefault()
               drafts.add(files)
             }}
-            placeholder={dragging ? t("composer.dropHere") : placeholder}
-            aria-label={placeholder ?? t("composer.send")}
+            placeholder={dragging ? t("composer.dropHere") : shownPlaceholder}
+            aria-label={shownPlaceholder ?? t("composer.send")}
             className="max-h-60 min-h-12 px-4 pt-3.5 pb-1 text-base leading-relaxed md:text-reading"
             onKeyDown={(e) => {
               // Safari ends the composition before the Enter that confirms a candidate; that Enter has keyCode 229.
@@ -509,11 +530,6 @@ export function Composer({
           </InputGroupAddon>
         </InputGroup>
       </form>
-      {running && (
-        <p className="px-4 pt-1.5 text-xs text-muted-foreground max-sm:hidden">
-          {canSteer ? t("composer.runningHint", { mod }) : t("composer.runningHintQueue")}
-        </p>
-      )}
       {drafts && (
         <>
           <input
