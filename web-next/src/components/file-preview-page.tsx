@@ -62,6 +62,9 @@ export function FilePreviewPage() {
   const connectorId = params.get("connectorId") ?? ""
   const root = params.get("root") ?? ""
   const routePath = params.get("path") ?? ""
+  const line = params.get("line")
+  const column = params.get("column")
+  const location = React.useMemo(() => filePreviewLocation(line, column), [line, column])
   const previewToken = params.get("previewToken") ?? ""
   const routeName = params.get("name") ?? ""
   const sourceUrl = params.get("sourceUrl") ?? ""
@@ -77,7 +80,7 @@ export function FilePreviewPage() {
       root={root}
       initialPath={routePath}
       initialName={routeName}
-      initialLocation={filePreviewLocation(params.get("line"), params.get("column"))}
+      initialLocation={location}
       previewToken={previewToken}
       sourceUrl={sourceUrl}
       sourceMediaType={sourceMediaType}

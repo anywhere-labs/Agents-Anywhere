@@ -2,7 +2,10 @@
 
 import * as React from "react"
 
+import type { FilePreviewLocation } from "@/lib/file-preview-location"
+
 export type SessionFilePreviewTarget = {
+  location?: FilePreviewLocation
   source: "workspace" | "attachment"
   name: string
   path: string

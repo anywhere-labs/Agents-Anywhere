@@ -6,6 +6,7 @@ import {
   inlineCodeFilePath,
   isExternalMarkdownHref,
   markdownUrlTransform,
+  sessionFileLinkLocation,
   sessionFileLinkPath,
 } from "../src/lib/session-file-link.ts"
 
@@ -84,4 +85,17 @@ test("inlineCodeFilePath keeps file references and rejects commands", () => {
   assert.equal(inlineCodeFilePath("console.log"), null)
   assert.equal(inlineCodeFilePath("ls -la out/report.pdf"), null)
   assert.equal(inlineCodeFilePath("open out/a.pdf"), null)
+})
+test("both markdown and inline code preserve the location alongside the path", () => {
+  for (const [href, path, lineNumber, column] of [
+    ["main.ts:23:4", "main.ts", 23, 4],
+    ["src/main.ts#L40-L55", "src/main.ts", 40, 1],
+    ["file:///C:/My%20Docs/main.ts#L90C7", "C:/My Docs/main.ts", 90, 7],
+  ]) {
+    assert.equal(markdownUrlTransform(href), href)
+    assert.equal(isExternalMarkdownHref(href), false)
+    assert.equal(sessionFileLinkPath(href), path)
+    assert.equal(inlineCodeFilePath(href), path)
+    assert.deepEqual(sessionFileLinkLocation(href), { lineNumber, column })
+  }
 })

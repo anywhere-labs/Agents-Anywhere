@@ -22,7 +22,7 @@ const models = []
 globalThis.previewMonacoMock = {
   languages: { getLanguages: () => [], register() {}, setMonarchTokensProvider() {} },
   editor: {
-    defineTheme() {}, setTheme() {},
+    ScrollType: { Immediate: 1 }, defineTheme() {}, setTheme() {},
     createModel(content) {
       const model = { content, disposed: false, dispose() { this.disposed = true }, validatePosition: x => x }
       models.push(model)
@@ -32,6 +32,8 @@ globalThis.previewMonacoMock = {
       let change
       const editor = { model: null, options, disposed: false,
         getModel() { return this.model }, setModel(model) { this.model = model; change?.() },
+        setPosition(position) { this.position = position },
+        revealPositionInCenter(position) { this.revealed = position },
         getValue() { return this.model?.content ?? "" },
         updateOptions(options) { this.options = { ...this.options, ...options } },
         onDidChangeModelContent(fn) { change = fn; return { dispose() {} } },
@@ -94,6 +96,23 @@ test("rapid file switches reuse the editor, keep old content read-only, and igno
   assert.equal(editor.disposed, false)
   assert.equal(oldModel.disposed, true)
   assert.equal(editors.length, start + 1)
+})
+
+test("repeated line requests reveal the position without reloading the model", async t => {
+  const read = t.mock.method(dashboardApi, "connectorFsReadText", async () => textFile("src/a.ts"))
+  const f = await fixture(t, FilePreviewSurface)
+  const props = { token: "test", connectorId: "connector", root: "/repo", initialPath: "src/a.ts", mode: "embedded" }
+  await f.render(props)
+  const editor = editors.at(-1)
+  const model = editor.model
+  for (const lineNumber of [17, 40, 40]) {
+    const position = { lineNumber, column: 3 }
+    editor.revealed = null
+    await f.render({ ...props, initialLocation: position })
+    assert.deepEqual(editor.revealed, position)
+    assert.equal(editor.model, model)
+  }
+  assert.equal(read.mock.callCount(), 1)
 })
 
 test("resolved file switches preserve the tree and split panels without listing directories again", async t => {

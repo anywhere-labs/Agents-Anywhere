@@ -7,10 +7,12 @@
 // / relative / Windows drive / UNC paths, and the `:12`, `:12:3` and `#L12`
 // line suffixes agents append.
 
+import { filePreviewLocation } from "./file-preview-location.ts"
+
 const URI_SCHEME = /^([A-Za-z][A-Za-z0-9+.-]+):/
 const PERCENT_ESCAPE = /%[0-9A-Fa-f]{2}/
-const LINE_ANCHOR = /#L\d+(?:C\d+)?(?:-L?\d+(?:C\d+)?)?$/
-const LINE_SUFFIX = /:\d+(?:-\d+)?(?::\d+)?$/
+const LINE_ANCHOR = /#L(\d+)(?:C(\d+))?(?:-L?\d+(?:C\d+)?)?$/
+const LINE_SUFFIX = /:(\d+)(?:-\d+)?(?::(\d+))?$/
 const WINDOWS_DRIVE = /^[A-Za-z]:[\\/]/
 const PATH_ROOT = /^(?:\/|~[/\\]|\.{1,2}[/\\]|[A-Za-z]:[/\\]|\\\\)/
 const EXTENSION = /^[a-z0-9]+$/
@@ -51,7 +53,7 @@ const SAFE_URL_SCHEME = /^(https?|ircs?|mailto|xmpp)$/i
  * genuinely dangerous schemes such as `javascript:` / `data:`.
  */
 export function markdownUrlTransform(value: string): string {
-  if (WINDOWS_DRIVE.test(value)) return value
+  if (isLocalColonPath(value)) return value
 
   const colon = value.indexOf(":")
   const questionMark = value.indexOf("?")
@@ -74,6 +76,19 @@ export function markdownUrlTransform(value: string): string {
   return ""
 }
 
+// A drive letter or a filename followed by a numeric line is not a URI scheme.
+function isLocalColonPath(value: string) {
+  return WINDOWS_DRIVE.test(value) || /^[\w.-]+\.[\w]+:\d+(?:-\d+)?(?::\d+)?$/.test(value)
+}
+
+export function sessionFileLinkLocation(destination: string) {
+  const raw = destination.trim().replace(/^<(.+)>$/, "$1")
+  const anchor = LINE_ANCHOR.exec(raw)
+  const path = /^file:/i.test(raw) ? raw.split(/[?#]/, 1)[0]! : raw
+  const match = anchor ?? LINE_SUFFIX.exec(decodePercentEscapes(path) ?? path)
+  return match ? filePreviewLocation(match[1]!, match[2] ?? null) : undefined
+}
+
 /**
  * Whether a link destination should stay a navigation link (web URL, mailto,
  * protocol-relative URL, or a pure anchor) instead of opening the preview tab.
@@ -81,6 +96,7 @@ export function markdownUrlTransform(value: string): string {
 export function isExternalMarkdownHref(href: string): boolean {
   if (!href) return false
   if (href.startsWith("#") || href.startsWith("//")) return true
+  if (isLocalColonPath(href)) return false
   const scheme = URI_SCHEME.exec(href)?.[1]
   if (!scheme) return false
   return scheme.toLowerCase() !== "file"
@@ -99,7 +115,7 @@ export function sessionFileLinkPath(destination: string): string | null {
   if (!value || value.startsWith("#") || value.startsWith("//")) return null
 
   const scheme = URI_SCHEME.exec(value)?.[1]
-  if (scheme) {
+  if (scheme && !isLocalColonPath(value)) {
     if (scheme.toLowerCase() !== "file") return null
     return fileUriPath(value.slice(scheme.length + 1))
   }
@@ -122,7 +138,7 @@ export function inlineCodeFilePath(code: string): string | null {
   if (text.toLowerCase().startsWith("file:")) return sessionFileLinkPath(text)
   if (text.includes("://") || text.includes("\n")) return null
 
-  const candidate = text.replace(LINE_SUFFIX, "")
+  const candidate = text.replace(LINE_ANCHOR, "").replace(LINE_SUFFIX, "")
   const name = candidate.split("/").at(-1)!.split("\\").at(-1)!
   const extension = name.includes(".")
     ? name.slice(name.lastIndexOf(".") + 1).toLowerCase()
@@ -133,7 +149,7 @@ export function inlineCodeFilePath(code: string): string | null {
   const hasSeparator = candidate.includes("/") || candidate.includes("\\")
   const hasWhitespace = /\s/.test(candidate)
   if (hasWhitespace || !hasSeparator) {
-    if (!STANDALONE_FILE_EXTENSIONS.has(extension)) return null
+    if (!STANDALONE_FILE_EXTENSIONS.has(extension) && (hasWhitespace || candidate === text)) return null
     if (SHELL_SYNTAX.test(candidate)) return null
     const firstWord = candidate.split(" ")[0] ?? ""
     if (hasWhitespace && COMMAND_WORDS.has(firstWord.toLowerCase())) return null
