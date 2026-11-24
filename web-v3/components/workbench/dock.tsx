@@ -14,6 +14,8 @@ import { cn } from "@/lib/utils"
 
 /** The slide: quick out of the gate, settling softly (Effi, iOS sheets). */
 export const DOCK_EASE = "duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none"
+/** How long a slide lasts, with room to finish. */
+const SLIDE_MS = 350
 
 export function Dock({
   open,
@@ -45,11 +47,26 @@ export function Dock({
   if (open && !mounted) setMounted(true)
   useEffect(() => {
     if (open || keepMounted || !mounted) return
-    const timer = window.setTimeout(() => setMounted(false), 350)
+    const timer = window.setTimeout(() => setMounted(false), SLIDE_MS)
     return () => window.clearTimeout(timer)
   }, [open, keepMounted, mounted])
 
-  const ease = !resizing && DOCK_EASE
+  // Only opening and closing animate. Anything else that moves the panel (the window or a neighbouring panel changing
+  // the room it has, a switch between docked and overlay) applies at once: closed, the panel rests at zero width when
+  // docked but off the right edge as an overlay, and animating from one to the other slides it across the view.
+  const [wasOpen, setWasOpen] = useState(open)
+  const [sliding, setSliding] = useState(false)
+  if (open !== wasOpen) {
+    setWasOpen(open)
+    setSliding(true)
+  }
+  useEffect(() => {
+    if (!sliding) return
+    const timer = window.setTimeout(() => setSliding(false), SLIDE_MS)
+    return () => window.clearTimeout(timer)
+  }, [sliding, open])
+
+  const ease = sliding && !resizing && DOCK_EASE
   return (
     <div
       inert={!open}
