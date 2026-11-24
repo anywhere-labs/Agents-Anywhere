@@ -1,6 +1,6 @@
 # AA v3 总体架构：控制面、隧道、聚合 RPC 与 MCP
 
-状态：已定稿（待实现）。加密设备的准入与端到端加密见 [e2ee-admission-proposal.md](e2ee-admission-proposal.md)；独立扩展的随身助手（Pi Lite）与限额大文件云盘规划见 [assistant-and-files-proposal.md](assistant-and-files-proposal.md)；会话数据模型和 RPC 形状沿用 `v3poc/protocol/`（照搬 Effi Cloud 的 `cloud.v1.Conversations`）。本文依赖的 MeshCall 能力（隧道、双向 E2EE `Noise_IK`/`IKpsk2`、`require_e2e_peer`、`issue_token` 自定义 `principal` 透传、可续期 Token 与 5 端 SDK）均已在 **`meshcall v0.4.0`** 正式发版。
+状态：已定稿（待实现）。加密设备的准入与端到端加密见 [e2ee-admission-proposal.md](e2ee-admission-proposal.md)；编排子产品 Orches 与限额大文件云盘见 [assistant-and-files-proposal.md](assistant-and-files-proposal.md)；会话数据模型和 RPC 形状沿用 `v3poc/protocol/`（照搬 Effi Cloud 的 `cloud.v1.Conversations`）。本文依赖的 MeshCall 能力（隧道、双向 E2EE `Noise_IK`/`IKpsk2`、`require_e2e_peer`、`issue_token` 自定义 `principal` 透传、可续期 Token 与 5 端 SDK）均已在 **`meshcall v0.4.0`** 正式发版。
 
 ## 1. 已确定的前提
 

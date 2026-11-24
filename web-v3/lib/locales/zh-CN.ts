@@ -84,7 +84,6 @@ export const zhCN: Messages = {
   "admin.drive.ttlDays": "保留天数",
   "admin.drive.reset": "恢复默认",
   "shell.quickAssistant": "Orches",
-  "shell.assistantPrimaryBadge": "Orches 优先",
   "shell.backToAssistantList": "返回 Orches 对话",
 
   // Sign-in (AA v3 本体仅支持简单账密登录或作为 OAuth/OIDC 客户端接入)
@@ -248,12 +247,11 @@ export const zhCN: Messages = {
   "settings.title": "设置",
   "settings.dialogDesc": "主题与语言、账号、云盘、已授权的应用和加密设备。",
   "settings.driveUsedLabel": "已用空间",
-  "settings.driveUsedHint": "已用 {used}，共 {total} · {count} 个文件",
   "settings.openDrive": "打开云盘",
   "settings.mcpRevokeConfirm": "撤销后，这个应用不能再查看或操作你的设备。",
   "settings.theme": "主题",
-  "settings.assistantPrimary": "侧栏先显示 Orches",
-  "settings.assistantPrimaryDesc": "打开后，侧栏先列出 Orches 的对话，设备的对话点进设备查看。",
+  "settings.assistantPrimary": "Orches 模式",
+  "settings.assistantPrimaryDesc": "打开后，首页是 Orches，侧栏先列出 Orches 的对话；设备的对话点进设备查看。",
   "settings.role": "角色",
   "settings.authMode": "登录方式",
   "settings.authModeLocal": "邮箱和密码",

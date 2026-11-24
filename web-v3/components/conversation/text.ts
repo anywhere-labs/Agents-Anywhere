@@ -100,6 +100,26 @@ export function cwdOf(t: ToolPart): string | undefined {
   return typeof c === 'string' ? c : undefined
 }
 
+/**
+ * A call's arguments as readable lines ("env: prod"), to say what a tool is asked to do when the UI has no words of its
+ * own for it. `title`: what is already said about the call; an argument it ends with ("Write notes.md") is left out.
+ */
+export function argumentsText(t: ToolPart, title = ''): string {
+  const text = (v: unknown) => {
+    if (typeof v === 'string' && v !== '') return v
+    const line = JSON.stringify(v) ?? String(v)
+    return line.length > 80 ? JSON.stringify(v, null, 2) : line
+  }
+  const input = t.input
+  if (input == null) return ''
+  if (typeof input !== 'object' || Array.isArray(input)) return text(input)
+  return Object.entries(input)
+    .filter(([, v]) => v != null && !(typeof v === 'string' && v !== '' && (title === v || title.endsWith(` ${v}`))))
+    .map(([key, v]) => [key, text(v)])
+    .map(([key, v]) => (v.includes('\n') ? `${key}:\n${v}` : `${key}: ${v}`))
+    .join('\n')
+}
+
 export function fileOf(t: ToolPart): string | undefined {
   const i = inputOf(t)
   return t.diffs?.[0]?.path ?? t.locations?.[0]?.path ?? (typeof i.path === 'string' ? i.path : typeof i.file_path === 'string' ? i.file_path : undefined)

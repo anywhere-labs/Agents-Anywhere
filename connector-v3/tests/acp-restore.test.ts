@@ -573,6 +573,26 @@ describe("idle agents", () => {
     }
   });
 
+  it("never closes by default; an agent's own idle close (its settings) applies at once, also to agents idle already", async () => {
+    const f = await setup({ flags: ["--caps=resume"] });
+    const session = await f.host.sessionsService.create({ agent: "fake", cwd: f.cwd }, TUNNEL);
+    await f.send(session.id, "one");
+    await sleep(300);
+    assert.equal(f.running(), 1, "never closed by default");
+
+    await f.host.deviceService.update_agent({ id: "fake", idle_close_minutes: 30 }, TUNNEL);
+    assert.equal(f.host.runtimes.agent("fake").idleCloseMinutes, 30);
+    // Minutes are too long for a test: the runtime takes milliseconds.
+    f.host.runtimes.runtime("fake").configureIdle?.(200);
+    await eventually(() => f.running() === 0 || undefined, "closed once idle for the agent's own time", 3_000);
+    const reply = await f.send(session.id, "two");
+    assert.equal(reply.turn_result, "end_turn", "its next message restores it");
+
+    f.host.runtimes.runtime("fake").configureIdle?.(0);
+    await sleep(400);
+    assert.equal(f.running(), 1, "0: never");
+  });
+
   it("output of its own between turns keeps an agent; metadata alone (usage reports) does not", async () => {
     const chatty = await setup({ flags: ["--caps=resume", "--tick=100"], host: { idleTtlMs: 400 } });
     const one = await chatty.host.sessionsService.create({ agent: "fake", cwd: chatty.cwd }, TUNNEL);

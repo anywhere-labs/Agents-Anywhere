@@ -1,8 +1,8 @@
 "use client"
 
-// A conversation (client-experience-proposal §2.4). Thread in the middle (Effi Cloud's turn rendering, approvals inline
-// under the tool call as in Claude Code Desktop / Codex / Cursor), queued messages above the input, the composer at the
-// bottom — centred under a greeting while the conversation is empty, as in ChatGPT / Claude.ai — and the side panel
+// A conversation (client-experience-proposal §2.4). Thread in the middle (Effi Cloud's turn rendering; a tool call that
+// waits for approval is only marked there), the waiting approvals stacked as cards and the queued messages above the
+// input, the composer at the bottom — centred under a greeting while the conversation is empty, as in ChatGPT / Claude.ai — and the side panel
 // (files, changes, terminal, plan): beside the thread when there is room for both, over it when there is not, in a
 // bottom sheet on phones; it slides in and out and its left edge is dragged to resize it. Files dropped anywhere on the
 // conversation are attached.
@@ -332,12 +332,9 @@ export default function SessionWorkspacePage() {
       void call(async () => {
         const updated = await tunnelManager.setSessionConfig(tunnelDevice, sessionId, configId, value)
         store.apply({ type: "session", session: updated })
-        // Remembered for the next conversation with this agent on this device (v2: per device + agent).
-        const key = `${deviceId}:${updated.agent}`
-        setPrefs((p) => ({ configByAgent: { ...p.configByAgent, [key]: { ...(p.configByAgent[key] ?? {}), [configId]: value } } }))
       })
     },
-    [call, deviceId, sessionId, setPrefs, store, tunnelDevice, tunnelManager]
+    [call, sessionId, store, tunnelDevice, tunnelManager]
   )
 
   const rename = useCallback(
@@ -466,7 +463,8 @@ export default function SessionWorkspacePage() {
         if (author.startsWith("e2e:")) return myPub && author.includes(myPub) ? null : pairedClientLabel
         return author
       },
-      approvals: "inline",
+      // Approvals are answered in the dock above the composer; the thread marks the waiting tool call.
+      approvals: "host",
       reduceMotion: false,
       imageSrc: (path) => sentPreview(path) ?? "",
       loadImage:

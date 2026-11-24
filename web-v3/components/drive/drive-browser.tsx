@@ -28,6 +28,7 @@ import { driveErrorMessage, driveFolderLabel, driveUploadRejection } from "@/com
 import { DriveMoveDialog } from "@/components/drive/drive-move-dialog"
 import { DriveNameDialog } from "@/components/drive/drive-name-dialog"
 import { DriveUploadList, useDriveUploads } from "@/components/drive/drive-uploads"
+import { DriveUsage } from "@/components/drive/drive-usage"
 import { Notice } from "@/components/field"
 import { useI18n } from "@/components/i18n-provider"
 import { Button } from "@/components/ui/button"
@@ -46,7 +47,6 @@ import {
   appendDrivePage,
   canWriteInto,
   driveRows,
-  formatDriveDuration,
   planDriveUpload,
   type DriveRow,
 } from "@/lib/drive/entries"
@@ -54,7 +54,6 @@ import { DRIVE_ROOT, driveBasename, driveJoin, driveParent, isOrchesPath } from 
 import { useWorkbench } from "@/lib/state/workbench-context"
 import type { DriveEntriesResponse, DriveQuotaView } from "@/lib/types/v3"
 import { cn } from "@/lib/utils"
-import { formatSize } from "@/lib/workbench/time"
 
 /** Files fetched per page (the server's maximum); "show more" fetches the next page. */
 const PAGE_SIZE = 1000
@@ -294,15 +293,6 @@ export function DriveBrowser({
         ? t("drive.deleteOrchesNote")
         : null
 
-  const usage = quota?.enabled
-    ? [
-        quota.quota_bytes != null
-          ? t("drive.usage", { used: formatSize(quota.used_bytes), quota: formatSize(quota.quota_bytes) })
-          : t("drive.usageUnlimited", { used: formatSize(quota.used_bytes) }),
-        t("drive.retention", { duration: formatDriveDuration(quota.default_ttl_seconds, locale) }),
-      ].join(" · ")
-    : null
-
   const dropProps = writable
     ? {
         onDragEnter: (event: DragEvent) => {
@@ -411,7 +401,7 @@ export function DriveBrowser({
     <PageContainer className="min-h-full" {...dropProps}>
       <PageHeader
         title={t("drive.title")}
-        description={usage ?? t("drive.description")}
+        description={t("drive.description")}
         actions={
           enabled ? (
             <>
@@ -436,7 +426,9 @@ export function DriveBrowser({
             </>
           ) : undefined
         }
-      />
+      >
+        {quota?.enabled && <DriveUsage quota={quota} className="mt-4 w-80 max-w-full" />}
+      </PageHeader>
       <input
         ref={fileInput}
         type="file"

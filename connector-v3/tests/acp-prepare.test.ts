@@ -13,7 +13,9 @@ import { DeviceGate } from "../src/core/gate.js";
 import { SessionStore } from "../src/core/session-store.js";
 import { TunnelStreamTracker } from "../src/rpc/device-admin-service.js";
 import { SessionsService } from "../src/rpc/sessions-service.js";
+import type { LastSessionConfig } from "../src/core/config.js";
 import { AcpRuntimeHost, type AcpRuntimeHostOptions } from "../src/runtime/acp-host.js";
+import { StateStore } from "../src/runtime/state-store.js";
 
 // argv: <log file> [--auth] [--slow-init=<ms>]
 const FAKE_AGENT = String.raw`
@@ -356,6 +358,54 @@ describe("Sessions/create with prepared_id", () => {
     const afterTtl = await g.service.create({ agent: "fake", cwd: g.dirs.a, prepared_id: expiring.prepared_id }, ctx);
     assert.equal(await g.count("session/new"), 2);
     assert.ok(g.host.isLive(afterTtl.id));
+  });
+});
+
+describe("the settings of the newest conversation", () => {
+  const model = (config: { id: string; current: string }[]) => config.find((o) => o.id === "model")?.current;
+
+  it("start the next conversation with that agent, and show on an agent prepared for it; other agents keep their own", async () => {
+    const saved: LastSessionConfig[] = [];
+    const f = await setup({ host: { onLastSessionConfigChange: (config) => void saved.push(config) } });
+    const first = await f.service.create({ agent: "fake", cwd: f.dirs.a, config: { model: "smart" } }, ctx);
+    assert.equal(model(first.config), "smart");
+    assert.equal(saved.at(-1)?.fake?.model, "smart", "saved on the device");
+    assert.equal(f.host.lastSessionConfig("fake").model, "smart");
+
+    // Created without settings (an MCP client, say): the newest conversation's.
+    const second = await f.service.create({ agent: "fake", cwd: f.dirs.b }, ctx);
+    assert.equal(model(second.config), "smart");
+    // Prepared for a new conversation: shown with them before it exists, and the conversation keeps them.
+    const prepared = await f.service.prepare({ agent: "fake", cwd: f.dirs.c }, ctx);
+    assert.equal(model(prepared.config), "smart");
+    const third = await f.service.create({ agent: "fake", cwd: f.dirs.c, prepared_id: prepared.prepared_id }, ctx);
+    assert.equal(model(third.config), "smart");
+    assert.equal(await f.count("session/new"), 3, "the prepared agent was taken over");
+
+    // Picked for this one: on top, and the newest from now on.
+    const fourth = await f.service.create({ agent: "fake", cwd: f.dirs.a, config: { model: "fast" } }, ctx);
+    assert.equal(model(fourth.config), "fast");
+    assert.equal(f.host.lastSessionConfig("fake").model, "fast");
+
+    const other = await f.service.create({ agent: "other", cwd: f.dirs.a }, ctx);
+    assert.equal(model(other.config), "fast", "the agent's own default");
+    assert.equal(saved.at(-1)?.fake?.model, "fast");
+  });
+
+  it("skip values the agent no longer offers", async () => {
+    const f = await setup({ host: { lastSessionConfig: { fake: { model: "retired" } } } });
+    const session = await f.service.create({ agent: "fake", cwd: f.dirs.a }, ctx);
+    assert.equal(model(session.config), "fast");
+    assert.equal(await f.count("set"), 0, "nothing sent to the agent");
+  });
+
+  it("are kept in last-session-config.json", async () => {
+    const store = new StateStore({ dataDir: await mkdtemp(path.join(root, "state-")) });
+    assert.deepEqual(await store.loadLastSessionConfig(), {});
+    await store.saveLastSessionConfig({ fake: { model: "smart", mode: "auto" } });
+    assert.deepEqual(await store.loadLastSessionConfig(), { fake: { model: "smart", mode: "auto" } });
+    await writeFile(store.pathFor("last-session-config.json"), JSON.stringify({ agents: { fake: { model: 1 } } }));
+    await assert.rejects(store.loadLastSessionConfig(), /agents\.fake\.model/);
   });
 });
 

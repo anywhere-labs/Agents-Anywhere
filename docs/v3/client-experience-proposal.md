@@ -1,6 +1,6 @@
 # AA v3 客户端体验：信息架构、界面模式与附件
 
-状态：定稿草案（2026-11-23 夜间整理，待 t4wefan 确认）。适用于 Web、Desktop、iOS、Android 四端。视觉规范以 [anywhere-ui](https://github.com/anywhere-labs/anywhere-ui) 为准（`docs/design-system.md`、`templates/console-next`），终端交互见 [terminal-proposal.md](terminal-proposal.md)，随身助手见 [assistant-and-files-proposal.md](assistant-and-files-proposal.md)。
+状态：定稿草案（2026-11-23 夜间整理，待 t4wefan 确认）。适用于 Web、Desktop、iOS、Android 四端。视觉规范以 [anywhere-ui](https://github.com/anywhere-labs/anywhere-ui) 为准（`docs/design-system.md`、`templates/console-next`），终端交互见 [terminal-proposal.md](terminal-proposal.md)，Orches（编排）见 [assistant-and-files-proposal.md](assistant-and-files-proposal.md)。
 
 ## 0. 视觉与交互参考（t4wefan，2026-11-23）
 
@@ -14,7 +14,7 @@
 
 ```text
 账号
-├── 随身助手（Pi Lite）：对话历史、云端工作区（与设备无关）
+├── Orches（编排）：Orches 对话（每个连接若干设备对话）、云端工作区
 └── 设备（工作电脑，普通 / 加密）
     ├── Agent（Claude Code、Codex、Antigravity、Pi …，按设备上报的 runtimes）
     │   └── 项目（工作目录 cwd，可选分组）
@@ -23,7 +23,7 @@
     └── 文件
 ```
 
-- 对话属于「设备 × Agent × 目录」。跨设备的地方只有两处：首页/侧栏的「最近对话」（按 `updated_at` 合并，规则见 `contracts/aa-v3/1.0` 的合并 fixtures），以及随身助手。
+- 对话属于「设备 × Agent × 目录」。跨设备的地方只有两处：首页/侧栏的「最近对话」（按 `updated_at` 合并，规则见 `contracts/aa-v3/1.0` 的合并 fixtures），以及 Orches（一个 Orches 对话可以连接多台设备上的对话）。
 - 项目就是工作目录，不是另一种实体：同一目录下不同 Agent 的对话归在同一项目下，项目名默认取目录名。
 - 设备的状态（在线 / 离线只读缓存 / 加密且未配对）在每一层都可见；离线设备的对话可以读缓存，不能发消息。
 
@@ -36,9 +36,9 @@
 | 登录外壳 | 登录、OIDC 回调 | anywhere-ui `SignInShell` |
 | 控制台外壳 | 账号、设置、外观、设备管理、管理员后台 | anywhere-ui `ConsoleShell`（侧栏 + 内容区） |
 | 工作台外壳 | 对话、终端、文件、设备总览 | 在 `ConsoleShell` 基础上扩展：可折叠侧栏 + 主区 + 可选右侧面板 |
-| 助手外壳 | 「助手为主角」模式下的主界面 | 工作台外壳的变体：主区是居中的助手对话 |
+| Orches 外壳 | Orches 首页和 Orches 对话（「Orches 模式」下也是首页） | 工作台外壳的变体：主区是 Orches 对话，右侧栏是它连接的设备对话 |
 
-在工作台外壳内，有两种**主模式**（设置 › 外观 ›「助手为主角」开关）：
+在工作台外壳内，有两种**主模式**（设置 › 通用 ›「Orches 模式」开关）：
 
 ### 2.1 设备优先（默认）
 
@@ -46,11 +46,11 @@
 - 设备列表每台设备一行：名称、在线点、锁标（加密设备，绿锁 / 灰锁）。展开后按 **Agent → 项目 → 对话** 三级显示；只有一个 Agent 或一个项目时省略那一级。
 - 点设备名进入设备页（2.3），点对话进入对话页（2.4）。
 
-### 2.2 助手为主角
+### 2.2 Orches 模式
 
-- 主区默认是随身助手的对话；侧栏主列表是助手的对话历史。
-- 侧栏下方是设备列表；点一台设备，侧栏**翻页**进入这台设备的子页面（返回按钮 + 该设备的 Agent → 项目 → 对话），主区仍可保持助手或切到所选对话。
-- 两种模式下都可以随时用 ⌘J（移动端为底部 Sheet）呼出助手抽屉。
+- 首页是 Orches 首页；侧栏主列表是 Orches 对话，当前 Orches 对话下面列出它连接的设备对话（见 [assistant-and-files-proposal.md](assistant-and-files-proposal.md) 2.2、2.3）。
+- 侧栏下方是设备列表；点一台设备，侧栏**翻页**进入这台设备的子页面（返回按钮 + 该设备的 Agent → 项目 → 对话），主区仍可保持 Orches 或切到所选对话。
+- 两种模式下都可以随时用 ⌘J（移动端为底部 Sheet）打开右侧的 Orches 栏。
 
 ### 2.3 设备页
 
@@ -141,9 +141,9 @@
 - **取字节**：≤ 8 MiB 经隧道 `read_file`；更大的文件由设备上传到云盘后给出临时下载链接（加密设备同样加密中转）。客户端按「设备 + 路径 + 修改时间」缓存。
 - **移动端**：WebView 不联网，需要文件内容时经 bridge 请求原生层（`file.read`），原生层经隧道取回后交给 WebView。
 
-### 3.4 随身助手的附件
+### 3.4 Orches 的附件
 
-助手的附件进助手自己的云端工作区（本地 OPFS / IndexedDB 热缓存 + 云盘 `assistant_vfs`，开启助手加密时用账号 DEK 加密），和设备上的附件互不相通；需要交给设备时，走 3.2 的路径重新发送。这个工作区在云盘里是 `/Orches/` 文件夹（助手已定名 Orches），路径与 `vfs_path` 一一对应，由 Orches 的同步管理。
+Orches 的附件进它自己的云端工作区（本地 OPFS / IndexedDB 热缓存 + 云盘 `assistant_vfs`，开启 Orches 加密时用账号 DEK 加密），和设备上的附件互不相通；需要交给设备时，走 3.2 的路径重新发送。这个工作区在云盘里是 `/Orches/` 文件夹，路径与 `vfs_path` 一一对应，由 Orches 的同步管理。
 
 ## 4. 需要的接口改动
 

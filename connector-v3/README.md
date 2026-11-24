@@ -79,6 +79,7 @@ src/
 | `create` | 新增可选 `prepared_id` | 预热的 Agent 属于同一 `agent`、同一 `cwd` 且没过期时直接接管：不再起进程、不再 `session/new`，预热期间 Agent 发来的 `session/update`（斜杠命令、配置变化等）回放进会话，然后照常应用 `config`。`prepared_id` 不存在、已过期、Agent 已退出或 `agent` / `cwd` 不匹配时，按原流程新起 Agent，不报错 |
 
 - 同一 Agent、同一目录只有一个预热 Agent：再次 `prepare` 返回同一个 `prepared_id` 并重新计算过期时间（新对话页停留较久时可以用它续期）；正在启动时，并发的 `prepare` 共用同一次启动。第一次 `npx` 启动可能要几分钟，调用超时后再调一次 `prepare` 就会接上还在进行的那次启动。
+- 新对话的设置：每个 Agent 最近一次新建对话时用的设置（模型、模式、推理强度等，`create` 结束时的值）记在数据目录的 `last-session-config.json` 里。`prepare` 返回前先把预热的 Agent 设成这些值，`create` 也先套用它们，再应用请求里的 `config`；Agent 已经不提供的值跳过。没有单独的「新对话默认选项」设置，客户端也不再自己记。对话之后再改的设置不算，只认新建时的。
 - 生命周期：空闲超过 TTL（默认 10 分钟，从 Agent 就绪或上一次 `prepare` 算起）关闭；每台设备最多保留 4 个，超出时关闭最久未用的（正在启动的不会被挤掉）；Connector 停止时全部关闭，正在启动的 `prepare` 返回 `agent_start_failed`。两个上限可以用 `ConnectorHost` / `AcpRuntimeHost` 的 `preparedTtlMs`、`maxPrepared` 调整。预热的 Agent 只在内存里，Connector 重启后旧的 `prepared_id` 失效，`create` 会按原流程启动。
 - 接管之前没有会话：Agent 发来的权限请求一律回答 `cancelled`，读写文件请求照常按 `cwd` 处理。
 - 启动失败时 `prepare` 直接返回错误，`create` 遇到同样的失败也返回同样的错误（`details.agent` 是 Agent id）：
@@ -104,12 +105,12 @@ src/
 
 ### Agent 管理（`agents` / `update_agent` / `stop_agent`）
 
-设备页列出这台设备上的每个 Agent：开关、运行状态和停止按钮，以及设置对话框（命令、参数、环境变量、恢复默认）。三个方法都在 `aa.v3.Device` 上。
+设备页列出这台设备上的每个 Agent：开关、运行状态和停止按钮，以及设置对话框（权限控制、空闲后关闭进程、命令、参数、环境变量、恢复默认）。三个方法都在 `aa.v3.Device` 上。
 
 | 调用 | 请求 | 响应 / 行为 |
 | --- | --- | --- |
 | `agents`（只读） | `{}` | `{ agents: AgentEntry[] }`：每个已注册的 Agent 一项（内置预设和配置的预设，关闭的也在内），顺序与 `status.runtimes` 相同 |
-| `update_agent`（幂等） | `{ id, enabled?, command?, args?, env?, reset? }` | 修改后的 `AgentEntry` |
+| `update_agent`（幂等） | `{ id, enabled?, approvals?, idle_close_minutes?, command?, args?, env?, reset? }` | 修改后的 `AgentEntry` |
 | `stop_agent`（不可撤销，幂等） | `{ id, force? }` | `{ stopped }`：停掉的 Agent 进程数 |
 
 `AgentEntry`：
@@ -125,12 +126,16 @@ src/
 | `customized` | 命令、参数或环境变量与预设不同（开关不算） |
 | `running` | 正在运行的 Agent 进程数：进程在跑的会话 + 预热的 + 正在启动的 |
 | `busy` | 正在执行一轮的会话数（包括 Agent 还在启动的） |
+| `approvals` | 只有 AA 能为它加上审批的 Agent（Pi）才有：权限控制是否打开 |
+| `idle_close_minutes` | 对话的 Agent 进程空闲多少分钟后关闭；`0` 表示不自动关闭（默认） |
 
 `update_agent`：
 
 - 不给或为 `null` 的字段保持不变，其他字段和所有请求一样被忽略。`command` 不能为空（去掉首尾空白），`args` 是字符串数组（最多 256 个，可以有空字符串）；命令、参数和环境变量的值都不能含 NUL。
 - `env`：值为字符串时设置该变量，为 `null` 时删除。变量名须匹配 `^[A-Za-z_][A-Za-z0-9_]*$`，每个 Agent 最多 128 个。这些变量加在 Connector 自身的环境之上传给 Agent，删不掉 Connector 进程继承来的变量。
-- `reset: true`：先丢掉对命令、参数和环境变量的修改（回到预设），再应用同一次调用里的其他字段。`reset` 不改开关，要同时打开就一起传 `enabled: true`。
+- `reset: true`：先丢掉对命令、参数和环境变量的修改（回到预设），再应用同一次调用里的其他字段。`reset` 不改开关、权限控制和空闲关闭时间，要同时打开就一起传 `enabled: true`。
+- `idle_close_minutes`：`0`–`10080` 的整数，`0` 表示不自动关闭。立即生效：已经空闲的进程按新时间重新计时。见「恢复 Agent 的上下文，回收空闲进程」。
+- `approvals`：只对预设带 `approvals` 的 Agent 有效（内置的 Pi），其他 Agent 返回 `failed_precondition` / `approvals_unsupported`。打开时先在 Pi 的全局扩展目录（`$PI_CODING_AGENT_DIR/extensions`，默认 `~/.pi/agent/extensions`）写入 `agents-anywhere-approvals.js`，关闭时删除它，写入或删除失败则整个修改不生效（`approvals_extension_failed`）。同名但不是 AA 写的文件不会被覆盖或删除。详见下面的「Pi 的权限控制」。
 - 改回与预设相同的值等于没改：`customized` 为 `false`，这一项也不再保存。
 - 修改先写入数据目录的 `agents.json`（0600，目录 0700），写入失败则整个修改不生效。环境变量的值只保存在这个文件里，不会出现在任何 RPC 的返回（包括 `get_settings`）、日志或推送里。
 - **只影响之后启动的 Agent 进程**：正在运行的保持原来的设置，直到被停止（`stop_agent`）、空闲回收或自己退出。命令、参数或环境变量变了（或被关闭）的 Agent，它的预热 Agent 会被关闭，下一次 `prepare` 按新设置启动。
@@ -158,6 +163,17 @@ src/
 | `turns_running` | `failed_precondition` | `stop_agent` 时有会话正在执行一轮且没带 `force`；`details.count` 是会话数 |
 | `agent_disabled` | `failed_precondition` | Agent 已关闭：`prepare`、`create` 和已有会话的新一轮都被拒绝；`details.agent` 是 Agent id |
 | `agent_not_configurable` | `failed_precondition` | 嵌入方用 `registerRuntime` 注册、没有预设的 Runtime 只能开关，不能改命令、参数和环境变量 |
+| `approvals_unsupported` | `failed_precondition` | 这个 Agent 没有 AA 能加上的审批（只有 Pi 有） |
+| `approvals_extension_failed` | `failed_precondition` | 打开或关闭权限控制时，写入或删除 Pi 的扩展失败；修改没有生效 |
+
+### Pi 的权限控制
+
+Pi 和它的 ACP 适配器都不会在改文件、跑命令前询问，Agent 报的选项里也没有权限。打开 Pi 的 `approvals` 后，AA 用一个 Pi 扩展补上：
+
+- 扩展装在 Pi 的全局扩展目录，Pi 每次启动都会加载它，但只有 AA 启动的 Pi 才有 `AA_APPROVALS_FILE` 环境变量，别的 Pi（用户自己在终端里用的）里它什么也不做。Connector 每次启动 Pi 前都会检查一遍，文件丢了或是旧版本就重新写入。
+- 每个对话多一个设置 `aa_approvals`（`category: "mode"`，在输入框的权限按钮里）：`ask`（除了读取都问）、`accept_edits`（改文件也不问，其余都问）、`full_access`（都不问，和 Pi 原本一样）。读取是 Pi 自带的 `read`、`grep`、`find`、`ls`，改文件是 `edit`、`write`；其余一律询问，包括命令，以及扩展和 MCP 服务器加的、AA 不认识的工具（名字说明不了它做什么）。这个设置由 Connector 自己管，不会发给 Pi；它写在每个 Pi 进程自己的模式文件里（数据目录的 `pi-approvals/`，进程退出时删除），扩展在每次调用工具前读一次，所以对话中途切换立即生效。新对话的默认值和其他设置一样，取这个 Agent 最近一次新建对话时的值；第一次是 `ask`。
+- 需要审批时，扩展通过 Pi 的扩展界面请求确认，消息里带上这次调用的编号、工具名和参数。pi-acp 会把它转成 ACP 的权限请求，但挂在一个另起的工具调用上；Connector 认出后把请求挂回 Pi 自己那次调用，所以对话里只有一步，审批卡片显示完整的命令或参数，选项和其他 Agent 一样是 `Allow` / `Reject`。别的扩展弹出的对话框原样处理。拒绝时这次调用被拦下，Pi 收到「用户拒绝了」。
+- 打开或关闭只影响之后启动的 Pi 进程；关闭时，正在运行的进程立即改为不再询问，对话里的这个设置也随之消失。
 
 ### 恢复 Agent 的上下文，回收空闲进程
 
@@ -171,7 +187,7 @@ src/
 
 四个内置 Agent（Claude Code、Codex、Antigravity、Pi）现在的版本都同时声明了 `session/resume` 和 `session/load`，所以都用 `session/resume`。
 
-**空闲回收**：Agent 支持恢复（`session/resume` 或 `session/load`）时，对话持续 `idleTtlMs`（默认 15 分钟）没有在进行的事：没有正在执行的一轮、没有待回答的权限请求、也没有正在进行的设置修改，就关闭它的 Agent 进程。对话保留，下一条消息重新启动 Agent 并恢复上下文；`Device/agents` 的 `running` 相应减少。Agent 在两轮之间自己发来的输出（消息、思考、工具调用、计划）也算有动静，会重新计时；用量报告之类的元数据不算。不支持恢复的 Agent 不回收，和以前一样一直运行到被停止。预热的 Agent 仍按自己的 TTL。`ConnectorHost` / `AcpRuntimeHost` 的 `idleTtlMs` 可以调整，`0` 或 `null` 表示不回收。回收中的进程还没退出时来了新消息，新进程会等它退出后再启动，不会有两个进程同时打开同一个 Agent 会话。
+**空闲回收**：每个 Agent 可以设置 `idle_close_minutes`（默认 `0`，不回收）。设置了且 Agent 支持恢复（`session/resume` 或 `session/load`）时，对话持续这么久没有在进行的事：没有正在执行的一轮、没有待回答的权限请求、也没有正在进行的设置修改，就关闭它的 Agent 进程。对话保留，下一条消息重新启动 Agent 并恢复上下文；`Device/agents` 的 `running` 相应减少。Agent 在两轮之间自己发来的输出（消息、思考、工具调用、计划）也算有动静，会重新计时；用量报告之类的元数据不算。不支持恢复的 Agent 不回收，和以前一样一直运行到被停止。预热的 Agent 仍按自己的 TTL。没有设置 `idle_close_minutes` 的 Agent 用 `ConnectorHost` / `AcpRuntimeHost` 的 `idleTtlMs`（毫秒，默认不回收，`0` 或 `null` 也表示不回收）。回收中的进程还没退出时来了新消息，新进程会等它退出后再启动，不会有两个进程同时打开同一个 Agent 会话。
 
 ## 运行
 
@@ -266,7 +282,9 @@ node dist/src/cli.js start --router 'wss://router.example.com#mt_xxx'   # URL#TO
 | `settings.json` | 模式、MCP 开关、配对确认、RPC 文件上限、设备名 |
 | `paired-clients.json` | 已配对客户端公钥（加密模式的信任名单） |
 | `sessions.json` | 会话快照（防抖写入），包括每个对话的 Agent 会话 id（`acp_session_id`，Agent 重启时用它恢复上下文）。旧文件没有这个字段也能照常加载 |
-| `agents.json` | 每个 Agent 的开关和本机设置：命令、参数、环境变量（0600；环境变量的值只保存在这里）。不认识的键会被忽略；已知的值损坏时 Connector 不启动并指出出错的字段，不会悄悄忽略（否则关掉的 Agent 会重新打开） |
+| `agents.json` | 每个 Agent 的开关和本机设置：权限控制、空闲关闭时间、命令、参数、环境变量（0600；环境变量的值只保存在这里）。不认识的键会被忽略；已知的值损坏时 Connector 不启动并指出出错的字段，不会悄悄忽略（否则关掉的 Agent 会重新打开） |
+| `last-session-config.json` | 每个 Agent 最近一次新建对话时的设置，新对话从这些值开始 |
+| `pi-approvals/` | 打开了权限控制的 Pi 进程各自的模式文件（进程退出时删除） |
 | `attachments/<对话 id>/` | 对话没有工作目录或目录不可写时的附件（通常附件在项目的 `.agents-anywhere/attachments/<对话 id>/`） |
 
 ## 在 Desktop 中嵌入
@@ -296,11 +314,13 @@ yarn test
 
 `tests/connector-router-e2e.test.ts` 会启动真实的 Go `meshcall-router`（v0.4.0）和一个用 Node 写的 stdio ACP 模拟 Agent，覆盖：控制面直接调用、MCP 开关、普通隧道上的创建（含 `prepare` 后带 `prepared_id` 创建）/发送/审批/排队/文件读取/终端 attach、两台客户端共用一个终端时的控制权（旁观者输入被拒、接管后旧控制者的输入被丢弃、只有控制者能改尺寸）和 `resume_seq` 续传（终端的帧都按 `terminals.schema.json` 校验）、经 MeshCall 的 Agent 管理（列表、改设置、恢复默认、停止，以及控制面和 MCP 被拒）、`close_tunnel_sessions`、presence 与推送的契约形状、普通 → 加密的安全切换，以及加密模式下的配对（IKpsk2）、陌生客户端被拒、重连（IK）和撤销。Router 二进制按以下顺序查找：`MESHCALL_ROUTER_BINARY`、`../../meshcall/meshcall-router/bin/meshcall-router`、`findRouterBinary()`；都找不到时跳过该测试文件。
 
-`tests/acp-prepare.test.ts` 不需要 Router：用一个记录每次进程启动、`session/new` 和配置修改的模拟 Agent 覆盖 `prepare` 与 `create({ prepared_id })`——配置项的形状、并发共用一次启动、接管同一个进程（没有第二次 `session/new`）并回放预热期间的通知、不匹配 / 过期 / 已退出时退回原流程、TTL 与续期、上限淘汰、启动错误，以及停止时关闭。
+`tests/acp-prepare.test.ts` 不需要 Router：用一个记录每次进程启动、`session/new` 和配置修改的模拟 Agent 覆盖 `prepare` 与 `create({ prepared_id })`——配置项的形状、并发共用一次启动、接管同一个进程（没有第二次 `session/new`）并回放预热期间的通知、不匹配 / 过期 / 已退出时退回原流程、TTL 与续期、上限淘汰、启动错误、停止时关闭，以及新对话沿用同一 Agent 最近一次新建对话的设置（预热的 Agent 上已经设好，各 Agent 互不影响，Agent 不再提供的值跳过，记在 `last-session-config.json`）。
 
-`tests/acp-restore.test.ts` 也不需要 Router：模拟 Agent 把会话存成文件，新进程可以重新打开，每次回复都说出它记得的内容。覆盖 `session/resume`、只有 `session/load`（重放的历史不进对话）、Agent 不按规范在 resume 时也重放、两种都不支持（新开会话、记 warn、不回收）、恢复被拒（先 resume 再 load，都失败时新开会话并记 warn）、resume 被拒但 load 成功、Agent 崩溃后恢复、Connector 重启后恢复（`sessions.json` 里的 id）、恢复后把设置改回对话里的值、接管预热 Agent 后记下它的会话 id、`rewind` 后不再恢复、空闲回收（轮次比 TTL 长时不回收、回收后下一条消息恢复、两轮之间自己的输出算有动静而用量报告不算、Agent 重启后稍晚才报告命令时 `compact` 会等它、预热 Agent 不受影响、`0` / `null` 关闭、回收中的进程退出前不启动新进程），以及没有这个字段的旧 `sessions.json`。
+`tests/acp-restore.test.ts` 也不需要 Router：模拟 Agent 把会话存成文件，新进程可以重新打开，每次回复都说出它记得的内容。覆盖 `session/resume`、只有 `session/load`（重放的历史不进对话）、Agent 不按规范在 resume 时也重放、两种都不支持（新开会话、记 warn、不回收）、恢复被拒（先 resume 再 load，都失败时新开会话并记 warn）、resume 被拒但 load 成功、Agent 崩溃后恢复、Connector 重启后恢复（`sessions.json` 里的 id）、恢复后把设置改回对话里的值、接管预热 Agent 后记下它的会话 id、`rewind` 后不再恢复、空闲回收（默认不回收、Agent 设置里的空闲时间立即生效且对已经空闲的进程也算、轮次比 TTL 长时不回收、回收后下一条消息恢复、两轮之间自己的输出算有动静而用量报告不算、Agent 重启后稍晚才报告命令时 `compact` 会等它、预热 Agent 不受影响、`0` / `null` 关闭、回收中的进程退出前不启动新进程），以及没有这个字段的旧 `sessions.json`。
 
-`tests/agent-settings.test.ts` 也不需要 Router：在初始化好的 `ConnectorHost` 上直接调用服务，模拟 Agent 记下每次启动时拿到的命令（argv0）、参数和一个环境变量。覆盖 `agents` 的形状与计数、开关（`status.runtimes`、`prepare` / `create` / 已有会话的新一轮被拒、预热 Agent 被关闭）、设置写入 `agents.json`（0600）并在重启后用于下一次启动、正在运行的进程保持旧设置、环境变量的值不出现在任何返回 / 日志 / 推送里、恢复默认、字段校验、设置变了时关闭预热 Agent（没变时保留）、带旧字段的 `agents.json` 照常加载、`stop_agent` 的计数与会话恢复、有轮次在跑时的 `turns_running` 与 `force`（含 Agent 还在启动、Agent 不理会取消的情况），以及控制面、MCP 和加密设备上的调用限制。
+`tests/agent-settings.test.ts` 也不需要 Router：在初始化好的 `ConnectorHost` 上直接调用服务，模拟 Agent 记下每次启动时拿到的命令（argv0）、参数和一个环境变量。覆盖 `agents` 的形状与计数、开关（`status.runtimes`、`prepare` / `create` / 已有会话的新一轮被拒、预热 Agent 被关闭）、设置写入 `agents.json`（0600）并在重启后用于下一次启动、正在运行的进程保持旧设置、环境变量的值不出现在任何返回 / 日志 / 推送里、恢复默认、空闲后关闭进程的时间（默认不关闭、按分钟保存、`0` 改回不关闭、恢复默认时保留）、字段校验、设置变了时关闭预热 Agent（没变时保留）、带旧字段的 `agents.json` 照常加载、`stop_agent` 的计数与会话恢复、有轮次在跑时的 `turns_running` 与 `force`（含 Agent 还在启动、Agent 不理会取消的情况），以及控制面、MCP 和加密设备上的调用限制。
+
+`tests/pi-approvals.test.ts` 也不需要 Router：扩展文件只在是 AA 自己的时候才会被更新或删除；哪些工具在哪种模式下要询问（不认识的工具、不认识的模式都按询问处理）；一个模拟的 Pi 加载扩展，覆盖不是 AA 启动的 Pi 里扩展什么也不做、按对话的模式决定是否询问、拒绝或无法询问时拦下这次调用、确认挂回它问的那次调用（别的扩展的对话框不动）；一个记录启动环境的模拟 ACP Agent 覆盖「权限控制」这个 Agent 设置：只给能加权限的 Agent、默认关闭、打开后安装扩展且每个对话有自己的设置和模式文件、像 pi-acp 那样发出确认时对话里只有一步、带完整命令、答复传回 Agent，Connector 停止时模式文件都已删除，关闭后删除扩展，正在进行的对话不再询问、也不再显示这个设置。
 
 ## 已知限制
 

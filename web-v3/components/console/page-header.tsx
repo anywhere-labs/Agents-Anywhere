@@ -6,11 +6,14 @@ export function PageHeader({
   description,
   actions,
   className,
+  children,
 }: {
   title: React.ReactNode
   description?: React.ReactNode
   actions?: React.ReactNode
   className?: string
+  /** Under the description, in the title's column: a page's own summary (the drive's usage). */
+  children?: React.ReactNode
 }) {
   return (
     <div
@@ -26,6 +29,7 @@ export function PageHeader({
         {description && (
           <p className="mt-2 text-sm text-muted-foreground">{description}</p>
         )}
+        {children}
       </div>
       {actions && (
         <div className="flex flex-wrap items-center gap-2">{actions}</div>

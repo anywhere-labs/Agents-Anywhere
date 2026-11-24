@@ -83,7 +83,6 @@ export const en = {
   "admin.drive.ttlDays": "Kept for (days)",
   "admin.drive.reset": "Reset to default",
   "shell.quickAssistant": "Orches",
-  "shell.assistantPrimaryBadge": "Orches first",
   "shell.backToAssistantList": "Back to Orches",
 
   // Sign-in (AA v3: simple password login in local mode, or OIDC client in oidc mode)
@@ -247,12 +246,11 @@ export const en = {
   "settings.title": "Settings",
   "settings.dialogDesc": "Theme and language, account, Cloud Drive, connected apps and encrypted devices.",
   "settings.driveUsedLabel": "Space used",
-  "settings.driveUsedHint": "{used} of {total} · {count} files",
   "settings.openDrive": "Open Cloud Drive",
   "settings.mcpRevokeConfirm": "Once revoked, this app can no longer see or work on your devices.",
   "settings.theme": "Theme",
-  "settings.assistantPrimary": "Orches first in the sidebar",
-  "settings.assistantPrimaryDesc": "The sidebar lists your Orches chats first; open a device to see its conversations.",
+  "settings.assistantPrimary": "Orches mode",
+  "settings.assistantPrimaryDesc": "Home opens Orches and the sidebar lists your Orches chats first; open a device to see its conversations.",
   "settings.role": "Role",
   "settings.authMode": "Sign-in",
   "settings.authModeLocal": "Email and password",

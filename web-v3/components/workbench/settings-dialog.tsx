@@ -25,6 +25,7 @@ import { toast } from "sonner"
 import { ConfirmDialog } from "@/components/console/confirm-dialog"
 import { DetailList, type DetailItem } from "@/components/console/detail-list"
 import { formatBytes } from "@/components/conversation/text"
+import { DriveUsage } from "@/components/drive/drive-usage"
 import { DropdownSelect } from "@/components/dropdown-select"
 import { useI18n } from "@/components/i18n-provider"
 import { Badge } from "@/components/ui/badge"
@@ -400,18 +401,15 @@ function SettingsBody({ section, active, onClose }: { section: SettingsSection; 
             {!driveQuota?.enabled ? (
               <Note>{loading ? t("common.loading") : t("settings.driveDisabled")}</Note>
             ) : (
-              <Row
-                label={t("settings.driveUsedLabel")}
-                hint={t("settings.driveUsedHint", {
-                  used: formatBytes(driveQuota.used_bytes),
-                  total: sizeOrUnlimited(driveQuota.quota_bytes, t("common.unlimited")),
-                  count: driveQuota.file_count,
-                })}
-              >
-                <Button variant="outline" size="sm" render={<Link href="/drive" onClick={onClose} />} nativeButton={false}>
-                  {t("settings.openDrive")}
-                </Button>
-              </Row>
+              <div className="space-y-3 py-3.5">
+                <div className="flex items-center justify-between gap-4">
+                  <p className="text-sm text-foreground">{t("settings.driveUsedLabel")}</p>
+                  <Button variant="outline" size="sm" render={<Link href="/drive" onClick={onClose} />} nativeButton={false}>
+                    {t("settings.openDrive")}
+                  </Button>
+                </div>
+                <DriveUsage quota={driveQuota} />
+              </div>
             )}
           </Card>
         </Group>

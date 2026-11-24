@@ -177,6 +177,13 @@ export const AgentEntrySchema = z.object({
   running: z.number().int().nonnegative(),
   /** Its sessions with a turn running now. */
   busy: z.number().int().nonnegative(),
+  /**
+   * Agents Anywhere's approvals turned on: only for agents that ask no one before they act and to which AA can add
+   * that (Pi). Absent for every other agent.
+   */
+  approvals: z.boolean().optional(),
+  /** Minutes a conversation's agent may sit idle before it is closed (restored by its next message); 0: never. */
+  idle_close_minutes: z.number().int().nonnegative(),
 });
 export type AgentEntry = z.output<typeof AgentEntrySchema>;
 const AgentsResponseSchema = z.object({ agents: z.array(AgentEntrySchema) });
@@ -319,6 +326,8 @@ function toAgentEntry(agent: AgentStatus): AgentEntry {
     customized: agent.customized,
     running: agent.running,
     busy: agent.busy,
+    ...(agent.approvals !== undefined ? { approvals: agent.approvals } : {}),
+    idle_close_minutes: agent.idleCloseMinutes,
   };
 }
 

@@ -9,6 +9,8 @@ export const zhCNDrive: Record<keyof typeof enDrive, string> = {
   "drive.usage": "已用 {used}，共 {quota}",
   "drive.usageUnlimited": "已用 {used}",
   "drive.retention": "文件保留 {duration}",
+  "drive.maxFile": "单个文件最大 {size}",
+  "drive.fileCount": "{count} 个文件",
   "drive.newFolder": "新建文件夹",
   "drive.upload": "上传",
 

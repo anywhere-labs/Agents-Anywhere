@@ -112,6 +112,7 @@ export const AcpRuntimePresetSchema = z.object({
   command: z.string().min(1),
   args: z.array(z.string()).default([]),
   env: z.record(z.string(), z.string()).optional(),
+  approvals: z.literal("pi").optional(),
 });
 
 export interface AcpRuntimePreset {
@@ -120,6 +121,11 @@ export interface AcpRuntimePreset {
   command: string;
   args: string[];
   env?: Record<string, string>;
+  /**
+   * The agent asks no one before it acts, and AA can add that: `"pi"`, with its Pi extension (`core/pi-approvals.ts`),
+   * once the agent's `approvals` setting is turned on.
+   */
+  approvals?: "pi";
 }
 
 // ── Per-agent settings (`aa.v3.Device/update_agent`) ────────────────────────────────────────────────────────────
@@ -128,6 +134,8 @@ export interface AcpRuntimePreset {
 export const AGENT_ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 /** Extra environment variables one agent may have. */
 export const MAX_AGENT_ENV_VARS = 128;
+/** The longest an agent's idle processes may be kept before they are closed: a week. */
+export const MAX_IDLE_CLOSE_MINUTES = 7 * 24 * 60;
 
 const noNul = (value: string): boolean => !value.includes("\u0000");
 const NO_NUL = "must not contain NUL characters";
@@ -147,6 +155,10 @@ export const AgentEnvValueSchema = z.string().max(32_768).refine(noNul, NO_NUL);
  */
 export const AgentOverrideSchema = z.object({
   enabled: z.boolean().optional(),
+  /** AA's approvals turned on (agents whose preset has `approvals`); off is not stored. */
+  approvals: z.boolean().optional(),
+  /** Close a conversation's agent after this many minutes idle; never (the default) is not stored. */
+  idle_close_minutes: z.number().int().min(1).max(MAX_IDLE_CLOSE_MINUTES).optional(),
   command: AgentCommandSchema.optional(),
   args: AgentArgsSchema.optional(),
   env: z
@@ -157,6 +169,8 @@ export const AgentOverrideSchema = z.object({
 
 export interface AgentOverride {
   enabled?: boolean;
+  approvals?: boolean;
+  idle_close_minutes?: number;
   command?: string;
   args?: string[];
   env?: Record<string, string>;
@@ -169,11 +183,18 @@ export type AgentOverrides = Record<string, AgentOverride>;
 /**
  * A change to one agent (`update_agent` without its `id`). Absent or `null` fields stay as they are; in `env` a
  * string sets the variable and `null` removes it. `reset` first drops the changes to the command, args and
- * environment (back to the preset), then applies the other fields; it leaves `enabled` alone. Other fields are
- * ignored, as in every request.
+ * environment (back to the preset), then applies the other fields; it leaves `enabled`, `approvals` and
+ * `idle_close_minutes` alone. Other fields are ignored, as in every request.
  */
 export const AgentUpdateSchema = z.object({
   enabled: z.boolean().nullish(),
+  /** Turn AA's approvals on or off (agents whose preset has `approvals`; `failed_precondition` for others). */
+  approvals: z.boolean().nullish(),
+  /**
+   * Minutes a conversation's agent may sit idle before it is closed (its next message starts it again, restoring its
+   * context where the agent can); 0: never, the default.
+   */
+  idle_close_minutes: z.number().int().min(0).max(MAX_IDLE_CLOSE_MINUTES).nullish(),
   command: AgentCommandSchema.nullish(),
   args: AgentArgsSchema.nullish(),
   env: z
@@ -185,11 +206,23 @@ export const AgentUpdateSchema = z.object({
 
 export interface AgentUpdate {
   enabled?: boolean | null;
+  approvals?: boolean | null;
+  idle_close_minutes?: number | null;
   command?: string | null;
   args?: string[] | null;
   env?: Record<string, string | null> | null;
   reset?: boolean | null;
 }
+
+// ── The settings of each agent's newest conversation (`last-session-config.json`) ───────────────────────────────
+
+/**
+ * By agent id, the settings (model, mode, …: `config_id → value`) the agent's newest conversation on this device was
+ * created with. The next conversation with that agent, and an agent prepared for one, starts with them wherever the
+ * agent still offers the value: there is no separate "defaults" setting.
+ */
+export const LastSessionConfigSchema = z.record(AgentIdSchema, z.record(z.string().min(1).max(256), z.string().max(4096)));
+export type LastSessionConfig = Record<string, Record<string, string>>;
 
 // ── Compile-time agreement between the schemas and the interfaces above ─────────────────────────────────────────
 
@@ -203,4 +236,5 @@ export type _ConfigSchemaChecks = [
   Assert<Same<z.infer<typeof AgentOverrideSchema>, AgentOverride>>,
   Assert<Same<z.infer<typeof AgentOverridesSchema>, AgentOverrides>>,
   Assert<Same<z.infer<typeof AgentUpdateSchema>, AgentUpdate>>,
+  Assert<Same<z.infer<typeof LastSessionConfigSchema>, LastSessionConfig>>,
 ];

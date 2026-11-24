@@ -8,6 +8,7 @@
 //
 // Portable: no Node built-ins. Spawning the agent and framing stdio is `src/runtime/*`'s job.
 
+import { PI_APPROVALS_CONFIG_ID } from "./pi-approvals.js";
 import type { AssistantItemInput, SessionStore } from "./session-store.js";
 import type {
   AssistantMessage,
@@ -462,7 +463,10 @@ export function configFromSessionResult(result: AcpNewSessionResult | AcpLoadSes
 
 /** `current_mode_update`: the mode setting (the `mode` option, or any option of the `mode` category) now reads `modeId`. */
 export function configWithMode(config: readonly ConfigOption[], modeId: string): ConfigOption[] {
-  return config.map((option) => (option.id === MODE_CONFIG_ID || option.category === "mode" ? { ...option, current: modeId } : option));
+  // The agent's mode, never the Connector's own approvals setting (also shown as a mode).
+  return config.map((option) =>
+    option.id !== PI_APPROVALS_CONFIG_ID && (option.id === MODE_CONFIG_ID || option.category === "mode") ? { ...option, current: modeId } : option,
+  );
 }
 
 function planEntries(entries: readonly AcpPlanEntry[]): PlanEntry[] {
@@ -532,6 +536,8 @@ export interface AcpTimelineProjectorOptions {
   newId?: () => string;
   /** Told of `available_commands_update` (slash commands are not part of the timeline). */
   onAvailableCommands?: (commands: AcpAvailableCommand[]) => void;
+  /** Applied to the settings the agent reports before they are stored (the Connector adds its own: approvals). */
+  decorateConfig?: (config: ConfigOption[]) => ConfigOption[];
 }
 
 interface OpenStretch {
@@ -576,6 +582,7 @@ export class AcpTimelineProjector {
   private readonly store: SessionStore;
   private readonly newId: () => string;
   private readonly onAvailableCommands: AcpTimelineProjectorOptions["onAvailableCommands"];
+  private readonly decorate: (config: ConfigOption[]) => ConfigOption[];
   private readonly unsubscribe: () => void;
 
   private turnId: string | undefined;
@@ -600,6 +607,7 @@ export class AcpTimelineProjector {
     this.sessionId = options.sessionId;
     this.newId = options.newId ?? (() => globalThis.crypto.randomUUID());
     this.onAvailableCommands = options.onAvailableCommands;
+    this.decorate = options.decorateConfig ?? ((config) => config);
     this.unsubscribe = this.store.addAnswerListener((sessionId, result) => {
       if (sessionId !== this.sessionId) return;
       const pending = this.permissions.get(result.request.request_id);
@@ -674,7 +682,7 @@ export class AcpTimelineProjector {
         this.setPlan(planEntries(update.entries));
         return;
       case "config_option_update":
-        this.store.updateSession(this.sessionId, { config: configOptionsFromAcp(update.configOptions) });
+        this.store.updateSession(this.sessionId, { config: this.decorate(configOptionsFromAcp(update.configOptions)) });
         return;
       case "current_mode_update":
         this.setMode(update.currentModeId);
@@ -692,6 +700,11 @@ export class AcpTimelineProjector {
   handleNotification(params: AcpSessionNotificationParams, acpSessionId?: string): void {
     if (acpSessionId !== undefined && params.sessionId !== acpSessionId) return;
     this.handleUpdate(params.update);
+  }
+
+  /** Whether the agent has reported this tool call in the turn now running. */
+  hasToolCall(toolCallId: string): boolean {
+    return this.tools.has(toolCallId);
   }
 
   /**

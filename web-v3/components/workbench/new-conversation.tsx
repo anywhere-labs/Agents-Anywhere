@@ -116,8 +116,8 @@ function NewConversationInner() {
   const loadingAgents = online && !info.status && !info.error
   const ready = Boolean(online && agent && tunnelManager && tunnelDevice)
 
-  // The agent, started as soon as it and the directory are chosen; its options, with the picks made here (and,
-  // for options not touched here, the ones last used with this agent on this device).
+  // The agent, started as soon as it and the directory are chosen; its options, with the picks made here. The device
+  // reports them as its newest conversation with this agent was created, so nothing is remembered here.
   const { state: prep, retry: retryPrepare } = usePreparedAgent({
     tunnelManager,
     device: tunnelDevice,
@@ -128,13 +128,9 @@ function NewConversationInner() {
   const agentKey = deviceId && agent ? `${deviceId}:${agent}` : null
   const [picked, setPicked] = useState<{ key: string | null; values: Record<string, string> }>({ key: null, values: {} })
   const ownPicks = useMemo(() => (picked.key === agentKey ? picked.values : {}), [agentKey, picked])
-  const picks = useMemo(
-    () => ({ ...(agentKey ? prefs.configByAgent[agentKey] : undefined), ...ownPicks }),
-    [agentKey, ownPicks, prefs.configByAgent]
-  )
   const shownConfig = useMemo(
-    () => (prep.status === "ready" ? withPicks(prep.prepared.config, picks) : []),
-    [picks, prep]
+    () => (prep.status === "ready" ? withPicks(prep.prepared.config, ownPicks) : []),
+    [ownPicks, prep]
   )
   // A first start downloads the agent: after a few seconds, say so.
   const startingKey = prep.status === "starting" ? `${agentKey}|${cwd ?? ""}` : null
@@ -167,9 +163,9 @@ function NewConversationInner() {
       if (prep.status === "starting") {
         prepared = await tunnelManager.prepareSession(tunnelDevice, { agent, ...(cwd ? { cwd } : {}) }).catch(() => null)
       }
-      // With a started agent only what differs from its options is sent; otherwise (a Connector without prepare,
-      // or a start that failed) the options last used, as before.
-      const config = prepared ? changedPicks(prepared.config, withPicks(prepared.config, picks)) : picks
+      // With a started agent only what differs from its options is sent; otherwise (a start that failed) what was
+      // picked here. The device starts from the agent's newest settings either way.
+      const config = prepared ? changedPicks(prepared.config, withPicks(prepared.config, ownPicks)) : ownPicks
       const title = titleFromMessage(text)
       const session = await tunnelManager.createSession(tunnelDevice, {
         agent,
@@ -179,13 +175,7 @@ function NewConversationInner() {
         ...(Object.keys(config).length ? { config } : {}),
       })
       created = session.id
-      setPrefs((p) => ({
-        lastStart: rememberStart(p.lastStart, deviceId, agent, cwd),
-        // What was picked here is remembered for the next conversation with this agent on this device.
-        ...(Object.keys(ownPicks).length
-          ? { configByAgent: { ...p.configByAgent, [`${deviceId}:${agent}`]: { ...p.configByAgent[`${deviceId}:${agent}`], ...ownPicks } } }
-          : {}),
-      }))
+      setPrefs((p) => ({ lastStart: rememberStart(p.lastStart, deviceId, agent, cwd) }))
       const refs = drafts.items.length ? await drafts.upload(session.id) : []
       if (refs === null) {
         // Its attachments did not all go: open it with the text kept, to add the files again there.

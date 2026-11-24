@@ -249,9 +249,9 @@ describe("Device/agents", () => {
     const { deviceService: device, sessionsService: sessions } = f.host;
     const { agents } = device.agents({}, TUNNEL);
     assert.deepEqual(agents, [
-      { id: "fake", name: "Fake", builtin: false, enabled: true, command: process.execPath, args: f.presets.fake.args, env_keys: [], customized: false, running: 0, busy: 0 },
-      { id: "slow", name: "Slow", builtin: false, enabled: true, command: process.execPath, args: f.presets.slow.args, env_keys: [], customized: false, running: 0, busy: 0 },
-      { id: "builtin", name: "Built-in", builtin: true, enabled: true, command: process.execPath, args: f.presets.builtin.args, env_keys: [], customized: false, running: 0, busy: 0 },
+      { id: "fake", name: "Fake", builtin: false, enabled: true, command: process.execPath, args: f.presets.fake.args, env_keys: [], customized: false, running: 0, busy: 0, idle_close_minutes: 0 },
+      { id: "slow", name: "Slow", builtin: false, enabled: true, command: process.execPath, args: f.presets.slow.args, env_keys: [], customized: false, running: 0, busy: 0, idle_close_minutes: 0 },
+      { id: "builtin", name: "Built-in", builtin: true, enabled: true, command: process.execPath, args: f.presets.builtin.args, env_keys: [], customized: false, running: 0, busy: 0, idle_close_minutes: 0 },
     ]);
     assert.deepEqual(device.status({}, TUNNEL).runtimes, [
       { id: "fake", name: "Fake" },
@@ -336,6 +336,7 @@ describe("Device/update_agent", () => {
       customized: true,
       running: 1,
       busy: 0,
+      idle_close_minutes: 0,
     });
     assert.deepEqual(device.status({}, TUNNEL).runtimes[0], { id: "fake", name: "Fake" }, "the name stays the preset's");
 
@@ -389,7 +390,7 @@ describe("Device/update_agent", () => {
     assert.deepEqual(removed.env_keys, ["OTHER"]);
 
     for (const answer of answers) assert.ok(!JSON.stringify(answer).includes(SECRET), JSON.stringify(answer));
-    assert.deepEqual(Object.keys(removed).sort(), ["args", "builtin", "busy", "command", "customized", "enabled", "env_keys", "id", "name", "running"]);
+    assert.deepEqual(Object.keys(removed).sort(), ["args", "builtin", "busy", "command", "customized", "enabled", "env_keys", "id", "idle_close_minutes", "name", "running"]);
     assert.ok(f.logs.length > 0);
     assert.ok(f.logs.every((line) => !line.includes(SECRET)), f.logs.join("\n"));
     assert.ok(f.pushes.length > 0);
@@ -417,6 +418,28 @@ describe("Device/update_agent", () => {
     const plain = await device.update_agent({ id: "fake", command: process.execPath, args: f.presets.fake.args, env: {} }, TUNNEL);
     assert.equal(plain.customized, false);
     assert.deepEqual(await saved(), {});
+  });
+
+  it("keeps an idle close time per agent: never by default, saved in minutes, 0 is never again, reset leaves it", async () => {
+    const f = await setup();
+    const saved = () => readFile(path.join(f.dataDir, "agents.json"), "utf8").then((text) => (JSON.parse(text) as { agents: Record<string, unknown> }).agents);
+    assert.equal(f.agent("fake").idle_close_minutes, 0, "never by default");
+
+    const set = await f.host.deviceService.update_agent({ id: "fake", idle_close_minutes: 30 }, TUNNEL);
+    assert.equal(set.idle_close_minutes, 30);
+    assert.deepEqual((await saved()).fake, { idle_close_minutes: 30 });
+    assert.ok(f.logs.includes("agent fake updated (idle_close_minutes)"), f.logs.join("\n"));
+    const reset = await f.host.deviceService.update_agent({ id: "fake", reset: true }, TUNNEL);
+    assert.equal(reset.idle_close_minutes, 30, "reset leaves it");
+    await f.restart();
+    assert.equal(f.agent("fake").idle_close_minutes, 30, "after a restart");
+
+    const never = await f.host.deviceService.update_agent({ id: "fake", idle_close_minutes: 0 }, TUNNEL);
+    assert.equal(never.idle_close_minutes, 0);
+    assert.deepEqual(await saved(), {}, "never is not stored");
+    for (const bad of [-1, 1.5, 7 * 24 * 60 + 1]) {
+      assert.ok(!UpdateAgentRequestSchema.safeParse({ id: "fake", idle_close_minutes: bad }).success, String(bad));
+    }
   });
 
   it("checks what it is given, and refuses agents this device does not have", async () => {

@@ -20,15 +20,12 @@ export interface WorkbenchLocalPrefs {
   pins: string[]
   lastStart: LastStart | null
   panel: { open: boolean; tab: string }
-  /** Per `${deviceId}:${agent}`: the session options last chosen (model, effort, mode), passed to the next create. */
-  configByAgent: Record<string, Record<string, string>>
 }
 
 const DEFAULTS: WorkbenchLocalPrefs = {
   pins: [],
   lastStart: null,
   panel: { open: false, tab: "files" },
-  configByAgent: {},
 }
 
 const listeners = new Set<() => void>()
@@ -42,7 +39,12 @@ function read(accountId: string): WorkbenchLocalPrefs {
   let value = DEFAULTS
   try {
     const raw = window.localStorage.getItem(storageKey(accountId))
-    if (raw) value = { ...DEFAULTS, ...(JSON.parse(raw) as Partial<WorkbenchLocalPrefs>) }
+    if (raw) {
+      // `configByAgent` (options for new conversations, now remembered by the device) is dropped, not written back.
+      const saved = JSON.parse(raw) as Partial<WorkbenchLocalPrefs> & { configByAgent?: unknown }
+      delete saved.configByAgent
+      value = { ...DEFAULTS, ...saved }
+    }
   } catch {
     value = DEFAULTS
   }

@@ -19,6 +19,7 @@
  */
 
 import { randomBytes } from "node:crypto";
+import * as path from "node:path";
 
 import { generateE2EKey, Mesh, Router, type RunningServer } from "meshcall";
 
@@ -84,7 +85,8 @@ export interface ConnectorHostOptions {
   maxPrepared?: number;
   /**
    * Close a session's agent after this long with nothing in flight, when the agent can restore its context (its
-   * next message starts it again and restores it). Default 15 min; 0 or null: never.
+   * next message starts it again and restores it), for agents without an idle close of their own (their settings).
+   * Default (and 0 or null): never.
    */
   idleTtlMs?: number | null;
   connectorVersion?: string;
@@ -274,6 +276,13 @@ export class ConnectorHost {
       ...(this.options.defaultPresets !== undefined ? { defaultPresets: this.options.defaultPresets } : {}),
       agentSettings: await state.loadAgentSettings(),
       onAgentSettingsChange: (agents) => state.saveAgentSettings(agents),
+      lastSessionConfig: await state.loadLastSessionConfig().catch((error: unknown) => {
+        this.#logger.warn(`could not read the settings of the newest conversations: ${String(error)}`);
+        return {};
+      }),
+      onLastSessionConfigChange: (config) => state.saveLastSessionConfig(config),
+      // Pi processes' approvals mode files (one per process, removed when it exits), with the device's other state.
+      approvalsDir: path.join(state.dataDir, "pi-approvals"),
       ...(this.options.preparedTtlMs !== undefined ? { preparedTtlMs: this.options.preparedTtlMs } : {}),
       ...(this.options.maxPrepared !== undefined ? { maxPrepared: this.options.maxPrepared } : {}),
       ...(this.options.idleTtlMs !== undefined ? { idleTtlMs: this.options.idleTtlMs } : {}),
@@ -484,7 +493,7 @@ export class ConnectorHost {
     const wasEnabled = !this.runtimes.isDisabled(id);
     const agent = await this.runtimes.updateAgent(id, update);
     // Which fields, never their values.
-    const fields: string[] = (["enabled", "command", "args", "env"] as const).filter((field) => update[field] != null);
+    const fields: string[] = (["enabled", "command", "args", "env", "approvals", "idle_close_minutes"] as const).filter((field) => update[field] != null);
     if (update.reset) fields.unshift("reset");
     this.#logger.info(`agent ${id} updated (${fields.join(", ") || "nothing"})`);
     // The control plane offers only the agents in presence: tell it now rather than at the next report.

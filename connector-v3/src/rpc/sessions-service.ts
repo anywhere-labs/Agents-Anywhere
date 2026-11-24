@@ -13,7 +13,9 @@
  *
  * New conversations: `prepare({ agent, cwd? })` starts the agent as soon as the user picks it and reports its
  * settings (model, mode, …) in the shape of `Session.config`, so they can be chosen before the first message;
- * `create({ …, prepared_id })` takes that agent over instead of starting another.
+ * `create({ …, prepared_id })` takes that agent over instead of starting another. Both start with the settings the
+ * agent's newest conversation on this device was created with (where it still offers them); `create`'s `config` goes
+ * on top, and what the conversation ends up with is remembered for the next one.
  *
  * Turns: an idle session starts a turn at once; a busy one queues the message (`control.queued`) and starts it when
  * the turn ends. `delivery: "steer"` (and `steer_queued`) interrupts the running turn and sends the message next:
@@ -78,7 +80,7 @@ const CreateRequestSchema = z.object({
   agent: z.string().min(1).max(64),
   title: z.string().max(256).nullish(),
   cwd: z.string().min(1).nullish(),
-  /** `config_id → value`, applied once the agent reports its options. */
+  /** `config_id → value`, applied once the agent reports its options, over the settings of its newest conversation. */
   config: z.record(z.string(), z.string()).nullish(),
   /** `prepare`'s id: take that agent over when it was prepared for this agent and folder and has not expired; else start one. */
   prepared_id: z.string().min(1).max(128).nullish(),
@@ -325,13 +327,21 @@ export class SessionsService {
       this.#store.delete(session.id);
       throw error;
     }
-    for (const [configId, value] of Object.entries(request.config ?? {})) {
+    // The settings the agent's newest conversation was created with, then the ones asked for here; whatever this one
+    // ends up with is remembered for the next.
+    const wanted = { ...runtimes.lastSessionConfig(request.agent), ...request.config };
+    for (const [configId, value] of Object.entries(wanted)) {
+      // Read again each time: one setting (the model) can change the others' choices.
+      const option = this.#store.get(session.id)?.config.find((o) => o.id === configId);
+      // An option the agent does not offer (or a value it no longer has) is ignored: the session itself is fine.
+      if (option === undefined || option.current === value || !option.options.some((o) => o.value === value)) continue;
       try {
         await runtimes.setConfig(session.id, configId, value);
       } catch {
-        // An option the agent does not offer is ignored: the session itself is fine.
+        // Refused: the agent's value stays.
       }
     }
+    await runtimes.rememberSessionConfig(session.id);
     return this.#store.get(session.id) ?? session;
   }
 

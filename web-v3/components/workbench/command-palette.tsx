@@ -214,7 +214,7 @@ export function CommandPalette({
     }
 
     const settings: [string, ReactNode, string, string][] = [
-      ["general", <PaletteIcon key="i" />, t("settings.nav.general"), "theme language appearance assistant-first"],
+      ["general", <PaletteIcon key="i" />, t("settings.nav.general"), "theme language appearance orches mode"],
       ["account", <UserIcon key="i" />, t("settings.nav.account"), "account role limits quota"],
       ["drive", <CloudIcon key="i" />, t("settings.driveTitle"), "drive storage quota files"],
       ["apps", <ShieldIcon key="i" />, t("settings.mcpGrantsTitle"), "mcp grants oauth apps"],

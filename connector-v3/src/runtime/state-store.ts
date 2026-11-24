@@ -27,7 +27,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { AgentOverridesSchema, type AgentOverrides } from "../core/config.js";
+import { AgentOverridesSchema, LastSessionConfigSchema, type AgentOverrides, type LastSessionConfig } from "../core/config.js";
 
 /** `DeviceMode` in control.schema.json. */
 export type DeviceMode = "normal" | "encrypted";
@@ -72,6 +72,7 @@ export const STATE_FILES = {
   pairedClients: "paired-clients.json",
   sessions: "sessions.json",
   agents: "agents.json",
+  lastSessionConfig: "last-session-config.json",
 } as const;
 
 const SECRET_FILE_MODE = 0o600;
@@ -297,6 +298,21 @@ export class StateStore {
     await this.#writeJson(STATE_FILES.agents, { agents });
   }
 
+  // -- the settings of each agent's newest conversation ---------------------
+
+  /** The settings each agent's newest conversation was created with; missing file → none. */
+  async loadLastSessionConfig(): Promise<LastSessionConfig> {
+    const file = this.pathFor(STATE_FILES.lastSessionConfig);
+    const raw = await this.#readJson(file);
+    if (raw === undefined) return {};
+    return parseLastSessionConfig(raw, file);
+  }
+
+  async saveLastSessionConfig(config: LastSessionConfig): Promise<void> {
+    const agents = parseLastSessionConfig({ agents: config }, undefined);
+    await this.#writeJson(STATE_FILES.lastSessionConfig, { agents });
+  }
+
   // -- internals -----------------------------------------------------------
 
   async #readJson(file: string): Promise<unknown> {
@@ -429,6 +445,18 @@ function parseAgentSettings(raw: unknown, file: string | undefined): AgentOverri
   if (!isRecord(raw)) throw invalid(file, "agent settings must be a JSON object");
   if (raw.agents === undefined) return {};
   const parsed = AgentOverridesSchema.safeParse(raw.agents);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    const where = ["agents", ...(issue?.path ?? []).map(String)].join(".");
+    throw invalid(file, `${where}: ${issue?.message ?? "invalid"}`);
+  }
+  return parsed.data;
+}
+
+function parseLastSessionConfig(raw: unknown, file: string | undefined): LastSessionConfig {
+  if (!isRecord(raw)) throw invalid(file, "the settings of the newest conversations must be a JSON object");
+  if (raw.agents === undefined) return {};
+  const parsed = LastSessionConfigSchema.safeParse(raw.agents);
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
     const where = ["agents", ...(issue?.path ?? []).map(String)].join(".");

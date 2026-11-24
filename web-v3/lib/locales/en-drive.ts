@@ -8,6 +8,8 @@ export const enDrive = {
   "drive.usage": "{used} of {quota} used",
   "drive.usageUnlimited": "{used} used",
   "drive.retention": "Files kept for {duration}",
+  "drive.maxFile": "Files up to {size}",
+  "drive.fileCount": "{count} files",
   "drive.newFolder": "New folder",
   "drive.upload": "Upload",
 

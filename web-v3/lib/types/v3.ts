@@ -255,6 +255,13 @@ export interface AgentEntry {
   running: number
   /** Conversations of this agent with a turn running now. */
   busy: number
+  /**
+   * Agents Anywhere's approvals turned on: only for agents that ask no one before they act and to which AA can add
+   * that (Pi). Absent for every other agent.
+   */
+  approvals?: boolean
+  /** Minutes a conversation's agent may sit idle before it is closed (its next message restores it); 0: never. */
+  idle_close_minutes?: number
 }
 
 /** aa.v3.Device/update_agent: `reset` first drops every override; `env` values of null remove a variable. */
@@ -266,6 +273,9 @@ export interface AgentUpdate {
   args?: string[]
   env?: Record<string, string | null>
   reset?: boolean
+  approvals?: boolean
+  /** 0: never close idle processes. */
+  idle_close_minutes?: number
 }
 
 /**

@@ -1,10 +1,12 @@
 "use client"
 
 // An agent's settings on one device (from its row on the device page; v2's runtime settings): on or off (it keeps its
-// product name: agents are not renamed), whether its processes are running (stop them, or start it to check it can be used and see its options), the options
-// new conversations with it start with, and how it is started (command, arguments, environment variables) with a way
-// back to the Connector's defaults. Changes apply the next time the agent starts. A Connector that does not manage
-// agents yet offers only the check and the options for new conversations.
+// product name: agents are not renamed), AA's approvals for agents that ask no one before they act (Pi: a Pi
+// extension the device installs globally), whether its processes are running (stop them, or start it to check it can
+// be used) and how long an idle one is kept, and how it is started (command, arguments, environment variables) with a
+// way back to the Connector's defaults. Changes apply the next time the agent starts. A Connector that does not manage agents yet offers only the
+// check. There is no "defaults for new conversations": the device starts each one with the settings the agent's
+// newest conversation was created with.
 import { useState } from "react"
 import { DeadlineExceededError, MeshCallError } from "meshcall/web"
 import { LoaderCircleIcon, PlusIcon, XIcon } from "lucide-react"
@@ -18,22 +20,22 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { AgentIcon } from "@/components/workbench/agent-icon"
-import { Card, Group, Note, Row } from "@/components/workbench/settings-parts"
+import { Card, Group, Row } from "@/components/workbench/settings-parts"
 import type { DeviceTunnelManager } from "@/lib/mesh/device-tunnel"
-import { useWorkbench } from "@/lib/state/workbench-context"
-import type { AgentEntry, AgentUpdate, DeviceRecord, PreparedAgent } from "@/lib/types/v3"
+import type { AgentEntry, AgentUpdate, DeviceRecord } from "@/lib/types/v3"
 import { joinArgs, splitArgs } from "@/lib/workbench/args"
-import { useLocalPrefs } from "@/lib/workbench/local-prefs"
 
 type TunnelDevice = Pick<DeviceRecord, "id" | "mode_hint" | "presence">
 
 type Check =
   | { status: "idle" }
   | { status: "starting" }
-  | { status: "ready"; prepared: PreparedAgent }
+  | { status: "ready" }
   | { status: "failed"; reason: string; message: string; methods: string[] }
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
+/** How long an idle conversation's agent is kept, in minutes (0: never closed, the default). */
+const IDLE_CLOSE_CHOICES = [0, 10, 30, 60, 180, 720]
 
 export function AgentSettingsDialog({
   open,
@@ -97,8 +99,6 @@ function AgentSettingsBody({
   onStopped: () => void
 }) {
   const { t } = useI18n()
-  const { activeAccount } = useWorkbench()
-  const [prefs, setPrefs] = useLocalPrefs(activeAccount?.accountId)
   const online = device?.presence === "online"
   const name = entry?.name ?? agent.name
 
@@ -191,8 +191,8 @@ function AgentSettingsBody({
     setCheck({ status: "starting" })
     for (;;) {
       try {
-        const prepared = await tunnelManager.prepareSession(device, { agent: agent.id })
-        setCheck({ status: "ready", prepared })
+        await tunnelManager.prepareSession(device, { agent: agent.id })
+        setCheck({ status: "ready" })
         onStopped()
         return
       } catch (err) {
@@ -212,17 +212,6 @@ function AgentSettingsBody({
     }
   }
 
-  const prefKey = device ? `${device.id}:${agent.id}` : ""
-  const defaults = prefs.configByAgent[prefKey] ?? {}
-  const setDefault = (configId: string, value: string) =>
-    setPrefs((p) => ({ configByAgent: { ...p.configByAgent, [prefKey]: { ...(p.configByAgent[prefKey] ?? {}), [configId]: value } } }))
-  const clearDefaults = () =>
-    setPrefs((p) => {
-      const next = { ...p.configByAgent }
-      delete next[prefKey]
-      return { configByAgent: next }
-    })
-
   const envKeys = [...new Set([...(entry?.env_keys ?? []), ...Object.keys(envSet)])].filter((k) => !envRemoved.includes(k))
   const addEnv = () => {
     const key = newEnv.key.trim()
@@ -234,6 +223,13 @@ function AgentSettingsBody({
     setEnvRemoved((r) => r.filter((k) => k !== key))
     setNewEnv({ key: "", value: "" })
   }
+
+  const idleLabel = (minutes: number) =>
+    minutes === 0
+      ? t("agent.idleNever")
+      : minutes % 60 === 0
+        ? t("agent.idleHours", { count: minutes / 60 })
+        : t("agent.idleMinutes", { count: minutes })
 
   let checkText: string | null = null
   if (check.status === "failed") {
@@ -274,6 +270,19 @@ function AgentSettingsBody({
                   aria-label={t("agent.enabled")}
                 />
               </Row>
+              {entry?.approvals !== undefined && (
+                <Row label={t("agent.approvals")} hint={t("agent.approvalsHint", { agent: name })}>
+                  <Switch
+                    checked={entry.approvals}
+                    disabled={!online}
+                    onCheckedChange={async (v) => {
+                      const next = await update({ approvals: Boolean(v) })
+                      if (next && next.running > 0) toast.success(t("agent.savedRestart"))
+                    }}
+                    aria-label={t("agent.approvals")}
+                  />
+                </Row>
+              )}
             </Card>
           </Group>
         )}
@@ -302,48 +311,25 @@ function AgentSettingsBody({
                 </Button>
               </Row>
             )}
+            {managed && entry?.idle_close_minutes !== undefined && (
+              <Row label={t("agent.idleClose")} hint={t("agent.idleCloseHint")}>
+                <DropdownSelect
+                  value={String(entry.idle_close_minutes)}
+                  options={[...new Set([...IDLE_CLOSE_CHOICES, entry.idle_close_minutes])]
+                    .sort((a, b) => a - b)
+                    .map((minutes) => ({ value: String(minutes), label: idleLabel(minutes) }))}
+                  onChange={(v) => void update({ idle_close_minutes: Number(v) })}
+                  label={t("agent.idleClose")}
+                  align="end"
+                />
+              </Row>
+            )}
             <Row label={t("agent.check")} hint={checkText ?? (check.status === "ready" ? t("agent.checkOk") : t("agent.checkHint"))}>
               <Button variant="outline" size="sm" disabled={!online || check.status === "starting"} onClick={() => void runCheck()}>
                 {check.status === "starting" && <LoaderCircleIcon className="size-3.5 animate-spin" />}
                 {t("agent.start")}
               </Button>
             </Row>
-          </Card>
-        </Group>
-
-        <Group
-          title={t("agent.defaults")}
-          description={t("agent.defaultsHint")}
-          action={
-            Object.keys(defaults).length > 0 && (
-              <Button variant="ghost" size="xs" className="text-muted-foreground" onClick={clearDefaults}>
-                {t("agent.defaultsClear")}
-              </Button>
-            )
-          }
-        >
-          <Card>
-            {check.status !== "ready" ? (
-              <Note>{t("agent.defaultsNeedStart")}</Note>
-            ) : check.prepared.config.length === 0 ? (
-              <Note>{t("agent.noOptions")}</Note>
-            ) : (
-              check.prepared.config.map((o) => {
-                const value = o.options.some((x) => x.value === defaults[o.id]) ? defaults[o.id]! : o.current
-                return (
-                  <Row key={o.id} label={o.name} hint={o.description}>
-                    <DropdownSelect
-                      value={value}
-                      options={o.options.map((x) => ({ value: x.value, label: x.name }))}
-                      onChange={(v) => setDefault(o.id, v)}
-                      label={o.name}
-                      align="end"
-                      className="max-w-56"
-                    />
-                  </Row>
-                )
-              })
-            )}
           </Card>
         </Group>
 
