@@ -11,6 +11,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { SettingsSection } from "@/components/settings/settings-section"
+import { TwoFactorSection } from "@/components/settings/two-factor-section"
 import {
   Dialog,
   DialogContent,
@@ -140,6 +141,8 @@ function AccountTab({
           </Button>
         }
       />
+
+      <TwoFactorSection token={token} />
 
       <AccountProfileCard me={me} token={token} onMeChange={onMeChange} />
 

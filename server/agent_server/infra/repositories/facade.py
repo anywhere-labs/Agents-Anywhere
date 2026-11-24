@@ -40,6 +40,7 @@ from agent_server.infra.repositories.runtime_workflows import (
     RuntimeWorkflowRepositoryMixin,
 )
 from agent_server.infra.repositories.tokens_links import TokensLinkRepositoryMixin
+from agent_server.infra.repositories.totp import TotpRepositoryMixin
 
 
 class Store(
@@ -54,6 +55,7 @@ class Store(
     DeviceRuntimeRepositoryMixin,
     ProtocolCatalogRepositoryMixin,
     UserRepositoryMixin,
+    TotpRepositoryMixin,
     OAuthRepositoryMixin,
     InstanceSettingsRepositoryMixin,
     ConnectorRepositoryMixin,

@@ -8,6 +8,8 @@
 
 - 运行中排队消息需要 Server 执行 `v2_56` 数据库迁移（只新增两张表，不改写已有数据）；排队在 Web、Desktop、Android 和 iOS 上可用，旧版客户端的行为不变。（[#658](https://github.com/anywhere-labs/Agents-Anywhere/pull/658)、[#659](https://github.com/anywhere-labs/Agents-Anywhere/pull/659)）
 
+- 两步验证需要 Server 执行 `v2_57` 数据库迁移（只新增两张表），并且 `AGENT_SERVER_SECRET` 至少 32 个字符，否则无法开启。开启后用密码登录的旧版 Web、Desktop 和 iOS 客户端会提示需要验证码而无法完成登录，请一起升级；Android 和 Desktop 通过网页确认登录，不受影响。（[#797](https://github.com/anywhere-labs/Agents-Anywhere/pull/797)）
+
 ### 会话创建与消息交付
 
 - ACP Agent 的思考内容会与助手正文分开展示，并支持折叠查看；Pi 已导入的会话也会按同样方式显示，只发图片不带文字的消息不再从时间线里消失。（[#736](https://github.com/anywhere-labs/Agents-Anywhere/pull/736)）
@@ -28,6 +30,10 @@
 
 - AA 插件退出登录前会弹窗确认，并提示退出后本机连接将停止。（[#789](https://github.com/anywhere-labs/Agents-Anywhere/pull/789)）
 - 准备 Pi 时会复用本机 Node 22.19 及以上版本（包括 Node 24），不再强制下载；需要下载时，官方源连不上会自动改用 npmmirror，Python 安装源选了镜像的设备会优先使用 npmmirror；Windows 上多个进程同时准备不再报 `Resource deadlock avoided`，而是排队等待；数据目录通过 Junction 挂到其他盘时，不再误报「Node 安装包路径无效」；Node 下载失败时会提示检查网络。（[#657](https://github.com/anywhere-labs/Agents-Anywhere/pull/657)）
+
+### Web 与 Desktop 界面
+
+- 「设置 → 账号」新增「两步验证」：用 Google Authenticator、Microsoft Authenticator、1Password 等身份验证器 App 扫码开启，开启时生成 10 个一次性恢复码；之后用密码登录还要输入 App 中的 6 位验证码或一个恢复码，连续输错 5 次锁定 5 分钟。关闭两步验证或重新生成恢复码都需要当前验证码；丢失手机的用户可由管理员重置。（[#797](https://github.com/anywhere-labs/Agents-Anywhere/pull/797)）
 
 ### Android
 

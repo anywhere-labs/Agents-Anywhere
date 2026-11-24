@@ -24,7 +24,10 @@ import type {
   ServiceInfo,
   UserRole,
   MobileLoginQrCreateResponse,
-  MobileLoginStatusResponse
+  MobileLoginStatusResponse,
+  TotpRecoveryCodes,
+  TotpSetup,
+  TotpStatus
 } from "@/features/auth/types";
 
 export class AuthApi {
@@ -57,6 +60,34 @@ export class AuthApi {
         passwordVerifier
       },
       { auth: false },
+    );
+  }
+
+  totpStatus(token: string): Promise<TotpStatus> {
+    return this.client.get<TotpStatus>("/auth/totp", { token });
+  }
+
+  beginTotpSetup(token: string): Promise<TotpSetup> {
+    return this.client.post<TotpSetup>("/auth/totp/setup", {}, { token });
+  }
+
+  cancelTotpSetup(token: string): Promise<void> {
+    return this.client.delete<void>("/auth/totp/setup", { token });
+  }
+
+  enableTotp(token: string, code: string): Promise<TotpRecoveryCodes> {
+    return this.client.post<TotpRecoveryCodes>("/auth/totp/enable", { code: code.trim() }, { token });
+  }
+
+  disableTotp(token: string, code: string): Promise<void> {
+    return this.client.post<void>("/auth/totp/disable", { code: code.trim() }, { token });
+  }
+
+  regenerateTotpRecoveryCodes(token: string, code: string): Promise<TotpRecoveryCodes> {
+    return this.client.post<TotpRecoveryCodes>(
+      "/auth/totp/recovery-codes",
+      { code: code.trim() },
+      { token },
     );
   }
 
@@ -256,6 +287,10 @@ export class AuthApi {
       },
       { token },
     );
+  }
+
+  resetUserTotp(token: string, userId: string): Promise<void> {
+    return this.client.delete<void>(`/admin/users/${encodeURIComponent(userId)}/totp`, { token });
   }
 
   deleteUser(token: string, userId: string): Promise<void> {
