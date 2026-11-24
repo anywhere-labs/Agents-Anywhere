@@ -8,6 +8,7 @@ import httpx
 import pytest
 from meshcall import MeshCallError
 
+from connector.core.config import ConnectorConfig
 from connector.runtimes.dsh.bridge.host import (
     BACKEND_UNAVAILABLE,
     SubscriptionRegistry,
@@ -15,7 +16,7 @@ from connector.runtimes.dsh.bridge.host import (
     SyncService,
 )
 from connector.server import ingest as ingest_module
-from connector.server.auth import ConnectorAuthenticationError
+from connector.server.auth import ConnectorAuthenticationError, ConnectorAuthenticator
 from connector.server.errors import ConnectorNetworkError
 from connector.server.ingest import (
     ConnectorIngestClient,
@@ -433,6 +434,51 @@ def test_failed_websocket_sender_stops_admission_instead_of_hanging_next_send():
                 channel.send_notification("connector.heartbeat", {}), 1
             )
         await channel.close_connection()
+
+    asyncio.run(run())
+
+
+def test_server_failure_while_fetching_the_access_token_keeps_the_batch_for_recovery():
+    # Seen in production: /connector/auth answered 502 during a Server restart; the flush
+    # loop logged "permanently rejected" and dropped the batch it was holding.
+    async def run():
+        delivered = asyncio.Event()
+        paths = []
+
+        async def transport(request):
+            paths.append(request.url.path)
+            if request.url.path == "/api/v2/connector/auth":
+                if paths.count(request.url.path) == 1:
+                    return httpx.Response(502, text="Bad Gateway")
+                return httpx.Response(200, json={"accessToken": "token", "expiresIn": 60})
+            delivered.set()
+            return httpx.Response(200, json={"accepted": 1, "rejected": []})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+            auth = ConnectorAuthenticator(ConnectorConfig("https://server.test", "connector", "fixture"), lambda: http, lambda timeout: http)
+            ingest = ConnectorIngestClient("https://server.test", auth.ensure_access_token, lambda: http, lambda timeout: http)
+            ingest._retry_delay = 0.001
+            await ingest.enqueue("session.state.updated", {"status": "running"})
+            task = asyncio.create_task(ingest.flush_loop())
+            await asyncio.wait_for(delivered.wait(), 1)
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            assert paths == ["/api/v2/connector/auth", "/api/v2/connector/auth", "/api/v2/connector/ingest"]
+            assert not ingest.has_pending
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("status", [500, 502, 503, 408, 429])
+def test_a_server_failure_fetching_the_access_token_is_transient(status):
+    async def run():
+        def handler(request):
+            return httpx.Response(status, text="try later")
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+            auth = ConnectorAuthenticator(ConnectorConfig("https://server.test", "connector", "fixture"), lambda: http, lambda timeout: http)
+            with pytest.raises(ConnectorNetworkError, match=f"HTTP {status}"):
+                await auth.ensure_access_token()
 
     asyncio.run(run())
 

@@ -59,6 +59,13 @@ class ConnectorAuthenticator:
                 ) from exc
             if response.status_code == 401:
                 raise ConnectorAuthenticationError("invalid connector credential")
+            if response.status_code in {408, 429} or response.status_code >= 500:
+                # The same rule as for the ingest request: a Server that is down or
+                # unhappy has not judged the batch. An HTTPStatusError raised here
+                # would make the ingest flush loop drop the batch it is holding.
+                raise ConnectorNetworkError(
+                    f"backend authentication temporarily unavailable: HTTP {response.status_code}"
+                )
             response.raise_for_status()
             body = response.json()
             access_token = body["accessToken"]
