@@ -1,4 +1,7 @@
+import type { FilePreviewLocation } from "@/lib/file-preview-location"
+
 export type PickedFile = {
+  location?: FilePreviewLocation
   name: string
   path: string
   sourceUrl?: string
@@ -21,6 +24,10 @@ export function nativeFilePreviewUrl({
     path: file.path,
     name: file.name,
   })
+  if (file.location) {
+    search.set("line", String(file.location.lineNumber))
+    search.set("column", String(file.location.column))
+  }
   if (file.sourceUrl) search.set("sourceUrl", file.sourceUrl)
   if (file.mediaType) search.set("mediaType", file.mediaType)
   if (typeof file.size === "number") search.set("size", String(file.size))

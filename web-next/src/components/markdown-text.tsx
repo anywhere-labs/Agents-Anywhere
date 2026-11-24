@@ -14,12 +14,13 @@ import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import {
   type OpenSessionFilePreview,
+  type SessionFilePreviewTarget,
   useSessionFilePreviewOpener,
 } from "@/components/session/session-file-preview-context"
 import { cn } from "@/lib/utils"
 import { SourceCodeBlock, SourceCodeContent } from "@/components/source-code-block"
 import { openNativeFilePreviewWindow } from "@/lib/file-preview-window"
-import { inlineCodeFilePath, isExternalMarkdownHref, markdownUrlTransform, sessionFileLinkPath } from "@/lib/session-file-link"
+import { inlineCodeFilePath, isExternalMarkdownHref, markdownUrlTransform, sessionFileLinkLocation, sessionFileLinkPath } from "@/lib/session-file-link"
 import type { SessionView } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
 
@@ -129,15 +130,17 @@ function MarkdownBody({
           code({ className, children, node: _node, ...props }) {
             const previewPath = typeof children === "string" ? inlineCodeFilePath(children) : null
             if (previewPath && token && session) {
+              const open = () => openSessionFilePreview(token, session, previewPath, openFilePreview, sessionFileLinkLocation(String(children)))
               return (
                 <span
                   role="button"
                   tabIndex={0}
                   className="inline-flex max-w-full items-baseline gap-0.5 rounded-none bg-transparent p-0 align-baseline text-[1em] text-inherit underline underline-offset-2 hover:text-foreground"
-                  onClick={() => openSessionFilePreview(token, session, previewPath, openFilePreview)}
+                  onClick={open}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === " ") {
-                      openSessionFilePreview(token, session, previewPath, openFilePreview)
+                      event.preventDefault()
+                      open()
                     }
                   }}
                 >
@@ -185,15 +188,21 @@ function MarkdownBody({
               )
             }
             const path = sessionFileLinkPath(href) ?? href
+            const open = () => {
+              const location = sessionFileLinkLocation(href)
+                ?? (typeof children === "string" ? sessionFileLinkLocation(children) : undefined)
+              openSessionFilePreview(token, session, path, openFilePreview, location)
+            }
             return (
               <span
                 role="button"
                 tabIndex={0}
                 className="inline-flex max-w-full items-baseline gap-0.5 align-baseline text-left underline underline-offset-2 hover:text-foreground"
-                onClick={() => openSessionFilePreview(token, session, path, openFilePreview)}
+                onClick={open}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" || event.key === " ") {
-                    openSessionFilePreview(token, session, path, openFilePreview)
+                    event.preventDefault()
+                    open()
                   }
                 }}
               >
@@ -598,8 +607,9 @@ export function openSessionFilePreview(
   session: SessionView,
   path: string,
   openFilePreview?: OpenSessionFilePreview | null,
+  location?: SessionFilePreviewTarget["location"],
 ) {
-  const file = { name: fileNameFromPath(path), path }
+  const file = { name: fileNameFromPath(path), path, location }
   if (openFilePreview) {
     openFilePreview({
       ...file,

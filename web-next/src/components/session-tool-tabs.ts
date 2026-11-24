@@ -160,7 +160,7 @@ export function sessionToolTabsReducer(
             browsePath: file.browsePath,
             browseExpandedPaths: file.browseExpandedPaths,
             browseScroll: file.browseScroll,
-          } : tab.filePreview,
+          } : file.location ? { ...tab.filePreview!, location: file.location } : tab.filePreview,
         } : tab),
       }
       // Opening a file from an empty browser turns that same tab into a kept file.

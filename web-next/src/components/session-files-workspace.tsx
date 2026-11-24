@@ -62,7 +62,7 @@ const FileDocument = React.memo(function FileDocument({ tab, active, token, conn
     <div className={`absolute inset-0 ${active ? "" : "invisible pointer-events-none"}`}
       aria-hidden={!active} inert={!active || undefined} data-file-tab-id={tab.id}>
       <FilePreviewSurface token={token ?? ""} connectorId={connectorId ?? ""} root={file.root}
-        initialPath={file.path} initialName={file.name} mode="embedded" onDirtyChange={dirty}
+        initialLocation={file.location} initialPath={file.path} initialName={file.name} mode="embedded" onDirtyChange={dirty}
         onOpenExternal={() => openNativeFilePreviewWindow({ token, connectorId, root: file.root, file })} />
     </div>
   )

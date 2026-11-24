@@ -103,7 +103,7 @@ export function MonacoCodeView({
           oldModel?.dispose()
         }
         editor.updateOptions({ ...next.options, readOnly: !next.editable })
-        if (changed) next.onReady?.(api)
+        if (changed || next.onReady !== previous?.onReady) next.onReady?.(api)
         if (next.editable && !previous?.editable) editor.focus()
         previous = next
       }
@@ -131,7 +131,7 @@ export function MonacoCodeView({
     }
   }, [])
 
-  React.useEffect(() => { syncRef.current?.() }, [content, documentKey, editable, fileName, language, options])
+  React.useEffect(() => { syncRef.current?.() }, [content, documentKey, editable, fileName, language, options, onReady])
 
   return <div ref={hostRef} className={cn("aa-monaco-code-view overscroll-contain", className)} style={style} />
 }
