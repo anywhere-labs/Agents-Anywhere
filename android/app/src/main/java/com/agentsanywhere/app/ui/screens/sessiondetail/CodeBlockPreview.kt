@@ -190,6 +190,20 @@ internal fun SoraFilePreview(
     editorBackground: Color? = null,
 ) {
     val context = LocalContext.current
+    val editorRef = remember { arrayOfNulls<CodeEditor>(1) }
+    DisposableEffect(searchController) {
+        onDispose {
+            val editor = editorRef[0] ?: return@onDispose
+            // Same teardown as SoraCodeBlock: detaching the view leaves the TextMate analyzer
+            // thread — and the text it holds — alive for the rest of the process. release() also
+            // detaches the color scheme, which throws for the null-registry scheme built by
+            // SoraTextMate.colorScheme(), so stop the language instead. Dropping the search
+            // subscription first keeps the controller from holding the editor afterwards.
+            searchController.detach(editor)
+            editor.setEditorLanguage(EmptyLanguage())
+            editorRef[0] = null
+        }
+    }
     AndroidView(
         modifier = modifier,
         factory = { ctx ->
@@ -198,6 +212,7 @@ internal fun SoraFilePreview(
                     FrameLayout.LayoutParams.MATCH_PARENT,
                     FrameLayout.LayoutParams.MATCH_PARENT,
                 )
+                editorRef[0] = this
                 configureReadOnlyCodeEditor(
                     darkMode = darkMode,
                     editorBackground = editorBackground,
@@ -211,7 +226,8 @@ internal fun SoraFilePreview(
         update = { editor ->
             val previous = editor.tag as? SoraFileEditorState
             val languageKey = SoraTextMate.languageKeyFor(languageHint)
-            val textChanged = editor.text.toString() != text
+            // Compare against the text we last wrote instead of serializing the whole document.
+            val textChanged = previous?.text != text
             val backgroundArgb = editorBackground?.toArgb()
                 ?: if (darkMode) 0xFF09090B.toInt() else 0xFFFFFFFF.toInt()
             SoraTextMate.ensureReady(context)
@@ -247,6 +263,7 @@ internal fun SoraFilePreview(
                 languageKey = languageKey,
                 searchQuery = searchQuery,
                 backgroundArgb = backgroundArgb,
+                text = text,
             )
         },
     )
@@ -275,6 +292,16 @@ internal class SoraFileSearchController {
         }
         receiver = newReceiver
         receipt = editor.subscribeEvent(PublishSearchResultEvent::class.java, newReceiver)
+    }
+
+    /** Stops listening to [editor] so a preview that left the screen can be collected. */
+    fun detach(editor: CodeEditor) {
+        if (this.editor !== editor) return
+        receipt?.unsubscribe()
+        receipt = null
+        receiver = null
+        this.editor = null
+        onResult = null
     }
 
     fun search(newQuery: String) {
@@ -336,6 +363,7 @@ private data class SoraFileEditorState(
     val languageKey: String,
     val searchQuery: String,
     val backgroundArgb: Int,
+    val text: String,
 )
 
 private data class SoraEditorState(
