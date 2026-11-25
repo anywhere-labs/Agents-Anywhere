@@ -92,8 +92,17 @@ internal fun SoraCodeBlock(
     val editorRef = remember(reading, codeKey) { arrayOfNulls<CodeEditor>(1) }
     DisposableEffect(reading, codeKey) {
         onDispose {
-            editorRef[0]?.let { reading?.codePositions?.set(codeKey, it.offsetX to it.offsetY) }
+            val editor = editorRef[0] ?: return@onDispose
+            // Detaching the view does not stop Sora's TextMate analyzer thread, and that thread
+            // keeps the block's content and styles reachable for the rest of the process lifetime.
+            // release() would run the full teardown, but it also detaches the color scheme and
+            // throws here because the scheme is built with a null ThemeRegistry, so swap in the
+            // no-op language instead: that destroys the analyzer and the formatter and drops the
+            // stored styles without touching the color scheme.
+            reading?.codePositions?.set(codeKey, editor.offsetX to editor.offsetY)
             reading?.selectionReaders?.remove(codeKey)
+            editor.setEditorLanguage(EmptyLanguage())
+            editorRef[0] = null
         }
     }
     val shape = RoundedCornerShape(12.dp)
@@ -126,7 +135,10 @@ internal fun SoraCodeBlock(
             val previous = editor.tag as? SoraEditorState
             val languageKey = SoraTextMate.languageKeyFor(languageHint)
             val highlights = diffHighlights.toMap()
-            val textChanged = editor.text.toString() != text
+            // Compare against the text we last wrote instead of serializing the whole editor
+            // content: Content.toString() rebuilds the entire document, on every recomposition.
+            val previousText = previous?.text
+            val textChanged = previousText != text
             SoraTextMate.ensureReady(context)
             if (previous?.darkMode != darkMode) {
                 editor.colorScheme = SoraTextMate.colorScheme(darkMode)
@@ -140,11 +152,10 @@ internal fun SoraCodeBlock(
                 scalable = scalable,
             )
             if (textChanged) {
-                val previousText = editor.text.toString()
                 val position = if (previous != null) editor.offsetX to editor.offsetY
                     else reading?.codePositions?.get(codeKey) ?: (0 to 0)
                 val cursor = editor.cursor
-                val selection = if (cursor.isSelected && text.startsWith(previousText))
+                val selection = if (cursor.isSelected && previousText != null && text.startsWith(previousText))
                     intArrayOf(cursor.leftLine, cursor.leftColumn, cursor.rightLine, cursor.rightColumn) else null
                 editor.setText(text)
                 if (selection != null) editor.setSelectionRegion(selection[0], selection[1], selection[2], selection[3])
@@ -173,7 +184,13 @@ internal fun SoraCodeBlock(
                     },
                 )
             }
-            editor.tag = SoraEditorState(darkMode = darkMode, languageKey = languageKey, highlights = highlights, configuration = configuration)
+            editor.tag = SoraEditorState(
+                darkMode = darkMode,
+                languageKey = languageKey,
+                highlights = highlights,
+                configuration = configuration,
+                text = text,
+            )
         },
     )
 }
@@ -343,6 +360,7 @@ private data class SoraEditorState(
     val languageKey: String,
     val highlights: Map<Int, DiffLineTone>,
     val configuration: List<Any?>,
+    val text: String,
 )
 
 internal enum class DiffLineTone {
