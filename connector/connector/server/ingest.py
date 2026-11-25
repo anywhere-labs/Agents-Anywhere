@@ -35,6 +35,14 @@ UPLOAD_CHUNK_BYTES = 64 * 1024
 # history from the first page of a paged snapshot until the last page lands.
 SNAPSHOT_PAGE_RETRIES = 4
 SNAPSHOT_PAGE_RETRY_BACKOFF_SECONDS = 0.5
+# A page whose body stalls for the whole write timeout is given up at once,
+# and snapshot uploads then wait this long before the next attempt. The wait
+# doubles with each upload that stalls and is reset by one that gets through.
+# It starts as long as the wait for a timeline the Server rejected (runtime_sync)
+# and is capped at an hour: once the path is back, the history should not have
+# to wait most of a day for it.
+SNAPSHOT_STALL_WAIT_SECONDS = 600.0
+SNAPSHOT_STALL_WAIT_MAX_SECONDS = 3600.0
 # A synchronous batch (for example one DSH sync batch the plugin waits on) that
 # fails for a transient reason is retried this often before the caller sees the
 # error. Delivery is at least once, as in the background flush loop; without a
@@ -101,6 +109,8 @@ class ConnectorIngestClient:
         self._post_lock = asyncio.Lock()
         self._available = asyncio.Event()
         self._posting = False
+        self._snapshot_stalls = 0
+        self._snapshot_retry_at = 0.0
 
     @property
     def has_pending(self) -> bool:
@@ -144,7 +154,19 @@ class ConnectorIngestClient:
         deliveries (the DSH sync relay) passes ``ordered=False``: a long upload
         then neither waits for the shared queue nor stalls it, and live
         notifications keep using the WebSocket meanwhile.
+
+        A page whose body stalls for the whole write timeout ends the upload at
+        once, and snapshot uploads then wait before the next attempt: a path
+        that could not carry one page cannot carry it sent again, and for as
+        long as the upload is kept up the backend WebSocket's keepalive starves
+        and the Server drops the connection.
         """
+        wait = self._snapshot_retry_at - time.monotonic()
+        if wait > 0:
+            raise ConnectorNetworkError(
+                f"snapshot upload deferred for {wait:.0f}s: the last one stalled "
+                "and the path cannot carry bulk traffic right now"
+            )
         task = asyncio.create_task(asyncio.to_thread(
             encode_snapshot, runtime, runtime_id, session_id, meta, items, complete=complete, trailing=list(trailing),
         ))
@@ -156,18 +178,32 @@ class ConnectorIngestClient:
         try:
             if not ordered:
                 await self._upload_snapshot(snapshot, on_progress)
-                return
-            async with self._post_lock:
-                self._posting = True
-                try:
-                    await self._drain_pending(on_progress)
-                    await self._upload_snapshot(snapshot, on_progress)
-                finally:
-                    self._posting = False
-                    if not self.has_pending:
-                        self._available.clear()
+            else:
+                async with self._post_lock:
+                    self._posting = True
+                    try:
+                        await self._drain_pending(on_progress)
+                        await self._upload_snapshot(snapshot, on_progress)
+                    finally:
+                        self._posting = False
+                        if not self.has_pending:
+                            self._available.clear()
+            self._snapshot_stalls = 0
+        except ConnectorNetworkError as exc:
+            if _body_stalled(exc):
+                self._defer_snapshots(exc)
+            raise
         finally:
             snapshot.close()
+
+    def _defer_snapshots(self, error: Exception) -> None:
+        self._snapshot_stalls += 1
+        delay = _snapshot_stall_wait(self._snapshot_stalls)
+        self._snapshot_retry_at = time.monotonic() + delay
+        logger.warning(
+            "snapshot upload stalled and was given up; snapshot uploads wait {:.0f}s stalls={} error={}",
+            delay, self._snapshot_stalls, error,
+        )
 
     async def _upload_snapshot(self, snapshot: EncodedSnapshot, on_progress: UploadProgress | None) -> None:
         client = self._http_client_getter()
@@ -191,7 +227,8 @@ class ConnectorIngestClient:
         # refuses as too large, or a page above the legacy size whose connection
         # keeps getting dropped, is cut smaller and the remaining items are
         # re-paged. Only a 413 says something about the deployment, so only that
-        # size sticks for later snapshots.
+        # size sticks for later snapshots. A body that stalled is neither
+        # retried nor re-paged: the path is not refusing its size.
         start, first = 0, True
         page_bytes = self._snapshot_page_bytes
         while first or start < len(snapshot):
@@ -200,7 +237,7 @@ class ConnectorIngestClient:
                 await self._post_snapshot_page(client, snapshot, start, end, first, on_progress)
             except (ConnectorNetworkError, httpx.HTTPStatusError) as exc:
                 size = snapshot.page_size(start, end, first=first)
-                smaller = _smaller_page_bytes(size, exc) if end - start > 1 else None
+                smaller = _smaller_page_bytes(size, exc) if end - start > 1 and not _body_stalled(exc) else None
                 if smaller is None or self._closed is not None:
                     raise
                 logger.warning(
@@ -228,6 +265,11 @@ class ConnectorIngestClient:
                 )
                 return
             except ConnectorNetworkError as exc:
+                if _body_stalled(exc):
+                    # No progress for the whole write timeout: the path cannot
+                    # carry bulk traffic now, and sent again the page only keeps
+                    # it busy. ingest_snapshot makes the next attempt wait.
+                    raise
                 attempt += 1
                 read_timeouts += _read_timed_out(exc)
                 if attempt > SNAPSHOT_PAGE_RETRIES or self._closed is not None:
@@ -421,6 +463,14 @@ def upload_timeout(size: int, *, read_timeouts: int = 0) -> httpx.Timeout:
 
 def _read_timed_out(error: Exception) -> bool:
     return isinstance(error.__cause__, httpx.ReadTimeout)
+
+
+def _body_stalled(error: Exception) -> bool:
+    return isinstance(error.__cause__, httpx.WriteTimeout)
+
+
+def _snapshot_stall_wait(stalls: int) -> float:
+    return min(SNAPSHOT_STALL_WAIT_MAX_SECONDS, SNAPSHOT_STALL_WAIT_SECONDS * 2 ** (stalls - 1))
 
 
 def _too_large(error: Exception) -> bool:
