@@ -2,68 +2,51 @@
 
 // A device (client-experience-proposal §2.3), laid out like v2 web-next's device page: the name as the page title
 // (click to rename) with its presence and lock beside it, then one column of plain sections under quiet labels —
-// Agents (each starts a conversation with it), Projects (start one in it, or see its conversations), Recent
-// conversations and the device's details. Other tabs: Conversations (all of them by agent / project, with a filter),
-// Terminals, Files (browse and preview, git status and diff) and Security (pairing and paired clients on encrypted
-// devices; the MCP switch on normal ones). Runtime availability states are not reported by v3 Connectors yet.
+// Agents (`device-agents.tsx`), Projects (start a conversation in one, or see its conversations), Recent conversations
+// and the device's details. Other tabs: Conversations (all of them by agent / project, with a filter), Terminals, Files
+// (browse and preview, git status and diff) and Security (pairing and paired clients on encrypted devices; the MCP
+// switch on normal ones).
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react"
-import { MeshCallError } from "meshcall/web"
+import { Suspense, useEffect, useMemo, useState } from "react"
 import {
   ChevronRightIcon,
-  EllipsisIcon,
+  Settings2Icon,
   FolderIcon,
-  InfoIcon,
-  KeyRoundIcon,
   LaptopIcon,
-  LoaderCircleIcon,
   LockIcon,
-  PencilIcon,
-  PlayIcon,
   PlusIcon,
-  RefreshCwIcon,
   SearchIcon,
-  SettingsIcon,
-  SquareIcon,
-  Trash2Icon,
   XIcon,
 } from "lucide-react"
 import { toast } from "sonner"
 
 import { ConfirmDialog } from "@/components/console/confirm-dialog"
-import { CopyableValue } from "@/components/console/copyable-value"
-import { DetailList, type DetailItem } from "@/components/console/detail-list"
+import { type DetailItem } from "@/components/console/detail-list"
 import { PageContainer } from "@/components/console/page-header"
 import { useI18n } from "@/components/i18n-provider"
 import { FullPageSpinner } from "@/components/spinner"
 import { TerminalsPanel } from "@/components/terminal/terminals-panel"
 import { Button } from "@/components/ui/button"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { useHeaderFit } from "@/hooks/use-header-fit"
-import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { AgentIcon } from "@/components/workbench/agent-icon"
-import { useAgentProcesses } from "@/components/workbench/agent-processes"
-import { AgentSettingsDialog } from "@/components/workbench/agent-settings-dialog"
+import { DeviceAgents } from "@/components/workbench/device-agents"
 import { E2eeLockBadge } from "@/components/workbench/e2ee-lock-badge"
 import { FileBrowser } from "@/components/workbench/file-browser"
+import { DeviceSettingsDialog, type DeviceSection } from "@/components/workbench/device-settings-dialog"
 import { PairDeviceDialog } from "@/components/workbench/pair-device-dialog"
+import { SectionLabel } from "@/components/workbench/section-label"
 import { useRouteParams } from "@/lib/platform/route-params"
 import { formatKeyFingerprint } from "@/lib/mesh/pairing"
 import { useWorkbench } from "@/lib/state/workbench-context"
-import type { AgentEntry, PairedClientEntry, SessionSummary } from "@/lib/types/v3"
+import type { SessionSummary } from "@/lib/types/v3"
 import { cn } from "@/lib/utils"
+import { isInstalled, type ListedAgent } from "@/lib/workbench/agents"
 import { deviceInfoCache, useDevice } from "@/lib/workbench/device-info"
 import { formatSize, shortAgo } from "@/lib/workbench/time"
+import { useDeviceAgents } from "@/lib/workbench/use-device-agents"
 import {
   agentLabel,
   buildDeviceTree,
@@ -74,7 +57,7 @@ import {
   tildePath,
 } from "@/lib/workbench/tree"
 
-const TABS = ["overview", "conversations", "terminals", "files", "security"] as const
+const TABS = ["overview", "conversations", "terminals", "files"] as const
 type Tab = (typeof TABS)[number]
 
 function uptime(seconds: number, zh: boolean): string {
@@ -83,16 +66,6 @@ function uptime(seconds: number, zh: boolean): string {
   const m = Math.floor((seconds % 3600) / 60)
   if (zh) return d ? `${d} 天 ${h} 小时` : h ? `${h} 小时 ${m} 分钟` : `${m} 分钟`
   return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`
-}
-
-/** A page section's label: quiet, like the sidebar's group labels (v2's section headings). */
-function SectionLabel({ children, action }: { children: React.ReactNode; action?: React.ReactNode }) {
-  return (
-    <div className="mb-1 flex min-h-8 items-center justify-between gap-2 px-2">
-      <h2 className="text-xs font-medium text-muted-foreground">{children}</h2>
-      {action}
-    </div>
-  )
 }
 
 const STATE_DOT: Partial<Record<SessionSummary["state"], string>> = {
@@ -152,6 +125,9 @@ function DeviceWorkbenchPageInner() {
   const [tab, setTab] = useState<Tab>(
     (TABS as readonly string[]).includes(initialTab) ? (initialTab as Tab) : initialTab === "sessions" ? "conversations" : "overview"
   )
+  // 设备设置 (the gear); an older `?tab=security` link opens its encryption section.
+  const [settingsOpen, setSettingsOpen] = useState(initialTab === "security")
+  const [settingsSection, setSettingsSection] = useState<DeviceSection | null>(initialTab === "security" ? "encryption" : null)
   const [filter, setFilter] = useState("")
   const [cwdFilter, setCwdFilter] = useState<string | null>(searchParams.get("cwd"))
 
@@ -169,13 +145,9 @@ function DeviceWorkbenchPageInner() {
   )
   const [allProjects, setAllProjects] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
-  const [infoOpen, setInfoOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [pairOpen, setPairOpen] = useState(false)
-  const [unpinOpen, setUnpinOpen] = useState(false)
   const [fingerprintState, setFingerprintState] = useState<{ pub: string; fp: string } | null>(null)
-  const [pairedClients, setPairedClients] = useState<PairedClientEntry[]>([])
-  const [generatedPairing, setGeneratedPairing] = useState<{ code: string; fingerprint: string; expires_at: string } | null>(null)
 
   useEffect(() => {
     if (!trust?.device_pub) return
@@ -189,23 +161,6 @@ function DeviceWorkbenchPageInner() {
     }
   }, [trust?.device_pub])
   const fingerprint = trust?.device_pub && fingerprintState?.pub === trust.device_pub ? fingerprintState.fp : null
-
-  const loadPairedClients = useCallback(async () => {
-    if (!tunnelManager || !tunnelDevice || tunnelDevice.presence !== "online" || !encrypted || !trust) return
-    const paired = await tunnelManager.listPairedClients(tunnelDevice).catch(() => ({ clients: [] }))
-    setPairedClients(paired.clients)
-  }, [encrypted, trust, tunnelDevice, tunnelManager])
-
-  useEffect(() => {
-    if (tab !== "security") return
-    let alive = true
-    queueMicrotask(() => {
-      if (alive) void loadPairedClients()
-    })
-    return () => {
-      alive = false
-    }
-  }, [loadPairedClients, tab])
 
   const call = async (task: () => Promise<unknown>, ok?: string) => {
     try {
@@ -241,70 +196,39 @@ function DeviceWorkbenchPageInner() {
       count: counts.get(p.cwd) ?? 0,
     }))
   }, [deviceSessions, t])
-  // Agents: what the device reports, plus agents it has conversations with (an agent may have been removed since).
-  // The agents' settings (aa.v3.Device/agents), when the Connector manages them; `managed: false` for one that
-  // predates it (its agents are then the ones it reports, without switches or settings).
-  const [agentList, setAgentList] = useState<{ deviceId: string; managed: boolean; entries: AgentEntry[] } | null>(null)
-  const loadAgents = useCallback(async () => {
-    if (!tunnelManager || !tunnelDevice || tunnelDevice.presence !== "online") return
-    try {
-      const res = await tunnelManager.listAgents(tunnelDevice)
-      setAgentList({ deviceId: tunnelDevice.id, managed: true, entries: res.agents })
-    } catch (err) {
-      if (err instanceof MeshCallError && err.code === "method_not_found") {
-        setAgentList({ deviceId: tunnelDevice.id, managed: false, entries: [] })
-      }
+  // The device's agents: their settings (aa.v3.Device/agents) when the Connector manages them, else the ones it reports.
+  const [newTerminal, setNewTerminal] = useState(false)
+  const deviceAgents = useDeviceAgents({
+    tunnelManager,
+    device: tunnelDevice,
+    deviceId,
+    shown: tab === "overview",
+    onNews: ({ kind, entry }) =>
+      kind === "installed" ? toast.success(t("install.done", { agent: entry.name })) : toast.error(t("install.failedToast", { agent: entry.name })),
+  })
+  const agents = useMemo((): ListedAgent[] => {
+    const listed = (id: string) => tree.find((a) => a.agent === id)?.count ?? 0
+    if (deviceAgents.entries && deviceAgents.managed) {
+      return deviceAgents.entries.map((entry) => ({
+        id: entry.id,
+        name: entry.name,
+        entry,
+        installed: isInstalled(entry),
+        enabled: entry.enabled,
+        running: entry.running > 0,
+        count: listed(entry.id),
+      }))
     }
-  }, [tunnelDevice, tunnelManager])
-  useEffect(() => {
-    let alive = true
-    queueMicrotask(() => {
-      if (alive) void loadAgents()
-    })
-    return () => {
-      alive = false
-    }
-  }, [loadAgents])
-  const agentState = agentList?.deviceId === deviceId ? agentList : null
-  const entryOf = (id: string) => agentState?.entries.find((e) => e.id === id) ?? null
-  const setEntry = (entry: AgentEntry) =>
-    setAgentList((cur) =>
-      cur && cur.deviceId === deviceId ? { ...cur, entries: cur.entries.map((e) => (e.id === entry.id ? entry : e)) } : cur
-    )
-  const [settingsAgent, setSettingsAgent] = useState<{ id: string; name: string } | null>(null)
-  const processes = useAgentProcesses({ tunnelManager, device: tunnelDevice, onChanged: () => void loadAgents() })
-
-  // Agents: the device's (with the turned-off ones when it manages them), plus agents it has conversations with
-  // (an agent may have been removed since).
-  const agents = useMemo(() => {
-    const managedEntries = agentState?.managed ? agentState.entries : []
-    const ids = new Set([
-      ...managedEntries.map((e) => e.id),
-      ...(status?.runtimes ?? []).map((r) => r.id),
-      ...tree.map((a) => a.agent),
-    ])
-    return [...ids].map((id) => {
-      const entry = managedEntries.find((e) => e.id === id)
-      return {
-        id,
-        name: entry?.name ?? agentLabel(id, status?.runtimes),
-        reported: Boolean(entry ?? status?.runtimes.some((r) => r.id === id)),
-        enabled: entry?.enabled ?? true,
-        running: entry?.running ?? 0,
-        count: tree.find((a) => a.agent === id)?.count ?? 0,
-      }
-    })
-  }, [agentState, status?.runtimes, tree])
-
-  const toggleAgent = (id: string, enabled: boolean) => {
-    if (!tunnelManager || !tunnelDevice) return
-    void call(async () => {
-      const entry = await tunnelManager.updateAgent(tunnelDevice, { id, enabled })
-      setEntry(entry)
-      // New conversations offer only the agents that are on: read the device's list again.
-      void deviceInfoCache.load(tunnelManager, tunnelDevice, true)
-    })
-  }
+    return (status?.runtimes ?? []).map((r) => ({
+      id: r.id,
+      name: agentLabel(r.id, status?.runtimes),
+      entry: null,
+      installed: true,
+      enabled: true,
+      running: false,
+      count: listed(r.id),
+    }))
+  }, [deviceAgents.entries, deviceAgents.managed, status?.runtimes, tree])
 
   const filtered = useMemo(
     () =>
@@ -368,6 +292,7 @@ function DeviceWorkbenchPageInner() {
   }
   const refresh = () => {
     void reload()
+    void deviceAgents.search()
     void call(async () => {
       if (!controlClient) return
       const res = await controlClient.pingDevice(device.id)
@@ -377,8 +302,8 @@ function DeviceWorkbenchPageInner() {
   const shownProjects = allProjects ? projects : projects.slice(0, PROJECTS_SHOWN)
 
   return (
-    <div className="flex-1 overflow-y-auto">
-      <PageContainer className="max-w-4xl gap-6 py-8">
+    <div className="flex flex-1 flex-col overflow-y-auto">
+      <PageContainer className="max-w-4xl flex-1 gap-6 py-8">
         {/* Header (v2): the name is the title — click to rename — with its presence and lock beside it. */}
         <div ref={headerRef} className="flex min-w-0 items-center gap-3">
           <div ref={headerTitleRef} className={cn("flex min-w-0 items-center gap-3", editingName !== null && "flex-1")}>
@@ -433,26 +358,18 @@ function DeviceWorkbenchPageInner() {
               <PlusIcon className={headerCompact ? "size-4" : "size-3.5"} />
               {!headerCompact && t("wb.newConversation")}
             </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={t("conv.more")} />}>
-                <EllipsisIcon className="size-4" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-48">
-                <DropdownMenuItem onClick={() => setInfoOpen(true)}>
-                  <InfoIcon />
-                  {t("device.info")}
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setEditingName(device.name)}>
-                  <PencilIcon />
-                  {t("devices.rename")}
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem variant="destructive" onClick={() => setDeleteOpen(true)}>
-                  <Trash2Icon />
-                  {t("device.delete")}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label={t("device.settings")}
+              title={t("device.settings")}
+              onClick={() => {
+                setSettingsSection(null)
+                setSettingsOpen(true)
+              }}
+            >
+              <Settings2Icon className="size-4" />
+            </Button>
           </div>
         </div>
 
@@ -476,137 +393,30 @@ function DeviceWorkbenchPageInner() {
           </p>
         )}
 
-        <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
+        <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} className="flex-1">
           <TabsList variant="pill" scrollable>
             <TabsTrigger value="overview">{t("devices.tabOverview")}</TabsTrigger>
             <TabsTrigger value="conversations">{t("device.tabConversations")}</TabsTrigger>
             <TabsTrigger value="terminals">{t("devices.tabTerminals")}</TabsTrigger>
             <TabsTrigger value="files">{t("devices.tabFiles")}</TabsTrigger>
-            <TabsTrigger value="security">{t("devices.tabSecurity")}</TabsTrigger>
           </TabsList>
 
           {/* Overview: one column of plain sections (v2) */}
           <TabsContent value="overview" className="mt-6 space-y-8">
-            <section>
-              <SectionLabel
-                action={
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    disabled={info.loading || !online}
-                    onClick={refresh}
-                    className="text-muted-foreground"
-                  >
-                    <RefreshCwIcon className={cn("size-3.5", info.loading && "animate-spin")} />
-                    {t("common.refresh")}
-                  </Button>
-                }
-              >
-                {t("device.agents")}
-              </SectionLabel>
-              {!online ? (
-                <p className="px-2 py-2 text-sm text-muted-foreground">{t("newConv.offline")}</p>
-              ) : !status && !tunnelError ? (
-                <p className="px-2 py-2 text-sm text-muted-foreground">{t("newConv.loadingAgents")}</p>
-              ) : agents.length === 0 ? (
-                <div className="space-y-1 px-2 py-2">
-                  <p className="text-sm text-foreground">{t("newConv.noAgents")}</p>
-                  <p className="text-sm text-muted-foreground">{t("newConv.noAgentsHint")}</p>
-                </div>
-              ) : (
-                <ul className="flex flex-col">
-                  {agents.map((a) => {
-                    const entry = entryOf(a.id)
-                    const pending = processes.pending(a.id)
-                    const meta = [
-                      t("device.agentConversations", { count: a.count }),
-                      ...(a.running > 0 ? [t("device.agentRunning", { count: a.running })] : []),
-                      ...(!a.enabled ? [t("device.agentOff")] : []),
-                      ...(entry?.customized ? [t("agent.customized")] : []),
-                      ...(!a.reported ? [t("device.agentNotReported")] : []),
-                    ].join(" · ")
-                    return (
-                      <li
-                        key={a.id}
-                        className="group flex min-h-12 items-center gap-1 rounded-lg pr-2 transition-colors hover:bg-surface-hover"
-                      >
-                        <button
-                          type="button"
-                          disabled={!a.reported}
-                          onClick={() => setSettingsAgent({ id: a.id, name: a.name })}
-                          className={cn(
-                            "flex min-w-0 flex-1 items-center gap-3 rounded-lg py-2 pl-2 text-left",
-                            !a.enabled && "opacity-60"
-                          )}
-                        >
-                          <AgentIcon agent={a.id} name={a.name} className="size-5 text-foreground" />
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate text-sm font-medium text-foreground">{a.name}</span>
-                            <span className="block truncate text-xs text-muted-foreground">{meta}</span>
-                          </span>
-                        </button>
-                        <div className="flex shrink-0 items-center gap-0.5">
-                          {entry &&
-                            (entry.running > 0 || pending === "stopping" ? (
-                              <Button
-                                variant="ghost"
-                                size="icon-sm"
-                                disabled={!online || pending !== null}
-                                onClick={() => processes.stop({ id: a.id, name: a.name })}
-                                aria-label={t("agent.stopTitle", { agent: a.name, count: entry.running })}
-                                title={t("agent.stopTitle", { agent: a.name, count: entry.running })}
-                                className="text-muted-foreground hover:text-foreground"
-                              >
-                                {pending === "stopping" ? (
-                                  <LoaderCircleIcon className="size-4 animate-spin" />
-                                ) : (
-                                  <SquareIcon className="size-3.5" />
-                                )}
-                              </Button>
-                            ) : (
-                              <Button
-                                variant="ghost"
-                                size="icon-sm"
-                                disabled={!online || !entry.enabled || pending !== null}
-                                onClick={() => processes.start({ id: a.id, name: a.name })}
-                                aria-label={t("agent.startTitle", { agent: a.name })}
-                                title={t("agent.startTitle", { agent: a.name })}
-                                className="text-muted-foreground hover:text-foreground"
-                              >
-                                {pending === "starting" ? (
-                                  <LoaderCircleIcon className="size-4 animate-spin" />
-                                ) : (
-                                  <PlayIcon className="size-4" />
-                                )}
-                              </Button>
-                            ))}
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            disabled={!a.reported}
-                            onClick={() => setSettingsAgent({ id: a.id, name: a.name })}
-                            aria-label={t("device.agentSettings", { agent: a.name })}
-                            title={t("device.agentSettings", { agent: a.name })}
-                            className="text-muted-foreground hover:text-foreground"
-                          >
-                            <SettingsIcon className="size-4" />
-                          </Button>
-                        </div>
-                        {entry && (
-                          <Switch
-                            checked={entry.enabled}
-                            disabled={!online}
-                            onCheckedChange={(v) => toggleAgent(a.id, Boolean(v))}
-                            aria-label={`${t("agent.enabled")} · ${a.name}`}
-                            className="ml-1 shrink-0"
-                          />
-                        )}
-                      </li>
-                    )
-                  })}
-                </ul>
-              )}
-            </section>
+            <DeviceAgents
+              tunnelManager={tunnelManager}
+              device={tunnelDevice}
+              online={online}
+              state={deviceAgents}
+              agents={agents}
+              loading={!status && !deviceAgents.entries && !tunnelError}
+              refreshing={info.loading}
+              onRefresh={refresh}
+              onOpenTerminal={() => {
+                setNewTerminal(true)
+                setTab("terminals")
+              }}
+            />
 
             {projects.length > 0 && (
               <section>
@@ -741,169 +551,52 @@ function DeviceWorkbenchPageInner() {
 
           {/* Terminals */}
           <TabsContent value="terminals" className="mt-6">
-            <TerminalsPanel tunnelManager={tunnelManager} device={tunnelDevice} defaultCwd={status?.cwd || undefined} />
+            <TerminalsPanel
+              tunnelManager={tunnelManager}
+              device={tunnelDevice}
+              defaultCwd={status?.cwd || undefined}
+              openNew={newTerminal}
+              onNewOpened={() => setNewTerminal(false)}
+            />
           </TabsContent>
 
           {/* Files */}
-          <TabsContent value="files" className="mt-6">
+          <TabsContent value="files" className="mt-6 flex flex-col">
             <FileBrowser
               tunnelManager={tunnelManager}
               device={tunnelDevice}
               initialPath={searchParams.get("path") ?? undefined}
               layout="split"
+              className="lg:min-h-[28rem] lg:flex-1"
             />
           </TabsContent>
 
-          {/* Security */}
-          <TabsContent value="security" className="mt-6 space-y-6">
-            {!encrypted && settings && (
-              <div className="flex items-center justify-between gap-4 rounded-card bg-card p-6">
-                <div className="space-y-1">
-                  <p className="text-sm font-medium text-foreground">{t("devices.allowMcp")}</p>
-                  <p className="text-sm leading-relaxed text-muted-foreground">{t("devices.allowMcpDesc")}</p>
-                </div>
-                <Switch
-                  checked={settings.allow_mcp}
-                  onCheckedChange={(checked) =>
-                    void call(async () => {
-                      if (!tunnelManager || !tunnelDevice) return
-                      const updated = await tunnelManager.updateDeviceSettings(tunnelDevice, { allow_mcp: Boolean(checked) })
-                      deviceInfoCache.patchSettings(tunnelManager, device.id, updated)
-                    }, t("common.saved"))
-                  }
-                />
-              </div>
-            )}
-
-            <div className="space-y-4 rounded-card bg-card p-6">
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div className="space-y-1">
-                  <h3 className="flex items-center gap-2 text-base font-semibold">
-                    <LockIcon className="size-4 text-muted-foreground" />
-                    {t("devices.greyLockTitle")}
-                  </h3>
-                  <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">{t("devices.greyLockDesc")}</p>
-                </div>
-                <Button size="sm" onClick={() => setPairOpen(true)}>
-                  <KeyRoundIcon className="size-3.5" />
-                  {t("devices.pair")}
-                </Button>
-              </div>
-              {trust && (
-                <div className="space-y-3 border-t border-border pt-4">
-                  <CopyableValue
-                    label={t("devices.pairFingerprint")}
-                    value={fingerprint ?? trust.device_pub}
-                    copyLabel={t("common.copy")}
-                    copyFailedLabel={t("common.copyFailed")}
-                  />
-                  <div className="flex justify-end">
-                    <Button variant="outline" size="sm" onClick={() => setUnpinOpen(true)}>
-                      {t("device.removePin")}
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {encrypted && trust && (
-              <div className="space-y-4 rounded-card bg-card p-6">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <h3 className="text-base font-semibold">{t("devices.pairedClients")}</h3>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={!online}
-                    onClick={() =>
-                      void call(async () => {
-                        if (!tunnelManager || !tunnelDevice) return
-                        const res = await tunnelManager.createPairing(tunnelDevice, { kind: "code" })
-                        setGeneratedPairing({ code: res.code ?? "", fingerprint: res.fingerprint ?? "", expires_at: res.expires_at })
-                      })
-                    }
-                  >
-                    {t("devices.createPairingLink")}
-                  </Button>
-                </div>
-                {generatedPairing && (
-                  <div className="space-y-2">
-                    <CopyableValue
-                      label={t("devices.generatedCodeLabel", {
-                        time: new Date(generatedPairing.expires_at).toLocaleTimeString(locale === "zh-CN" ? "zh-CN" : "en-US"),
-                      })}
-                      value={generatedPairing.code}
-                      copyLabel={t("common.copy")}
-                      copyFailedLabel={t("common.copyFailed")}
-                    />
-                    {generatedPairing.fingerprint && (
-                      <p className="text-xs text-muted-foreground">
-                        {t("devices.pairFingerprint")}: <span className="font-mono">{generatedPairing.fingerprint}</span>
-                      </p>
-                    )}
-                  </div>
-                )}
-                {pairedClients.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">{t("devices.noPairedClients")}</p>
-                ) : (
-                  <div className="divide-y divide-border">
-                    {pairedClients.map((client) => (
-                      <div key={client.client_pub} className="flex items-center justify-between gap-4 py-3 first:pt-0 last:pb-0">
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-foreground">{client.label || client.platform}</p>
-                          <p className="truncate font-mono text-xs text-muted-foreground">{client.client_pub}</p>
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          aria-label={t("common.delete")}
-                          onClick={() =>
-                            void call(async () => {
-                              if (!tunnelManager || !tunnelDevice) return
-                              await tunnelManager.revokePairedClient(tunnelDevice, client.client_pub)
-                              setPairedClients((prev) => prev.filter((c) => c.client_pub !== client.client_pub))
-                            }, t("common.saved"))
-                          }
-                        >
-                          <Trash2Icon className="size-3.5" />
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </TabsContent>
         </Tabs>
       </PageContainer>
 
-      {processes.dialogs}
-      <Dialog open={infoOpen} onOpenChange={setInfoOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>{t("device.info")}</DialogTitle>
-          </DialogHeader>
-          <DetailList items={details} />
-        </DialogContent>
-      </Dialog>
-      {settingsAgent && (
-        <AgentSettingsDialog
-          open={Boolean(settingsAgent)}
-          onOpenChange={(open) => {
-            if (!open) setSettingsAgent(null)
-          }}
-          tunnelManager={tunnelManager}
-          device={tunnelDevice}
-          agent={settingsAgent}
-          entry={entryOf(settingsAgent.id)}
-          managed={agentState?.managed ?? true}
-          onEntry={(entry) => {
-            setEntry(entry)
-            if (tunnelManager && tunnelDevice) void deviceInfoCache.load(tunnelManager, tunnelDevice, true)
-          }}
-          onStopped={() => void loadAgents()}
-        />
-      )}
-
+      <DeviceSettingsDialog
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        section={settingsSection}
+        onSection={setSettingsSection}
+        name={device.name}
+        tunnelManager={tunnelManager}
+        device={tunnelDevice}
+        encrypted={encrypted}
+        trust={trust ?? null}
+        fingerprint={fingerprint}
+        settings={settings ?? null}
+        details={details}
+        onRename={async (next) => {
+          if (!controlClient) return
+          await controlClient.renameDevice(device.id, next)
+          await refreshDevices()
+        }}
+        onSettings={(updated) => tunnelManager && deviceInfoCache.patchSettings(tunnelManager, device.id, updated)}
+        onPair={() => setPairOpen(true)}
+        onUnpin={() => removeLocalDeviceTrust(deviceId)}
+        onDelete={() => setDeleteOpen(true)}
+      />
       <PairDeviceDialog
         open={pairOpen}
         onOpenChange={(open) => {
@@ -926,20 +619,6 @@ function DeviceWorkbenchPageInner() {
         onConfirm={() => void handleDelete()}
       />
 
-      <ConfirmDialog
-        open={unpinOpen}
-        onOpenChange={setUnpinOpen}
-        title={t("device.removePin")}
-        description={t("devices.unpairedHint")}
-        confirmLabel={t("common.delete")}
-        cancelLabel={t("common.cancel")}
-        destructive
-        onConfirm={async () => {
-          await removeLocalDeviceTrust(deviceId)
-          setUnpinOpen(false)
-          toast.success(t("common.saved"))
-        }}
-      />
     </div>
   )
 }

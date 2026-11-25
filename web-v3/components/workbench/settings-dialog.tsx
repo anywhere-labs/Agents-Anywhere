@@ -1,13 +1,10 @@
 "use client"
 
 // 设置, from the account menu at the bottom left (or ⌘,): a large dialog with its own section list, like Effi's and
-// Claude's settings. Phones get it full screen: the section list first, a section opens as its own page with a back
-// button. Administration is not here: it has its own console at /admin (anywhere-ui console template).
+// Claude's settings (`split-dialog.tsx`). Administration is not here: it has its own console at /admin (anywhere-ui console template).
 import { useCallback, useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import {
-  ArrowLeftIcon,
-  ChevronRightIcon,
   CloudIcon,
   ExternalLinkIcon,
   KeyRoundIcon,
@@ -17,7 +14,6 @@ import {
   SlidersHorizontalIcon,
   SunIcon,
   UserIcon,
-  XIcon,
 } from "lucide-react"
 import { useTheme } from "next-themes"
 import { toast } from "sonner"
@@ -30,9 +26,7 @@ import { DropdownSelect } from "@/components/dropdown-select"
 import { useI18n } from "@/components/i18n-provider"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog"
 import { Switch } from "@/components/ui/switch"
-import { useIsMobile } from "@/hooks/use-mobile"
 import { fetchAuthConfig, listDriveFiles, listMcpGrants, revokeMcpGrant } from "@/lib/api/control-http"
 import { getControlledModeSupport } from "@/lib/assistant/controlled-mode"
 import type { Locale, MessageKey } from "@/lib/i18n"
@@ -41,6 +35,7 @@ import { useWorkbench } from "@/lib/state/workbench-context"
 import type { DriveQuotaView, McpGrantView } from "@/lib/types/v3"
 import { cn } from "@/lib/utils"
 import { Card, Group, Note, Row } from "@/components/workbench/settings-parts"
+import { SplitDialog } from "@/components/workbench/split-dialog"
 
 export type SettingsSection = "general" | "account" | "drive" | "apps" | "encryption"
 
@@ -91,92 +86,19 @@ export function SettingsDialog({
   onSection: (section: SettingsSection | null) => void
 }) {
   const { t } = useI18n()
-  const phone = useIsMobile()
-  const shown = section ?? "general"
-  const showList = phone && section === null
-  const title = t(SECTIONS.find((s) => s.id === shown)!.label)
-
-  const nav = (
-    <nav aria-label={t("settings.title")} className={cn("flex flex-col gap-0.5", phone ? "px-4 pt-4 pb-8" : "px-3 pb-4")}>
-      {SECTIONS.map(({ id, label, Icon }) => {
-        const current = !phone && shown === id
-        return (
-          <button
-            key={id}
-            type="button"
-            aria-current={current ? "page" : undefined}
-            onClick={() => onSection(id)}
-            className={cn(
-              "flex w-full items-center gap-2.5 rounded-full text-left text-sm transition-colors",
-              phone ? "h-12 px-3" : "h-9 px-3",
-              current ? "bg-surface-hover font-medium text-foreground" : "text-muted-foreground hover:bg-surface-hover hover:text-foreground"
-            )}
-          >
-            <Icon className="size-4 shrink-0" />
-            <span className="min-w-0 flex-1 truncate">{t(label)}</span>
-            {phone && <ChevronRightIcon className="size-4 shrink-0 text-muted-foreground" />}
-          </button>
-        )
-      })}
-    </nav>
-  )
-
-  const body = <SettingsBody section={shown} active={open} onClose={() => onOpenChange(false)} />
-
+  const sections = useMemo(() => SECTIONS.map(({ id, label, Icon }) => ({ id, label: t(label), Icon })), [t])
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        showCloseButton={false}
-        className={cn(
-          "flex gap-0 overflow-hidden p-0",
-          phone
-            ? "top-0 left-0 h-dvh w-screen max-w-none translate-x-0 translate-y-0 rounded-none sm:max-w-none"
-            : "h-[min(680px,calc(100dvh-4rem))] w-[calc(100%-3rem)] max-w-[56rem] sm:max-w-[56rem]"
-        )}
-      >
-        <DialogDescription className="sr-only">{t("settings.dialogDesc")}</DialogDescription>
-        {phone ? (
-          <div className="flex min-w-0 flex-1 flex-col" style={{ paddingTop: "env(safe-area-inset-top)" }}>
-            <header className="flex h-14 shrink-0 items-center gap-1 px-2">
-              {showList ? (
-                <DialogTitle className="flex-1 px-2 text-base font-semibold">{t("settings.title")}</DialogTitle>
-              ) : (
-                <>
-                  <Button variant="ghost" size="icon-sm" aria-label={t("common.back")} onClick={() => onSection(null)}>
-                    <ArrowLeftIcon />
-                  </Button>
-                  <DialogTitle className="flex-1 truncate text-base font-semibold">{title}</DialogTitle>
-                </>
-              )}
-              <DialogClose render={<Button variant="ghost" size="icon-sm" aria-label={t("common.close")} />}>
-                <XIcon />
-              </DialogClose>
-            </header>
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              {showList ? nav : <div className="px-4 pt-2 pb-[max(2rem,env(safe-area-inset-bottom))]">{body}</div>}
-            </div>
-          </div>
-        ) : (
-          <>
-            <aside className="flex w-56 shrink-0 flex-col overflow-y-auto bg-card">
-              <DialogTitle className="px-6 pt-6 pb-4 text-base font-semibold">{t("settings.title")}</DialogTitle>
-              {nav}
-            </aside>
-            <div className="flex min-w-0 flex-1 flex-col">
-              <header className="flex h-16 shrink-0 items-center gap-2 pr-4 pl-8">
-                <h2 className="flex-1 truncate text-base font-semibold">{title}</h2>
-                <DialogClose render={<Button variant="ghost" size="icon-sm" aria-label={t("common.close")} />}>
-                  <XIcon />
-                </DialogClose>
-              </header>
-              <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
-                <div className="mx-auto w-full max-w-2xl px-8 pb-10">{body}</div>
-              </div>
-            </div>
-          </>
-        )}
-      </DialogContent>
-    </Dialog>
+    <SplitDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title={t("settings.title")}
+      description={t("settings.dialogDesc")}
+      sections={sections}
+      section={section}
+      onSection={onSection}
+    >
+      <SettingsBody section={section ?? "general"} active={open} onClose={() => onOpenChange(false)} />
+    </SplitDialog>
   )
 }
 

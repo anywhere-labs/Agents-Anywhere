@@ -1,17 +1,19 @@
 "use client"
 
-// Start and stop an agent's processes from its row on the device page. Start runs the same warm start a new
-// conversation uses (aa.v3.Sessions/prepare, in the home folder): it shows whether the agent can be used, and the
-// process waits up to 10 minutes for a new conversation to take it over before it is closed. Stop ends all of the
-// agent's processes (aa.v3.Device/stop_agent); while conversations are replying it asks first, then forces.
+// Start and stop an agent from its row on the device page. Start runs the same warm start a new conversation uses
+// (aa.v3.Sessions/prepare, in the home folder): it shows whether the agent can be used, and what it opened waits up to
+// 10 minutes for a new conversation to take it over before it is closed. Stop ends the process all of the agent's
+// conversations share (aa.v3.Device/stop_agent); while conversations are replying it asks first, then forces.
 import { useState, type ReactNode } from "react"
 import { DeadlineExceededError, MeshCallError } from "meshcall/web"
 import { toast } from "sonner"
 
 import { ConfirmDialog } from "@/components/console/confirm-dialog"
 import { useI18n } from "@/components/i18n-provider"
+import { AgentSignInDialog, type SignInTarget } from "@/components/workbench/agent-sign-in-dialog"
 import type { DeviceTunnelManager } from "@/lib/mesh/device-tunnel"
 import type { DeviceRecord } from "@/lib/types/v3"
+import { signInNeeded, signInText } from "@/lib/workbench/sign-in"
 
 type Agent = { id: string; name: string }
 type Pending = "starting" | "stopping"
@@ -23,7 +25,7 @@ export function useAgentProcesses({
 }: {
   tunnelManager: DeviceTunnelManager | null
   device: Pick<DeviceRecord, "id" | "mode_hint" | "presence"> | null
-  /** After a start or stop: read the agents' process counts again. */
+  /** After a start or stop: read again what is running. */
   onChanged: () => void
 }): {
   pending: (id: string) => Pending | null
@@ -34,6 +36,7 @@ export function useAgentProcesses({
   const { t } = useI18n()
   const [pending, setPending] = useState<Record<string, Pending>>({})
   const [confirm, setConfirm] = useState<(Agent & { busy: number }) | null>(null)
+  const [signIn, setSignIn] = useState<SignInTarget | null>(null)
 
   const mark = (id: string, value: Pending | null) =>
     setPending((cur) => {
@@ -59,7 +62,13 @@ export function useAgentProcesses({
         }
       }
     } catch (err) {
-      toast.error(startError(err, agent.name))
+      const needed = signInNeeded(err)
+      if (needed)
+        toast.error(
+          signInText(t, agent.name, needed),
+          needed.methods.length ? { action: { label: t("agentSignIn.action"), onClick: () => setSignIn({ ...agent, methods: needed.methods }) } } : undefined
+        )
+      else toast.error(startError(err, agent.name))
     } finally {
       mark(agent.id, null)
       onChanged()
@@ -69,14 +78,8 @@ export function useAgentProcesses({
   const startError = (err: unknown, agent: string): string => {
     const message = err instanceof Error ? err.message : String(err)
     if (!(err instanceof MeshCallError)) return t("newConv.agentStartFailed", { agent, error: message })
-    if (err.reason === "agent_auth_required") {
-      const raw = err.details?.auth_methods
-      const methods = Array.isArray(raw)
-        ? raw.flatMap((m) => (m && typeof m === "object" && typeof m.name === "string" ? [m.name as string] : []))
-        : []
-      return t("newConv.agentAuthRequired", { agent }) + (methods.length ? ` ${t("newConv.agentAuthMethods", { methods: methods.join("、") })}` : "")
-    }
     if (err.reason === "agent_disabled") return t("newConv.agentDisabled", { agent })
+    if (err.reason === "agent_not_installed") return t("newConv.agentNotInstalled", { agent })
     return t("newConv.agentStartFailed", { agent, error: message })
   }
 
@@ -85,8 +88,8 @@ export function useAgentProcesses({
     setConfirm(null)
     mark(agent.id, "stopping")
     try {
-      const res = await tunnelManager.stopAgent(device, agent.id, force)
-      toast.success(t("agent.stoppedAgent", { agent: agent.name, count: res.stopped }))
+      await tunnelManager.stopAgent(device, agent.id, force)
+      toast.success(t("agent.stoppedAgent", { agent: agent.name }))
     } catch (err) {
       if (err instanceof MeshCallError && err.reason === "turns_running") {
         const count = typeof err.details?.count === "number" ? err.details.count : 1
@@ -99,20 +102,31 @@ export function useAgentProcesses({
   }
 
   const dialogs = (
-    <ConfirmDialog
-      open={confirm !== null}
-      onOpenChange={(open) => {
-        if (!open) setConfirm(null)
-      }}
-      title={t("agent.stopBusyTitle", { agent: confirm?.name ?? "" })}
-      description={t("agent.stopBusyDesc", { count: confirm?.busy ?? 0 })}
-      confirmLabel={t("agent.stop")}
-      cancelLabel={t("common.cancel")}
-      destructive
-      onConfirm={() => {
-        if (confirm) void stop(confirm, true)
-      }}
-    />
+    <>
+      <AgentSignInDialog
+        target={signIn}
+        onClose={() => setSignIn(null)}
+        tunnelManager={tunnelManager}
+        device={device}
+        onSignedIn={(id) => {
+          if (signIn?.id === id) void start({ id, name: signIn.name })
+        }}
+      />
+      <ConfirmDialog
+        open={confirm !== null}
+        onOpenChange={(open) => {
+          if (!open) setConfirm(null)
+        }}
+        title={t("agent.stopBusyTitle", { agent: confirm?.name ?? "" })}
+        description={t("agent.stopBusyDesc", { count: confirm?.busy ?? 0 })}
+        confirmLabel={t("agent.stop")}
+        cancelLabel={t("common.cancel")}
+        destructive
+        onConfirm={() => {
+          if (confirm) void stop(confirm, true)
+        }}
+      />
+    </>
   )
 
   return {

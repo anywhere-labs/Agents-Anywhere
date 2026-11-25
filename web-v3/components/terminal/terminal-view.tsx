@@ -129,6 +129,8 @@ export interface TerminalViewProps {
    * once, so it updates the attached row from here instead of showing a stale "controlled by".
    */
   onControl?: (control: { controller: TerminalInfo["controller"]; generation: number; you: boolean }) => void
+  /** Its program has ended. */
+  onExit?: (exit: { code: number | null; signal: string | null }) => void
 }
 
 export interface TerminalViewHandle {
@@ -149,6 +151,7 @@ export function TerminalView({
   extraKeys = true,
   fill = false,
   onControl,
+  onExit,
 }: TerminalViewProps) {
   const { t } = useI18n()
   const hostRef = useRef<HTMLDivElement>(null)
@@ -175,6 +178,14 @@ export function TerminalView({
     onControlRef.current?.({ controller, generation, you })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [controllerKey, generation, you, live])
+  const onExitRef = useRef(onExit)
+  useEffect(() => {
+    onExitRef.current = onExit
+  }, [onExit])
+  const exit = state?.status === "exited" ? state.exit : null
+  useEffect(() => {
+    if (exit) onExitRef.current?.(exit)
+  }, [exit])
   const coarse = useSyncExternalStore(
     (onChange) => {
       const mql = window.matchMedia("(pointer: coarse)")

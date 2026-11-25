@@ -1,6 +1,5 @@
 "use client"
 
-import { useCallback } from "react"
 import {
   DownloadIcon,
   EllipsisIcon,
@@ -34,10 +33,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { driveExpiry, driveRowActions, formatDriveTime, type DriveRow } from "@/lib/drive/entries"
-import { cn } from "@/lib/utils"
 import { formatSize } from "@/lib/workbench/time"
+import { cn } from "@/lib/utils"
 
 export interface DriveRowHandlers {
   onOpen: (row: DriveRow) => void
@@ -56,8 +54,8 @@ const IMAGE = /\.(png|jpe?g|gif|webp|svg|avif|bmp|heic|ico)$/i
 const VIDEO = /\.(mp4|mov|webm|mkv|avi|m4v)$/i
 const AUDIO = /\.(mp3|wav|m4a|aac|flac|ogg|opus)$/i
 
-function RowIcon({ row }: { row: DriveRow }) {
-  const className = "size-5 shrink-0 stroke-[1.5] text-muted-foreground"
+export function RowIcon({ row }: { row: DriveRow }) {
+  const className = "size-4 shrink-0 text-muted-foreground"
   if (row.kind === "folder") {
     if (row.system === "transfers") return <FolderSymlinkIcon className={className} />
     if (row.system === "orches") return <FolderSyncIcon className={className} />
@@ -76,13 +74,13 @@ function RowIcon({ row }: { row: DriveRow }) {
   return <FileIcon className={className} />
 }
 
-function RowMenu({ row, label, handlers }: { row: DriveRow; label: string; handlers: DriveRowHandlers }) {
+export function RowMenu({ row, label, handlers }: { row: DriveRow; label: string; handlers: DriveRowHandlers }) {
   const { t } = useI18n()
   const actions = driveRowActions(row)
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        render={<Button variant="ghost" size="icon-sm" aria-label={t("drive.moreActions", { name: label })} />}
+        render={<Button variant="ghost" size="icon-xs" aria-label={t("drive.moreActions", { name: label })} />}
       >
         <EllipsisIcon className="size-4" />
       </DropdownMenuTrigger>
@@ -121,131 +119,69 @@ function RowMenu({ row, label, handlers }: { row: DriveRow; label: string; handl
   )
 }
 
-/** Folders and files of one folder, as a file manager list: name, size, modified, expires, actions. */
-export function DriveEntryTable({
+/** A row's label: system folders by their role, files the server cannot name as "encrypted file". */
+export function driveRowLabel(row: DriveRow, t: ReturnType<typeof useI18n>["t"]): string {
+  if (row.kind === "folder") return driveFolderLabel(row.path, row.name, t)
+  return row.nameHidden ? t("drive.encryptedFile") : row.name
+}
+
+/**
+ * Folders and files of one folder as a plain list (no frame): icon, name, size, modified, expiry, and the row's
+ * actions. A folder opens on click, a file its page.
+ */
+export function DriveEntryList({
   rows,
   now,
-  highlight = null,
+  onOpenFile,
   handlers,
 }: {
   rows: readonly DriveRow[]
   /** When the listing was loaded; expiries read relative to it. */
   now: number
-  /** A file to point out (by id): selected and scrolled into view. */
-  highlight?: string | null
+  onOpenFile: (row: DriveRow) => void
   handlers: DriveRowHandlers
 }) {
   const { t, locale } = useI18n()
-  // Stable per file, so the row scrolls into view when it appears, not on every render after.
-  const scrollIntoView = useCallback(
-    (row: HTMLTableRowElement | null) => {
-      if (highlight) row?.scrollIntoView({ block: "center" })
-    },
-    [highlight]
-  )
   return (
-    <Table>
-      <TableHeader>
-        <TableRow className="hover:bg-transparent">
-          <TableHead className="text-muted-foreground">{t("drive.colName")}</TableHead>
-          <TableHead className="hidden w-28 text-right text-muted-foreground sm:table-cell">
-            {t("drive.colSize")}
-          </TableHead>
-          <TableHead className="hidden w-44 text-muted-foreground md:table-cell">{t("drive.colModified")}</TableHead>
-          <TableHead className="hidden w-32 text-muted-foreground sm:table-cell">{t("drive.colExpires")}</TableHead>
-          <TableHead className="w-24">
-            <span className="sr-only">{t("drive.colActions")}</span>
-          </TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {rows.map((row) => {
-          const label =
-            row.kind === "folder"
-              ? driveFolderLabel(row.path, row.name, t)
-              : row.nameHidden
-                ? t("drive.encryptedFile")
-                : row.name
-          const expiry = row.kind === "file" ? driveExpiry(row.expiresAt, locale, now) : null
-          const expiryLabel = expiry ? (expiry.expired ? t("drive.expired") : expiry.label) : "—"
-          const actions = driveRowActions(row)
-          const highlighted = row.kind === "file" && row.id === highlight
-          return (
-            <TableRow
-              key={`${row.kind}:${row.id}`}
-              ref={highlighted ? scrollIntoView : undefined}
-              data-state={highlighted ? "selected" : undefined}
-              className={cn("h-14", row.kind === "folder" && "cursor-pointer")}
-              onClick={row.kind === "folder" ? () => handlers.onOpen(row) : undefined}
+    <ul className="flex flex-col divide-y divide-border">
+      {rows.map((row) => {
+        const label = driveRowLabel(row, t)
+        const expiry = row.kind === "file" ? driveExpiry(row.expiresAt, locale, now) : null
+        return (
+          <li key={`${row.kind}:${row.id}`} className="group/row relative">
+            <button
+              type="button"
+              title={row.path}
+              onClick={() => (row.kind === "folder" ? handlers.onOpen(row) : onOpenFile(row))}
+              className="flex h-12 w-full min-w-0 items-center gap-3 pr-10 pl-1 text-left text-sm transition-colors hover:bg-surface-hover/60"
             >
-              <TableCell className="w-full max-w-0">
-                <div className="flex min-w-0 items-center gap-3">
-                  <RowIcon row={row} />
-                  <div className="min-w-0">
-                    {row.kind === "folder" ? (
-                      <button
-                        type="button"
-                        title={row.path}
-                        className="block max-w-full truncate rounded-sm text-left text-sm font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          handlers.onOpen(row)
-                        }}
-                      >
-                        {label}
-                      </button>
-                    ) : (
-                      <p title={row.path} className="truncate text-sm text-foreground">
-                        {label}
-                      </p>
-                    )}
-                    {row.kind === "file" && row.nameHidden && (
-                      <p className="truncate font-mono text-sm text-muted-foreground">{row.name}</p>
-                    )}
-                    {row.kind === "file" && (
-                      <p className="truncate text-xs tabular-nums text-muted-foreground sm:hidden">
-                        {formatSize(row.size)} · {expiryLabel}
-                      </p>
-                    )}
-                  </div>
-                  {row.kind === "file" && row.encrypted && (
-                    <LockIcon aria-label={t("drive.encrypted")} className="size-3.5 shrink-0 text-muted-foreground" />
-                  )}
-                </div>
-              </TableCell>
-              <TableCell className="hidden text-right text-xs tabular-nums text-muted-foreground sm:table-cell">
-                {row.kind === "file" ? formatSize(row.size) : "—"}
-              </TableCell>
-              <TableCell className="hidden text-xs tabular-nums text-muted-foreground md:table-cell">
-                {formatDriveTime(row.modifiedAt, locale, now)}
-              </TableCell>
-              <TableCell className="hidden text-xs tabular-nums sm:table-cell">
-                <span
-                  title={expiry?.title}
-                  className={expiry?.soon ? "text-warning" : "text-muted-foreground"}
-                >
-                  {expiryLabel}
-                </span>
-              </TableCell>
-              <TableCell onClick={(event) => event.stopPropagation()}>
-                <div className="flex items-center justify-end gap-0.5">
-                  {actions.download && (
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label={t("drive.downloadName", { name: label })}
-                      onClick={() => handlers.onDownload(row)}
-                    >
-                      <DownloadIcon className="size-4" />
-                    </Button>
-                  )}
-                  <RowMenu row={row} label={label} handlers={handlers} />
-                </div>
-              </TableCell>
-            </TableRow>
-          )
-        })}
-      </TableBody>
-    </Table>
+              <RowIcon row={row} />
+              <span className="min-w-0 flex-1 truncate">{label}</span>
+              {row.kind === "file" && row.encrypted && (
+                <LockIcon aria-label={t("drive.encrypted")} className="size-3.5 shrink-0 text-muted-foreground" />
+              )}
+              <span className="hidden w-20 shrink-0 text-right text-xs tabular-nums text-muted-foreground sm:block">
+                {row.kind === "file" ? formatSize(row.size) : ""}
+              </span>
+              <span className="hidden w-32 shrink-0 text-right text-xs tabular-nums text-muted-foreground md:block">
+                {row.kind === "file" ? formatDriveTime(row.modifiedAt, locale, now) : ""}
+              </span>
+              <span
+                title={expiry?.title}
+                className={cn(
+                  "w-20 shrink-0 text-right text-xs tabular-nums text-muted-foreground",
+                  expiry?.soon && "text-destructive"
+                )}
+              >
+                {expiry ? (expiry.expired ? t("drive.expired") : expiry.label) : ""}
+              </span>
+            </button>
+            <div className="absolute top-1/2 right-0 -translate-y-1/2 opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100 has-[[data-popup-open]]:opacity-100 max-md:opacity-100">
+              <RowMenu row={row} label={label} handlers={handlers} />
+            </div>
+          </li>
+        )
+      })}
+    </ul>
   )
 }

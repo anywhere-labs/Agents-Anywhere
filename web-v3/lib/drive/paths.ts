@@ -76,6 +76,12 @@ export function driveHref(path: string): string {
   return `/drive?path=${encodeURIComponent(normalized).replace(/%2F/g, "/")}`
 }
 
+/** A file's page: its folder plus `file=<id>`. */
+export function driveFileHref(folder: string, fileId: string): string {
+  const href = driveHref(folder)
+  return `${href}${href.includes("?") ? "&" : "?"}file=${encodeURIComponent(fileId)}`
+}
+
 /** Where the extension starts, for selecting just the stem when renaming (`q3.pdf` → 2, `.env` → 4). */
 export function driveStemLength(name: string): number {
   const lower = name.toLowerCase()

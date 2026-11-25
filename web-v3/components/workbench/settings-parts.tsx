@@ -5,7 +5,7 @@ import type * as React from "react"
 export function Group({ title, description, action, children }: { title?: string; description?: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
     <section className="space-y-2.5">
-      {(title || action) && (
+      {(title || description || action) && (
         <div className="flex items-end justify-between gap-4">
           <div className="min-w-0 space-y-0.5">
             {title && <h3 className="text-sm font-medium text-foreground">{title}</h3>}

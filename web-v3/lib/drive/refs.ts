@@ -1,8 +1,8 @@
 // `drive:/…` references in replies (docs/v3/assistant-and-files-proposal.md §6.3). The server makes the canonical form
 // and resolves a reference (`GET /drive/resolve?ref=…`); the client only finds references in text and links them to
-// the drive page, which resolves them and shows the folder, or the file in its folder.
+// the drive page, which resolves them and shows the folder, or the file's page.
 
-import { driveHref } from "@/lib/drive/paths"
+import { driveFileHref, driveHref } from "@/lib/drive/paths"
 import type { DriveResolveResponse } from "@/lib/types/v3"
 
 /**
@@ -96,8 +96,7 @@ export function driveRefOfHref(href: string): string | null {
 /** Where the drive page shows what a reference resolved to: a folder itself, a file in its folder (highlighted). */
 export function driveLocationOf(resolved: Pick<DriveResolveResponse, "kind" | "path" | "file">): string {
   if (resolved.kind === "folder" || !resolved.file) return driveHref(resolved.path)
-  const folder = driveHref(resolved.file.parent_path)
-  return `${folder}${folder.includes("?") ? "&" : "?"}file=${encodeURIComponent(resolved.file.id)}`
+  return driveFileHref(resolved.file.parent_path, resolved.file.id)
 }
 
 /** The few mdast fields the plugin reads and writes. */

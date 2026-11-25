@@ -8,13 +8,13 @@ import { DriveBrowser } from "@/components/drive/drive-browser"
 import { useI18n } from "@/components/i18n-provider"
 import { FullPageSpinner } from "@/components/spinner"
 import { ControlApiError, resolveDrivePath } from "@/lib/api/control-http"
-import { driveHref, normalizeDrivePath } from "@/lib/drive/paths"
+import { driveFileHref, driveHref, normalizeDrivePath } from "@/lib/drive/paths"
 import { driveLocationOf } from "@/lib/drive/refs"
 import { useWorkbench } from "@/lib/state/workbench-context"
 
 // The open folder lives in the address (`/drive?path=/报告/2026`), so it survives reloads and can be linked; the
-// query string (not a path segment) keeps the page a single static route for the Desktop export. `?file=<id>` points
-// out a file in the folder; `?ref=drive:/…` (a reference linked from a reply) is resolved first and replaced by
+// query string (not a path segment) keeps the page a single static route for the Desktop export. `?file=<id>` opens
+// a file's page; `?ref=drive:/…` (a reference linked from a reply) is resolved first and replaced by
 // the folder, or by the file's folder and the file.
 function DrivePageInner() {
   const router = useRouter()
@@ -24,7 +24,12 @@ function DrivePageInner() {
   if (reference !== null) return <OpenDriveRef reference={reference} />
   return (
     <div className="flex-1 overflow-y-auto">
-      <DriveBrowser path={path} highlight={searchParams.get("file")} onNavigate={(next) => router.push(driveHref(next))} />
+      <DriveBrowser
+        path={path}
+        file={searchParams.get("file")}
+        onNavigate={(next) => router.push(driveHref(next))}
+        onOpenFile={(folder, id) => router.push(driveFileHref(folder, id))}
+      />
     </div>
   )
 }

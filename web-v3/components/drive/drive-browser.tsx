@@ -1,13 +1,15 @@
 "use client"
 
-// The drive page (docs/v3/client-experience-proposal.md §2.6): one folder of the account's cloud drive at a time,
-// laid out like a file manager — breadcrumbs, folders then files with size, modified time and expiry, and per-row
-// actions (open, download, rename, move, copy the `drive:/…` reference, delete). Uploads go into the open folder
-// (button, or drop files on the page). Orches' workspace (/Orches) is listed read-only apart from deletes.
+// The drive page (docs/v3/client-experience-proposal.md §2.6): one folder of the account's cloud drive at a time as a
+// plain list — breadcrumbs to move up, folders then files with size, modified time and expiry, per-row actions (open,
+// download, rename, move, copy the `drive:/…` reference, delete). A file opens its own page (`file=<id>`): download,
+// or preview in a window, and its details. Uploads go into the open folder (button, or drop files on the page).
+// Orches' workspace (/Orches) is listed read-only apart from deletes.
 
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react"
 import {
   CircleAlertIcon,
+  FileXIcon,
   CloudOffIcon,
   FolderOpenIcon,
   FolderPlusIcon,
@@ -17,21 +19,25 @@ import {
   LoaderCircleIcon,
   RefreshCwIcon,
   UploadIcon,
+  XIcon,
 } from "lucide-react"
 import { toast } from "sonner"
 
 import { ConfirmDialog } from "@/components/console/confirm-dialog"
 import { EmptyState, PageContainer, PageHeader } from "@/components/console/page-header"
 import { DriveBreadcrumbs } from "@/components/drive/drive-breadcrumbs"
-import { DriveEntryTable, type DriveRowHandlers } from "@/components/drive/drive-entry-table"
+import { DriveEntryList, driveRowLabel, type DriveRowHandlers } from "@/components/drive/drive-entry-list"
+import { DriveFilePage } from "@/components/drive/drive-file-page"
 import { driveErrorMessage, driveFolderLabel, driveUploadRejection } from "@/components/drive/drive-labels"
 import { DriveMoveDialog } from "@/components/drive/drive-move-dialog"
 import { DriveNameDialog } from "@/components/drive/drive-name-dialog"
+import { DrivePreview } from "@/components/drive/drive-preview"
 import { DriveUploadList, useDriveUploads } from "@/components/drive/drive-uploads"
 import { DriveUsage } from "@/components/drive/drive-usage"
 import { Notice } from "@/components/field"
 import { useI18n } from "@/components/i18n-provider"
 import { Button } from "@/components/ui/button"
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   ControlApiError,
@@ -47,6 +53,7 @@ import {
   appendDrivePage,
   canWriteInto,
   driveRows,
+  fileRow,
   planDriveUpload,
   type DriveRow,
 } from "@/lib/drive/entries"
@@ -83,13 +90,15 @@ const isFileDrag = (event: DragEvent) => Array.from(event.dataTransfer.types).in
 
 export function DriveBrowser({
   path,
-  highlight = null,
+  file = null,
   onNavigate,
+  onOpenFile,
 }: {
   path: string
-  /** A file of the folder to point out (by id), e.g. one a reply linked to. */
-  highlight?: string | null
+  /** The file of the folder whose page is open (by id), e.g. one a reply linked to. */
+  file?: string | null
   onNavigate: (path: string) => void
+  onOpenFile: (folder: string, fileId: string) => void
 }) {
   const { t, locale } = useI18n()
   const { activeAccount, getFreshAccessToken } = useWorkbench()
@@ -100,6 +109,9 @@ export function DriveBrowser({
   const [loading, setLoading] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [dragDepth, setDragDepth] = useState(0)
+  // The open file's preview window (by id), and the file itself when the listing does not hold it (past "show more").
+  const [previewing, setPreviewing] = useState<string | null>(null)
+  const [fetched, setFetched] = useState<{ id: string; row?: DriveRow; error?: unknown } | null>(null)
   const nameDialog = useDialogSubject<NameRequest>()
   const moveDialog = useDialogSubject<DriveRow>()
   const deleteDialog = useDialogSubject<DriveRow>()
@@ -173,6 +185,28 @@ export function DriveBrowser({
   const enabled = quota?.enabled ?? null
   const writable = enabled === true && canWriteInto(path) && !loadError
   const folderLabel = driveFolderLabel(path, driveBasename(path), t)
+  const listed = file ? rows.find((row) => row.kind === "file" && row.id === file) : undefined
+  const openRow = listed ?? (file && fetched?.id === file ? fetched.row : undefined)
+  const openFile = openRow?.kind === "file" ? openRow : null
+  const fileMissing = Boolean(file && !listed && fetched?.id === file && fetched.error)
+  const filePage = file !== null
+  const fileListed = Boolean(listed)
+
+  useEffect(() => {
+    if (!file || !listing || fileListed || !serverUrl) return
+    let alive = true
+    void (async () => {
+      try {
+        const res = await fetchDriveDownloadUrl(serverUrl, await getFreshAccessToken(), file)
+        if (alive) setFetched({ id: file, row: fileRow(res.file) })
+      } catch (error) {
+        if (alive) setFetched({ id: file, error })
+      }
+    })()
+    return () => {
+      alive = false
+    }
+  }, [file, fileListed, getFreshAccessToken, listing, serverUrl])
 
   const uploads = useDriveUploads({
     serverUrl,
@@ -271,6 +305,10 @@ export function DriveBrowser({
         toast.success(t("drive.deletedFile"))
       }
       deleteDialog.hide()
+      if (toDelete.kind === "file" && toDelete.id === file) {
+        onNavigate(path)
+        return
+      }
       await load()
     } catch (err) {
       toast.error(driveErrorMessage(err, t))
@@ -293,7 +331,7 @@ export function DriveBrowser({
         ? t("drive.deleteOrchesNote")
         : null
 
-  const dropProps = writable
+  const dropProps = writable && !filePage
     ? {
         onDragEnter: (event: DragEvent) => {
           if (!isFileDrag(event)) return
@@ -353,11 +391,28 @@ export function DriveBrowser({
           }
         />
       )
-  } else if (!listing) {
+  } else if (filePage && openFile) {
+    body = (
+      <DriveFilePage row={openFile} now={current?.at ?? 0} handlers={handlers} onPreview={() => setPreviewing(openFile.id)} />
+    )
+  } else if (filePage && fileMissing) {
+    body = (
+      <EmptyState
+        icon={FileXIcon}
+        title={t("drive.fileNotFoundTitle")}
+        description={t("drive.notFoundDesc")}
+        action={
+          <Button variant="outline" size="sm" onClick={() => onNavigate(path)}>
+            {t("drive.backToFolder")}
+          </Button>
+        }
+      />
+    )
+  } else if (!listing || filePage) {
     body = (
       <div className="flex flex-col gap-2 py-2" aria-busy="true" aria-label={t("common.loading")}>
         {Array.from({ length: 4 }, (_, index) => (
-          <Skeleton key={index} className="h-12 w-full rounded-2xl" />
+          <Skeleton key={index} className="my-1.5 h-9 w-full rounded-xl" />
         ))}
       </div>
     )
@@ -379,10 +434,15 @@ export function DriveBrowser({
   } else {
     body = (
       <div className="flex flex-col gap-3">
-        <DriveEntryTable rows={rows} now={current?.at ?? 0} highlight={highlight} handlers={handlers} />
+        <DriveEntryList
+          rows={rows}
+          now={current?.at ?? 0}
+          onOpenFile={(row) => onOpenFile(path, row.id)}
+          handlers={handlers}
+        />
         {listing.files.length < listing.total_files && (
           <div className="flex items-center gap-3 px-2">
-            <p className="text-sm text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               {t("drive.moreFiles", { shown: listing.files.length, total: listing.total_files })}
             </p>
             <Button variant="ghost" size="sm" disabled={loadingMore} onClick={() => void loadMore()}>
@@ -414,7 +474,7 @@ export function DriveBrowser({
               >
                 <RefreshCwIcon className={cn("size-4", loading && "animate-spin")} />
               </Button>
-              {writable && (
+              {writable && !filePage && (
                 <>
                   <Button variant="outline" size="sm" onClick={() => nameDialog.show({ mode: "create" })}>
                     <FolderPlusIcon className="size-4" />
@@ -442,11 +502,16 @@ export function DriveBrowser({
 
       <DriveUploadList items={uploads.items} onCancel={uploads.cancel} onDismiss={uploads.dismissFinished} />
 
-      <section aria-label={folderLabel} className="relative flex flex-col gap-4 rounded-card bg-card p-4 sm:p-6">
+      <section aria-label={folderLabel} className="relative flex flex-col gap-1">
         {enabled !== false && (
-          <div className="flex min-w-0 items-center justify-between gap-3">
-            <DriveBreadcrumbs path={path} onNavigate={onNavigate} className="flex-1" />
-            {listing && (
+          <div className="-ml-2 flex min-h-11 min-w-0 items-center gap-1 border-b border-border pb-2">
+            <DriveBreadcrumbs
+              path={path}
+              leaf={filePage ? (openFile ? driveRowLabel(openFile, t) : "") : undefined}
+              onNavigate={onNavigate}
+              className="min-w-0 flex-1"
+            />
+            {listing && !filePage && (
               <Button
                 variant="ghost"
                 size="icon-sm"
@@ -459,14 +524,44 @@ export function DriveBrowser({
             )}
           </div>
         )}
-        {enabled && isOrchesPath(path) && <Notice icon={<FolderSyncIcon />}>{t("drive.orchesNotice")}</Notice>}
+        {enabled && !filePage && isOrchesPath(path) && <Notice icon={<FolderSyncIcon />}>{t("drive.orchesNotice")}</Notice>}
         {body}
         {dragDepth > 0 && (
-          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-card border-2 border-dashed border-border-strong bg-background/85 px-6 text-center text-sm font-medium text-foreground">
+          <div className="pointer-events-none absolute -inset-3 z-10 flex items-center justify-center rounded-card border-2 border-dashed border-border-strong bg-background/85 px-6 text-center text-sm font-medium text-foreground">
             {t("drive.dropHere", { folder: folderLabel })}
           </div>
         )}
       </section>
+
+      <Dialog
+        open={openFile !== null && previewing === openFile.id}
+        onOpenChange={(open) => {
+          if (!open) setPreviewing(null)
+        }}
+      >
+        <DialogContent
+          showCloseButton={false}
+          className="flex h-[min(48rem,calc(100dvh-4rem))] w-[calc(100%-2rem)] max-w-3xl flex-col p-5 sm:max-w-3xl"
+        >
+          {openFile && (
+            <>
+              <DialogTitle className="sr-only">{driveRowLabel(openFile, t)}</DialogTitle>
+              <DialogDescription className="sr-only">{openFile.path}</DialogDescription>
+              <DrivePreview
+                row={openFile}
+                now={current?.at ?? 0}
+                handlers={handlers}
+                className="flex-1"
+                trailing={
+                  <DialogClose render={<Button variant="ghost" size="icon-xs" aria-label={t("common.close")} />}>
+                    <XIcon className="size-3.5" />
+                  </DialogClose>
+                }
+              />
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <DriveNameDialog
         key={`name-${nameDialog.key}`}
@@ -491,7 +586,9 @@ export function DriveBrowser({
           if (!open) moveDialog.hide()
         }}
         onMoved={(folder) => {
+          const moved = moveDialog.subject
           moveDialog.hide()
+          if (moved?.kind === "file" && moved.id === file) onOpenFile(folder, moved.id)
           toast.success(t("drive.moved", { folder: driveFolderLabel(folder, driveBasename(folder), t) }))
           void load()
         }}

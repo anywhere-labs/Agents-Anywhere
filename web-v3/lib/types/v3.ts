@@ -237,6 +237,14 @@ export interface ConfigOption {
   options: { value: string; name: string; description?: string; group?: string }[]
 }
 
+/** A way to sign in the device offers. `agent`: the agent does it when asked to; `terminal`: in a terminal. */
+export interface SignInMethod {
+  id: string
+  name: string
+  description?: string
+  kind: "agent" | "terminal"
+}
+
 /**
  * aa.v3.Device/agents: an agent on the device with its settings (connector-v3 README › Agent 管理). A disabled agent
  * is not offered for new conversations; settings apply to agent processes started afterwards. Environment values never
@@ -251,7 +259,9 @@ export interface AgentEntry {
   args: string[]
   env_keys: string[]
   customized: boolean
-  /** Live processes of this agent (conversations whose agent is up, and the one started for a new conversation). */
+  /** Known ways to sign in to it (the agent names its own once it was started). */
+  sign_in?: SignInMethod[]
+  /** Its processes: one shared by all of its conversations, or two while its settings change. */
   running: number
   /** Conversations of this agent with a turn running now. */
   busy: number
@@ -262,12 +272,64 @@ export interface AgentEntry {
   approvals?: boolean
   /** Minutes a conversation's agent may sit idle before it is closed (its next message restores it); 0: never. */
   idle_close_minutes?: number
+  /** Conversations (and the one started for a new conversation) open in its processes. */
+  sessions?: number
+  /** Added by the user: it can be renamed and removed. */
+  custom?: true
+  /** It can be started on the device (absent: a Connector that lists installed agents only). */
+  installed?: boolean
+  /** Its own program, where it was found, or where the user said it is (`program_set`). */
+  program?: string
+  program_set?: boolean
+  /** Its own program is there, but not this one, which starts it (`npx`). */
+  missing?: string
+  website?: string
+  install?: AgentInstall
+  /** Only for agents that can be pointed at a model gateway; `base_url`: the one they use (its key stays on the device). */
+  gateway?: AgentGateway
+}
+
+export interface AgentGateway {
+  /** What the gateway must speak. */
+  api: "anthropic" | "openai-chat" | "openai-responses"
+  model_required: boolean
+  base_url?: string
+  model?: string
+}
+
+/** An agent of the user's own: a command that speaks ACP. */
+export interface NewAgent {
+  name: string
+  command: string
+  args?: string[]
+  env?: Record<string, string>
+}
+
+/** How an agent can be installed on its device; the preferred method first. */
+export interface AgentInstall {
+  methods: { id: string; command: string; available: boolean; needs?: string }[]
+  job?: AgentInstallJob
+}
+
+/** The newest install of an agent since its Connector started. */
+export interface AgentInstallJob {
+  method: string
+  command: string
+  state: "waiting" | "running" | "succeeded" | "failed" | "cancelled"
+  started_at: Instant
+  ended_at?: Instant
+  exit_code?: number
+  /** Why it failed, when it was not its exit code. */
+  error?: string
+  /** The end of what it printed. */
+  output: string
 }
 
 /** aa.v3.Device/update_agent: `reset` first drops every override; `env` values of null remove a variable. */
 export interface AgentUpdate {
   id: string
   enabled?: boolean
+  /** Only for an agent the user added. */
   name?: string
   command?: string
   args?: string[]
@@ -276,6 +338,10 @@ export interface AgentUpdate {
   approvals?: boolean
   /** 0: never close idle processes. */
   idle_close_minutes?: number
+  /** Where its program is, when it is not found by itself; empty: look for it again. */
+  program?: string
+  /** Absent fields stay (the key only on the same host); an empty `base_url` removes the gateway. */
+  gateway?: { base_url?: string; api_key?: string; model?: string }
 }
 
 /**

@@ -41,9 +41,9 @@ const DOWNLOAD_MAX = 256 * 1024 * 1024
 const bytesOf = (r: ReadFileResult) =>
   r.encoding === "base64" ? base64ToBytes(r.content) : new TextEncoder().encode(r.content)
 
-const IMAGE_EXT = /\.(png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i
-const PDF_EXT = /\.pdf$/i
-const MD_EXT = /\.(md|markdown|mdx)$/i
+export const IMAGE_EXT = /\.(png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i
+export const PDF_EXT = /\.pdf$/i
+export const MD_EXT = /\.(md|markdown|mdx)$/i
 const MIME_BY_EXT: Record<string, string> = {
   png: "image/png",
   jpg: "image/jpeg",
@@ -106,7 +106,7 @@ function remember(key: string, value: ReadFileResult) {
   if (readCache.size > 40) readCache.delete(readCache.keys().next().value!)
 }
 
-function HighlightedText({ text, path }: { text: string; path: string }) {
+export function HighlightedText({ text, path }: { text: string; path: string }) {
   const lines = useHighlightedCode(text, languageForPath(path))
   return (
     <CodeBlock size="sm" className="rounded-2xl border-0 bg-background">
@@ -241,9 +241,9 @@ export function FilePreview({
           </div>
         ) : binaryKind === "image" && blobUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={blobUrl} alt={name} className="mx-auto max-h-[70vh] max-w-full rounded-2xl object-contain" />
+          <img src={blobUrl} alt={name} className="mx-auto max-h-full max-w-full rounded-2xl object-contain" />
         ) : binaryKind === "pdf" && blobUrl ? (
-          <iframe src={blobUrl} title={name} className="h-[70vh] w-full rounded-2xl bg-background" />
+          <iframe src={blobUrl} title={name} className="h-full min-h-[60vh] w-full rounded-2xl bg-background" />
         ) : result.encoding === "base64" ? (
           <div className="flex flex-col items-center gap-3 rounded-2xl bg-background p-8 text-center">
             <FileIcon className="size-7 stroke-[1.5] text-muted-foreground" />
@@ -340,7 +340,7 @@ export function FileBrowser({
   }
 
   const list = (
-    <div className="flex min-h-0 flex-col gap-2">
+    <div className="flex min-h-0 flex-1 flex-col gap-2">
       <div className="flex min-w-0 items-center gap-1">
         <Button
           variant="ghost"
@@ -419,11 +419,26 @@ export function FileBrowser({
   }
 
   return (
-    <div className={cn("grid min-h-0 gap-4 lg:grid-cols-[minmax(16rem,22rem)_1fr]", className)}>
-      <div className="flex max-h-[70vh] min-h-64 flex-col rounded-card bg-card p-3">{list}</div>
-      <div className="min-h-64 min-w-0 rounded-card bg-card p-4">
+    <div
+      className={cn(
+        "grid min-h-0 overflow-hidden rounded-card bg-card lg:grid-cols-[minmax(16rem,22rem)_1fr] lg:grid-rows-[minmax(0,1fr)]",
+        className
+      )}
+    >
+      <div className={cn("flex min-h-64 flex-col p-3 lg:min-h-0 lg:border-r lg:border-border", file && "max-lg:hidden")}>
+        {list}
+      </div>
+      <div className={cn("flex min-h-64 min-w-0 flex-col gap-2 p-4 lg:min-h-0", !file && "max-lg:hidden")}>
         {file ? (
-          <FilePreview tunnelManager={tunnelManager} device={device} path={file} className="h-full" />
+          <>
+            <div className="lg:hidden">
+              <Button variant="ghost" size="xs" onClick={() => setFile(null)}>
+                <ArrowLeftIcon className="size-3.5" />
+                {t("panel.back")}
+              </Button>
+            </div>
+            <FilePreview tunnelManager={tunnelManager} device={device} path={file} className="flex-1" />
+          </>
         ) : (
           <p className="py-16 text-center text-sm text-muted-foreground">{t("device.pickFile")}</p>
         )}

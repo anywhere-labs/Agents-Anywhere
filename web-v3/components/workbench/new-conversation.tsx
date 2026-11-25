@@ -9,7 +9,7 @@
 // are uploaded into it, the message is sent, and the page moves into the conversation.
 import { MeshCallError } from "meshcall/web"
 import { useRouter, useSearchParams } from "next/navigation"
-import { Suspense, useEffect, useMemo, useState } from "react"
+import { Suspense, useMemo, useState } from "react"
 import {
   BotIcon,
   ChevronDownIcon,
@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { AgentIcon } from "@/components/workbench/agent-icon"
+import { AgentSignInDialog, type SignInTarget } from "@/components/workbench/agent-sign-in-dialog"
 import { DirectoryOptions, FolderPickerDialog } from "@/components/workbench/folder-picker"
 import { DeviceStatusIcon } from "@/components/workbench/device-status"
 import { useWorkbenchUi } from "@/components/workbench/workbench-ui"
@@ -43,6 +44,8 @@ import { useWorkbench } from "@/lib/state/workbench-context"
 import { useDevice, useDriveQuota } from "@/lib/workbench/device-info"
 import { rememberStart, useLocalPrefs } from "@/lib/workbench/local-prefs"
 import { changedPicks, usePreparedAgent, withPicks } from "@/lib/workbench/prepared-agent"
+import type { SignInMethod } from "@/lib/types/v3"
+import { signInText } from "@/lib/workbench/sign-in"
 import { agentLabel, deviceProjects, projectName, sessionHref, tildePath } from "@/lib/workbench/tree"
 import { titleFromMessage } from "@/lib/workbench/title"
 
@@ -125,6 +128,7 @@ function NewConversationInner() {
     cwd,
     enabled: ready && !info.error,
   })
+  const [signIn, setSignIn] = useState<SignInTarget | null>(null)
   const agentKey = deviceId && agent ? `${deviceId}:${agent}` : null
   const [picked, setPicked] = useState<{ key: string | null; values: Record<string, string> }>({ key: null, values: {} })
   const ownPicks = useMemo(() => (picked.key === agentKey ? picked.values : {}), [agentKey, picked])
@@ -132,15 +136,6 @@ function NewConversationInner() {
     () => (prep.status === "ready" ? withPicks(prep.prepared.config, ownPicks) : []),
     [ownPicks, prep]
   )
-  // A first start downloads the agent: after a few seconds, say so.
-  const startingKey = prep.status === "starting" ? `${agentKey}|${cwd ?? ""}` : null
-  const [slowKey, setSlowKey] = useState<string | null>(null)
-  useEffect(() => {
-    if (!startingKey) return
-    const timer = window.setTimeout(() => setSlowKey(startingKey), 4000)
-    return () => window.clearTimeout(timer)
-  }, [startingKey])
-  const slowStart = startingKey !== null && slowKey === startingKey
 
   const drop = useDropZone((files) => drafts.add(files), Boolean(ready))
 
@@ -199,9 +194,11 @@ function NewConversationInner() {
       const error =
         err instanceof MeshCallError && err.reason === "agent_disabled"
           ? t("newConv.agentDisabled", { agent: agentName })
-          : err instanceof Error
-            ? err.message
-            : String(err)
+          : err instanceof MeshCallError && err.reason === "agent_not_installed"
+            ? t("newConv.agentNotInstalled", { agent: agentName })
+            : err instanceof Error
+              ? err.message
+              : String(err)
       if (created) {
         toast.error(t("newConv.sendFailed", { error }))
         return handOver(created, text)
@@ -233,6 +230,7 @@ function NewConversationInner() {
 
   let notice: string | null = null
   let onRetry: (() => void) | null = null
+  let signInMethods: SignInMethod[] = []
   if (meshError && !meshConnected) notice = `MeshCall Router: ${meshError}`
   else if (device && !online) notice = t("newConv.offline")
   else if (info.error) {
@@ -242,14 +240,15 @@ function NewConversationInner() {
   else if (online && info.status && runtimes.length === 0) notice = `${t("newConv.noAgents")} — ${t("newConv.noAgentsHint")}`
   else if (prep.status === "failed") {
     if (prep.reason === "agent_auth_required") {
-      const methods = prep.authMethods.map((m) => m.name).join("、")
-      notice = t("newConv.agentAuthRequired", { agent: agentName }) + (methods ? ` ${t("newConv.agentAuthMethods", { methods })}` : "")
+      notice = signInText(t, agentName, prep.signIn)
+      signInMethods = prep.signIn?.methods ?? []
     } else if (prep.reason === "invalid_cwd") notice = t("newConv.invalidCwd")
     else if (prep.reason === "unknown_agent") notice = t("newConv.unknownAgent", { agent: agentName })
     else if (prep.reason === "agent_disabled") notice = t("newConv.agentDisabled", { agent: agentName })
+    else if (prep.reason === "agent_not_installed") notice = t("newConv.agentNotInstalled", { agent: agentName })
     else notice = t("newConv.agentStartFailed", { agent: agentName, error: prep.message })
     onRetry = retryPrepare
-  } else if (slowStart) notice = t("newConv.agentStarting", { agent: agentName })
+  }
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col overflow-y-auto" {...drop.handlers}>
@@ -356,6 +355,15 @@ function NewConversationInner() {
         {notice && (
           <p className="text-center text-sm leading-relaxed text-muted-foreground">
             {notice}
+            {signInMethods.length > 0 && agent && (
+              <button
+                type="button"
+                onClick={() => setSignIn({ id: agent, name: agentName, methods: signInMethods })}
+                className="ml-2 font-medium text-foreground underline-offset-4 hover:underline"
+              >
+                {t("agentSignIn.action")}
+              </button>
+            )}
             {onRetry && (
               <button type="button" onClick={onRetry} className="ml-2 font-medium text-foreground underline-offset-4 hover:underline">
                 {t("wb.retry")}
@@ -391,6 +399,13 @@ function NewConversationInner() {
         device={tunnelDevice}
         start={cwd ?? undefined}
         onPick={(path) => setPickedCwd({ device: deviceId, cwd: path })}
+      />
+      <AgentSignInDialog
+        target={signIn}
+        onClose={() => setSignIn(null)}
+        tunnelManager={tunnelManager}
+        device={tunnelDevice}
+        onSignedIn={retryPrepare}
       />
     </div>
   )

@@ -19,15 +19,16 @@ import type {
   AgentUpdate,
   DeviceMode,
   DeviceRecord,
-  PairingPayload,
   DeviceSettings,
   DeviceStatus,
   ListDirsResult,
   Message,
+  NewAgent,
   OpenTunnelResponse,
   PairedClientEntry,
-  ReadFileResult,
+  PairingPayload,
   PreparedAgent,
+  ReadFileResult,
   Session,
   SessionListPayload,
   TerminalAttachRequest,
@@ -525,6 +526,29 @@ export class DeviceTunnelManager {
     return this.callUnary(device, DEVICE_SVC, "agents", {})
   }
 
+  /** The same once the device was searched again for installed agents. */
+  refreshAgents(device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">): Promise<{ agents: AgentEntry[] }> {
+    return this.callUnary(device, DEVICE_SVC, "refresh_agents", {}, { timeoutMs: 30_000 })
+  }
+
+  /** Install an agent with one of its methods; `listAgents` reports how it goes. */
+  installAgent(device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">, id: string, method: string): Promise<AgentEntry> {
+    return this.callUnary(device, DEVICE_SVC, "install_agent", { id, method })
+  }
+
+  cancelInstall(device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">, id: string): Promise<AgentEntry> {
+    return this.callUnary(device, DEVICE_SVC, "cancel_install", { id })
+  }
+
+  addAgent(device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">, agent: NewAgent): Promise<AgentEntry> {
+    return this.callUnary(device, DEVICE_SVC, "add_agent", agent)
+  }
+
+  /** Remove an agent the user added; `turns_running` unless `force` while it replies. */
+  removeAgent(device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">, id: string, force = false): Promise<{ removed: boolean }> {
+    return this.callUnary(device, DEVICE_SVC, "remove_agent", { id, force }, { timeoutMs: 30_000 })
+  }
+
   updateAgent(device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">, update: AgentUpdate): Promise<AgentEntry> {
     return this.callUnary(device, DEVICE_SVC, "update_agent", update)
   }
@@ -536,6 +560,20 @@ export class DeviceTunnelManager {
     force = false
   ): Promise<{ stopped: number }> {
     return this.callUnary(device, DEVICE_SVC, "stop_agent", force ? { id, force } : { id })
+  }
+
+  /** Sign in to an agent (it may open a browser on the device): answers once signed in; asking again joins. */
+  signInAgent(device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">, id: string, method: string): Promise<{ ok: true }> {
+    return this.callUnary(device, DEVICE_SVC, "sign_in_agent", { id, method }, { timeoutMs: 120_000 })
+  }
+
+  cancelSignIn(device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">, id: string): Promise<{ ok: true }> {
+    return this.callUnary(device, DEVICE_SVC, "cancel_sign_in", { id })
+  }
+
+  /** A terminal in which the agent's own program signs in (exit code 0: signed in). */
+  signInTerminal(device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">, id: string, method: string): Promise<TerminalInfo> {
+    return this.callUnary(device, DEVICE_SVC, "sign_in_terminal", { id, method })
   }
 
   listDirs(

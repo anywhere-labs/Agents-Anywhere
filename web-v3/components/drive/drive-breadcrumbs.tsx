@@ -7,13 +7,16 @@ import { useI18n } from "@/components/i18n-provider"
 import { DRIVE_ROOT, driveBreadcrumbs } from "@/lib/drive/paths"
 import { cn } from "@/lib/utils"
 
-/** Path of the open folder, root first; every level but the last goes back to it. */
+/** Path of the open folder (and file), root first; every level but the last goes back to it. */
 export function DriveBreadcrumbs({
   path,
+  leaf,
   onNavigate,
   className,
 }: {
   path: string
+  /** The open file's name, after its folder. */
+  leaf?: string
   onNavigate: (path: string) => void
   className?: string
 }) {
@@ -24,6 +27,7 @@ export function DriveBreadcrumbs({
       path: crumb.path,
       label: driveFolderLabel(crumb.path, crumb.name, t),
     })),
+    ...(leaf !== undefined ? [{ path: "\u0000file", label: leaf }] : []),
   ]
   return (
     <nav aria-label={t("drive.breadcrumb")} className={cn("min-w-0", className)}>

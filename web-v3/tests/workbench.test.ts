@@ -1,10 +1,24 @@
 import { describe, expect, it } from "vitest"
+import { MeshCallError } from "meshcall/web"
 
 import { outputText } from "@/components/conversation/text"
 import { bytesToBase64Url, isUnimplemented, planTransfer, rpcCap } from "@/lib/attachments/transfer"
-import type { ConfigOption, DriveQuotaView, SessionSummary } from "@/lib/types/v3"
+import type { AgentEntry, AgentInstallJob, ConfigOption, DriveQuotaView, SessionSummary } from "@/lib/types/v3"
+import { AGENT_MARKS } from "@/components/workbench/agent-marks"
+import {
+  byName,
+  installNews,
+  isGatewayUrl,
+  isInstalled,
+  isInstalling,
+  keepsGatewayKey,
+  preferredMethod,
+  splitAgents,
+  type ListedAgent,
+} from "@/lib/workbench/agents"
 import { rememberStart, toggleIn } from "@/lib/workbench/local-prefs"
 import { joinArgs, splitArgs } from "@/lib/workbench/args"
+import { signInNeeded, signInText } from "@/lib/workbench/sign-in"
 import { changedPicks, withPicks } from "@/lib/workbench/prepared-agent"
 import { titleFromMessage } from "@/lib/workbench/title"
 import { agentLabel, buildDeviceTree, deviceProjects, matchesQuery, projectName, tildePath } from "@/lib/workbench/tree"
@@ -236,5 +250,160 @@ describe("tool output as text (outputText)", () => {
     expect(outputText({ stdout: "ok" })).toBe("ok")
     expect(outputText({ exit_code: 0 })).toBe("")
     expect(outputText({ content: [] })).toBe('{\n  "content": []\n}')
+  })
+})
+
+describe("agents of a device", () => {
+  it("are listed by name, installed or not, whatever their case", () => {
+    const names = ["goose", "Claude Code", "Grok Build", "Amp", "cline", "Agent 10", "Agent 9"]
+    expect(names.map((name) => ({ id: name, name })).sort(byName).map((a) => a.name)).toEqual([
+      "Agent 9",
+      "Agent 10",
+      "Amp",
+      "Claude Code",
+      "cline",
+      "goose",
+      "Grok Build",
+    ])
+    // Same name: their ids decide, so the order does not change between reads.
+    expect([{ id: "b", name: "Pi" }, { id: "a", name: "pi" }].sort(byName).map((a) => a.id)).toEqual(["a", "b"])
+  })
+
+  const entry = (id: string, patch: Partial<AgentEntry> = {}): AgentEntry => ({
+    id,
+    name: id,
+    builtin: true,
+    enabled: true,
+    command: id,
+    args: [],
+    env_keys: [],
+    customized: false,
+    running: 0,
+    busy: 0,
+    ...patch,
+  })
+  const job = (state: AgentInstallJob["state"]): AgentEntry["install"] => ({
+    methods: [],
+    job: { method: "script", command: "install", state, started_at: "2026-11-24T10:00:00Z", output: "" },
+  })
+
+  it("are there, or apart from them can be installed, each by name", () => {
+    const listed = (e: AgentEntry | null, id = e?.id ?? ""): ListedAgent => ({
+      id,
+      name: id,
+      entry: e,
+      installed: isInstalled(e),
+      enabled: true,
+      running: false,
+      count: 0,
+    })
+    const { usable, more } = splitAgents([
+      listed(entry("pi", { installed: true, install: { methods: [] } })),
+      listed(entry("kimi", { installed: false, install: { methods: [] } })),
+      listed(entry("amp", { installed: false, install: { methods: [] } })),
+      // Its own program is there, only what starts it is not.
+      listed(entry("codex", { installed: false, missing: "npx", install: { methods: [] } })),
+      // Added by the user, and its command is gone: theirs to put right, not one to install.
+      listed(entry("custom-mine", { installed: false, custom: true })),
+      // A Connector that does not manage agents.
+      listed(null, "claude"),
+    ])
+    expect(usable.map((a) => a.id)).toEqual(["claude", "codex", "custom-mine", "pi"])
+    expect(more.map((a) => a.id)).toEqual(["amp", "kimi"])
+  })
+
+  it("are news once installed, or when their install ended without them", () => {
+    const before = [
+      entry("a", { installed: false, install: job("running") }),
+      entry("b", { installed: false, install: job("running") }),
+      entry("c", { installed: false, install: job("waiting") }),
+      entry("d", { installed: false }),
+      entry("e", { installed: true }),
+      entry("f", { installed: false, install: job("failed") }),
+      entry("g", { installed: false, install: job("running") }),
+    ]
+    const now = [
+      entry("a", { installed: true, install: job("succeeded") }),
+      entry("b", { installed: false, install: job("failed") }),
+      entry("c", { installed: false, install: job("cancelled") }),
+      // In a terminal, say.
+      entry("d", { installed: true }),
+      entry("e", { installed: true }),
+      entry("f", { installed: false, install: job("failed") }),
+      // Its command ended well, but the program is not there.
+      entry("g", { installed: false, install: job("succeeded") }),
+      entry("new", { installed: true }),
+    ]
+    expect(installNews(before, now).map((n) => `${n.kind} ${n.entry.id}`)).toEqual(["installed a", "failed b", "installed d", "failed g"])
+    expect(installNews(now, now)).toEqual([])
+  })
+
+  it("have marks that fill a square box", () => {
+    expect(Object.keys(AGENT_MARKS).sort()).toEqual([
+      "amp", "antigravity", "auggie", "claude", "codex", "copilot", "cursor", "devin", "dirac", "droid", "goose",
+      "grok", "junie", "kilo", "kimi", "minimax", "opencode", "pi", "qoder", "qwen", "vibe", "vtcode",
+    ])
+    for (const [id, mark] of Object.entries(AGENT_MARKS)) {
+      const [, , width, height] = mark.viewBox.split(" ").map(Number)
+      expect(width, id).toBe(height)
+      expect(mark.shapes.length, id).toBeGreaterThan(0)
+    }
+  })
+
+  it("count as installed when a Connector does not say", () => {
+    expect(isInstalled({})).toBe(true)
+    expect(isInstalled(null)).toBe(true)
+    expect(isInstalled({ installed: false })).toBe(false)
+  })
+
+  it("are followed while an install waits or runs, and offered the first method that can run", () => {
+    expect((["waiting", "running", "succeeded", "failed", "cancelled"] as const).filter((state) => isInstalling({ state }))).toEqual([
+      "waiting",
+      "running",
+    ])
+    expect(isInstalling(undefined)).toBe(false)
+    const methods = [
+      { id: "npm", command: "npm install -g x", available: false, needs: "npm" },
+      { id: "brew", command: "brew install x", available: true, needs: "brew" },
+    ]
+    expect(preferredMethod({ install: { methods } })).toBe("brew")
+    expect(preferredMethod({ install: { methods: methods.slice(0, 1) } })).toBe("npm")
+    expect(preferredMethod({})).toBeUndefined()
+  })
+
+  it("take http(s) gateways only, and send a saved key to no other host", () => {
+    for (const url of ["https://gw.example.com", "http://127.0.0.1:4000/v1"]) expect(isGatewayUrl(url), url).toBe(true)
+    for (const url of ["", "gw.example.com", "ftp://gw.example.com", "https://a:b@gw.example.com", "https://gw.example.com?x", "https://gw.example.com#x"]) {
+      expect(isGatewayUrl(url), url).toBe(false)
+    }
+    expect(keepsGatewayKey("https://gw.example.com", "https://gw.example.com/v1")).toBe(true)
+    for (const url of ["http://gw.example.com", "https://gw.example.com:8443", "https://other.example.com", "gw.example.com"]) {
+      expect(keepsGatewayKey("https://gw.example.com", url), url).toBe(false)
+    }
+    expect(keepsGatewayKey(undefined, "https://gw.example.com")).toBe(false)
+  })
+})
+
+describe("signing in to an agent", () => {
+  const refused = (details: Record<string, unknown>) =>
+    new MeshCallError("failed_precondition", "could not start Cursor: Authentication required", { details: { reason: "agent_auth_required", ...details } })
+  const t = (key: string, values: Record<string, string>) => `${key}:${Object.values(values).join("|")}`
+
+  it("reads the ways the device offers, and leaves out what an older Connector sent", () => {
+    const needed = signInNeeded(
+      refused({
+        agent_message: "Run 'agent login'.",
+        auth_methods: [{ id: "cursor_login", name: "Cursor Login", kind: "agent" }, { id: "aa:program", name: "cursor-agent login", kind: "terminal" }, { id: "old", name: "Old" }],
+      })
+    )
+    expect(needed?.methods.map((m) => m.id)).toEqual(["cursor_login", "aa:program"])
+    expect(signInText(t, "Cursor", needed)).toBe("agentSignIn.needed:Cursor")
+    expect(signInNeeded(new MeshCallError("unavailable", "x", { details: { reason: "agent_start_failed" } }))).toBeNull()
+  })
+
+  it("with nothing to sign in with here, says what the agent said", () => {
+    const needed = signInNeeded(refused({ agent_message: "Run `mcode login` and try again.", auth_methods: [{ id: "x", name: "X" }] }))
+    expect(signInText(t, "MiniMax", needed)).toBe("agentSignIn.neededSays:MiniMax|Run `mcode login` and try again.")
+    expect(signInText(t, "MiniMax", signInNeeded(refused({})))).toBe("agentSignIn.needed:MiniMax")
   })
 })

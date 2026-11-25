@@ -11,12 +11,7 @@ import { DeadlineExceededError, MeshCallError } from "meshcall/web"
 
 import type { DeviceTunnelManager } from "@/lib/mesh/device-tunnel"
 import type { ConfigOption, DeviceRecord, PreparedAgent } from "@/lib/types/v3"
-
-export interface AgentAuthMethod {
-  id: string
-  name: string
-  description?: string
-}
+import { signInNeeded, type SignInNeeded } from "@/lib/workbench/sign-in"
 
 export type PrepareState =
   | { status: "idle" }
@@ -24,20 +19,12 @@ export type PrepareState =
   | { status: "ready"; prepared: PreparedAgent }
   /** The Connector predates `prepare`: the options appear once the conversation has started. */
   | { status: "unsupported" }
-  | { status: "failed"; reason: string; message: string; authMethods: AgentAuthMethod[] }
+  | { status: "failed"; reason: string; message: string; signIn: SignInNeeded | null }
 
 type Keyed = PrepareState & { key: string }
 
 /** Prepare again this long before the agent would be closed. */
 const RENEW_BEFORE_MS = 60_000
-
-function authMethods(details: Record<string, unknown> | null): AgentAuthMethod[] {
-  const raw = details?.auth_methods
-  if (!Array.isArray(raw)) return []
-  return raw.filter(
-    (m): m is AgentAuthMethod => typeof m === "object" && m !== null && typeof m.id === "string" && typeof m.name === "string"
-  )
-}
 
 export function usePreparedAgent({
   tunnelManager,
@@ -84,7 +71,7 @@ export function usePreparedAgent({
           status: "failed",
           reason: err instanceof MeshCallError ? (err.reason ?? err.code) : "error",
           message: err instanceof Error ? err.message : String(err),
-          authMethods: err instanceof MeshCallError ? authMethods(err.details) : [],
+          signIn: signInNeeded(err),
         })
       }
     }

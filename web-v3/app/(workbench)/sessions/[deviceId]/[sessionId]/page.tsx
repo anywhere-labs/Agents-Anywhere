@@ -58,6 +58,7 @@ import type { FilePart, ImagePart, QueuedMessage } from "@/lib/types/v3"
 import { useDevice, useDriveQuota } from "@/lib/workbench/device-info"
 import { toggleIn, useLocalPrefs } from "@/lib/workbench/local-prefs"
 import { cn } from "@/lib/utils"
+import { signInNeeded, signInText } from "@/lib/workbench/sign-in"
 import { agentLabel, deviceHref, sessionHref, sessionKey, tildePath } from "@/lib/workbench/tree"
 
 const WebThreadItem: ThreadItem = ({ id, anchor, children }) => (
@@ -239,17 +240,25 @@ export default function SessionWorkspacePage() {
     quota,
   })
 
-  // A failed call as a toast. The session's agent turned off on the device (aa.v3.Device/update_agent) refuses new
-  // turns: say so, with the way to the device page where it is turned on again.
+  // A failed call as a toast. The session's agent turned off on the device (aa.v3.Device/update_agent), or no longer
+  // there, refuses new turns: say so, with the way to the device page where it is turned on or installed again.
   const showError = useCallback(
     (err: unknown) => {
-      if (err instanceof MeshCallError && err.reason === "agent_disabled") {
-        toast.error(t("conv.agentDisabled"), {
-          action: { label: t("conv.openDevice"), onClick: () => router.push(deviceHref(deviceId)) },
-        })
-      } else toast.error(errorText(err))
+      const reason = err instanceof MeshCallError ? err.reason : undefined
+      const text =
+        reason === "agent_disabled"
+          ? t("conv.agentDisabled")
+          : reason === "agent_not_installed"
+            ? t("conv.agentNotInstalled")
+            : reason === "unknown_agent"
+              ? t("conv.agentRemoved")
+              : reason === "agent_auth_required"
+                ? signInText(t, agentName, signInNeeded(err))
+                : null
+      if (text) toast.error(text, { action: { label: t("conv.openDevice"), onClick: () => router.push(deviceHref(deviceId)) } })
+      else toast.error(errorText(err))
     },
-    [deviceId, router, t]
+    [agentName, deviceId, router, t]
   )
 
   // ── Sending ──

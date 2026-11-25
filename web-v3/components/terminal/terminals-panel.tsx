@@ -21,11 +21,16 @@ export function TerminalsPanel({
   tunnelManager,
   device,
   defaultCwd,
+  openNew = false,
+  onNewOpened,
 }: {
   tunnelManager: DeviceTunnelManager | null
   /** Must be referentially stable across presence heartbeats (see the device page). */
   device: TunnelDevice | null
   defaultCwd?: string
+  /** Open a new terminal right away (to paste a command into), once; `onNewOpened` takes the wish back. */
+  openNew?: boolean
+  onNewOpened?: () => void
 }) {
   const { t } = useI18n()
   const [terminals, setTerminals] = useState<TerminalInfo[]>([])
@@ -109,6 +114,19 @@ export function TerminalsPanel({
       toast.error(err instanceof Error ? err.message : String(err))
     }
   }
+
+  const openedNew = useRef(false)
+  useEffect(() => {
+    if (!openNew || !online || openedNew.current) return
+    openedNew.current = true
+    queueMicrotask(() => {
+      onNewOpened?.()
+      void handleCreate()
+    })
+  })
+  useEffect(() => {
+    if (!openNew) openedNew.current = false
+  }, [openNew])
 
   const handleClose = async (id: string) => {
     if (!tunnelManager || !device) return
