@@ -1,7 +1,7 @@
 // Read-only view. Python Connector owns migration, identity history and runtime ownership.
 import fs from "node:fs";
 import path from "node:path";
-import { userInfo } from "node:os";
+import { homedir } from "node:os";
 
 export type RuntimeOwner = {
   instanceId: string; kind: string; pid: number; processStartedAt?: string;
@@ -10,7 +10,7 @@ export type RuntimeOwner = {
 };
 export type LocalState = Record<string, unknown> & { version: 2; connectorIds: string[]; runtime?: RuntimeOwner };
 export type OwnershipState = { status: "owned" | "conflict" | "error"; message?: string; owner?: RuntimeOwner };
-export const localRuntimePath = (home = userInfo().homedir): string => path.join(home, ".agents-anywhere", "connector-runtime.json");
+export const localRuntimePath = (home = homedir()): string => path.join(home, ".agents-anywhere", "connector-runtime.json");
 
 function object(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);

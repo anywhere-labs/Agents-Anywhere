@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process'
 import { constants } from 'node:fs'
 import { access, chmod, copyFile, mkdir, rename } from 'node:fs/promises'
-import { userInfo } from 'node:os'
+import { homedir } from 'node:os'
 import { basename, delimiter, dirname, isAbsolute, join } from 'node:path'
 import { createRequire } from 'node:module'
 import { promisify } from 'node:util'
@@ -83,7 +83,7 @@ export async function resolveUv(config: ResolvedConfig, settings: ConnectorSetti
       return await ensureExecutable(bundled, join(config.stateRoot, 'bin'))
     } catch { /* Missing optional dependency or unsupported platform: try system uv. */ }
   }
-  const home = userInfo().homedir
+  const home = homedir()
   const paths = [
     ...(process.env['PATH'] ?? process.env['Path'] ?? '').split(delimiter).filter(Boolean),
     join(home, '.local', 'bin'), join(home, '.cargo', 'bin'),
