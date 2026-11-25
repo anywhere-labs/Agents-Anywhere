@@ -1,7 +1,10 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { createSessionControllerStore } from "../src/components/session/session-controller-store.ts"
-import { createSessionStateCache } from "../src/components/session/session-state-cache.ts"
+import { registerSource } from "./helpers/onboarding-source.mjs"
+
+const hooks = registerSource()
+const { createSessionControllerStore } = await import("../src/components/session/session-controller-store.ts")
+const { createSessionStateCache } = await import("../src/components/session/session-state-cache.ts")
 
 function controller(id) {
   const value = { state: { session: { id }, items: [], eventCursor: "seq:10" }, hasSnapshot: true, invalidated: false }
@@ -158,3 +161,13 @@ test("local sessions share effect replay and departure cleanup without starting 
   assert.equal(a.disposed, true)
   assert.notEqual(store.get("local", () => controller("local")), a)
 })
+
+test("timeline sync requests and their cooldown belong to one account's store", t => {
+  const first = createSessionControllerStore(createSessionStateCache("scope"))
+  const second = createSessionControllerStore(createSessionStateCache("scope"))
+  t.after(() => { first.dispose(); second.dispose() })
+  assert.equal(first.timelineSync, first.timelineSync, "one scheduler per store, not one per access")
+  assert.notEqual(first.timelineSync, second.timelineSync, "accounts do not share cooldowns")
+})
+
+test.after(() => hooks.deregister())
