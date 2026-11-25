@@ -31,10 +31,9 @@ CONNECTOR_ALREADY_RUNNING = "connector_already_running"
 
 
 def system_home() -> Path:
-    if sys.platform != "win32":
-        import pwd
-
-        return Path(pwd.getpwuid(os.getuid()).pw_dir)
+    # Respect $HOME: a service account's passwd home can be a path that does not
+    # exist or is not writable (for example /home/<service> when the data lives on
+    # another volume). Path.home() is still per-user, so the mutex stays per-user.
     return Path.home()
 
 

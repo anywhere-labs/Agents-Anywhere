@@ -1,17 +1,17 @@
 import { constants } from 'node:fs'
 import { access, stat } from 'node:fs/promises'
-import { userInfo } from 'node:os'
+import { homedir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import type { DesktopDetection } from '../../contracts/index.js'
 import { hasCode } from '../storage/files.js'
 import { readMachineState } from './machine-state.js'
 import { isDesktopRunning, type DesktopProcessTarget } from './process.js'
 
-export const desktopRecordPath = (home = userInfo().homedir): string => join(home, '.agentsanywhere', 'desktop', 'install.json')
+export const desktopRecordPath = (home = homedir()): string => join(home, '.agentsanywhere', 'desktop', 'install.json')
 
 /** Read-only: registration and Desktop onboarding belong to the Desktop app. */
 export async function detectDesktop(
-  home = userInfo().homedir, platform = process.platform,
+  home = homedir(), platform = process.platform,
   running: (target: DesktopProcessTarget, platform: NodeJS.Platform) => Promise<boolean> = isDesktopRunning,
 ): Promise<DesktopDetection> {
   try {

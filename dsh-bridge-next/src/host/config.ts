@@ -1,4 +1,4 @@
-import { homedir, userInfo } from 'node:os'
+import { homedir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import z from '@deepseek-ai/schemastery'
@@ -30,12 +30,12 @@ export interface ResolvedConfig extends ConnectionSettings {
 }
 
 export function stateRoot(config: Config): string {
-  return config.stateRoot ?? join(userInfo().homedir, '.agents-anywhere', 'dsh-bridge-next')
+  return config.stateRoot ?? join(homedir(), '.agents-anywhere', 'dsh-bridge-next')
 }
 
 /** Fixed per-user rendezvous with the Connector; DSH_HOME and stateRoot do not move it. */
 export function bridgeDirectory(): string {
-  return join(userInfo().homedir, '.agents-anywhere', 'dsh-bridge')
+  return join(homedir(), '.agents-anywhere', 'dsh-bridge')
 }
 
 /**
@@ -55,7 +55,7 @@ export function resolveConfig(config: Config): ResolvedConfig {
   return {
     ...(config.dshHome !== undefined ? { dshHome: config.dshHome } : {}),
     stateRoot: root,
-    ...(config.stateRoot === undefined ? { legacyStateRoot: join(userInfo().homedir, '.agentsanywhere', 'dsh-bridge-next') } : {}),
+    ...(config.stateRoot === undefined ? { legacyStateRoot: join(homedir(), '.agentsanywhere', 'dsh-bridge-next') } : {}),
     connectorSourceDir,
     apiBaseUrl: normalizeServerOrigin(config.apiBaseUrl ?? CLOUD_API_BASE_URL),
     uvPath: config.uvPath ?? process.env['UV_PATH'] ?? 'uv',
