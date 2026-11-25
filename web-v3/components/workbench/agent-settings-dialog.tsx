@@ -11,7 +11,7 @@
 // with the settings the agent's newest conversation was created with.
 import { useEffect, useRef, useState } from "react"
 import { DeadlineExceededError, MeshCallError } from "meshcall/web"
-import { LoaderCircleIcon, SlidersHorizontalIcon, SquareTerminalIcon, WaypointsIcon } from "lucide-react"
+import { CpuIcon, LoaderCircleIcon, SlidersHorizontalIcon, SquareTerminalIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { ConfirmDialog } from "@/components/console/confirm-dialog"
@@ -349,7 +349,7 @@ function AgentSettingsBody({
 
   const sections: SplitSection<AgentSection>[] = [
     { id: "general", label: t("settings.nav.general"), Icon: SlidersHorizontalIcon },
-    ...(gateway ? [{ id: "gateway" as const, label: t("gateway.title"), Icon: WaypointsIcon }] : []),
+    ...(gateway ? [{ id: "gateway" as const, label: t("agent.models"), Icon: CpuIcon }] : []),
     ...(managed && entry ? [{ id: "launch" as const, label: t("agent.launch"), Icon: SquareTerminalIcon }] : []),
   ]
   const shown = (sections.find((s) => s.id === section) ?? sections[0]).id

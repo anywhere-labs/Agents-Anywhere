@@ -273,6 +273,7 @@ export const zhCNWorkbench: Record<keyof typeof enWorkbench, string> = {
 
   // 模型网关
   "gateway.title": "模型网关",
+  "agent.models": "模型与订阅",
   "gateway.hint": "{agent} 的模型请求改走这个地址，它要兼容 {api} 接口。只对这里启动的 {agent} 有效，终端里的不受影响。",
   "gateway.url": "地址",
   "gateway.keySaved": "已保存，不改就留空",

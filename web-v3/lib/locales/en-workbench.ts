@@ -273,6 +273,7 @@ export const enWorkbench = {
 
   // Model gateway
   "gateway.title": "Model gateway",
+  "agent.models": "Models & plans",
   "gateway.hint": "{agent}'s model requests go to this address instead; it must speak {api}. Only for the {agent} started from here: the one in your terminal is not affected.",
   "gateway.url": "Address",
   "gateway.keySaved": "Saved; leave empty to keep it",
