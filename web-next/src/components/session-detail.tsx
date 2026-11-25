@@ -288,6 +288,7 @@ function SessionDetailVisit({
       clearResolvedOptimisticMessages,
       onSessionUpdated,
       onInvalidated: () => cache.delete(sessionId),
+      timelineSync: sessionControllers.timelineSync,
     })
   }, token), [sessionControllers, sessionId, token])
   previousControllerRef.current = controller

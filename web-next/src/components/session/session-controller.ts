@@ -5,6 +5,7 @@ import { sessionRuntimeId, sessionRuntimeType } from "@/features/dashboard/runti
 import type { ProtocolEventEnvelope, SessionView, TimelineItem } from "@/features/dashboard/types"
 import type { SessionRemoteState } from "./session-state-cache"
 import { createSessionEventBuffer } from "./session-event-buffer"
+import { createTimelineSyncScheduler, sessionRequiresTimelineSync, type TimelineSyncScheduler } from "./session-timeline-sync"
 import {
   acceptSessionEventId,
   drainSessionEventBuffer,
@@ -61,6 +62,8 @@ export type SessionControllerOptions = {
   clearResolvedOptimisticMessages: (sessionId: string, items: TimelineItem[]) => void
   onSessionUpdated?: (session: SessionView) => void
   onInvalidated: () => void
+  /** Shared per account so a quick reopen reuses the sync that just ran. */
+  timelineSync?: TimelineSyncScheduler
 }
 
 /** A detail view's remote state, subscription and incremental recovery. */
@@ -97,6 +100,8 @@ export function createSessionController(options: SessionControllerOptions) {
   let bufferedEvents: ProtocolEventEnvelope[] = []
   let processedIds = new Set<string>()
   const liveReads = new Map<RuntimeDomain, LiveRead>()
+  const timelineSync = options.timelineSync ?? createTimelineSyncScheduler()
+  let timelineSyncRequested = false
 
   function publish(patch: Partial<SessionControllerSnapshot>) {
     if (disposed) return
@@ -110,6 +115,7 @@ export function createSessionController(options: SessionControllerOptions) {
     const state = typeof update === "function" ? update(previous) : update
     if (state === previous) return
     publish({ state })
+    requestTimelineSync()
     if (!state || !started || !snapshotReady || !snapshot.subscribed || recoveryPromise || recoveryStarting) return
     if (state.session.connectorStatus !== previous?.session.connectorStatus) {
       if (state.session.connectorStatus === "online") refreshRuntime(true)
@@ -119,6 +125,19 @@ export function createSessionController(options: SessionControllerOptions) {
         clearError("notices")
       }
     } else if (state.effectiveCapabilities !== previous?.effectiveCapabilities) refreshCatalogs(false)
+  }
+
+  // A runtime that publishes history only on request says so on the session's
+  // runtime state; the history then arrives over the live stream like any other
+  // event. One request per open however many reads and events repeat the flag.
+  function requestTimelineSync() {
+    if (!started || timelineSyncRequested || disposed || snapshot.invalidated) return
+    const current = snapshot.state
+    // The endpoint answers 409 while the Connector is offline; coming online
+    // refreshes the runtime state and evaluates this again.
+    if (current?.session.connectorStatus !== "online" || !sessionRequiresTimelineSync(current.state)) return
+    timelineSyncRequested = true
+    timelineSync.request(sessionId, () => dashboardApi.syncSession(token, sessionId))
   }
 
   function recordError(key: string, error: unknown) {
@@ -522,6 +541,7 @@ export function createSessionController(options: SessionControllerOptions) {
     start() {
       if (started || disposed) return
       started = true
+      requestTimelineSync()
       void connect()
       if (!snapshotReady)
         void loadInitialSessionState(token, sessionId)

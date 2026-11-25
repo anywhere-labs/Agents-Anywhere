@@ -1,5 +1,6 @@
 import type { SessionController } from "./session-controller"
 import type { SessionStateCache } from "./session-state-cache"
+import { createTimelineSyncScheduler } from "./session-timeline-sync"
 
 /** Only mounted views keep subscriptions; pending writes have a separate lifetime. */
 export function createSessionControllerStore(cache: SessionStateCache) {
@@ -10,6 +11,7 @@ export function createSessionControllerStore(cache: SessionStateCache) {
   }
   const entries = new Map<string, Entry>()
   const pendingSelections = new Map<string, SessionController["selectionChanges"]>()
+  const timelineSync = createTimelineSyncScheduler()
   let active = true
 
   function evict(id: string, entry: Entry) {
@@ -71,6 +73,8 @@ export function createSessionControllerStore(cache: SessionStateCache) {
         if (!active) dispose()
       })
     },
+    /** Timeline sync requests and their cooldown outlive the view that asked. */
+    timelineSync,
     dispose,
   }
 }

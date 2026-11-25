@@ -4,6 +4,7 @@ import { registerSource } from "./helpers/onboarding-source.mjs"
 
 const hooks = registerSource()
 const { createSessionController } = await import("../src/components/session/session-controller.ts")
+const { createTimelineSyncScheduler } = await import("../src/components/session/session-timeline-sync.ts")
 const { dashboardApi } = await import("../src/features/dashboard/api.ts")
 const { ApiError } = await import("../src/lib/api/errors.ts")
 const session = { id: "a", connectorId: "connector", connectorStatus: "online", runtime: "codex", status: "idle", updatedSeq: 10 }
@@ -12,6 +13,9 @@ const notice = (title, seq = 10) => ({ noticeId: "n", type: "notification", titl
 const envelope = (type, payload = {}, sequence = 10) => ({ protocolVersion: "1.0", sessionId: "a", type, payload, sequence, cursor: `seq:${sequence}`, eventId: `${type}:${sequence}`, emittedAt: "now" })
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b }); return { promise, resolve, reject } }
 const settle = async () => { for (let i = 0; i < 20; i++) await Promise.resolve() }
+// The runtime declares the need for a timeline sync on its session state.
+const syncState = (seq) => ({ ...runtimeState(seq), metadata: { sync: { changed: true, requires_timeline_sync: true } } })
+const remoteState = (state, sessionView = session) => ({ session: sessionView, state, items: [], notices: [], nextSeq: 10, hasMore: false, timelineResetVersion: 0, serverTime: "now", eventCursor: "seq:10", effectiveCapabilities: null, catalogs: {} })
 
 async function fixture(t, options = {}) {
   t.mock.timers.enable({ apis: ["setTimeout"] })
@@ -37,6 +41,11 @@ async function fixture(t, options = {}) {
   t.mock.method(dashboardApi, "getSessionRuntimeState", async () => ({ state: runtimeState(10), serverTime: "now" }))
   t.mock.method(dashboardApi, "getSessionRuntimeCapabilities", async () => ({ capabilitySet: { capabilities: [] }, serverTime: "now" }))
   t.mock.method(dashboardApi, "getSessionRuntimeNotices", async () => ({ notices: [], serverTime: "now" }))
+  const syncs = []
+  t.mock.method(dashboardApi, "syncSession", async (_token, id) => {
+    syncs.push(id)
+    return options.sync ? options.sync() : { ok: true, result: {}, serverTime: "now" }
+  })
   let invalidations = 0
   const controller = createSessionController({
     token: "token", sessionId: "a", hasSnapshot: true,
@@ -48,7 +57,7 @@ async function fixture(t, options = {}) {
   controller.start()
   await settle()
   return {
-    controller, sockets, recoveries, snapshots, get invalidations() { return invalidations },
+    controller, sockets, recoveries, snapshots, syncs, get invalidations() { return invalidations },
     async subscribe() { sockets.at(-1).receive("session.subscribed"); await settle() },
     async flush() { t.mock.timers.tick(34); await settle() },
     async reconnect() { sockets.at(-1).close(); t.mock.timers.tick(1200); await settle(); sockets.at(-1).receive("session.subscribed"); await settle() },
@@ -367,6 +376,91 @@ test("a missing runtime retains the cached model catalog and leaves the session 
   assert.equal(f.controller.getSnapshot().recovered, true)
   assert.equal(f.invalidations, 0)
   assert.equal(f.sockets[0].closed, undefined)
+})
+
+test("a runtime state that requires a timeline sync is requested once per open", async t => {
+  const f = await fixture(t, { controller: { initialState: remoteState(syncState(10)) } })
+  assert.deepEqual(f.syncs, ["a"], "a cached state that carries the flag is requested as soon as the session opens")
+  t.mock.method(dashboardApi, "getSessionRuntimeState", async () => ({ state: syncState(20), serverTime: "now" }))
+  await f.subscribe()
+  f.sockets.at(-1).receive("runtime.state.updated", { state: syncState(30) }, 11)
+  await f.flush(); await settle()
+  assert.deepEqual(f.syncs, ["a"], "live reads and events repeating the flag do not request again")
+  assert.equal(f.controller.getSnapshot().state.state.updatedSeq, 30)
+  assert.equal(f.controller.getSnapshot().error, null)
+})
+
+test("a cold open requests the sync once the live runtime state carries the flag", async t => {
+  const f = await fixture(t, {
+    controller: { hasSnapshot: false, initialState: null },
+    snapshot: { session, state: runtimeState(10), timeline: { items: [], nextSeq: 10, hasMore: false }, notices: [], eventCursor: "seq:10", effectiveCapabilities: null, catalogs: {}, serverTime: "now" },
+  })
+  assert.deepEqual(f.syncs, [], "the snapshot state is served from the store and does not carry the flag")
+  t.mock.method(dashboardApi, "getSessionRuntimeState", async () => ({ state: syncState(20), serverTime: "now" }))
+  await f.subscribe()
+  assert.deepEqual(f.syncs, ["a"], "the live runtime state read after subscribing carries the flag")
+  assert.equal(f.controller.getSnapshot().recovered, true)
+})
+
+test("sessions whose runtime does not require a timeline sync never request one", async t => {
+  const f = await fixture(t)
+  await f.subscribe()
+  f.sockets.at(-1).receive("runtime.state.updated", { state: { ...runtimeState(11), metadata: { sync: { changed: true, requires_timeline_sync: false } } } }, 11)
+  await f.flush(); await settle()
+  assert.equal(f.controller.getSnapshot().state.state.updatedSeq, 11)
+  assert.deepEqual(f.syncs, [])
+})
+
+test("a failed timeline sync never surfaces in the session", async t => {
+  const f = await fixture(t, {
+    sync: () => { throw new ApiError({ status: 409, kind: "http", detail: "connector is offline" }) },
+    controller: { initialState: remoteState(syncState(10)) },
+  })
+  await settle()
+  assert.deepEqual(f.syncs, ["a"])
+  const current = f.controller.getSnapshot()
+  assert.equal(current.error, null)
+  assert.equal(current.invalidated, false)
+  assert.equal(current.state.state.metadata.sync.requires_timeline_sync, true)
+  assert.equal(f.sockets.length, 1, "the transport is unaffected")
+})
+
+test("a sync response that arrives after the session was closed is dropped", async t => {
+  const response = deferred()
+  const f = await fixture(t, { sync: () => response.promise, controller: { initialState: remoteState(syncState(10)) } })
+  assert.deepEqual(f.syncs, ["a"])
+  f.controller.dispose()
+  response.resolve({ ok: true, result: { items: 0, complete: false, pending: true }, serverTime: "later" })
+  await settle()
+  assert.equal(f.controller.getSnapshot().error, null)
+  assert.equal(f.controller.getSnapshot().state.state.updatedSeq, 10)
+})
+
+test("an offline Connector defers the request until the session is seen online", async t => {
+  const offline = { ...session, connectorStatus: "offline" }
+  const f = await fixture(t, { controller: { initialState: remoteState(syncState(10), offline) } })
+  assert.deepEqual(f.syncs, [], "the endpoint would answer 409 while the Connector is offline")
+  await f.subscribe()
+  f.sockets.at(-1).receive("session.meta.updated", { session: { ...session, updatedSeq: 11 } }, 11)
+  await f.flush(); await settle()
+  assert.deepEqual(f.syncs, ["a"])
+})
+
+test("a session reopened within the cooldown reuses the request of the earlier open", async t => {
+  const scheduler = createTimelineSyncScheduler({ now: () => 0 })
+  const first = await fixture(t, { controller: { timelineSync: scheduler, initialState: remoteState(syncState(10)) } })
+  assert.deepEqual(first.syncs, ["a"])
+  first.controller.dispose()
+  const reopened = createSessionController({
+    token: "token", sessionId: "a", hasSnapshot: true, initialState: remoteState(syncState(10)), timelineSync: scheduler,
+    applyOptimisticItems: state => state, clearResolvedOptimisticMessages() {}, onInvalidated() {},
+  })
+  t.after(() => reopened.dispose())
+  reopened.start()
+  await settle()
+  assert.deepEqual(first.syncs, ["a"], "the same account scheduler still counts the earlier request")
+  assert.equal(reopened.getSnapshot().state.state.metadata.sync.requires_timeline_sync, true)
+  assert.equal(reopened.getSnapshot().error, null)
 })
 
 test.after(() => hooks.deregister())
