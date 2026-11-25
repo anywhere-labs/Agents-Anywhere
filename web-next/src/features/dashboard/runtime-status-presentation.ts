@@ -70,3 +70,32 @@ export function runtimeIsSelectable(runtime: DeviceRuntimeView): boolean {
     && runtime.active
     && (runtime.status === "running" || runtime.status === "starting")
 }
+
+/** Counters a runtime published with its last discovery, under `metadata.health`. */
+export type RuntimeHealthCounters = {
+  subscriptions: number
+  seen: number
+  replays: number
+  gaps: number
+}
+
+const RUNTIME_HEALTH_KEYS = ["subscriptions", "seen", "replays", "gaps"] as const
+
+/**
+ * Counters from the runtime's last discovery, when the runtime publishes them.
+ * They describe that moment, not now. A runtime that published none, could not
+ * read them, or published something that is not a non-negative number shows
+ * nothing rather than a number that cannot be trusted.
+ */
+export function runtimeHealthCounters(runtime: DeviceRuntimeView): RuntimeHealthCounters | null {
+  const health = runtime.metadata?.health
+  if (typeof health !== "object" || health === null) return null
+  const published = health as Record<string, unknown>
+  const counters: Partial<RuntimeHealthCounters> = {}
+  for (const key of RUNTIME_HEALTH_KEYS) {
+    const value = published[key]
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return null
+    counters[key] = value
+  }
+  return counters as RuntimeHealthCounters
+}
