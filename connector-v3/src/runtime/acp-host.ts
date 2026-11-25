@@ -66,6 +66,7 @@ import {
   type AcpWriteTextFileParams,
 } from "../core/acp-protocol.js";
 import type { GatewayApi, GatewayLaunch } from "../core/agent-gateway.js";
+import { CcSwitchError, CcSwitchStore, ccSwitchAppOf, type CcSwitchApp, type CcSwitchProvider, type CcSwitchProviderInput } from "./cc-switch.js";
 import {
   AgentOverrideSchema,
   AgentOverridesSchema,
@@ -792,6 +793,10 @@ export class AcpRuntime implements AgentRuntime {
     const approvals = this.#approvalsOn ? await this.#approvalsFile() : undefined;
     const searchPath = this.#options.agentPath?.();
     const gateway = preset.gateway;
+    // Pointed at a provider that cannot be used: not started, rather than answering through something else.
+    if (gateway?.error !== undefined) {
+      throw new MeshCallError("failed_precondition", gateway.error, { details: { reason: "agent_provider_unavailable", agent: this.id } });
+    }
     const env = {
       ...(searchPath !== undefined ? { PATH: searchPath } : {}),
       ...(preset.env ?? {}),
@@ -1448,6 +1453,8 @@ export interface AcpRuntimeHostOptions extends Omit<AcpRuntimeOptions, "agentPat
   catalog?: readonly CatalogAgent[];
   /** Looks for programs on this device. */
   finder?: AgentFinder;
+  /** CC Switch's providers on this device (default: in `~/.cc-switch`). */
+  ccSwitch?: CcSwitchStore;
   /** How long an agent's install may take. Default 30 min. */
   installTimeoutMs?: number;
   /** The agents that can be used here changed (one was installed, or is gone). */
@@ -1509,6 +1516,11 @@ export interface AgentInfo {
   approvals?: boolean;
   /** Agents that can be pointed at a model gateway, and the one they are pointed at (its key never leaves the device). */
   gateway?: { api: GatewayApi; modelRequired: boolean; baseUrl?: string; model?: string };
+  /**
+   * Agents CC Switch keeps providers for: whether it does on this device, and the provider the agent answers through
+   * here (its name absent when it is gone).
+   */
+  ccSwitch?: { available: boolean; provider?: { id: string; name?: string } };
   /** Known ways to sign in to it. */
   signIn: SignInMethod[];
   /** Minutes a conversation's agent may sit idle before it is closed; 0: never. */
@@ -1570,6 +1582,7 @@ export class AcpRuntimeHost {
   readonly #builtin = new Set<string>();
   readonly #finder: AgentFinder;
   readonly #installer: AgentInstaller;
+  readonly #ccSwitch: CcSwitchStore;
   /** The catalog agents registered here. */
   readonly #catalog = new Map<string, CatalogAgent>();
   /** The agents the user added. */
@@ -1591,6 +1604,7 @@ export class AcpRuntimeHost {
     const catalog = (options.includeDefaultPresets ?? true) && options.defaultPresets === undefined ? (options.catalog ?? AGENT_CATALOG) : [];
     const finder = options.finder ?? new AgentFinder({ folders: agentFolders(catalog) });
     this.#finder = finder;
+    this.#ccSwitch = options.ccSwitch ?? new CcSwitchStore();
     this.#installer = new AgentInstaller({
       path: () => finder.path,
       ...(options.installTimeoutMs !== undefined ? { timeoutMs: options.installTimeoutMs } : {}),
@@ -1691,8 +1705,18 @@ export class AcpRuntimeHost {
     return {
       ...launch,
       ...(Object.keys(added).length > 0 ? { env: { ...added, ...(launch.env ?? {}) } } : {}),
-      ...(agent?.gateway !== undefined && override?.gateway !== undefined ? { gateway: agent.gateway.launch(override.gateway) } : {}),
+      ...this.#gatewayOf(agentId, agent, override),
     };
+  }
+
+  /** What the agent answers through: a CC Switch provider, else its gateway, else its own configuration (nothing). */
+  #gatewayOf(agentId: string, agent: CatalogAgent | undefined, override: AgentOverride | undefined): { gateway?: GatewayLaunch } {
+    const app = ccSwitchAppOf(agentId);
+    if (override?.provider !== undefined) {
+      return { gateway: app !== undefined ? this.#ccSwitch.launchOf(app, override.provider) : { error: "CC Switch keeps no providers for it" } };
+    }
+    if (agent?.gateway !== undefined && override?.gateway !== undefined) return { gateway: agent.gateway.launch(override.gateway) };
+    return {};
   }
 
   // ── Installed agents ──
@@ -1883,6 +1907,15 @@ export class AcpRuntimeHost {
       });
       if (gateway !== undefined) after.gateway = gateway;
       else if (parsed.data.gateway != null) delete after.gateway;
+      const provider = this.#checkProvider(runtime, parsed.data.provider ?? undefined);
+      // A provider and a gateway are two ways of the same thing: choosing one drops the other.
+      if (provider !== undefined) {
+        if (provider === "") delete after.provider;
+        else {
+          after.provider = provider;
+          delete after.gateway;
+        }
+      } else if (gateway !== undefined) delete after.provider;
       const checked = AgentOverrideSchema.safeParse(after);
       if (!checked.success) throw invalidAgentSettings(checked.error);
       // On only when installed; naming its program in the same change counts.
@@ -1935,7 +1968,7 @@ export class AcpRuntimeHost {
       // `prepare` opens a new one.
       const turnedOff = before.enabled !== false && after.enabled === false;
       if (relaunch || turnedOff || approvalsAfter !== approvalsBefore) await this.#dropPreparedOf(agentId);
-      if (JSON.stringify(before.gateway) !== JSON.stringify(after.gateway)) await this.#forgetModel(agentId);
+      if (JSON.stringify(before.gateway) !== JSON.stringify(after.gateway) || before.provider !== after.provider) await this.#forgetModel(agentId);
       return this.#info(runtime);
     };
     return this.#inTurn(run);
@@ -2059,6 +2092,81 @@ export class AcpRuntimeHost {
     return found;
   }
 
+  /** The CC Switch provider to use (`""`: none; `undefined`: not part of the change), checked to be there. */
+  #checkProvider(runtime: AgentRuntime, change: string | undefined): string | undefined {
+    if (change === undefined || change === "") return change;
+    const app = ccSwitchAppOf(runtime.id);
+    if (app === undefined) {
+      throw new MeshCallError("failed_precondition", `CC Switch keeps no providers for ${runtime.name}`, { details: { reason: "provider_unsupported", agent: runtime.id } });
+    }
+    const found = this.#providers(app).find((each) => each.id === change);
+    if (found === undefined) throw new MeshCallError("not_found", `there is no CC Switch provider ${change}`, { details: { reason: "provider_not_found", agent: runtime.id } });
+    if (found.official) {
+      throw new InvalidArgumentError(`"${found.name}" is ${runtime.name}'s own sign-in: use the agent's own configuration`, {
+        details: { reason: "provider_official", agent: runtime.id },
+      });
+    }
+    return change;
+  }
+
+  #providers(app: CcSwitchApp): CcSwitchProvider[] {
+    try {
+      return this.#ccSwitch.list(app);
+    } catch (error) {
+      throw ccSwitchError(error);
+    }
+  }
+
+  /** CC Switch's providers for the agent, and the one it uses here. */
+  listProviders(agentId: string): { app: CcSwitchApp; available: boolean; providers: CcSwitchProvider[]; selected?: string } {
+    const runtime = this.runtime(agentId);
+    const app = ccSwitchAppOf(agentId);
+    if (app === undefined) {
+      throw new MeshCallError("failed_precondition", `CC Switch keeps no providers for ${runtime.name}`, { details: { reason: "provider_unsupported", agent: agentId } });
+    }
+    const selected = this.#overrides.get(agentId)?.provider;
+    if (!this.#ccSwitch.available) return { app, available: false, providers: [], ...(selected !== undefined ? { selected } : {}) };
+    return { app, available: true, providers: this.#providers(app), ...(selected !== undefined ? { selected } : {}) };
+  }
+
+  /** Add a CC Switch provider for the agent's app, or change one; agents that use it start their next process with it. */
+  saveProvider(agentId: string, input: CcSwitchProviderInput, id?: string): Promise<CcSwitchProvider> {
+    return this.#inTurn(async () => {
+      const app = this.listProviders(agentId).app;
+      let saved: CcSwitchProvider;
+      try {
+        saved = this.#ccSwitch.save(app, input, id);
+      } catch (error) {
+        throw ccSwitchError(error);
+      }
+      this.#reapplyProvider(app, saved.id);
+      return saved;
+    });
+  }
+
+  removeProvider(agentId: string, id: string): Promise<void> {
+    return this.#inTurn(async () => {
+      const app = this.listProviders(agentId).app;
+      const users = [...this.#overrides].filter(([agent, override]) => override.provider === id && ccSwitchAppOf(agent) === app);
+      if (users.length > 0) {
+        const names = users.map(([agent]) => this.#runtimes.get(agent)?.name ?? agent).join(", ");
+        throw new MeshCallError("failed_precondition", `${names} answers through it here: choose another one first`, { details: { reason: "provider_in_use", agent: agentId } });
+      }
+      try {
+        this.#ccSwitch.remove(app, id);
+      } catch (error) {
+        throw ccSwitchError(error);
+      }
+    });
+  }
+
+  /** A provider changed: the agents using it start their next process with what it says now. */
+  #reapplyProvider(app: CcSwitchApp, id: string): void {
+    for (const [agentId, override] of this.#overrides) {
+      if (override.provider === id && ccSwitchAppOf(agentId) === app) this.#applySettings(agentId);
+    }
+  }
+
   /** The gateway after `change` (`undefined`: none, or not part of the change), checked. */
   #checkGateway(
     runtime: AgentRuntime,
@@ -2134,6 +2242,16 @@ export class AcpRuntimeHost {
               modelRequired: agent.gateway.modelRequired,
               ...(override.gateway !== undefined ? { baseUrl: override.gateway.base_url } : {}),
               ...(override.gateway?.model !== undefined ? { model: override.gateway.model } : {}),
+            },
+          }
+        : {}),
+      ...(ccSwitchAppOf(runtime.id) !== undefined
+        ? {
+            ccSwitch: {
+              available: this.#ccSwitch.available,
+              ...(override.provider !== undefined
+                ? { provider: { id: override.provider, ...nameIf(this.#ccSwitch.nameOf(ccSwitchAppOf(runtime.id) as CcSwitchApp, override.provider)) } }
+                : {}),
             },
           }
         : {}),
@@ -2535,6 +2653,8 @@ function applyAgentUpdate(preset: AcpRuntimePreset, current: AgentOverride, upda
         ...(current.idle_close_minutes !== undefined ? { idle_close_minutes: current.idle_close_minutes } : {}),
         ...(current.program !== undefined ? { program: current.program } : {}),
         ...(current.gateway !== undefined ? { gateway: current.gateway } : {}),
+        ...(current.provider !== undefined ? { provider: current.provider } : {}),
+        ...(current.sign_in !== undefined ? { sign_in: current.sign_in } : {}),
       }
     : { ...current };
   if (update.enabled != null) next.enabled = update.enabled;
@@ -2558,6 +2678,8 @@ function applyAgentUpdate(preset: AcpRuntimePreset, current: AgentOverride, upda
   if (next.idle_close_minutes !== undefined && next.idle_close_minutes > 0) kept.idle_close_minutes = next.idle_close_minutes;
   if (next.program !== undefined && next.program.length > 0) kept.program = next.program;
   if (next.gateway !== undefined) kept.gateway = { ...next.gateway };
+  if (next.provider !== undefined) kept.provider = next.provider;
+  if (next.sign_in !== undefined) kept.sign_in = next.sign_in;
   if (next.command !== undefined && next.command !== preset.command) kept.command = next.command;
   if (next.args !== undefined && !sameArgs(next.args, preset.args ?? [])) kept.args = next.args;
   if (next.env !== undefined && !sameEnv(next.env, preset.env ?? {})) kept.env = next.env;
@@ -2609,4 +2731,24 @@ function invalidAgentSettings(error: { issues: readonly { path: readonly Propert
   return new InvalidArgumentError(`invalid agent settings${where ? ` (${where})` : ""}: ${issue?.message ?? "invalid"}`, {
     details: { reason: "invalid_agent_settings", ...(where ? { field: where } : {}) },
   });
+}
+
+const nameIf = (name: string | undefined) => (name !== undefined ? { name } : {});
+
+/** CC Switch's refusals as answers: what the user can do about each. */
+function ccSwitchError(error: unknown): unknown {
+  if (!(error instanceof CcSwitchError)) return error;
+  const details = { details: { reason: error.reason } };
+  switch (error.reason) {
+    case "provider_not_found":
+      return new MeshCallError("not_found", error.message, details);
+    case "provider_invalid":
+    case "provider_official":
+      return new InvalidArgumentError(error.message, details);
+    case "provider_current":
+    case "cc_switch_missing":
+      return new MeshCallError("failed_precondition", error.message, details);
+    default:
+      return new UnavailableError(error.message, details);
+  }
 }

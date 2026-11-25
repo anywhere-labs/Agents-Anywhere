@@ -5,7 +5,8 @@
  * end-to-end clients get here. Settings and pairing are further limited: never from MCP, and pairing management
  * only from an authenticated, paired E2E client (the device's own CLI uses the local admin socket instead).
  * Adding, changing, removing, stopping, installing or signing in to agents (`add_agent`, `update_agent`, `remove_agent`,
- * `stop_agent`, `install_agent`, `sign_in_agent`, `sign_in_terminal`) runs or ends programs, so only a client over a
+ * `stop_agent`, `install_agent`, `sign_in_agent`, `sign_in_terminal`) runs or ends programs, and changing model
+ * providers (`save_provider`, `remove_provider`) writes CC Switch's data, so only a client over a
  * tunnel may: never the control plane's direct calls, never MCP. An install runs one of the catalog's fixed commands and
  * a sign-in the agent's own program, never a command of the caller's.
  */
@@ -22,9 +23,11 @@ import {
   type RpcContext,
 } from "meshcall";
 
-import { AgentIdSchema, AgentUpdateSchema, ClientPlatformSchema, NewAgentSchema, PairedClientEntrySchema, type AgentUpdate, type NewAgent, type PairedClientEntry } from "../core/config.js";
+import { AgentIdSchema, AgentUpdateSchema, ClientPlatformSchema, GatewayKeySchema, GatewayUrlSchema, NewAgentSchema, PairedClientEntrySchema, type AgentUpdate, type NewAgent, type PairedClientEntry } from "../core/config.js";
 import { PAIRING_CODE_ID, type DeviceGate, type GateDecision } from "../core/gate.js";
 import type { AgentInfo, AgentInstallInfo } from "../runtime/acp-host.js";
+import type { CcSwitchProvider, CcSwitchProviderInput } from "../runtime/cc-switch.js";
+import { usageAgentOf, type SubscriptionUsage } from "../runtime/subscription-usage.js";
 import {
   DeviceOpsError,
   fetchDriveFile,
@@ -130,6 +133,12 @@ export interface DeviceServiceHost {
   removeAgent(id: string, options: { force?: boolean }): Promise<void>;
   /** Stop an agent's processes (`failed_precondition` / `turns_running` while turns run, unless `force`); how many. */
   stopAgent(id: string, options: { force: boolean }): Promise<number>;
+  /** CC Switch's providers for an agent, and the one it answers through here. */
+  listProviders(id: string): Promise<{ app: string; available: boolean; providers: CcSwitchProvider[]; selected?: string }>;
+  saveProvider(id: string, input: CcSwitchProviderInput, providerId?: string): Promise<CcSwitchProvider>;
+  removeProvider(id: string, providerId: string): Promise<void>;
+  /** How much of its subscription the agent has used. */
+  subscriptionUsage(id: string, refresh: boolean): Promise<SubscriptionUsage>;
   /** Sign in to an agent (ACP `authenticate`); resolves once signed in, asking again joins. */
   signInAgent(id: string, method: string): Promise<void>;
   cancelSignIn(id: string): void;
@@ -227,6 +236,13 @@ export const AgentEntrySchema = z.object({
   gateway: z
     .object({ api: z.enum(["anthropic", "openai-chat", "openai-responses"]), model_required: z.boolean(), base_url: z.string().optional(), model: z.string().optional() })
     .optional(),
+  /**
+   * Agents CC Switch keeps providers for: whether it does on this device, and the provider the agent answers through
+   * here (`list_providers`); its name is absent when it is gone. Absent for every other agent.
+   */
+  cc_switch: z.object({ available: z.boolean(), provider: z.object({ id: z.string(), name: z.string().optional() }).optional() }).optional(),
+  /** Its subscription's usage can be read (`subscription_usage`). */
+  usage: z.boolean().optional(),
   /** Minutes a conversation's agent may sit idle before it is closed (restored by its next message); 0: never. */
   idle_close_minutes: z.number().int().nonnegative(),
   /** Conversations (and prepared ones) open in its processes. */
@@ -256,6 +272,51 @@ const SignInTerminalRequestSchema = SignInRequestSchema.extend({
   rows: z.number().int().min(1).max(1000).nullish(),
 });
 const StopAgentResponseSchema = z.object({ stopped: z.number().int().nonnegative() });
+
+const ProviderSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  /** Absent for the agent's own sign-in (CC Switch's official providers), which cannot be chosen here. */
+  base_url: z.string().optional(),
+  model: z.string().optional(),
+  has_key: z.boolean(),
+  official: z.boolean(),
+  /** CC Switch has it in use: the agent's own configuration (and the agent in a terminal) answers through it. */
+  current: z.boolean(),
+  website: z.string().optional(),
+});
+const ProvidersResponseSchema = z.object({
+  /** CC Switch's app of the agent. */
+  app: z.string(),
+  /** CC Switch keeps providers on this device. */
+  available: z.boolean(),
+  providers: z.array(ProviderSchema),
+  /** The provider the agent answers through here; absent: its own configuration. */
+  selected: z.string().optional(),
+});
+const SaveProviderRequestSchema = z.object({
+  id: AgentIdSchema,
+  /** The provider to change; absent: add one. */
+  provider_id: z.string().min(1).max(256).nullish(),
+  name: z.string().trim().min(1).max(128),
+  base_url: GatewayUrlSchema,
+  /** Required for a new one; absent: the saved key stays. Never sent back. */
+  api_key: GatewayKeySchema.nullish(),
+  /** An empty string removes it. */
+  model: z.string().trim().max(256).nullish(),
+});
+const RemoveProviderRequestSchema = z.object({ id: AgentIdSchema, provider_id: z.string().min(1).max(256) });
+const UsageRequestSchema = z.object({ id: AgentIdSchema, refresh: z.boolean().nullish() });
+const UsageResponseSchema = z.object({
+  status: z.enum(["ok", "signed_out", "expired", "refresh_pending", "error"]),
+  plan: z.string().optional(),
+  /** `five_hour`, `seven_day`, `seven_day_opus`, `seven_day_sonnet`, `30_day`, …; `used_percent` 0–100. */
+  windows: z.array(z.object({ name: z.string(), used_percent: z.number(), resets_at: z.string().optional() })),
+  extra: z.object({ enabled: z.boolean(), monthly_limit: z.number().optional(), used: z.number().optional(), currency: z.string().optional() }).optional(),
+  credits: z.number().optional(),
+  error: z.string().optional(),
+  queried_at: z.number(),
+});
 const RemoveAgentResponseSchema = z.object({ removed: z.boolean() });
 
 const UpdateSettingsSchema = z.object({
@@ -405,6 +466,8 @@ function toAgentEntry(agent: AgentStatus): AgentEntry {
           },
         }
       : {}),
+    ...(agent.ccSwitch !== undefined ? { cc_switch: agent.ccSwitch } : {}),
+    ...(usageAgentOf(agent.id) !== undefined ? { usage: true } : {}),
     idle_close_minutes: agent.idleCloseMinutes,
     sessions: agent.sessions,
     ...(agent.signIn.length > 0 ? { sign_in: agent.signIn } : {}),
@@ -414,6 +477,19 @@ function toAgentEntry(agent: AgentStatus): AgentEntry {
     ...(agent.missing !== undefined ? { missing: agent.missing } : {}),
     ...(agent.website !== undefined ? { website: agent.website } : {}),
     ...(agent.install !== undefined ? { install: toInstall(agent.install) } : {}),
+  };
+}
+
+function toProvider(provider: CcSwitchProvider): z.output<typeof ProviderSchema> {
+  return {
+    id: provider.id,
+    name: provider.name,
+    ...(provider.baseUrl !== undefined ? { base_url: provider.baseUrl } : {}),
+    ...(provider.model !== undefined ? { model: provider.model } : {}),
+    has_key: provider.hasKey,
+    official: provider.official,
+    current: provider.current,
+    ...(provider.website !== undefined ? { website: provider.website } : {}),
   };
 }
 
@@ -646,6 +722,85 @@ export class DeviceService {
         ...(request.rows != null ? { rows: request.rows } : {}),
       }),
     );
+  }
+
+  // ── Models and subscriptions (CC Switch) ──
+
+  @method({
+    description:
+      "CC Switch's model providers for an agent (Claude Code, Codex) on this device, and the one it answers through here. Keys never leave the device.",
+    readOnly: true,
+    request: AgentRequestSchema,
+    response: ProvidersResponseSchema,
+  })
+  async list_providers(request: z.output<typeof AgentRequestSchema>, ctx: RpcContext) {
+    this.#host.gate.assertBusinessCallAllowed(ctx);
+    const listed = await rpcGuard(() => this.#host.listProviders(request.id));
+    return { ...listed, providers: listed.providers.map(toProvider) };
+  }
+
+  @method({
+    description:
+      "Add a model provider to CC Switch for an agent's app, or change one (not the agent's own sign-in). Agents answering through it here use it from their next process. Only from a client over a tunnel.",
+    idempotent: false,
+    request: SaveProviderRequestSchema,
+    response: ProviderSchema,
+  })
+  async save_provider(request: z.output<typeof SaveProviderRequestSchema>, ctx: RpcContext) {
+    const decision = this.#host.gate.assertBusinessCallAllowed(ctx);
+    requireClientTunnel(decision, "change model providers");
+    const input = {
+      name: request.name,
+      baseUrl: request.base_url,
+      ...(request.api_key ? { apiKey: request.api_key } : {}),
+      ...(request.model != null ? { model: request.model } : {}),
+    };
+    return toProvider(await rpcGuard(() => this.#host.saveProvider(request.id, input, request.provider_id ?? undefined)));
+  }
+
+  @method({
+    description:
+      "Remove a model provider from CC Switch: not the one CC Switch has in use, nor one an agent answers through here. Only from a client over a tunnel.",
+    destructive: true,
+    idempotent: true,
+    request: RemoveProviderRequestSchema,
+    response: OkSchema,
+  })
+  async remove_provider(request: z.output<typeof RemoveProviderRequestSchema>, ctx: RpcContext) {
+    const decision = this.#host.gate.assertBusinessCallAllowed(ctx);
+    requireClientTunnel(decision, "change model providers");
+    await rpcGuard(() => this.#host.removeProvider(request.id, request.provider_id));
+    return { ok: true as const };
+  }
+
+  @method({
+    description:
+      "How much of its subscription an agent has used (Claude Code: Claude plans; Codex: ChatGPT plans), read with its own sign-in on this device; kept for a minute unless refresh.",
+    readOnly: true,
+    request: UsageRequestSchema,
+    response: UsageResponseSchema,
+  })
+  async subscription_usage(request: z.output<typeof UsageRequestSchema>, ctx: RpcContext) {
+    this.#host.gate.assertBusinessCallAllowed(ctx);
+    const usage = await rpcGuard(() => this.#host.subscriptionUsage(request.id, request.refresh === true));
+    return {
+      status: usage.status,
+      ...(usage.plan !== undefined ? { plan: usage.plan } : {}),
+      windows: usage.windows.map((each) => ({ name: each.name, used_percent: each.usedPercent, ...(each.resetsAt !== undefined ? { resets_at: each.resetsAt } : {}) })),
+      ...(usage.extra !== undefined
+        ? {
+            extra: {
+              enabled: usage.extra.enabled,
+              ...(usage.extra.monthlyLimit !== undefined ? { monthly_limit: usage.extra.monthlyLimit } : {}),
+              ...(usage.extra.used !== undefined ? { used: usage.extra.used } : {}),
+              ...(usage.extra.currency !== undefined ? { currency: usage.extra.currency } : {}),
+            },
+          }
+        : {}),
+      ...(usage.credits !== undefined ? { credits: usage.credits } : {}),
+      ...(usage.error !== undefined ? { error: usage.error } : {}),
+      queried_at: usage.queriedAt,
+    };
   }
 
   // ── Files, git and attachments ──

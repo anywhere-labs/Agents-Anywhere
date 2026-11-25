@@ -203,6 +203,8 @@ export const AgentOverrideSchema = z.object({
   program: AgentProgramSchema.min(1).optional(),
   /** Its model requests go to this gateway (agents of the catalog that can be pointed at one). */
   gateway: ModelGatewaySchema.optional(),
+  /** It answers through this CC Switch provider (its id; agents CC Switch keeps providers for). Not with `gateway`. */
+  provider: z.string().min(1).max(256).optional(),
   /** How the user signed in to it last (ACP `authenticate`): a process that asks for it is signed in to this way. */
   sign_in: z.string().min(1).max(256).optional(),
   command: AgentCommandSchema.optional(),
@@ -216,6 +218,7 @@ export interface AgentOverride {
   idle_close_minutes?: number;
   program?: string;
   gateway?: ModelGateway;
+  provider?: string;
   sign_in?: string;
   command?: string;
   args?: string[];
@@ -256,6 +259,11 @@ export const AgentUpdateSchema = z.object({
   gateway: z
     .object({ base_url: z.union([z.literal(""), GatewayUrlSchema]).nullish(), api_key: GatewayKeySchema.nullish(), model: GatewayModelSchema.nullish() })
     .nullish(),
+  /**
+   * Answer through this CC Switch provider (its id), in place of a gateway; an empty string goes back to the agent's
+   * own configuration. Only the processes Agents Anywhere starts are pointed at it.
+   */
+  provider: z.string().max(256).nullish(),
   command: AgentCommandSchema.nullish(),
   args: AgentArgsSchema.nullish(),
   env: z
@@ -272,6 +280,7 @@ export interface AgentUpdate {
   idle_close_minutes?: number | null;
   program?: string | null;
   gateway?: { base_url?: string | null; api_key?: string | null; model?: string | null } | null;
+  provider?: string | null;
   command?: string | null;
   args?: string[] | null;
   env?: Record<string, string | null> | null;

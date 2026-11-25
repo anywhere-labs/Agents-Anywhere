@@ -287,6 +287,59 @@ export interface AgentEntry {
   install?: AgentInstall
   /** Only for agents that can be pointed at a model gateway; `base_url`: the one they use (its key stays on the device). */
   gateway?: AgentGateway
+  /**
+   * Agents CC Switch keeps model providers for (Claude Code, Codex): whether it does on the device, and the provider
+   * the agent answers through there (its name absent when it is gone).
+   */
+  cc_switch?: { available: boolean; provider?: { id: string; name?: string } }
+  /** Its subscription's usage can be read (`subscription_usage`). */
+  usage?: boolean
+}
+
+/** A model provider kept by CC Switch on a device. Its key never leaves the device. */
+export interface ModelProvider {
+  id: string
+  name: string
+  /** Absent for the agent's own sign-in (CC Switch's official providers), which cannot be chosen. */
+  base_url?: string
+  model?: string
+  has_key: boolean
+  official: boolean
+  /** CC Switch has it in use: the agent's own configuration (and the agent in a terminal) answers through it. */
+  current: boolean
+  website?: string
+}
+
+export interface ProviderList {
+  app: string
+  /** CC Switch keeps providers on the device. */
+  available: boolean
+  providers: ModelProvider[]
+  /** The provider the agent answers through on the device; absent: its own configuration. */
+  selected?: string
+}
+
+export interface ProviderInput {
+  id: string
+  /** The provider to change; absent: add one. */
+  provider_id?: string
+  name: string
+  base_url: string
+  /** Required for a new one; absent: the saved key stays. */
+  api_key?: string
+  /** Empty: removed. */
+  model?: string
+}
+
+export interface SubscriptionUsage {
+  status: "ok" | "signed_out" | "expired" | "refresh_pending" | "error"
+  plan?: string
+  /** `five_hour`, `seven_day`, `seven_day_opus`, `seven_day_sonnet`, `seven_day_fable`, `30_day`, …; `used_percent` 0–100. */
+  windows: { name: string; used_percent: number; resets_at?: string }[]
+  extra?: { enabled: boolean; monthly_limit?: number; used?: number; currency?: string }
+  credits?: number
+  error?: string
+  queried_at: number
 }
 
 export interface AgentGateway {
@@ -342,6 +395,8 @@ export interface AgentUpdate {
   program?: string
   /** Absent fields stay (the key only on the same host); an empty `base_url` removes the gateway. */
   gateway?: { base_url?: string; api_key?: string; model?: string }
+  /** Answer through this CC Switch provider (its id); empty: the agent's own configuration. */
+  provider?: string
 }
 
 /**

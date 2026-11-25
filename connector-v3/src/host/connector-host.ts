@@ -21,13 +21,15 @@
 import { randomBytes } from "node:crypto";
 import * as path from "node:path";
 
-import { generateE2EKey, Mesh, Router, type RunningServer } from "meshcall";
+import { generateE2EKey, Mesh, MeshCallError, Router, type RunningServer } from "meshcall";
 
 import type { CatalogAgent } from "../core/agent-catalog.js";
 import type { AcpRuntimePreset, AgentUpdate, NewAgent } from "../core/config.js";
 import { DeviceGate, type DeviceGateOptions, type PairingHint, type PairingPayload } from "../core/gate.js";
 import { SessionStore } from "../core/session-store.js";
 import { AcpRuntimeHost, type PushEvent } from "../runtime/acp-host.js";
+import type { CcSwitchProvider, CcSwitchProviderInput, CcSwitchStore } from "../runtime/cc-switch.js";
+import { readSubscriptionUsage, usageAgentOf, type SubscriptionUsage, type UsageAgent } from "../runtime/subscription-usage.js";
 import type { AgentFinder } from "../runtime/agent-finder.js";
 import { devicePlatform, removeSessionAttachments, type DriveDownload } from "../runtime/device-ops.js";
 import { StateStore, type ConnectorSettings, type DeviceIdentity, type DeviceMode, type PairedClientEntry } from "../runtime/state-store.js";
@@ -87,6 +89,8 @@ export interface ConnectorHostOptions {
   catalog?: readonly CatalogAgent[];
   /** Looks for programs on this device. */
   finder?: AgentFinder;
+  /** CC Switch's model providers (default: in `~/.cc-switch`). */
+  ccSwitch?: CcSwitchStore;
   /** `Sessions/prepare`: how long an unused prepared agent waits (default 10 min) and how many are kept (default 4). */
   preparedTtlMs?: number;
   maxPrepared?: number;
@@ -121,6 +125,9 @@ interface ServingRouter {
 const RESCAN_AGENTS_MS = 5_000;
 
 const silentLogger: ConnectorLogger = { info: () => undefined, warn: () => undefined, error: () => undefined };
+
+/** How long a subscription's usage is shown before it is read again. */
+const USAGE_TTL_MS = 60_000;
 
 export class ConnectorHost {
   readonly options: ConnectorHostOptions;
@@ -286,6 +293,7 @@ export class ConnectorHost {
       ...(this.options.defaultPresets !== undefined ? { defaultPresets: this.options.defaultPresets } : {}),
       ...(this.options.catalog !== undefined ? { catalog: this.options.catalog } : {}),
       ...(this.options.finder !== undefined ? { finder: this.options.finder } : {}),
+      ...(this.options.ccSwitch !== undefined ? { ccSwitch: this.options.ccSwitch } : {}),
       onAgentsChanged: () => {
         this.#logger.info(`agents that can be used here: ${this.runtimes.list().map((agent) => agent.id).join(", ") || "none"}`);
         // The control plane offers only the agents in presence: tell it now rather than at the next report.
@@ -355,6 +363,10 @@ export class ConnectorHost {
         addAgent: (input) => this.addAgent(input),
         removeAgent: (id, options) => this.removeAgent(id, options),
         stopAgent: (id, options) => this.stopAgent(id, options),
+        listProviders: (id) => this.listProviders(id),
+        saveProvider: (id, input, providerId) => this.saveProvider(id, input, providerId),
+        removeProvider: (id, providerId) => this.removeProvider(id, providerId),
+        subscriptionUsage: (id, refresh) => this.subscriptionUsage(id, refresh),
         signInAgent: (id, method) => this.signInAgent(id, method),
         cancelSignIn: (id) => this.runtimes.cancelSignIn(id),
         signInTerminal: (id, method, size) => this.signInTerminal(id, method, size),
@@ -549,7 +561,7 @@ export class ConnectorHost {
     const before = usable();
     const agent = await this.runtimes.updateAgent(id, update);
     // Which fields, never their values.
-    const fields: string[] = (["name", "enabled", "program", "gateway", "command", "args", "env", "approvals", "idle_close_minutes"] as const).filter((field) => update[field] != null);
+    const fields: string[] = (["name", "enabled", "program", "gateway", "provider", "command", "args", "env", "approvals", "idle_close_minutes"] as const).filter((field) => update[field] != null);
     if (update.reset) fields.unshift("reset");
     this.#logger.info(`agent ${id} updated (${fields.join(", ") || "nothing"})`);
     // The control plane offers only the agents in presence: tell it now rather than at the next report.
@@ -574,6 +586,43 @@ export class ConnectorHost {
     await this.runtimes.removeAgent(id);
     this.#logger.info(`agent ${id} removed`);
     this.#presence?.reportNow();
+  }
+
+  /** CC Switch's providers for an agent (see `AcpRuntimeHost.listProviders`). */
+  async listProviders(id: string): Promise<ReturnType<AcpRuntimeHost["listProviders"]>> {
+    await this.init();
+    return this.runtimes.listProviders(id);
+  }
+
+  /** Add or change a CC Switch provider; its key is never logged. */
+  async saveProvider(id: string, input: CcSwitchProviderInput, providerId?: string): Promise<CcSwitchProvider> {
+    await this.init();
+    const saved = await this.runtimes.saveProvider(id, input, providerId);
+    this.#logger.info(`CC Switch provider ${saved.id} ${providerId === undefined ? "added" : "changed"} for agent ${id}`);
+    return saved;
+  }
+
+  async removeProvider(id: string, providerId: string): Promise<void> {
+    await this.init();
+    await this.runtimes.removeProvider(id, providerId);
+    this.#logger.info(`CC Switch provider ${providerId} removed for agent ${id}`);
+  }
+
+  readonly #usage = new Map<UsageAgent, { at: number; read: Promise<SubscriptionUsage> }>();
+
+  /** How much of its subscription the agent has used (read again after a minute, or when `refresh`). */
+  async subscriptionUsage(id: string, refresh = false): Promise<SubscriptionUsage> {
+    await this.init();
+    this.runtimes.runtime(id);
+    const agent = usageAgentOf(id);
+    if (agent === undefined) {
+      throw new MeshCallError("failed_precondition", `there is no subscription usage to read for ${id}`, { details: { reason: "usage_unsupported", agent: id } });
+    }
+    const cached = this.#usage.get(agent);
+    if (cached !== undefined && !refresh && Date.now() - cached.at < USAGE_TTL_MS) return cached.read;
+    const read = readSubscriptionUsage(agent);
+    this.#usage.set(agent, { at: Date.now(), read });
+    return read;
   }
 
   /** Sign in to an agent (see `AcpRuntimeHost.signIn`). */

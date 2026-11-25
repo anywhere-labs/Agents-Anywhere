@@ -209,6 +209,10 @@ describe("signing in to an agent", () => {
     const saved = async () => (JSON.parse(await readFile(path.join(f.dataDir, "agents.json"), "utf8").catch(() => "{}")) as { agents?: Record<string, unknown> }).agents ?? {};
     await eventually(async () => JSON.stringify(await saved()) === JSON.stringify({ fake: { sign_in: "each" } }), "it to be saved");
     assert.equal(f.entry()?.customized, false);
+    // Another change to the agent keeps it.
+    await f.host.deviceService.update_agent({ id: "fake", idle_close_minutes: 5 }, TUNNEL);
+    assert.deepEqual(await saved(), { fake: { idle_close_minutes: 5, sign_in: "each" } });
+    await f.host.deviceService.update_agent({ id: "fake", idle_close_minutes: 0 }, TUNNEL);
     await f.host.deviceService.stop_agent({ id: "fake" }, TUNNEL);
     await f.prepare();
     assert.deepEqual(await f.lines("authenticate"), ["each", "each"]);

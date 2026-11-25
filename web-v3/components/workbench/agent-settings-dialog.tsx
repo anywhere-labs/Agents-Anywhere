@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { AgentIcon } from "@/components/workbench/agent-icon"
+import { AgentModels } from "@/components/workbench/agent-models"
 import { AgentSignInDialog, type SignInTarget } from "@/components/workbench/agent-sign-in-dialog"
 import { EnvEditor, hasEnvChanges, NO_ENV_CHANGES } from "@/components/workbench/env-editor"
 import { Card, Group, Row } from "@/components/workbench/settings-parts"
@@ -349,11 +350,13 @@ function AgentSettingsBody({
 
   const sections: SplitSection<AgentSection>[] = [
     { id: "general", label: t("settings.nav.general"), Icon: SlidersHorizontalIcon },
-    ...(gateway ? [{ id: "gateway" as const, label: t("agent.models"), Icon: CpuIcon }] : []),
+    ...(gateway || entry?.cc_switch || entry?.usage ? [{ id: "gateway" as const, label: t("agent.models"), Icon: CpuIcon }] : []),
     ...(managed && entry ? [{ id: "launch" as const, label: t("agent.launch"), Icon: SquareTerminalIcon }] : []),
   ]
   const shown = (sections.find((s) => s.id === section) ?? sections[0]).id
-  const formSection = shown === "gateway" || shown === "launch" || (shown === "general" && entry?.custom === true)
+  // The gateway form: where CC Switch keeps no providers, or for a gateway set before (choosing a provider drops it).
+  const showGatewayForm = gateway !== undefined && (entry?.cc_switch?.available !== true || gateway.base_url !== undefined)
+  const formSection = (shown === "gateway" && showGatewayForm) || shown === "launch" || (shown === "general" && entry?.custom === true)
   return (
     <>
       <SplitDialog
@@ -507,8 +510,22 @@ function AgentSettingsBody({
             </>
           )}
 
-          {shown === "gateway" && gateway && (
+          {shown === "gateway" && entry && (
+            <AgentModels
+              tunnelManager={tunnelManager}
+              device={device}
+              agentId={agent.id}
+              name={name}
+              entry={entry}
+              online={online}
+              update={update}
+              {...(signInMethods.length > 0 ? { onSignIn: () => setSignIn({ id: agent.id, name, methods: signInMethods }) } : {})}
+            />
+          )}
+
+          {shown === "gateway" && gateway && showGatewayForm && (
             <Group
+              title={entry?.cc_switch ? t("gateway.title") : undefined}
               description={t("gateway.hint", { agent: name, api: GATEWAY_APIS[gateway.api].name })}
               action={
                 gateway.base_url && (

@@ -19,6 +19,8 @@ export interface GatewayLaunch {
   sessionMeta?: Record<string, unknown>;
   /** ACP `providers/set`, before its first session. */
   provider?: AcpSetProviderParams;
+  /** What it was pointed at cannot be used (a CC Switch provider that is gone): no process is started, and this says why. */
+  error?: string;
 }
 
 export interface AgentGateway {
@@ -49,14 +51,10 @@ function withoutSlash(url: string): string {
 export const CLAUDE_GATEWAY: AgentGateway = {
   api: "anthropic",
   modelRequired: false,
-  launch: ({ base_url, api_key, model }) => {
-    const env: Record<string, string> = {
+  launch: ({ base_url, api_key, model }) =>
+    claudeLaunch({
       ANTHROPIC_BASE_URL: anthropicUrl(base_url),
       ANTHROPIC_AUTH_TOKEN: api_key,
-      ANTHROPIC_API_KEY: "",
-      ANTHROPIC_CUSTOM_HEADERS: "",
-      CLAUDE_CODE_USE_BEDROCK: "",
-      CLAUDE_CODE_USE_VERTEX: "",
       ...(model !== undefined
         ? {
             ANTHROPIC_MODEL: model,
@@ -67,19 +65,37 @@ export const CLAUDE_GATEWAY: AgentGateway = {
             CLAUDE_CODE_SUBAGENT_MODEL: model,
           }
         : {}),
-    };
-    return { env, sessionMeta: { claudeCode: { options: { settings: { apiKeyHelper: "", env: { ...env } } } } } };
-  },
+    }),
 };
+
+/**
+ * Claude Code with these variables (an address and a key at least), in the environment and in the settings of its
+ * sessions, so that neither the user's own settings nor other ways to sign in go before them.
+ */
+export function claudeLaunch(vars: Record<string, string>): GatewayLaunch {
+  const env: Record<string, string> = {
+    ANTHROPIC_API_KEY: "",
+    ANTHROPIC_CUSTOM_HEADERS: "",
+    CLAUDE_CODE_USE_BEDROCK: "",
+    CLAUDE_CODE_USE_VERTEX: "",
+    ...vars,
+  };
+  return { env, sessionMeta: { claudeCode: { options: { settings: { apiKeyHelper: "", env: { ...env } } } } } };
+}
 
 export const CODEX_GATEWAY: AgentGateway = {
   api: "openai-responses",
   modelRequired: false,
-  launch: ({ base_url, api_key, model }) => ({
-    provider: { providerId: "openai", apiType: "openai", baseUrl: openAiUrl(base_url), headers: { Authorization: `Bearer ${api_key}` } },
-    ...(model !== undefined ? { env: { CODEX_CONFIG: JSON.stringify({ model }) } } : {}),
-  }),
+  launch: ({ base_url, api_key, model }) => codexLaunch(openAiUrl(base_url), api_key, model),
 };
+
+/** Codex answering through this address (as Codex takes it: the Responses API is under it) with this key. */
+export function codexLaunch(baseUrl: string, apiKey: string, model?: string): GatewayLaunch {
+  return {
+    provider: { providerId: "openai", apiType: "openai", baseUrl: withoutSlash(baseUrl), headers: { Authorization: `Bearer ${apiKey}` } },
+    ...(model !== undefined ? { env: { CODEX_CONFIG: JSON.stringify({ model }) } } : {}),
+  };
+}
 
 export const COPILOT_GATEWAY: AgentGateway = {
   api: "openai-chat",

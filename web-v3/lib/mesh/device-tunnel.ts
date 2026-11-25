@@ -17,6 +17,10 @@ import { vault } from "@/lib/storage/idb"
 import type {
   AgentEntry,
   AgentUpdate,
+  ModelProvider,
+  ProviderInput,
+  ProviderList,
+  SubscriptionUsage,
   DeviceMode,
   DeviceRecord,
   DeviceSettings,
@@ -574,6 +578,25 @@ export class DeviceTunnelManager {
   /** A terminal in which the agent's own program signs in (exit code 0: signed in). */
   signInTerminal(device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">, id: string, method: string): Promise<TerminalInfo> {
     return this.callUnary(device, DEVICE_SVC, "sign_in_terminal", { id, method })
+  }
+
+  /** CC Switch's model providers for an agent on the device, and the one it answers through there. */
+  listProviders(device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">, id: string): Promise<ProviderList> {
+    return this.callUnary(device, DEVICE_SVC, "list_providers", { id })
+  }
+
+  /** Add a CC Switch provider (no `provider_id`) or change one; the key only when new or changed. */
+  saveProvider(device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">, input: ProviderInput): Promise<ModelProvider> {
+    return this.callUnary(device, DEVICE_SVC, "save_provider", input)
+  }
+
+  removeProvider(device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">, id: string, providerId: string): Promise<{ ok: true }> {
+    return this.callUnary(device, DEVICE_SVC, "remove_provider", { id, provider_id: providerId })
+  }
+
+  /** How much of its subscription the agent has used, read on the device (kept there for a minute unless `refresh`). */
+  subscriptionUsage(device: Pick<DeviceRecord, "id" | "mode_hint" | "presence">, id: string, refresh = false): Promise<SubscriptionUsage> {
+    return this.callUnary(device, DEVICE_SVC, "subscription_usage", refresh ? { id, refresh } : { id }, { timeoutMs: 30_000 })
   }
 
   listDirs(
