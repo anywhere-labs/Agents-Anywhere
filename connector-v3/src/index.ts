@@ -54,11 +54,11 @@ export {
   AcpRequestError,
   AcpRuntime,
   AcpRuntimeHost,
-  defaultAcpPresets,
   turnReplyText,
   type AcpRuntimeHostOptions,
   type AcpRuntimeOptions,
   type AgentInfo,
+  type AgentInstallInfo,
   type AgentRuntime,
   type PreparedAgent,
   type PreparedInfo,
@@ -69,6 +69,8 @@ export {
   type StartSessionInput,
   type TurnResult,
 } from "./runtime/acp-host.js";
+export { AgentFinder, type AgentFinderOptions } from "./runtime/agent-finder.js";
+export type { InstallJob, InstallState } from "./runtime/agent-installer.js";
 export * as deviceOps from "./runtime/device-ops.js";
 export {
   atomicWriteFile,
@@ -98,6 +100,7 @@ export {
 } from "./runtime/terminal-manager.js";
 
 // Core (portable)
+export { AGENT_CATALOG, type AgentInstallMethod, type CatalogAgent } from "./core/agent-catalog.js";
 export * from "./core/config.js";
 export {
   DeviceGate,

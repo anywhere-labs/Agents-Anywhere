@@ -15,7 +15,9 @@ v3 的工作设备进程（TypeScript，Node ≥ 22）。它在本机运行任�
 ```
 src/
   core/                 可移植（无 Node 内置模块），也可用于 WebView
-    config.ts           设置、配对客户端、ACP 预设和每个 Agent 的本机设置的形状与校验
+    config.ts           设置、配对客户端、ACP 预设、每个 Agent 的本机设置和用户添加的 Agent 的形状与校验
+    agent-catalog.ts    AA 认识的 Agent：程序名、ACP 启动方式、安装命令、登录命令（只有数据）
+    agent-gateway.ts    能接模型网关的 Agent 各自怎么接（环境变量、会话 _meta 或 providers/set）
     timeline.ts         aa.v3 会话模型（Session / Message / Control / WatchEvent）
     session-store.ts    内存会话库：唯一的会话真相来源，watch 推送整值替换
     acp-protocol.ts     ACP 类型与 AcpTimelineProjector（session/update → 时间线）
@@ -24,12 +26,19 @@ src/
     state-store.ts      数据目录里的 identity / settings / paired-clients / sessions / agents（原子写入，0600）
     device-ops.ts       文件、目录、git、附件（有上限、不走 shell）
     terminal-manager.ts 终端：PTY（可选原生依赖）或管道、无界面屏幕模拟器、输出序号、控制权
-    acp-host.ts         通用 ACP 宿主：每个会话一个 Agent 进程，stdio 行分隔 JSON-RPC 2.0；重启 Agent 时恢复它的上下文，回收空闲进程
+    acp-host.ts         通用 ACP 宿主：每种 Agent 共用一个进程、每个对话一个 ACP 会话；设置变了就换进程，恢复上下文，回收空闲会话和进程，登录
+    agent-process.ts    一个 Agent 进程：initialize 一次，按会话 id 分发 session/update 和 Agent 的请求
+    acp-connection.ts   stdio 行分隔 JSON-RPC 2.0
+    process-tree.ts     启动和结束整个进程树（Windows 的 .cmd 经 cmd.exe）
+    agent-finder.ts     找 Agent 的程序（PATH、登录 shell 的 PATH、安装器常用目录）
+    agent-installer.ts  一键安装：依次在设备上运行目录里固定的安装命令
+    sign-in.ts          登录方式：Agent 自己报的，加上它的程序自带的登录命令
   rpc/                  MeshCall 服务（targeted，instance = 设备 id）
     device-admin-service.ts  aa.v3.DeviceAdmin：ping / close_tunnel_sessions / check_update / rename
     sessions-service.ts      aa.v3.Sessions
     device-service.ts        aa.v3.Device
     terminals-service.ts     aa.v3.Terminals（attach 为 duplex，按调用方身份判定控制者）
+    terminal-schema.ts       终端在线上的形状（Terminals 和 Device/sign_in_terminal 共用）
   host/
     control-client.ts   控制面 HTTP（register / router-token）、presence 流、推送
     connector-host.ts   ConnectorHost：装配上面所有部分，负责挂载、模式切换、重连
@@ -88,7 +97,7 @@ src/
 | --- | --- | --- |
 | `unknown_agent` | `invalid_argument` | 这台设备上没有这个 Agent |
 | `invalid_cwd` | `invalid_argument` | `cwd` 不是这台设备上的目录 |
-| `agent_auth_required` | `failed_precondition` | Agent 要求先登录（ACP `-32000`，消息如 `could not start Claude Code: Authentication required`）；`details.auth_methods` 是 Agent 在 `initialize` 里给出的登录方式（`id`、`name`、`description`） |
+| `agent_auth_required` | `failed_precondition` | Agent 要求先登录（ACP `-32000`）；`details.agent_message` 是 Agent 自己的说明，`details.auth_methods` 是这里能用的登录方式（`id`、`name`、`description?`、`kind`），见「登录 Agent」 |
 | `agent_start_failed` | `unavailable` | 程序不存在、启动后退出、超时或应答无法使用；消息形如 `could not start <Agent>: …` |
 
 ### 终端（`aa.v3.Terminals`）
@@ -103,15 +112,23 @@ src/
 - **一元 `resize`**：没有连接可以带代数，所以只在调用方身份等于当前控制者的 `client_id` 时执行，否则返回 `failed_precondition`（`details.reason = "not_controller"`）。正常客户端应在 `attach` 流里发 `resize` 帧。
 - `owner` 目前都是 `user`；`agent`（ACP `terminal/create` 创建的终端，所有人只读）已预留，对它的 `claim`、`input`、`resize` 都会被拒（`agent_owned`）。
 
-### Agent 管理（`agents` / `update_agent` / `stop_agent`）
+### Agent 管理（`aa.v3.Device`）
 
-设备页列出这台设备上的每个 Agent：开关、运行状态和停止按钮，以及设置对话框（权限控制、空闲后关闭进程、命令、参数、环境变量、恢复默认）。三个方法都在 `aa.v3.Device` 上。
+设备页列出 AA 认识的所有 Agent（「Agent 目录」）和用户自己添加的：已安装的在上面，可以开关、启动、停止和设置；没安装的收在一行里，展开后每个都有安装入口。
 
 | 调用 | 请求 | 响应 / 行为 |
 | --- | --- | --- |
-| `agents`（只读） | `{}` | `{ agents: AgentEntry[] }`：每个已注册的 Agent 一项（内置预设和配置的预设，关闭的也在内），顺序与 `status.runtimes` 相同 |
-| `update_agent`（幂等） | `{ id, enabled?, approvals?, idle_close_minutes?, command?, args?, env?, reset? }` | 修改后的 `AgentEntry` |
+| `agents`（只读） | `{}` | `{ agents: AgentEntry[] }`：每个已注册的 Agent 一项，关闭的、没安装的都在内 |
+| `refresh_agents`（幂等） | `{}` | 同上，先重新查找已安装的程序（重新读取登录 shell 的 PATH，要一点时间） |
+| `install_agent` | `{ id, method }` | 用目录里这个 Agent 的某种安装方式安装（固定命令，在设备上无终端运行，排在之前的安装后面）；进度看 `agents` 里的 `install.job` |
+| `cancel_install`（幂等） | `{ id }` | 结束等待中或运行中的安装 |
+| `add_agent` | `{ name, command, args?, env? }` | 添加用户自己的 Agent，见「用户添加的 Agent」 |
+| `update_agent`（幂等） | `{ id, name?, enabled?, approvals?, idle_close_minutes?, program?, gateway?, command?, args?, env?, reset? }` | 修改后的 `AgentEntry` |
+| `remove_agent`（不可撤销，幂等） | `{ id, force? }` | `{ removed }`：只能移除用户添加的 Agent |
 | `stop_agent`（不可撤销，幂等） | `{ id, force? }` | `{ stopped }`：停掉的 Agent 进程数 |
+| `sign_in_agent`（幂等） | `{ id, method }` | `{ ok }`：登录完成后才返回，见「登录 Agent」 |
+| `cancel_sign_in`（幂等） | `{ id }` | 结束正在进行的登录 |
+| `sign_in_terminal` | `{ id, method, cols?, rows? }` | 一个运行 Agent 登录程序的终端（`TerminalInfo`） |
 
 `AgentEntry`：
 
@@ -127,7 +144,16 @@ src/
 | `running` | 正在运行的 Agent 进程数：进程在跑的会话 + 预热的 + 正在启动的 |
 | `busy` | 正在执行一轮的会话数（包括 Agent 还在启动的） |
 | `approvals` | 只有 AA 能为它加上审批的 Agent（Pi）才有：权限控制是否打开 |
-| `idle_close_minutes` | 对话的 Agent 进程空闲多少分钟后关闭；`0` 表示不自动关闭（默认） |
+| `idle_close_minutes` | 对话空闲多少分钟后关闭它的 Agent 会话；`0` 表示不自动关闭（默认） |
+| `custom` | 用户添加的 Agent：可以改名、移除 |
+| `sessions` | 它的进程里打开着的对话（含预热的） |
+| `gateway` | 只有能接模型网关的 Agent 才有：要的 API（`anthropic`、`openai-chat`、`openai-responses`）、是否必须指定模型、现在的 `base_url` 和 `model`（密钥不离开设备） |
+| `sign_in` | 已知的登录方式（同 `auth_methods`）；Agent 自己报的要等它启动过一次才知道 |
+| `installed` | 能在这里启动：它的程序在，启动它的命令（`npx` 等）也在。只有已安装的才能打开 |
+| `program`、`program_set` | 找到的程序位置；`program_set`：是用户指定的 |
+| `missing` | 程序在，但启动它的命令不在（如 `npx`） |
+| `website` | 目录里的 Agent：官方说明 |
+| `install` | 目录里的 Agent：这台设备上能用的安装方式（`methods`，首选在前，`available` 表示需要的程序在）和最近一次安装（`job`：状态、开始结束时间、退出码、输出的末尾） |
 
 `update_agent`：
 
@@ -138,7 +164,9 @@ src/
 - `approvals`：只对预设带 `approvals` 的 Agent 有效（内置的 Pi），其他 Agent 返回 `failed_precondition` / `approvals_unsupported`。打开时先在 Pi 的全局扩展目录（`$PI_CODING_AGENT_DIR/extensions`，默认 `~/.pi/agent/extensions`）写入 `agents-anywhere-approvals.js`，关闭时删除它，写入或删除失败则整个修改不生效（`approvals_extension_failed`）。同名但不是 AA 写的文件不会被覆盖或删除。详见下面的「Pi 的权限控制」。
 - 改回与预设相同的值等于没改：`customized` 为 `false`，这一项也不再保存。
 - 修改先写入数据目录的 `agents.json`（0600，目录 0700），写入失败则整个修改不生效。环境变量的值只保存在这个文件里，不会出现在任何 RPC 的返回（包括 `get_settings`）、日志或推送里。
-- **只影响之后启动的 Agent 进程**：正在运行的保持原来的设置，直到被停止（`stop_agent`）、空闲回收或自己退出。命令、参数或环境变量变了（或被关闭）的 Agent，它的预热 Agent 会被关闭，下一次 `prepare` 按新设置启动。
+- `program`：目录里的 Agent 已装好但没找到时，填它的程序的完整路径（`~/` 开头也行），必须存在且可运行（`program_not_found`、`program_path_relative`）；空字符串改回自动查找。
+- `gateway`：见「模型网关」。`name`、`command`、`args`、`env` 对用户添加的 Agent 直接改它自己；其他 Agent 的 `name` 被忽略（保持产品名）。
+- **设置变了就换进程**：启动方式（命令、参数、环境变量、程序、网关、权限控制）变了时，正在运行的进程退役：不再在里面打开会话；空闲的对话立即关掉它的会话，下一条消息在新进程里恢复；正在回复的对话等这一轮结束再换。预热的 Agent 被关闭，下一次 `prepare` 按新设置启动。
 
 关闭的 Agent（`enabled: false`）：
 
@@ -152,7 +180,7 @@ src/
 - 有会话正在执行一轮时，不带 `force` 返回 `failed_precondition` / `turns_running`（`details.count` 是这样的会话数）。带 `force: true` 时先像 `aa.v3.Sessions/stop` 那样取消这些轮次（排队的消息等下一次发送），给 Agent 3 秒正常结束，再停掉进程；到时还没结束的轮次和 Agent 还在启动的轮次都记为取消（`cancelled`），不算出错。
 - 重复调用只会停掉之后又启动的进程，没有可停的时返回 `{ stopped: 0 }`。
 
-**谁可以调用**：`update_agent` 会让设备运行调用方指定的程序，`stop_agent` 会中断会话，所以两者只接受经隧道连来的客户端：普通设备上的普通隧道，或加密设备上已配对的端到端会话。控制面的直接调用返回 `permission_denied` / `tunnel_required`，MCP 返回 `permission_denied` / `mcp_not_allowed`（MCP 开关关着时，设备门先以 `mcp_disabled_on_device` 拒绝）。`agents` 与 `status` 规则相同：普通设备上控制面和已允许的 MCP 也能读。加密设备上三个方法都只接受已配对的端到端客户端。
+**谁可以调用**：`update_agent`、`add_agent` 会让设备运行调用方指定的程序，`install_agent`、`sign_in_agent`、`sign_in_terminal` 会运行程序，`stop_agent`、`remove_agent` 会中断会话，所以它们只接受经隧道连来的客户端：普通设备上的普通隧道，或加密设备上已配对的端到端会话。控制面的直接调用返回 `permission_denied` / `tunnel_required`，MCP 返回 `permission_denied` / `mcp_not_allowed`（MCP 开关关着时，设备门先以 `mcp_disabled_on_device` 拒绝）。`agents` 与 `status` 规则相同：普通设备上控制面和已允许的 MCP 也能读。加密设备上三个方法都只接受已配对的端到端客户端。
 
 | `details.reason` | 错误码 | 含义 |
 | --- | --- | --- |
@@ -165,6 +193,39 @@ src/
 | `agent_not_configurable` | `failed_precondition` | 嵌入方用 `registerRuntime` 注册、没有预设的 Runtime 只能开关，不能改命令、参数和环境变量 |
 | `approvals_unsupported` | `failed_precondition` | 这个 Agent 没有 AA 能加上的审批（只有 Pi 有） |
 | `approvals_extension_failed` | `failed_precondition` | 打开或关闭权限控制时，写入或删除 Pi 的扩展失败；修改没有生效 |
+| `agent_not_installed` | `failed_precondition` | 没安装的 Agent 不能打开，也不能启动 |
+| `program_not_found` / `program_path_relative` | `invalid_argument` | `program` 那里没有可运行的程序 / 不是完整路径 |
+| `unknown_install_method` / `install_needs_program` | `invalid_argument` / `failed_precondition` | 没有这种安装方式 / 这种方式需要的程序（如 `npm`）不在 |
+| `gateway_unsupported` / `gateway_key_required` / `gateway_model_required` | `failed_precondition` / `invalid_argument` | 这个 Agent 不能接网关 / 换了地址却没给密钥 / 这个 Agent 必须指定模型 |
+| `agent_name_taken` / `command_not_found` / `agent_not_custom` / `too_many_agents` | `invalid_argument` / `failed_precondition` / `resource_exhausted` | 添加或修改用户的 Agent：名字已被用 / 命令找不到 / 不是用户添加的 / 已有 64 个 |
+| `unknown_sign_in_method` / `sign_in_failed` / `sign_in_cancelled` | `invalid_argument` / `failed_precondition` | 没有这种登录方式（或它要在终端里做）/ Agent 拒绝了，消息是它的原因 / 被 `cancel_sign_in` 或另一种方式结束 |
+
+### 登录 Agent
+
+很多 Agent 第一次用之前要登录：`session/new` 回 ACP `-32000`，Connector 返回 `agent_auth_required`。`details.agent_message` 是 Agent 自己的说明（例如 Cursor 的「Please run 'agent login' first」），`details.auth_methods` 是这里能用的方式，`kind` 说明怎么用：
+
+- `agent`：Agent 在 `initialize` 里报的普通方式，`sign_in_agent` 让它自己去做（ACP `authenticate`）。它可能在设备上打开浏览器并等用户完成，所以这个调用最多等 10 分钟；客户端超时后再调一次会接上正在进行的那次，`cancel_sign_in` 结束等待（ACP 没有取消登录的方法，只能不再等）。登录用的进程留下来，之后的会话直接开在里面。
+- `terminal`：在终端里运行的方式。Connector 在 `initialize` 里声明 `auth.terminal`，Agent 会报出 `type: "terminal"` 的方式（它自己的程序加上 `args` / `env`）；旧的 `_meta["terminal-auth"]`（Copilot）也认。Agent 没报任何终端方式而目录知道它的程序怎么登录时（`login`：Cursor、Codex、Grok、Kilo、Auggie 的登录命令，goose 的 `configure`），再加一项 `aa:program`。`sign_in_terminal` 开一个运行它的终端，客户端照常 attach；退出码 0 表示登录成功。
+- 要把密钥带在 `authenticate` 里的方式（`_meta["api-key"]`）和 AA 不认识的类型不列出来；密钥用 Agent 设置里的环境变量或模型网关。
+
+有的 Agent 要求每个新进程都 `authenticate` 一次（即使已经登录过）。用 `sign_in_agent` 成功登录的方式记在 `agents.json`（`sign_in`）；之后新进程说要登录时，先用这种方式静默试一次（最多 20 秒），不行就忘掉它、照常返回 `agent_auth_required`，不会反复打开浏览器。
+
+### 模型网关
+
+能接网关的 Agent（`gateway` 字段）可以让它的模型请求走用户指定的地址和密钥：`update_agent({ id, gateway: { base_url, api_key?, model? } })`。`base_url` 必须是 `http(s)` 地址；换了地址（协议、主机或端口不同）必须给新密钥，同一地址不给就沿用；`base_url: ""` 移除网关。保存在 `agents.json`，密钥不出现在任何返回里。
+
+| Agent | API | 怎么接 |
+| --- | --- | --- |
+| Claude Code | Anthropic Messages | `ANTHROPIC_BASE_URL` 等环境变量，加上会话 `_meta` |
+| Codex | OpenAI Responses | `providers/set`，加上配置覆盖 |
+| GitHub Copilot、goose、Kimi、Qwen Code | OpenAI Chat Completions，必须指定模型 | 各自的环境变量 |
+| OpenCode、Kilo | OpenAI Chat Completions，必须指定模型 | `*_CONFIG_CONTENT` |
+
+网关的环境变量放在用户自己的环境变量之前（用户的同名变量优先），不会改 Agent 自己的配置文件。换网关会换进程，并忘掉这个 Agent 新对话默认用的模型（另一个网关的模型名可能不同）。不同 Agent 接网关的效果不同：只验证了 Claude Code 和 Codex 的所有请求都只走网关。
+
+### 用户添加的 Agent
+
+`add_agent({ name, command, args?, env? })` 添加任何说 ACP 的命令：id 由名字生成（`custom-<slug>`），命令必须能找到（`command_not_found`），名字不能重复（`agent_name_taken`），最多 64 个。保存在 `custom-agents.json`（0600），环境变量的值同样不离开设备。添加后照常列在 `agents` 里（`custom: true`），可以用 `update_agent` 改名、改命令，`remove_agent` 移除。移除后它的对话还在，但不能继续（`unknown_agent`）；以同样的名字再添加回来，这些对话又能继续。
 
 ### Pi 的权限控制
 
@@ -173,7 +234,8 @@ Pi 和它的 ACP 适配器都不会在改文件、跑命令前询问，Agent 报
 - 扩展装在 Pi 的全局扩展目录，Pi 每次启动都会加载它，但只有 AA 启动的 Pi 才有 `AA_APPROVALS_FILE` 环境变量，别的 Pi（用户自己在终端里用的）里它什么也不做。Connector 每次启动 Pi 前都会检查一遍，文件丢了或是旧版本就重新写入。
 - 每个对话多一个设置 `aa_approvals`（`category: "mode"`，在输入框的权限按钮里）：`ask`（除了读取都问）、`accept_edits`（改文件也不问，其余都问）、`full_access`（都不问，和 Pi 原本一样）。读取是 Pi 自带的 `read`、`grep`、`find`、`ls`，改文件是 `edit`、`write`；其余一律询问，包括命令，以及扩展和 MCP 服务器加的、AA 不认识的工具（名字说明不了它做什么）。这个设置由 Connector 自己管，不会发给 Pi；它写在每个 Pi 进程自己的模式文件里（数据目录的 `pi-approvals/`，进程退出时删除），扩展在每次调用工具前读一次，所以对话中途切换立即生效。新对话的默认值和其他设置一样，取这个 Agent 最近一次新建对话时的值；第一次是 `ask`。
 - 需要审批时，扩展通过 Pi 的扩展界面请求确认，消息里带上这次调用的编号、工具名和参数。pi-acp 会把它转成 ACP 的权限请求，但挂在一个另起的工具调用上；Connector 认出后把请求挂回 Pi 自己那次调用，所以对话里只有一步，审批卡片显示完整的命令或参数，选项和其他 Agent 一样是 `Allow` / `Reject`。别的扩展弹出的对话框原样处理。拒绝时这次调用被拦下，Pi 收到「用户拒绝了」。
-- 打开或关闭只影响之后启动的 Pi 进程；关闭时，正在运行的进程立即改为不再询问，对话里的这个设置也随之消失。
+- 每个 Pi 进程一个模式文件（`{"default":"ask","modes":{"<会话 id>":…}}`），同一进程里的对话各用各的模式。
+- 打开时 Pi 换进程：空闲的对话立即换到带扩展的新进程，正在回复的等这一轮结束。没在打开的对话（包括打开权限控制之前的）也立即有这个设置，选的值在对话下次打开时生效，不改动对话的更新时间。关闭时，正在运行的进程立即改为不再询问，所有对话里的这个设置随之消失。
 
 ### 恢复 Agent 的上下文，回收空闲进程
 
@@ -185,9 +247,11 @@ Pi 和它的 ACP 适配器都不会在改文件、跑命令前询问，Agent 报
 - 恢复失败（Agent 两种方法都不支持、会话已不存在或 Agent 报错）时，退回 `session/new`：对话照常继续，但 Agent 不带之前的上下文，新会话的 id 取代旧的。Connector 日志里会记一条 warn，写明原因（对话里已有 Agent 的回复时才记）；对话里没有提示，因为时间线现在没有表达这种提示的条目类型。
 - 不恢复的情况：`rewind` 之后（Agent 的上下文里有被删掉的消息，而 ACP 不能截断上下文），以及 fork 出来的新对话，都从新的 Agent 会话开始。
 
-四个内置 Agent（Claude Code、Codex、Antigravity、Pi）现在的版本都同时声明了 `session/resume` 和 `session/load`，所以都用 `session/resume`。
+目录里的 Agent 都支持 `session/list` 和 `session/load`（不支持的不收）；声明了 `session/resume` 的有 Amp、Antigravity、Auggie、Claude Code、Codex、Dirac、Grok、Junie、Kilo、Kimi、MiniMax、OpenCode、Pi、Qoder、Qwen Code、VT Code。
 
-**空闲回收**：每个 Agent 可以设置 `idle_close_minutes`（默认 `0`，不回收）。设置了且 Agent 支持恢复（`session/resume` 或 `session/load`）时，对话持续这么久没有在进行的事：没有正在执行的一轮、没有待回答的权限请求、也没有正在进行的设置修改，就关闭它的 Agent 进程。对话保留，下一条消息重新启动 Agent 并恢复上下文；`Device/agents` 的 `running` 相应减少。Agent 在两轮之间自己发来的输出（消息、思考、工具调用、计划）也算有动静，会重新计时；用量报告之类的元数据不算。不支持恢复的 Agent 不回收，和以前一样一直运行到被停止。预热的 Agent 仍按自己的 TTL。没有设置 `idle_close_minutes` 的 Agent 用 `ConnectorHost` / `AcpRuntimeHost` 的 `idleTtlMs`（毫秒，默认不回收，`0` 或 `null` 也表示不回收）。回收中的进程还没退出时来了新消息，新进程会等它退出后再启动，不会有两个进程同时打开同一个 Agent 会话。
+**一个进程，多个对话**：每种 Agent 只起一个进程，`initialize` 一次，每个对话是里面的一个 ACP 会话（`session/new`、`session/resume` / `session/load`）。Agent 发来的消息都带会话 id，按 id 交给对应的对话。设置变了时进程退役（见「Agent 管理」），最后一个对话离开后退出。预设可以写 `own_process: true` 让每个对话用自己的进程（给不能在一个进程里跑多个会话的 Agent 用）。
+
+**空闲回收**：每个 Agent 可以设置 `idle_close_minutes`（默认 `0`，不回收）。设置了且 Agent 支持恢复（`session/resume` 或 `session/load`）时，对话持续这么久没有在进行的事：没有正在执行的一轮、没有待回答的权限请求、也没有正在进行的设置修改，就关闭它的 ACP 会话（Agent 支持 `session/close` 时；否则等所有对话都空闲了再关进程）。进程里一个对话也没有、持续同样久时，进程也关闭。对话保留，下一条消息重新启动 Agent 并恢复上下文；`Device/agents` 的 `running` 相应减少。Agent 在两轮之间自己发来的输出（消息、思考、工具调用、计划）也算有动静，会重新计时；用量报告之类的元数据不算。不支持恢复的 Agent 不回收，和以前一样一直运行到被停止。预热的 Agent 仍按自己的 TTL。没有设置 `idle_close_minutes` 的 Agent 用 `ConnectorHost` / `AcpRuntimeHost` 的 `idleTtlMs`（毫秒，默认不回收，`0` 或 `null` 也表示不回收）。回收中的进程还没退出时来了新消息，新进程会等它退出后再启动，不会有两个进程同时打开同一个 Agent 会话。
 
 ## 运行
 
@@ -255,24 +319,22 @@ node dist/src/cli.js start --router 'wss://router.example.com#mt_xxx'   # URL#TO
 | `AA_CONNECTOR_PRESETS` | 额外 ACP 预设的 JSON 文件 |
 | `AA_LOG_LEVEL` | `info`（默认）、`warn`、`error`、`silent` |
 
-### Agent 预设
+### Agent 目录
 
-内置预设只在本机装有对应程序时提供（`agents` 里 `builtin: true`）：
+Connector 认识 22 个说 ACP 的 Agent（`src/core/agent-catalog.ts`）：Amp、Antigravity、Auggie、Claude Code、Codex、GitHub Copilot、Cursor、Devin、Dirac、Droid、goose、Grok、Junie、Kilo、Kimi、MiniMax、OpenCode、Pi、Qoder、Qwen Code、Mistral Vibe、VT Code。每个记着：
 
-| id | 名称 | 命令 | 需要的程序 |
-| --- | --- | --- | --- |
-| `claude` | Claude Code | `npx -y @agentclientprotocol/claude-agent-acp` | `claude` |
-| `codex` | Codex | `npx -y @agentclientprotocol/codex-acp` | `codex` |
-| `antigravity` | Antigravity | `agy acp` | `agy` |
-| `pi` | Pi | `npx -y @openma/pi-acp --quiet-startup` | `pi` |
+- 它自己的程序名（在不在决定算不算已安装）和安装器常用的目录；Connector 在 PATH、登录 shell 的 PATH 和这些目录里找。
+- 怎么作为 ACP Agent 启动：它自己的程序加参数，或 npm 上的适配器（`npx -y <适配器>`，这时还要 `npx`，没有时 `missing: "npx"`）。
+- 安装方式：官方脚本（macOS / Linux 的 shell，Windows 的 PowerShell）、npm、Homebrew、WinGet、uv，都是官方文档里的命令。一键安装就在设备上运行其中一条，30 分钟超时。
+- 登录命令（`login`）和能不能接模型网关（`gateway`）。
 
-其他任何说 ACP（stdio 上的 JSON-RPC 2.0）的命令都可以通过 `--presets presets.json` 加入（id 相同时取代内置预设）：
+每个目录里的 Agent 都在干净的容器里用它的脚本（或 npm）命令装过，验证到能 `initialize` 并开会话或要求登录为止。只收在 `initialize` 里同时声明了 `session/list` 和 `session/load` 的 Agent（对话列表和内容要从 Agent 读出来）；Cline、CodeBuddy、Kiro、OpenHands、Stakpak 因此不收。brew 和 WinGet 的命令、Windows 只来自文档。
+
+其他任何说 ACP（stdio 上的 JSON-RPC 2.0）的命令：在设备页添加（见「用户添加的 Agent」），或用 `--presets presets.json`（id 相同时取代目录里的）：
 
 ```json
 [{ "id": "my-agent", "name": "My Agent", "command": "my-agent", "args": ["--acp"] }]
 ```
-
-每个预设的命令、参数和环境变量都可以在这台设备上单独修改，也可以关闭，见上面的「Agent 管理」。
 
 ### 数据目录
 
@@ -282,7 +344,9 @@ node dist/src/cli.js start --router 'wss://router.example.com#mt_xxx'   # URL#TO
 | `settings.json` | 模式、MCP 开关、配对确认、RPC 文件上限、设备名 |
 | `paired-clients.json` | 已配对客户端公钥（加密模式的信任名单） |
 | `sessions.json` | 会话快照（防抖写入），包括每个对话的 Agent 会话 id（`acp_session_id`，Agent 重启时用它恢复上下文）。旧文件没有这个字段也能照常加载 |
-| `agents.json` | 每个 Agent 的开关和本机设置：权限控制、空闲关闭时间、命令、参数、环境变量（0600；环境变量的值只保存在这里）。不认识的键会被忽略；已知的值损坏时 Connector 不启动并指出出错的字段，不会悄悄忽略（否则关掉的 Agent 会重新打开） |
+| `agents.json` | 每个 Agent 的开关和本机设置：权限控制、空闲关闭时间、程序位置、模型网关、上次登录的方式、命令、参数、环境变量（0600；环境变量的值和网关密钥只保存在这里）。不认识的键会被忽略；已知的值损坏时 Connector 不启动并指出出错的字段，不会悄悄忽略（否则关掉的 Agent 会重新打开） |
+| `custom-agents.json` | 用户添加的 Agent（0600） |
+| `agents/` | Agent 进程启动时的工作目录（每个会话有自己的目录，这个不属于任何会话） |
 | `last-session-config.json` | 每个 Agent 最近一次新建对话时的设置，新对话从这些值开始 |
 | `pi-approvals/` | 打开了权限控制的 Pi 进程各自的模式文件（进程退出时删除） |
 | `attachments/<对话 id>/` | 对话没有工作目录或目录不可写时的附件（通常附件在项目的 `.agents-anywhere/attachments/<对话 id>/`） |
@@ -322,6 +386,8 @@ yarn test
 
 `tests/pi-approvals.test.ts` 也不需要 Router：扩展文件只在是 AA 自己的时候才会被更新或删除；哪些工具在哪种模式下要询问（不认识的工具、不认识的模式都按询问处理）；一个模拟的 Pi 加载扩展，覆盖不是 AA 启动的 Pi 里扩展什么也不做、按对话的模式决定是否询问、拒绝或无法询问时拦下这次调用、确认挂回它问的那次调用（别的扩展的对话框不动）；一个记录启动环境的模拟 ACP Agent 覆盖「权限控制」这个 Agent 设置：只给能加权限的 Agent、默认关闭、打开后安装扩展且每个对话有自己的设置和模式文件、像 pi-acp 那样发出确认时对话里只有一步、带完整命令、答复传回 Agent，Connector 停止时模式文件都已删除，关闭后删除扩展，正在进行的对话不再询问、也不再显示这个设置。
 
+`tests/shared-process.test.ts`：一种 Agent 一个进程、对话各自的会话、设置变了时空闲对话立即换进程而回复中的等这一轮结束、会话和进程的空闲关闭、`own_process`、登录被拒时不留进程。`tests/agent-catalog.test.ts`：目录的形状、查找程序、安装（排队、取消、失败、超时）、程序位置。`tests/agent-gateway.test.ts`：每种网关的启动方式、密钥不出现在返回里、换地址要新密钥、移除。`tests/custom-agents.test.ts`：添加、改名、改命令、移除和再添加、限制。`tests/sign-in.test.ts`：登录方式的列表、Agent 自己登录（加入、结束、换方式、失败原因）、终端里登录、每个进程都要登录的 Agent、调用限制。
+
 ## 已知限制
 
 - ACP 没有截断上下文的接口：`rewind` 会重启该会话的 Agent，新的 Agent 不带之前的上下文（设置保持对话里的值）；fork 出来的对话也从新的 Agent 会话开始。
@@ -329,8 +395,9 @@ yarn test
 - 预热的 Agent 已经执行过 `session/new`：如果某个 Agent 在 `session/new` 时就写入自己的会话记录，没被接管的预热会话会在它自己的历史里留下一条空会话（Pi 要到第一条消息才写入，不受影响）。
 - `compact` 只在 Agent 通过 `available_commands_update` 提供 `compact` 命令时可用。Agent 刚启动（包括重启、空闲回收之后）还没报告任何命令时，`compact` 最多等 3 秒。
 - Router token 过期被拒后会重新获取 token 并重新挂载，期间该 Router 上的隧道会断开，客户端需要重连。
-- MeshCall 的契约检查（W002）只把 `idempotent/readOnly/destructive: true` 当作声明；`create`、`send` 等方法确实不幂等，已显式标 `idempotent: false`，启动时仍会打印 5 条 W002 警告。
+- MeshCall 的契约检查（W002）只把 `idempotent/readOnly/destructive: true` 当作声明；`create`、`send` 等方法确实不幂等，已显式标 `idempotent: false`，启动时仍会打印 6 条 W002 警告。
 - 终端：Windows 上的 ConPTY 只按 node-pty 的接口实现，尚未在真实 Windows 设备上验证；`script` 和 `pipe` 模式不能改变程序看到的窗口尺寸。
+- 目录里的大多数 Agent 只验证到握手和登录提示，没有用真实账号跑过对话；一键安装没有在 Windows 上跑过。
 - 尚未与真实的 `server-v3` 实例和真实的 Claude Code / Codex ACP 适配器联调；兼容性目前由契约 schema 校验和 Router 端到端测试保证。
 
 ### 附件

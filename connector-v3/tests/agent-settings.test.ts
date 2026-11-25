@@ -249,9 +249,9 @@ describe("Device/agents", () => {
     const { deviceService: device, sessionsService: sessions } = f.host;
     const { agents } = device.agents({}, TUNNEL);
     assert.deepEqual(agents, [
-      { id: "fake", name: "Fake", builtin: false, enabled: true, command: process.execPath, args: f.presets.fake.args, env_keys: [], customized: false, running: 0, busy: 0, idle_close_minutes: 0 },
-      { id: "slow", name: "Slow", builtin: false, enabled: true, command: process.execPath, args: f.presets.slow.args, env_keys: [], customized: false, running: 0, busy: 0, idle_close_minutes: 0 },
-      { id: "builtin", name: "Built-in", builtin: true, enabled: true, command: process.execPath, args: f.presets.builtin.args, env_keys: [], customized: false, running: 0, busy: 0, idle_close_minutes: 0 },
+      { id: "fake", name: "Fake", builtin: false, enabled: true, command: process.execPath, args: f.presets.fake.args, env_keys: [], customized: false, running: 0, busy: 0, idle_close_minutes: 0, sessions: 0, installed: true },
+      { id: "slow", name: "Slow", builtin: false, enabled: true, command: process.execPath, args: f.presets.slow.args, env_keys: [], customized: false, running: 0, busy: 0, idle_close_minutes: 0, sessions: 0, installed: true },
+      { id: "builtin", name: "Built-in", builtin: true, enabled: true, command: process.execPath, args: f.presets.builtin.args, env_keys: [], customized: false, running: 0, busy: 0, idle_close_minutes: 0, sessions: 0, installed: true },
     ]);
     assert.deepEqual(device.status({}, TUNNEL).runtimes, [
       { id: "fake", name: "Fake" },
@@ -259,13 +259,13 @@ describe("Device/agents", () => {
       { id: "builtin", name: "Built-in" },
     ]);
 
-    // A session's agent and a prepared one run; a turn makes the session busy.
+    // A session and a prepared one share the agent's process; a turn makes the session busy.
     const session = await sessions.create({ agent: "fake", cwd: f.dirs.a }, TUNNEL);
     await sessions.prepare({ agent: "fake", cwd: f.dirs.b }, TUNNEL);
-    assert.deepEqual([f.agent("fake").running, f.agent("fake").busy], [2, 0]);
+    assert.deepEqual([f.agent("fake").running, f.agent("fake").sessions, f.agent("fake").busy], [1, 2, 0]);
     await sessions.send({ id: session.id, client_msg_id: "m1", content: "slow work" }, TUNNEL);
     await eventually(async () => (await f.count("turn")) === 1, "the turn reached the agent");
-    assert.deepEqual([f.agent("fake").running, f.agent("fake").busy], [2, 1]);
+    assert.deepEqual([f.agent("fake").running, f.agent("fake").busy], [1, 1]);
     assert.deepEqual([f.agent("builtin").running, f.agent("builtin").busy], [0, 0]);
 
     // Read-only, like status: the control plane and MCP (when allowed) may read it too.
@@ -281,14 +281,14 @@ describe("Device/update_agent", () => {
     const { deviceService: device, sessionsService: sessions, store } = f.host;
     const prepared = await sessions.prepare({ agent: "fake", cwd: f.dirs.b }, TUNNEL);
     const session = await sessions.create({ agent: "fake", cwd: f.dirs.a }, TUNNEL);
-    const [preparedSpawn, sessionSpawn] = await f.spawns();
-    assert.ok(preparedSpawn && sessionSpawn);
+    const [spawned] = await f.spawns();
+    assert.ok(spawned);
 
     const off = await device.update_agent({ id: "fake", enabled: false }, TUNNEL);
     assert.equal(off.enabled, false);
     assert.equal(off.customized, false, "the switch is not a customization");
-    await eventually(() => !alive(preparedSpawn.pid), "the prepared agent closed");
     assert.deepEqual(f.host.runtimes.listPrepared(), []);
+    assert.equal(f.host.runtimes.agent("fake").sessions, 1, "the prepared session is closed, the conversation's is not");
     assert.deepEqual(device.status({}, TUNNEL).runtimes.map((r) => r.id), ["slow", "builtin"]);
     assert.deepEqual(device.agents({}, TUNNEL).agents.map((a) => [a.id, a.enabled]), [["fake", false], ["slow", true], ["builtin", true]]);
 
@@ -303,9 +303,9 @@ describe("Device/update_agent", () => {
     await refusedWith(() => sessions.send({ id: session.id, client_msg_id: "m1", content: "hello" }, TUNNEL), "failed_precondition", "agent_disabled");
     await refusedWith(() => sessions.compact({ id: session.id }, TUNNEL), "failed_precondition", "agent_disabled");
     assert.equal(store.listMessages(session.id).messages.length, before);
-    assert.equal(await f.count("spawn"), 2);
-    // Running processes keep running until stopped.
-    assert.ok(alive(sessionSpawn.pid));
+    assert.equal(await f.count("spawn"), 1);
+    // A running process keeps running until stopped.
+    assert.ok(alive(spawned.pid));
     assert.equal(f.agent("fake").running, 1);
 
     // On again: offered again, and the conversation works.
@@ -313,9 +313,10 @@ describe("Device/update_agent", () => {
     assert.deepEqual(device.status({}, TUNNEL).runtimes.map((r) => r.id), ["fake", "slow", "builtin"]);
     const reply: Reply = await sessions.send({ id: session.id, client_msg_id: "m2", content: "hello", wait: true }, TUNNEL);
     assert.equal(reply.reply_text, "echo: hello");
-    // The prepared id is gone: create starts its own agent.
+    // The prepared id is gone: create opens a session of its own.
     await sessions.create({ agent: "fake", cwd: f.dirs.b, prepared_id: prepared.prepared_id }, TUNNEL);
-    assert.equal(await f.count("spawn"), 3);
+    assert.equal(await f.count("session/new"), 3);
+    assert.equal(await f.count("spawn"), 1);
   });
 
   it("saves the settings on the device, applies them to agents started afterwards and after a restart", async () => {
@@ -337,10 +338,12 @@ describe("Device/update_agent", () => {
       running: 1,
       busy: 0,
       idle_close_minutes: 0,
+      sessions: 1,
+      installed: true,
     });
     assert.deepEqual(device.status({}, TUNNEL).runtimes[0], { id: "fake", name: "Fake" }, "the name stays the preset's");
 
-    // The running agent keeps the settings it started with.
+    // This agent cannot restore a session, so the conversation stays in the process it has, with the settings before.
     const sent: Reply = await sessions.send({ id: first.id, client_msg_id: "m1", content: "still old", wait: true }, TUNNEL);
     assert.equal(sent.reply_text, "echo: still old");
     assert.equal(await f.count("spawn"), 1);
@@ -364,7 +367,7 @@ describe("Device/update_agent", () => {
 
     // The Connector restarts: same settings, and the existing conversation's next message starts the new agent.
     await f.restart();
-    assert.deepEqual(f.agent("fake"), { ...entry, running: 0 });
+    assert.deepEqual(f.agent("fake"), { ...entry, running: 0, sessions: 0 });
     const resumed: Reply = await f.host.sessionsService.send({ id: second.id, client_msg_id: "m2", content: "after restart", wait: true }, TUNNEL);
     assert.equal(resumed.reply_text, "echo: after restart");
     const restarted = (await f.spawns())[2];
@@ -390,7 +393,7 @@ describe("Device/update_agent", () => {
     assert.deepEqual(removed.env_keys, ["OTHER"]);
 
     for (const answer of answers) assert.ok(!JSON.stringify(answer).includes(SECRET), JSON.stringify(answer));
-    assert.deepEqual(Object.keys(removed).sort(), ["args", "builtin", "busy", "command", "customized", "enabled", "env_keys", "id", "idle_close_minutes", "name", "running"]);
+    assert.deepEqual(Object.keys(removed).sort(), ["args", "builtin", "busy", "command", "customized", "enabled", "env_keys", "id", "idle_close_minutes", "installed", "name", "running", "sessions"]);
     assert.ok(f.logs.length > 0);
     assert.ok(f.logs.every((line) => !line.includes(SECRET)), f.logs.join("\n"));
     assert.ok(f.pushes.length > 0);
@@ -471,11 +474,8 @@ describe("Device/update_agent", () => {
     await refusedWith(() => f.host.updateAgent("fake", { env: { "BAD-NAME": "v" } }), "invalid_argument", "invalid_agent_settings");
     await refusedWith(() => f.host.updateAgent("fake", { command: "" }), "invalid_argument", "invalid_agent_settings");
 
-    // A name is not a setting: dropped like any other field the request does not have, on the wire and directly.
-    const named = UpdateAgentRequestSchema.safeParse({ id: "fake", name: "Renamed", enabled: true });
-    assert.ok(named.success);
-    assert.ok(!("name" in named.data));
-    const ignored = await device.update_agent({ id: "fake", name: "Renamed" } as unknown as Parameters<typeof device.update_agent>[0], TUNNEL);
+    // Only agents the user added have a name to change (`custom-agents.test.ts`): the others keep theirs.
+    const ignored = await device.update_agent({ id: "fake", name: "Renamed" }, TUNNEL);
     assert.deepEqual([ignored.name, ignored.customized], ["Fake", false]);
     const nul = await refusedWith(() => f.host.updateAgent("fake", { env: { TOKEN: `${SECRET}\u0000` } }), "invalid_argument", "invalid_agent_settings");
     assert.equal(nul.details?.field, "env.TOKEN");
@@ -509,19 +509,19 @@ describe("Device/update_agent", () => {
 });
 
 describe("Device/stop_agent", () => {
-  it("stops the sessions' and prepared agents; the sessions stay and start it again on their next message", async () => {
+  it("stops the agent's process with its sessions, prepared ones included; conversations stay and start it again on their next message", async () => {
     const f = await setup();
     const { deviceService: device, sessionsService: sessions, store } = f.host;
     const one = await sessions.create({ agent: "fake", cwd: f.dirs.a }, TUNNEL);
     const two = await sessions.create({ agent: "fake", cwd: f.dirs.b }, TUNNEL);
     await sessions.prepare({ agent: "fake", cwd: f.dirs.b }, TUNNEL);
     const other = await sessions.create({ agent: "builtin", cwd: f.dirs.a }, TUNNEL);
-    const pids = (await f.spawns()).map((s) => s.pid);
-    assert.equal(f.agent("fake").running, 3);
+    const [fake, builtin] = (await f.spawns()).map((s) => s.pid) as [number, number];
+    assert.equal(f.agent("fake").running, 1);
 
-    assert.deepEqual(await device.stop_agent({ id: "fake" }, TUNNEL), { stopped: 3 });
-    for (const pid of pids.slice(0, 3)) await eventually(() => !alive(pid), `agent ${pid} stopped`);
-    assert.ok(alive(pids[3] as number), "other agents are left alone");
+    assert.deepEqual(await device.stop_agent({ id: "fake" }, TUNNEL), { stopped: 1 });
+    await eventually(() => !alive(fake), "the agent stopped");
+    assert.ok(alive(builtin), "other agents are left alone");
     assert.equal(f.agent("fake").running, 0);
     assert.deepEqual(f.host.runtimes.listPrepared(), []);
     assert.deepEqual(store.list().sessions.map((s) => s.id).sort(), [one.id, two.id, other.id].sort());
@@ -529,7 +529,7 @@ describe("Device/stop_agent", () => {
 
     const reply: Reply = await sessions.send({ id: one.id, client_msg_id: "m1", content: "back", wait: true }, TUNNEL);
     assert.equal(reply.reply_text, "echo: back");
-    assert.equal(await f.count("spawn"), 5, "started again");
+    assert.equal(await f.count("spawn"), 3, "started again");
     assert.equal(f.agent("fake").running, 1);
     // Again: what runs now; then nothing.
     assert.deepEqual(await device.stop_agent({ id: "fake" }, TUNNEL), { stopped: 1 });

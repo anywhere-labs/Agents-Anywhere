@@ -1,6 +1,6 @@
-// `aa.v3.Sessions/prepare` and `create({ prepared_id })`: an agent started before its conversation, against a small
-// stdio ACP agent that logs every process start, `session/new` and setting change. The service is called directly
-// (the Router end-to-end test covers the wire).
+// `aa.v3.Sessions/prepare` and `create({ prepared_id })`: a session opened before its conversation, against a small
+// stdio ACP agent that logs every process start, `session/new`, `session/close` and setting change. The service is
+// called directly (the Router end-to-end test covers the wire).
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import * as os from "node:os";
@@ -42,7 +42,7 @@ async function handle(msg) {
     case "initialize": {
       const slow = flag("--slow-init");
       if (slow) await new Promise((r) => setTimeout(r, Number(slow.split("=")[1])));
-      return reply({ protocolVersion: 1, agentCapabilities: {}, authMethods: [{ id: "login", name: "Log in", description: "Run fake-agent login" }] });
+      return reply({ protocolVersion: 1, agentCapabilities: { sessionCapabilities: { close: {} } }, authMethods: [{ id: "login", name: "Log in", description: "Run fake-agent login" }] });
     }
     case "session/new": {
       note("session/new " + process.pid + " " + params.cwd);
@@ -67,6 +67,10 @@ async function handle(msg) {
       update(params.sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "echo: " + text } });
       return reply({ stopReason: "end_turn" });
     }
+    case "session/close":
+      sessions.delete(params.sessionId);
+      note("closed " + params.sessionId);
+      return reply({});
     case "session/cancel":
       return;
     default:
@@ -229,10 +233,26 @@ describe("Sessions/prepare", () => {
     ]);
     assert.equal(one.prepared_id, two.prepared_id);
     assert.equal(await f.count("spawn"), 1);
-    // Another folder is another agent.
+    // Another folder is another session, in the same process.
     const other = await f.service.prepare({ agent: "fake", cwd: f.dirs.b }, ctx);
     assert.notEqual(other.prepared_id, one.prepared_id);
-    assert.equal(await f.count("spawn"), 2);
+    assert.equal(await f.count("session/new"), 2);
+    assert.equal(await f.count("spawn"), 1);
+  });
+
+  it("shares one process between conversations and folders that start at the same time", async () => {
+    const f = await setup({ flags: ["--slow-init=200"] });
+    const [prepared, first, second] = await Promise.all([
+      f.service.prepare({ agent: "fake", cwd: f.dirs.a }, ctx),
+      f.service.create({ agent: "fake", cwd: f.dirs.b }, ctx),
+      f.service.create({ agent: "fake", cwd: f.dirs.c }, ctx),
+    ]);
+    assert.equal(await f.count("spawn"), 1);
+    const pid = await f.pid(0);
+    assert.deepEqual(new Set((await f.log()).filter((line) => line.startsWith("session/new "))), new Set([f.dirs.a, f.dirs.b, f.dirs.c].map((dir) => `session/new ${pid} ${dir}`)));
+    assert.equal(prepared.cwd, f.dirs.a);
+    assert.ok(f.host.isLive(first.id) && f.host.isLive(second.id));
+    assert.deepEqual([f.host.agent("fake").running, f.host.agent("fake").sessions], [1, 3]);
   });
 
   it("checks the agent and folder like create", async () => {
@@ -256,7 +276,7 @@ describe("Sessions/prepare", () => {
     assert.equal(auth.code, "failed_precondition");
     assert.equal(auth.reason, "agent_auth_required");
     assert.equal(auth.message, "could not start Agent auth: Authentication required");
-    assert.deepEqual(auth.details?.auth_methods, [{ id: "login", name: "Log in", description: "Run fake-agent login" }]);
+    assert.deepEqual(auth.details?.auth_methods, [{ id: "login", name: "Log in", description: "Run fake-agent login", kind: "agent" }]);
     // Nothing is kept: the next call tries again (after the user signed in, say).
     await rejection(f.service.prepare({ agent: "auth", cwd: f.dirs.a }, ctx));
     assert.equal(await f.count("spawn"), 2);
@@ -309,13 +329,16 @@ describe("Sessions/create with prepared_id", () => {
     assert.equal(sent.reply_text, "echo: hello");
     assert.equal(f.store.getControl(session.id).state, "idle");
 
-    // The prepared agent is the session's now: closing the pool does not touch it, deleting the session does.
+    // It is the conversation's now: a new one is prepared, and deleting the conversation closes only its own session.
+    const acpSession = f.store.acpSessionId(session.id);
     const next = await f.service.prepare({ agent: "fake", cwd: f.dirs.a }, ctx);
     assert.notEqual(next.prepared_id, prepared.prepared_id);
-    assert.equal(await f.count("spawn"), 2);
-    assert.ok(alive(pid));
+    assert.equal(await f.count("spawn"), 1);
+    assert.equal(await f.count("closed"), 0);
     await f.service.delete({ id: session.id }, ctx);
-    await eventually(() => !alive(pid) || undefined, "the session's agent exited");
+    assert.deepEqual((await f.log()).filter((line) => line.startsWith("closed ")), [`closed ${acpSession}`]);
+    assert.ok(alive(pid), "the process serves the others");
+    assert.deepEqual(f.host.listPrepared().map((p) => p.id), [next.prepared_id]);
   });
 
   it("starts the agent as usual when prepared_id is unknown, for another agent or folder, exited or expired", async () => {
@@ -342,7 +365,7 @@ describe("Sessions/create with prepared_id", () => {
     // Exited on its own (crashed): dropped from the pool, create starts a new one.
     const crashed = await f.service.prepare({ agent: "fake", cwd: f.dirs.c }, ctx);
     assert.equal(await newSessions(), 5);
-    process.kill(await f.pid(4), "SIGKILL");
+    process.kill(await f.pid(0), "SIGKILL");
     await eventually(() => f.host.listPrepared().length === 0 || undefined, "crashed agent dropped");
     const afterCrash = await f.service.create({ agent: "fake", cwd: f.dirs.c, prepared_id: crashed.prepared_id }, ctx);
     assert.equal(await newSessions(), 6);
@@ -352,8 +375,7 @@ describe("Sessions/create with prepared_id", () => {
     // Expired: closed after its TTL, so create starts a new one.
     const g = await setup({ host: { preparedTtlMs: 300 } });
     const expiring = await g.service.prepare({ agent: "fake", cwd: g.dirs.a }, ctx);
-    const pid = await g.pid(0);
-    await eventually(() => !alive(pid) || undefined, "closed after its TTL");
+    await eventually(async () => (await g.count("closed")) === 1 || undefined, "closed after its TTL");
     assert.deepEqual(g.host.listPrepared(), []);
     const afterTtl = await g.service.create({ agent: "fake", cwd: g.dirs.a, prepared_id: expiring.prepared_id }, ctx);
     assert.equal(await g.count("session/new"), 2);
@@ -410,34 +432,36 @@ describe("the settings of the newest conversation", () => {
 });
 
 describe("prepared agent lifecycle", () => {
-  it("closes an unused agent after its TTL; asking again restarts the TTL", async () => {
+  it("closes an unused session after its TTL; asking again restarts the TTL; the process stays", async () => {
     const f = await setup({ host: { preparedTtlMs: 1_500 } });
     const first = await f.service.prepare({ agent: "fake", cwd: f.dirs.a }, ctx);
-    const pid = await f.pid(0);
     await sleep(700);
     const again = await f.service.prepare({ agent: "fake", cwd: f.dirs.a }, ctx);
     assert.equal(again.prepared_id, first.prepared_id);
     await sleep(1_100); // past the first expiry (1.5 s), before the second (2.2 s)
-    assert.ok(alive(pid), "the second prepare kept it");
+    assert.equal(await f.count("closed"), 0, "the second prepare kept it");
     assert.equal(f.host.listPrepared().length, 1);
-    await eventually(() => !alive(pid) || undefined, "the agent closed after its TTL", 5_000);
+    await eventually(async () => (await f.count("closed")) === 1 || undefined, "the session closed after its TTL", 5_000);
     assert.deepEqual(f.host.listPrepared(), []);
+    assert.ok(alive(await f.pid(0)), "never closed by default");
+    assert.deepEqual([f.host.agent("fake").running, f.host.agent("fake").sessions], [1, 0]);
   });
 
   it("keeps at most maxPrepared and closes the least recently used one first", async () => {
     const f = await setup({ host: { maxPrepared: 2 } });
     const a = await f.service.prepare({ agent: "fake", cwd: f.dirs.a }, ctx);
     const b = await f.service.prepare({ agent: "fake", cwd: f.dirs.b }, ctx);
-    const pidB = await f.pid(1);
     // Using a again makes b the least recently used.
     assert.equal((await f.service.prepare({ agent: "fake", cwd: f.dirs.a }, ctx)).prepared_id, a.prepared_id);
     const c = await f.service.prepare({ agent: "fake", cwd: f.dirs.c }, ctx);
-    await eventually(() => !alive(pidB) || undefined, "b closed");
+    const closed = await eventually(async () => (await f.log()).find((line) => line.startsWith("closed ")), "b closed");
+    assert.equal(closed, `closed acp-${await f.pid(0)}-2`);
     assert.deepEqual(new Set(f.host.listPrepared().map((p) => p.id)), new Set([a.prepared_id, c.prepared_id]));
-    assert.equal(await f.count("spawn"), 3);
-    // b's id is gone: create starts a new agent.
+    assert.equal(await f.count("session/new"), 3);
+    // b's id is gone: create opens a new session.
     await f.service.create({ agent: "fake", cwd: f.dirs.b, prepared_id: b.prepared_id }, ctx);
-    assert.equal(await f.count("spawn"), 4);
+    assert.equal(await f.count("session/new"), 4);
+    assert.equal(await f.count("spawn"), 1);
   });
 
   it("closes prepared agents, and fails starts still under way, when the Connector stops", async () => {

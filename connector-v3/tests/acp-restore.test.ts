@@ -115,6 +115,10 @@ async function handle(msg) {
       update(s.id, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: answer } });
       return reply({ stopReason: "end_turn" });
     }
+    case "session/close":
+      sessions.delete(params.sessionId);
+      note("close " + params.sessionId);
+      return reply({});
     case "session/cancel":
       return;
     default:
@@ -544,7 +548,7 @@ describe("idle agents", () => {
     assert.equal(f.running(), 0);
     assert.equal(f.host.runtimes.isLive(session.id), false);
     assert.equal(f.host.store.getControl(session.id).state, "idle");
-    assert.ok(f.logs.some((line) => line.includes("closing the agent of conversation") && line.includes("after 400 ms idle")), f.logs.join("\n"));
+    assert.ok(f.logs.includes("Fake: closing its process after 400 ms idle; the next message of a conversation restores it"), f.logs.join("\n"));
     // The conversation is untouched.
     assert.equal(f.conversation(session.id).length, 2);
 

@@ -21,6 +21,7 @@ import {
   piApprovalRequest,
   piApprovalsExtensionSource,
   piToolNeedsApproval,
+  type PiApprovalMode,
 } from "../src/core/pi-approvals.js";
 import { SessionStore } from "../src/core/session-store.js";
 import { DeviceGate } from "../src/core/gate.js";
@@ -62,6 +63,7 @@ async function run(sessionId, command) {
 const config = (s) => [{ id: "model", name: "Model", category: "model", type: "select", currentValue: s.model,
   options: [{ value: "fast", name: "Fast" }, { value: "smart", name: "Smart" }] }];
 const sessions = new Map();
+let created = 0;
 async function handle(msg) {
   if (msg.method === undefined) {
     const answer = waiting.get(msg.id);
@@ -71,13 +73,21 @@ async function handle(msg) {
   const { id, method, params } = msg;
   const reply = (result) => out({ jsonrpc: "2.0", id, result });
   switch (method) {
-    case "initialize": return reply({ protocolVersion: 1, agentCapabilities: {} });
+    case "initialize": return reply({ protocolVersion: 1, agentCapabilities: { sessionCapabilities: { resume: {}, close: {} } } });
     case "session/new": {
-      const sessionId = "acp-" + process.pid + "-" + (sessions.size + 1);
+      const sessionId = "acp-" + process.pid + "-" + ++created;
       const s = { model: "fast" };
       sessions.set(sessionId, s);
       return reply({ sessionId, configOptions: config(s) });
     }
+    case "session/resume": {
+      const s = { model: "fast" };
+      sessions.set(params.sessionId, s);
+      return reply({ configOptions: config(s) });
+    }
+    case "session/close":
+      sessions.delete(params.sessionId);
+      return reply({});
     case "session/set_config_option": {
       const s = sessions.get(params.sessionId);
       s[params.configId] = params.value;
@@ -138,7 +148,7 @@ after(async () => {
   await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
-const modeIn = async (file: string) => (JSON.parse(await readFile(file, "utf8")) as { mode: string }).mode;
+const modesIn = async (file: string) => JSON.parse(await readFile(file, "utf8")) as { default: string; modes: Record<string, string> };
 
 describe("the extension file", () => {
   it("is installed, brought up to date, and removed only when it is AA's", async () => {
@@ -224,12 +234,15 @@ describe("the extension inside Pi", () => {
   });
 
   it("asks as the conversation's mode says, and blocks what is declined or cannot be asked", async () => {
-    const mode = await PiApprovalsFile.create(path.join(root, "modes"), "full_access");
-    process.env[PI_APPROVALS_ENV] = mode.path;
+    const modes = await PiApprovalsFile.create(path.join(root, "modes"));
+    const mode = { set: (value: PiApprovalMode) => modes.set("session-1", value) };
+    await mode.set("full_access");
+    process.env[PI_APPROVALS_ENV] = modes.path;
     const [onToolCall] = await load();
     assert.ok(onToolCall);
     const asked: string[] = [];
-    const answering = (answer: boolean) => ({ hasUI: true, ui: { confirm: async (title: string) => (asked.push(title), answer) } });
+    const sessionManager = { getSessionId: () => "session-1" };
+    const answering = (answer: boolean) => ({ sessionManager, hasUI: true, ui: { confirm: async (title: string) => (asked.push(title), answer) } });
     const call = (toolName: string, input: unknown, answer = true) => onToolCall({ toolCallId: "call_1", toolName, input }, answering(answer));
     const command = { command: "rm -rf build\necho done" };
 
@@ -259,15 +272,37 @@ describe("the extension inside Pi", () => {
     assert.deepEqual(asked, ["Use deploy", "Use deploy"]);
 
     // Asking is impossible (no UI): blocked rather than done unasked.
-    assert.equal((await onToolCall({ toolCallId: "call_1", toolName: "bash", input: command }, { hasUI: false }))?.block, true);
-    // An unreadable mode file: the safest mode.
-    await mode.remove();
+    assert.equal((await onToolCall({ toolCallId: "call_1", toolName: "bash", input: command }, { sessionManager, hasUI: false }))?.block, true);
+    // An unreadable file: the safest mode.
+    await modes.remove();
     assert.equal((await call("bash", command, false))?.block, true);
   });
 
+  it("keeps a mode per session: one process runs many, and a session without one asks", async () => {
+    const modes = await PiApprovalsFile.create(path.join(root, "modes"));
+    process.env[PI_APPROVALS_ENV] = modes.path;
+    const [onToolCall] = await load();
+    assert.ok(onToolCall);
+    /** Whether a command asks in that session (declined, so it is blocked when it does). */
+    const asks = async (sessionId: unknown) => {
+      const ctx = { sessionManager: { getSessionId: () => sessionId }, hasUI: true, ui: { confirm: async () => false } };
+      return (await onToolCall({ toolCallId: "call_1", toolName: "bash", input: { command: "ls" } }, ctx)) !== undefined;
+    };
+    await modes.set("trusted", "full_access");
+    assert.deepEqual([await asks("trusted"), await asks("other"), await asks(undefined), await asks("constructor")], [false, true, true, true]);
+    await modes.set("other", "full_access");
+    await modes.forget("trusted");
+    assert.deepEqual([await asks("trusted"), await asks("other")], [true, false]);
+    assert.deepEqual([modes.mode("trusted"), modes.mode("other")], ["ask", "full_access"]);
+    // Turned off while the process runs: no session asks any more.
+    await modes.turnOff();
+    assert.deepEqual([await asks("trusted"), await asks("new")], [false, false]);
+    await modes.remove();
+  });
+
   it("names the call it asks about, so the request is about that call and not about the dialog", async () => {
-    const mode = await PiApprovalsFile.create(path.join(root, "modes"), "ask");
-    process.env[PI_APPROVALS_ENV] = mode.path;
+    const modes = await PiApprovalsFile.create(path.join(root, "modes"));
+    process.env[PI_APPROVALS_ENV] = modes.path;
     const [onToolCall] = await load();
     assert.ok(onToolCall);
     /** The permission request a call of Pi's leads to, as the Connector asks it. */
@@ -366,7 +401,7 @@ describe("approvals as an agent setting", () => {
     assert.equal(existsSync(path.join(f.extensions, PI_APPROVALS_EXTENSION_FILE)), false);
   });
 
-  it("turned on: installs the extension, and each conversation gets the setting and a mode file of its own", async () => {
+  it("turned on: installs the extension, and each conversation gets the setting and a mode of its own", async () => {
     const f = await setup();
     const on = await f.host.updateAgent("pi", { approvals: true });
     assert.equal(on.approvals, true);
@@ -377,12 +412,16 @@ describe("approvals as an agent setting", () => {
     assert.equal(approvalsOf(session.config), "ask", "asks until told otherwise");
     const file = await f.startedWith(0);
     assert.notEqual(file, "-");
-    assert.equal(await modeIn(file), "ask");
+    const modeOf = async (id: string) => {
+      const state = await modesIn(file);
+      return state.modes[f.store.acpSessionId(id) ?? ""] ?? state.default;
+    };
+    assert.equal(await modeOf(session.id), "ask");
 
     // The setting is the Connector's: the agent never hears of it.
     const changed = await f.service.set_config({ id: session.id, config_id: PI_APPROVALS_CONFIG_ID, value: "accept_edits" }, ctx);
     assert.equal(approvalsOf(changed.config), "accept_edits");
-    assert.equal(await modeIn(file), "accept_edits");
+    assert.equal(await modeOf(session.id), "accept_edits");
     assert.ok(!(await f.log()).some((line) => line.startsWith(`set ${PI_APPROVALS_CONFIG_ID}`)));
     await assert.rejects(f.service.set_config({ id: session.id, config_id: PI_APPROVALS_CONFIG_ID, value: "sometimes" }, ctx));
     // The agent's own settings keep it.
@@ -394,18 +433,89 @@ describe("approvals as an agent setting", () => {
     assert.equal(approvalsOf(second.config), "ask");
     const third = await f.service.create({ agent: "pi", cwd: f.project, config: { [PI_APPROVALS_CONFIG_ID]: "full_access" } }, ctx);
     assert.equal(approvalsOf(third.config), "full_access");
-    assert.equal(await modeIn(await f.startedWith(2)), "full_access");
     const fourth = await f.service.create({ agent: "pi", cwd: f.project }, ctx);
     assert.equal(approvalsOf(fourth.config), "full_access", "the newest conversation's");
-    assert.equal(await modeIn(await f.startedWith(3)), "full_access", "and its process's mode file says so");
+    // All of them in one process: its file says so for each.
+    assert.equal((await f.log()).filter((line) => line.startsWith("spawn ")).length, 1);
+    assert.deepEqual(await Promise.all([session, second, third, fourth].map((s) => modeOf(s.id))), ["accept_edits", "ask", "full_access", "full_access"]);
 
-    // Its process gone, its mode file goes too: no later than the Connector when it stops.
+    // A conversation's mode goes with it; the file with the process, no later than the Connector when it stops.
+    const gone = f.store.acpSessionId(session.id) ?? "";
     await f.service.delete({ id: session.id }, ctx);
-    await eventually(() => !existsSync(file) || undefined, "the mode file removed");
-    const others = await Promise.all([1, 2, 3].map(f.startedWith));
-    assert.ok(others.every(existsSync));
+    await eventually(async () => !(gone in (await modesIn(file)).modes) || undefined, "its mode forgotten");
+    assert.ok(existsSync(file));
     await f.host.dispose();
-    assert.deepEqual(others.filter(existsSync), []);
+    assert.equal(existsSync(file), false);
+  });
+
+  it("turned on while conversations run: idle ones move to a process with approvals", async () => {
+    const f = await setup();
+    const session = await f.service.create({ agent: "pi", cwd: f.project }, ctx);
+    assert.equal(await f.startedWith(0), "-");
+    await f.host.updateAgent("pi", { approvals: true });
+    await eventually(() => f.host.agent("pi").running === 0 || undefined, "the process without approvals stopped");
+    await f.service.send({ id: session.id, client_msg_id: "m1", content: "hello", wait: true }, ctx);
+    const file = await f.startedWith(1);
+    assert.notEqual(file, "-");
+    assert.equal(approvalsOf(f.store.get(session.id)?.config ?? []), "ask");
+
+    // Its mode comes along when it moves again (its process exits, say).
+    await f.service.set_config({ id: session.id, config_id: PI_APPROVALS_CONFIG_ID, value: "full_access" }, ctx);
+    await f.host.stopAgent("pi");
+    await f.service.send({ id: session.id, client_msg_id: "m2", content: "hello", wait: true }, ctx);
+    const next = await f.startedWith(2);
+    assert.notEqual(next, file);
+    assert.equal((await modesIn(next)).modes[f.store.acpSessionId(session.id) ?? ""], "full_access");
+    assert.equal(approvalsOf(f.store.get(session.id)?.config ?? []), "full_access");
+  });
+
+  it("turned on: conversations from before can choose at once, open or not, and what is chosen is used", async () => {
+    const f = await setup();
+    const [idle, closed, untouched] = [
+      await f.service.create({ agent: "pi", cwd: f.project }, ctx),
+      await f.service.create({ agent: "pi", cwd: f.project }, ctx),
+      await f.service.create({ agent: "pi", cwd: f.project }, ctx),
+    ];
+    const other = await f.service.create({ agent: "other", cwd: f.project }, ctx);
+    await f.host.closeSession(closed.id);
+    const modeOf = (id: string) => approvalsOf(f.store.get(id)?.config ?? []);
+    const times = () => [idle, closed, untouched].map((s) => f.store.get(s.id)?.updated_at);
+    const before = times();
+    await f.host.updateAgent("pi", { approvals: true });
+    assert.deepEqual([idle, closed, untouched, other].map((s) => modeOf(s.id)), ["ask", "ask", "ask", undefined]);
+    assert.deepEqual(times(), before, "they keep their places in the list");
+
+    // Chosen without a message having opened them.
+    for (const [session, value] of [[idle, "accept_edits"], [closed, "full_access"]] as const) {
+      const changed = await f.service.set_config({ id: session.id, config_id: PI_APPROVALS_CONFIG_ID, value }, ctx);
+      assert.equal(approvalsOf(changed.config), value);
+    }
+    for (const session of [idle, closed, untouched]) await f.service.send({ id: session.id, client_msg_id: "m1", content: "hello", wait: true }, ctx);
+    const file = await f.startedWith(2);
+    const modes = (await modesIn(file)).modes;
+    assert.deepEqual([idle, closed, untouched].map((s) => modes[f.store.acpSessionId(s.id) ?? ""] ?? "ask"), ["accept_edits", "full_access", "ask"]);
+    assert.deepEqual([idle, closed, untouched].map((s) => modeOf(s.id)), ["accept_edits", "full_access", "ask"]);
+
+    // Closed again (idle, or the agent stopped), they keep it; turned off, none has it any more.
+    await f.host.closeSession(idle.id);
+    await f.host.stopAgent("pi");
+    assert.deepEqual([idle, closed, untouched].map((s) => modeOf(s.id)), ["accept_edits", "full_access", "ask"]);
+    await f.host.updateAgent("pi", { approvals: false });
+    assert.deepEqual([idle, closed, untouched].map((s) => modeOf(s.id)), [undefined, undefined, undefined]);
+  });
+
+  it("turned on before the Connector started: conversations saved without it have the setting", async () => {
+    const store = new SessionStore({ device: { id: "dev_test", name: "Test" } });
+    const saved = [store.create({ agent: "pi", cwd: "/tmp" }), store.create({ agent: "other", cwd: "/tmp" })];
+    const host = new AcpRuntimeHost({
+      store,
+      includeDefaultPresets: false,
+      presets: ["pi", "other"].map((id) => ({ id, name: id, command: process.execPath, args: [agentScript, "/dev/null"], ...(id === "pi" ? { approvals: "pi" as const } : {}) })),
+      agentSettings: { pi: { approvals: true } },
+      piExtensionsDir: path.join(root, "no-extensions"),
+    });
+    hosts.push(host);
+    assert.deepEqual(saved.map((s) => approvalsOf(store.get(s.id)?.config ?? [])), ["ask", undefined]);
   });
 
   it("asks about Pi's own call: one step, with the whole command, answered by the agent's option", async () => {
@@ -443,6 +553,6 @@ describe("approvals as an agent setting", () => {
     assert.deepEqual(f.saved.at(-1), {});
     assert.equal(existsSync(path.join(f.extensions, PI_APPROVALS_EXTENSION_FILE)), false);
     assert.equal(approvalsOf(f.store.get(session.id)?.config ?? []), undefined);
-    await eventually(async () => (await modeIn(file)) === "full_access" || undefined, "never asks from now on");
+    await eventually(async () => (await modesIn(file)).default === "full_access" || undefined, "never asks from now on");
   });
 });

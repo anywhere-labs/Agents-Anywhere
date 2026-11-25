@@ -23,13 +23,16 @@ import * as path from "node:path";
 
 import { generateE2EKey, Mesh, Router, type RunningServer } from "meshcall";
 
-import type { AcpRuntimePreset, AgentUpdate } from "../core/config.js";
+import type { CatalogAgent } from "../core/agent-catalog.js";
+import type { AcpRuntimePreset, AgentUpdate, NewAgent } from "../core/config.js";
 import { DeviceGate, type DeviceGateOptions, type PairingHint, type PairingPayload } from "../core/gate.js";
 import { SessionStore } from "../core/session-store.js";
 import { AcpRuntimeHost, type PushEvent } from "../runtime/acp-host.js";
+import type { AgentFinder } from "../runtime/agent-finder.js";
 import { devicePlatform, removeSessionAttachments, type DriveDownload } from "../runtime/device-ops.js";
 import { StateStore, type ConnectorSettings, type DeviceIdentity, type DeviceMode, type PairedClientEntry } from "../runtime/state-store.js";
-import { TerminalManager } from "../runtime/terminal-manager.js";
+import { spawnCommand } from "../runtime/process-tree.js";
+import { TerminalManager, type TerminalInfo } from "../runtime/terminal-manager.js";
 import { DeviceAdminService, TunnelStreamTracker } from "../rpc/device-admin-service.js";
 import { DeviceService, type AgentStatus } from "../rpc/device-service.js";
 import { SessionsService } from "../rpc/sessions-service.js";
@@ -76,10 +79,14 @@ export interface ConnectorHostOptions {
   controlUrl?: string;
   deviceSecret?: string;
   presets?: AcpRuntimePreset[];
-  /** Add the built-in agent presets that are installed here (see `defaultAcpPresets`). Default true. */
+  /** Add the agents the Connector knows (`core/agent-catalog.ts`), installed here or not. Default true. */
   includeDefaultPresets?: boolean;
-  /** The Connector's own presets (`builtin` in `Device/agents`); default the built-in agents installed here. */
+  /** The Connector's own agents instead of the catalog's (`builtin` in `Device/agents`): they count as installed. */
   defaultPresets?: AcpRuntimePreset[];
+  /** Another catalog than `AGENT_CATALOG`. */
+  catalog?: readonly CatalogAgent[];
+  /** Looks for programs on this device. */
+  finder?: AgentFinder;
   /** `Sessions/prepare`: how long an unused prepared agent waits (default 10 min) and how many are kept (default 4). */
   preparedTtlMs?: number;
   maxPrepared?: number;
@@ -109,6 +116,9 @@ interface ServingRouter {
   mesh: Mesh;
   running: RunningServer;
 }
+
+/** How long a look at what is installed is good for when clients ask for the agents. */
+const RESCAN_AGENTS_MS = 5_000;
 
 const silentLogger: ConnectorLogger = { info: () => undefined, warn: () => undefined, error: () => undefined };
 
@@ -274,6 +284,15 @@ export class ConnectorHost {
       presets: this.options.presets ?? [],
       includeDefaultPresets: this.options.includeDefaultPresets ?? true,
       ...(this.options.defaultPresets !== undefined ? { defaultPresets: this.options.defaultPresets } : {}),
+      ...(this.options.catalog !== undefined ? { catalog: this.options.catalog } : {}),
+      ...(this.options.finder !== undefined ? { finder: this.options.finder } : {}),
+      onAgentsChanged: () => {
+        this.#logger.info(`agents that can be used here: ${this.runtimes.list().map((agent) => agent.id).join(", ") || "none"}`);
+        // The control plane offers only the agents in presence: tell it now rather than at the next report.
+        this.#presence?.reportNow();
+      },
+      customAgents: await state.loadCustomAgents(),
+      onCustomAgentsChange: (agents) => state.saveCustomAgents(agents),
       agentSettings: await state.loadAgentSettings(),
       onAgentSettingsChange: (agents) => state.saveAgentSettings(agents),
       lastSessionConfig: await state.loadLastSessionConfig().catch((error: unknown) => {
@@ -283,6 +302,8 @@ export class ConnectorHost {
       onLastSessionConfigChange: (config) => state.saveLastSessionConfig(config),
       // Pi processes' approvals mode files (one per process, removed when it exits), with the device's other state.
       approvalsDir: path.join(state.dataDir, "pi-approvals"),
+      // Agent processes serve conversations in any folder, so they start in one that belongs to none of them.
+      processCwd: path.join(state.dataDir, "agents"),
       ...(this.options.preparedTtlMs !== undefined ? { preparedTtlMs: this.options.preparedTtlMs } : {}),
       ...(this.options.maxPrepared !== undefined ? { maxPrepared: this.options.maxPrepared } : {}),
       ...(this.options.idleTtlMs !== undefined ? { idleTtlMs: this.options.idleTtlMs } : {}),
@@ -291,6 +312,8 @@ export class ConnectorHost {
       clientInfo: { name: "agents-anywhere-connector", version: this.connectorVersion },
       logger: { info: (message) => this.#logger.info(message), warn: (message) => this.#logger.warn(message) },
     });
+    // Agents only a login shell finds show up a moment later: nothing waits for that shell.
+    void this.#runtimes.refreshAgents().catch((error: unknown) => this.#logger.warn(`could not look for installed agents: ${String(error)}`));
 
     const host = this;
     const sessions = new SessionsService({
@@ -320,10 +343,21 @@ export class ConnectorHost {
         startedAt: this.startedAt,
         settings: () => this.settings,
         updateSettings: (patch) => this.updateSettings(patch, { deferModeSwitch: true }),
-        runtimes: () => this.runtimes.list(),
+        runtimes: () => {
+          this.runtimes.rescanAgents(RESCAN_AGENTS_MS);
+          return this.runtimes.list();
+        },
         agents: () => this.agents(),
+        refreshAgents: () => this.refreshAgents(),
+        installAgent: (id, method) => this.installAgent(id, method),
+        cancelInstall: (id) => this.cancelInstall(id),
         updateAgent: (id, update) => this.updateAgent(id, update),
+        addAgent: (input) => this.addAgent(input),
+        removeAgent: (id, options) => this.removeAgent(id, options),
         stopAgent: (id, options) => this.stopAgent(id, options),
+        signInAgent: (id, method) => this.signInAgent(id, method),
+        cancelSignIn: (id) => this.runtimes.cancelSignIn(id),
+        signInTerminal: (id, method, size) => this.signInTerminal(id, method, size),
         sessionCwd: (sessionId) => (store.has(sessionId) ? store.get(sessionId)?.cwd : undefined),
         get driveDownload() {
           return host.driveDownloader();
@@ -478,10 +512,31 @@ export class ConnectorHost {
 
   // ── Agents ──
 
-  /** Every agent of this device, turned-off ones included, with its settings and running processes and turns. */
+  /** Every agent of this device, turned-off and not installed ones included, with its settings and running processes and turns. */
   agents(): AgentStatus[] {
     const sessions = this.sessionsService;
+    this.runtimes.rescanAgents(RESCAN_AGENTS_MS);
     return this.runtimes.agents().map((agent) => ({ ...agent, busy: sessions.busyCount(agent.id) }));
+  }
+
+  /** `agents()` once the device was searched again, with the PATH of a login shell read again. */
+  async refreshAgents(): Promise<AgentStatus[]> {
+    await this.init();
+    await this.runtimes.refreshAgents();
+    return this.agents();
+  }
+
+  /** Start installing an agent with one of its methods. */
+  async installAgent(id: string, method: string): Promise<AgentStatus> {
+    await this.init();
+    const agent = this.runtimes.installAgent(id, method);
+    this.#logger.info(`installing agent ${id} (${method})`);
+    return { ...agent, busy: this.sessionsService.busyCount(id) };
+  }
+
+  async cancelInstall(id: string): Promise<AgentStatus> {
+    await this.init();
+    return { ...(await this.runtimes.cancelInstall(id)), busy: this.sessionsService.busyCount(id) };
   }
 
   /**
@@ -490,15 +545,51 @@ export class ConnectorHost {
    */
   async updateAgent(id: string, update: AgentUpdate): Promise<AgentStatus> {
     await this.init();
-    const wasEnabled = !this.runtimes.isDisabled(id);
+    const usable = () => JSON.stringify(this.runtimes.list());
+    const before = usable();
     const agent = await this.runtimes.updateAgent(id, update);
     // Which fields, never their values.
-    const fields: string[] = (["enabled", "command", "args", "env", "approvals", "idle_close_minutes"] as const).filter((field) => update[field] != null);
+    const fields: string[] = (["name", "enabled", "program", "gateway", "command", "args", "env", "approvals", "idle_close_minutes"] as const).filter((field) => update[field] != null);
     if (update.reset) fields.unshift("reset");
     this.#logger.info(`agent ${id} updated (${fields.join(", ") || "nothing"})`);
     // The control plane offers only the agents in presence: tell it now rather than at the next report.
-    if (agent.enabled !== wasEnabled) this.#presence?.reportNow();
+    if (usable() !== before) this.#presence?.reportNow();
     return { ...agent, busy: this.sessionsService.busyCount(id) };
+  }
+
+  /** Add an agent of the user's own (see `NewAgent`), saved in `custom-agents.json` (0600). */
+  async addAgent(input: NewAgent): Promise<AgentStatus> {
+    await this.init();
+    const agent = await this.runtimes.addAgent(input);
+    this.#logger.info(`agent ${agent.id} added`);
+    this.#presence?.reportNow();
+    return { ...agent, busy: 0 };
+  }
+
+  /** Remove an agent the user added; its processes are stopped as `stopAgent` does. */
+  async removeAgent(id: string, options: { force?: boolean } = {}): Promise<void> {
+    await this.init();
+    this.runtimes.assertCustom(id);
+    await this.sessionsService.stopAgent(id, options);
+    await this.runtimes.removeAgent(id);
+    this.#logger.info(`agent ${id} removed`);
+    this.#presence?.reportNow();
+  }
+
+  /** Sign in to an agent (see `AcpRuntimeHost.signIn`). */
+  async signInAgent(id: string, method: string): Promise<void> {
+    await this.init();
+    await this.runtimes.signIn(id, method);
+    this.#logger.info(`signed in to agent ${id} (${method})`);
+  }
+
+  /** Start a terminal in which the agent's program signs in. */
+  async signInTerminal(id: string, method: string, size: { cols?: number; rows?: number } = {}): Promise<TerminalInfo> {
+    await this.init();
+    const { command, args, env } = this.runtimes.signInCommand(id, method);
+    const program = spawnCommand(command, args);
+    this.#logger.info(`signing in to agent ${id} in a terminal (${method})`);
+    return this.terminals.create({ shell: program.command, args: program.args, env, ...size });
   }
 
   /** Stop an agent's processes; with `force` its running turns are cancelled first (see `SessionsService.stopAgent`). */

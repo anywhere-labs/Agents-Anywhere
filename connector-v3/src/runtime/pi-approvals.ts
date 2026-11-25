@@ -1,5 +1,5 @@
 // The files behind Pi approvals (`core/pi-approvals.ts`): the extension in Pi's global extensions folder, and one
-// mode file per Pi process AA starts.
+// file per Pi process AA starts with the modes of its sessions.
 
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
@@ -7,6 +7,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import {
+  DEFAULT_PI_APPROVAL_MODE,
   PI_APPROVALS_EXTENSION_FILE,
   PI_APPROVALS_EXTENSION_MARKER,
   piApprovalsExtensionSource,
@@ -64,48 +65,80 @@ export async function uninstallPiApprovals(dir: string = piExtensionsDir()): Pro
   await fs.rm(file, { force: true });
 }
 
-/** A Pi process's mode file: written when it starts and whenever its conversation's mode changes, removed when it exits. */
+/**
+ * A Pi process's approvals: the mode of each of its sessions, in a file the extension reads before every tool call.
+ * Written whenever one changes, removed when the process exits.
+ */
 export class PiApprovalsFile {
   readonly path: string;
-  #mode: PiApprovalMode;
-  /** Writes one after another, so the file always ends with the latest mode. */
+  #modes = new Map<string, PiApprovalMode>();
+  #off = false;
+  /** Writes one after another, so the file always ends with the latest modes. */
   #writing: Promise<void> = Promise.resolve();
 
-  private constructor(file: string, mode: PiApprovalMode) {
+  private constructor(file: string) {
     this.path = file;
-    this.#mode = mode;
   }
 
-  /** A new file in `dir` (created 0700 if needed), holding `mode`. */
-  static async create(dir: string, mode: PiApprovalMode): Promise<PiApprovalsFile> {
+  /** A new file in `dir` (created 0700 if needed): every session asks until told otherwise. */
+  static async create(dir: string): Promise<PiApprovalsFile> {
     await fs.mkdir(dir, { recursive: true, mode: 0o700 });
-    const file = new PiApprovalsFile(path.join(dir, `pi-${randomUUID()}.json`), mode);
-    await file.set(mode);
+    const file = new PiApprovalsFile(path.join(dir, `pi-${randomUUID()}.json`));
+    await file.#write(new Map(), false);
     return file;
   }
 
-  get mode(): PiApprovalMode {
-    return this.#mode;
+  /** Approvals were turned off while the process runs: nothing asks any more. */
+  get off(): boolean {
+    return this.#off;
   }
 
-  /** Replace the mode; the extension reads it before the next tool call. Atomic: it never reads half a file. */
-  set(mode: PiApprovalMode): Promise<void> {
-    const write = async (): Promise<void> => {
-      const temp = `${this.path}.${randomUUID()}.tmp`;
-      await fs.writeFile(temp, `${JSON.stringify({ mode })}\n`, { encoding: "utf8", mode: 0o600 });
-      await fs.rename(temp, this.path);
-      this.#mode = mode;
-    };
-    const next = this.#writing.then(write, write);
-    this.#writing = next.catch(() => undefined);
-    return next;
+  /** The session's mode. */
+  mode(sessionId: string): PiApprovalMode {
+    return this.#modes.get(sessionId) ?? DEFAULT_PI_APPROVAL_MODE;
+  }
+
+  /** Change a session's mode; the extension reads it before the next tool call. */
+  set(sessionId: string, mode: PiApprovalMode): Promise<void> {
+    return this.#change((modes) => modes.set(sessionId, mode));
+  }
+
+  /** The session is closed. */
+  forget(sessionId: string): Promise<void> {
+    return this.#modes.has(sessionId) ? this.#change((modes) => modes.delete(sessionId)) : Promise.resolve();
+  }
+
+  /** Ask in no session any more. */
+  turnOff(): Promise<void> {
+    this.#off = true;
+    return this.#change((modes) => modes.clear());
   }
 
   /** Remove the file (after any write still under way). */
   remove(): Promise<void> {
-    const rm = () => fs.rm(this.path, { force: true });
-    const next = this.#writing.then(rm, rm);
+    return this.#after(() => fs.rm(this.path, { force: true }));
+  }
+
+  #change(change: (modes: Map<string, PiApprovalMode>) => unknown): Promise<void> {
+    return this.#after(async () => {
+      const next = new Map(this.#modes);
+      change(next);
+      await this.#write(next, this.#off);
+    });
+  }
+
+  #after(task: () => Promise<void>): Promise<void> {
+    const next = this.#writing.then(task, task);
     this.#writing = next.catch(() => undefined);
     return next;
+  }
+
+  /** Atomic: the extension never reads half a file. */
+  async #write(modes: Map<string, PiApprovalMode>, off: boolean): Promise<void> {
+    const temp = `${this.path}.${randomUUID()}.tmp`;
+    const state = { default: off ? "full_access" : DEFAULT_PI_APPROVAL_MODE, modes: Object.fromEntries(modes) };
+    await fs.writeFile(temp, `${JSON.stringify(state)}\n`, { encoding: "utf8", mode: 0o600 });
+    await fs.rename(temp, this.path);
+    this.#modes = modes;
   }
 }

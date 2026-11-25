@@ -2,12 +2,17 @@
  * Generic ACP runtime host: runs any agent that speaks the Agent Client Protocol (JSON-RPC 2.0, one JSON object
  * per line over stdio) and projects its output into the `SessionStore`.
  *
- * One agent process per aa.v3 session: the agent gets the session's `cwd`, a crash takes down only that
- * conversation, and closing a session kills its whole process group. The process is started lazily (on create or
- * on the first prompt after a Connector restart).
+ * One process per agent, shared by all of its conversations, each an ACP session of its own with its own `cwd`
+ * (`agent-process.ts`). It is started lazily: by the first conversation, or a prepared one. A crash ends the turns that
+ * run in it; every conversation's next message starts the agent again. Only an agent that cannot run several sessions
+ * (`own_process`) gets a process per conversation.
+ *
+ * Settings that take another process (command, args, environment, …): the running process is retired. No session is
+ * opened in it any more, idle ones move to the next process right away, busy ones when what they do has ended, and it
+ * exits with the last one. An agent that cannot restore a session keeps it there until it is closed or stopped.
  *
  * Restoring the agent's context: the agent's own session id (ACP `sessionId`) is saved with the conversation. When
- * the conversation's agent starts again (a Connector restart, `stop_agent`, a crash, an idle close), the new process
+ * the conversation's agent starts again (a Connector restart, `stop_agent`, a crash, an idle close, a new process), it
  * reopens that session instead of starting a new one: `session/resume` when the agent offers it (no replay), else,
  * or when the agent refuses the resume, `session/load` (the agent replays the conversation as `session/update`s; AA
  * has it already, so the replay is dropped). Either way the conversation's settings (model, mode, …) are set again
@@ -15,16 +20,16 @@
  * a new ACP session as before: it has lost the earlier context, which is logged (the timeline has no item for such a
  * notice).
  *
- * Idle agents: a session's agent that can restore its context is closed once nothing has been in flight for the
- * agent's `idle_close_minutes` (its settings; `idleTtlMs` for agents without one; never by default): no turn, no
- * permission request, no setting change, no output of its own between turns. The conversation stays; its next
- * message starts the agent again and restores it. Agents that cannot restore keep running as before.
+ * Idle agents: a session the agent can restore is closed (`session/close`) once nothing has been in flight in it for
+ * the agent's `idle_close_minutes` (its settings; `idleTtlMs` for agents without one; never by default): no turn, no
+ * permission request, no setting change, no output of its own between turns. When that holds for all of them, the
+ * process is closed. The conversation stays; its next message restores it. Sessions that cannot be restored stay.
  *
- * Prepared agents (`AcpRuntimeHost.prepare`, `aa.v3.Sessions/prepare`): a new-conversation page starts the agent
- * as soon as the user picks it, so its settings (model, mode, …) are known before the first message and an `npx`
- * download happens while the user types. The process waits after `session/new`; `create({ prepared_id })` takes it
- * over (no second `session/new`) and replays the `session/update`s it sent meanwhile. Unused ones are closed after
- * a TTL, beyond a per-device limit (least recently used first), and when the Connector stops.
+ * Prepared agents (`AcpRuntimeHost.prepare`, `aa.v3.Sessions/prepare`): a new-conversation page opens a session as soon
+ * as the user picks the agent, so its settings (model, mode, …) are known before the first message and an `npx` download
+ * happens while the user types. `create({ prepared_id })` takes the session over (no second `session/new`) and replays
+ * the `session/update`s it got meanwhile. Unused ones are closed after a TTL, beyond a per-device limit (least recently
+ * used first), and when the Connector stops.
  *
  * Agent → client requests handled here:
  *   - `session/request_permission` → a `PendingRequest` in the store; the first answer any client gives
@@ -34,50 +39,50 @@
  *     bounded by the RPC file cap.
  */
 
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { existsSync } from "node:fs";
-import { readFile as readFileBytes, stat } from "node:fs/promises";
+import { mkdir, readFile as readFileBytes, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import * as os from "node:os";
 import * as path from "node:path";
 
 import { InvalidArgumentError, MeshCallError, UnavailableError } from "meshcall";
 
+import { AGENT_CATALOG, agentFolders, installMethods, launcherOf, presetOf, programEnv, type CatalogAgent } from "../core/agent-catalog.js";
 import {
-  ACP_PROTOCOL_VERSION,
   AcpTimelineProjector,
   configFromSessionResult,
   configOptionsFromAcp,
   configWithMode,
-  isJsonRpcNotification,
-  isJsonRpcRequest,
-  isJsonRpcResponse,
   JsonRpcErrorCode,
   MODE_CONFIG_ID,
-  type AcpAgentMethod,
-  type AcpAgentMethods,
+  type AcpAuthMethod,
   type AcpAvailableCommand,
   type AcpContentBlock,
   type AcpInitializeResult,
-  type AcpNewSessionResult,
   type AcpReadTextFileParams,
   type AcpRequestPermissionParams,
   type AcpRequestPermissionResult,
-  type AcpSessionNotificationParams,
+  type AcpSetProviderParams,
   type AcpStopReason,
   type AcpWriteTextFileParams,
-  type JsonRpcId,
 } from "../core/acp-protocol.js";
+import type { GatewayApi, GatewayLaunch } from "../core/agent-gateway.js";
 import {
   AgentOverrideSchema,
   AgentOverridesSchema,
   AgentUpdateSchema,
+  CUSTOM_AGENT_ID_PREFIX,
+  CustomAgentsSchema,
   LastSessionConfigSchema,
+  MAX_CUSTOM_AGENTS,
+  NewAgentSchema,
   type AcpRuntimePreset,
   type AgentOverride,
   type AgentOverrides,
   type AgentUpdate,
+  type CustomAgent,
   type LastSessionConfig,
+  type ModelGateway,
+  type NewAgent,
 } from "../core/config.js";
 import {
   DEFAULT_PI_APPROVAL_MODE,
@@ -90,23 +95,33 @@ import {
 } from "../core/pi-approvals.js";
 import type { AnswerInput, AnswerResult, SessionStore } from "../core/session-store.js";
 import type { ConfigOption } from "../core/timeline.js";
-import { DeviceOpsError, readFile, resolveUserPath, writeFile } from "./device-ops.js";
+import { AcpRequestError, type AcpConnection } from "./acp-connection.js";
+import { AgentFinder } from "./agent-finder.js";
+import { AgentInstaller, type InstallJob } from "./agent-installer.js";
+import { isTerminalMethod, offeredMethods, PROGRAM_SIGN_IN, signInMethods, terminalCommand, type SignInCommand, type SignInMethod } from "./sign-in.js";
+import { agentErrorText, AgentProcess, bufferUpdate, type OpenedSession, type RestoreMethod } from "./agent-process.js";
+import { devicePlatform, readFile, resolveUserPath, writeFile } from "./device-ops.js";
 import { installPiApprovals, PiApprovalsFile, uninstallPiApprovals } from "./pi-approvals.js";
 import { DEFAULT_MAX_RPC_FILE_BYTES } from "./state-store.js";
 
-export type { AcpRuntimePreset } from "../core/config.js";
+/** What a process is started with: a preset with this device's changes, and the model gateway it uses. */
+export interface AgentLaunch extends AcpRuntimePreset {
+  gateway?: GatewayLaunch;
+}
 
-const IS_WINDOWS = process.platform === "win32";
-const STDERR_TAIL_BYTES = 4096;
-const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
+export type { AcpRuntimePreset } from "../core/config.js";
+export { AcpConnection, AcpRequestError, type AcpConnectionOptions } from "./acp-connection.js";
+export type { RestoreMethod } from "./agent-process.js";
+
 /** `initialize` / `session/new`: the first start of an `npx` agent downloads it, which can take minutes. */
 const STARTUP_TIMEOUT_MS = 300_000;
-const DEFAULT_KILL_GRACE_MS = 2_000;
+const SIGN_IN_TIMEOUT_MS = 600_000;
+/** For a sign-in nobody asked for now. */
+const SIGN_IN_AGAIN_TIMEOUT_MS = 20_000;
 /** A prepared agent nobody took over is closed after this long without another `prepare` for it. */
 const DEFAULT_PREPARED_TTL_MS = 10 * 60_000;
 /** Prepared agents kept per device. */
 const DEFAULT_MAX_PREPARED = 4;
-/** A session's agent (one that can restore its context) is closed after this long with nothing in flight. */
 
 // ── Public types ────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -128,6 +143,8 @@ export interface StartSessionInput {
    * this `cwd`; otherwise it is closed and the session starts its own agent.
    */
   prepared?: PreparedAgent;
+  /** Keep the session from being closed as idle until `StartedSession.release` is called. */
+  hold?: boolean;
 }
 
 export interface StartedSession {
@@ -139,20 +156,19 @@ export interface StartedSession {
   restored?: RestoreMethod;
   /** Why the earlier ACP session could not be reopened: the agent started a new one, without the earlier context. */
   restoreError?: string;
+  /** Ends `hold`. */
+  release?: () => void;
 }
 
-/** How an agent reopens an earlier ACP session: `session/resume`, or `session/load` (which replays it). */
-export type RestoreMethod = "resume" | "load";
-
-/** Where a runtime reports what nothing else shows: a lost agent context, an idle agent closed. */
+/** Where a runtime reports what nothing else shows: a lost agent context, an idle agent or session closed. */
 export interface RuntimeLogger {
   info(message: string): void;
   warn(message: string): void;
 }
 
 /**
- * An agent started ahead of its conversation: `initialize` and `session/new` are done, so its settings are known
- * before the first message. `startSession({ prepared })` takes it over.
+ * A session opened ahead of its conversation: its settings are known before the first message. `startSession({ prepared })`
+ * takes it over.
  */
 export interface PreparedAgent {
   readonly cwd: string;
@@ -163,9 +179,9 @@ export interface PreparedAgent {
   readonly usable: boolean;
   /** Change a setting before the conversation exists (the host applies the agent's newest settings this way). */
   setConfig?(configId: string, value: string): Promise<ConfigOption[]>;
-  /** Told once when the process exits before a session took it over. */
+  /** Told once when the agent is gone before a conversation took it over. */
   onExit: (() => void) | undefined;
-  /** Stop the process (nothing once a session took it over). */
+  /** Close it (nothing once a conversation took it over). */
   close(): Promise<void>;
 }
 
@@ -174,7 +190,7 @@ export interface AgentRuntime {
   readonly id: string;
   readonly name: string;
   startSession(input: StartSessionInput): Promise<StartedSession>;
-  /** Start the agent ahead of a session in `cwd` (for `startSession({ prepared })`). Optional. */
+  /** Open a session in `cwd` ahead of a conversation (for `startSession({ prepared })`). Optional. */
   prepare?(input: { cwd: string }): Promise<PreparedAgent>;
   /** Run one turn; resolves when the turn ends (never rejects for agent failures: those end as `"error"`). */
   sendPrompt(sessionId: string, input: { turnId: string; prompt: AcpContentBlock[] }): Promise<TurnResult>;
@@ -188,10 +204,12 @@ export interface AgentRuntime {
   dispose(): Promise<void>;
   /** The preset it runs (ACP runtimes): what `update_agent` changes. Without it only `enabled` can be changed. */
   readonly preset?: AcpRuntimePreset;
-  /** Run agent processes started from now on with `preset` (same id); running ones keep theirs. Optional. */
-  configure?(preset: AcpRuntimePreset): void;
-  /** Agent processes running now: the sessions' agents, prepared ones and ones still starting. Optional. */
+  /** Run the agent with `preset` (same id) from now on: idle sessions at once, others when what they do has ended. Optional. */
+  configure?(launch: AgentLaunch): void;
+  /** Agent processes running now, ones still starting included. Optional. */
   processCount?(): number;
+  /** Sessions open now, prepared ones included. Optional. */
+  sessionCount?(): number;
   /**
    * Stop every agent process of this runtime (`stop_agent`): its sessions start the agent again on their next
    * message (restoring its context where the agent can), and a turn still running ends `cancelled`. Resolves with
@@ -199,368 +217,50 @@ export interface AgentRuntime {
    */
   stop?(): Promise<number>;
   /**
-   * Turn AA's approvals on or off (runtimes whose preset has `approvals`). On: processes started from now on get
-   * them. Off: running ones stop asking at once and their conversations lose the setting.
+   * Turn AA's approvals on or off (runtimes whose preset has `approvals`). On: sessions get them as they do settings
+   * (`configure`), and conversations that are not open have the setting at once. Off: running ones stop asking at once,
+   * and no conversation has the setting any more.
    */
   configureApprovals?(on: boolean): void;
+  /** Sign in with one of the agent's ways; asking again joins. Optional. */
+  readonly signInMethods?: SignInMethod[];
+  /** Sign in this way when a process asks for it. Optional. */
+  configureSignIn?(methodId: string | undefined): void;
+  signIn?(methodId: string): Promise<void>;
+  cancelSignIn?(): void;
+  /** What to run in a terminal to sign in this way. Optional. */
+  signInCommand?(methodId: string): SignInCommand;
   /**
-   * How long a session's agent may sit idle before it is closed (ms; 0: never), or `undefined` for the host's
-   * `idleTtlMs`. Applies to idle agents at once.
+   * How long a session may sit idle before it is closed (ms; 0: never), or `undefined` for the host's `idleTtlMs`.
+   * Applies to idle sessions at once.
    */
   configureIdle?(ms: number | undefined): void;
 }
 
-/**
- * Built-in ACP agents. Each is offered only when the program it needs is installed on this machine
- * (`requires`), so a device never advertises an agent that cannot start.
- */
-const BUILTIN_PRESETS: (AcpRuntimePreset & { requires: string })[] = [
-  { id: "claude", name: "Claude Code", command: "npx", args: ["-y", "@agentclientprotocol/claude-agent-acp"], requires: "claude" },
-  { id: "codex", name: "Codex", command: "npx", args: ["-y", "@agentclientprotocol/codex-acp"], requires: "codex" },
-  { id: "antigravity", name: "Antigravity", command: "agy", args: ["acp"], requires: "agy" },
-  // Pi prints a banner (version, skills, model) as plain agent text right after session/new; it has no marker, so it
-  // would land in the conversation as a reply. The model is already in the session's config options.
-  // Pi asks no one before it acts; AA can add that with its extension (`approvals`, off until turned on).
-  { id: "pi", name: "Pi", command: "npx", args: ["-y", "@openma/pi-acp", "--quiet-startup"], requires: "pi", approvals: "pi" },
-];
-
-export function defaultAcpPresets(isInstalled: (program: string) => boolean = commandOnPath): AcpRuntimePreset[] {
-  return BUILTIN_PRESETS.filter((p) => isInstalled(p.requires) && isInstalled(p.command)).map(
-    ({ requires: _requires, ...preset }) => preset,
-  );
-}
-
-/** Whether `program` resolves on PATH (or is an existing absolute path). */
-export function commandOnPath(program: string): boolean {
-  if (path.isAbsolute(program)) return existsSync(program);
-  const exts = process.platform === "win32" ? (process.env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";") : [""];
-  for (const dir of (process.env.PATH ?? "").split(path.delimiter)) {
-    if (!dir) continue;
-    for (const ext of exts) if (existsSync(path.join(dir, program + ext))) return true;
-  }
-  return false;
-}
-
-/** A JSON-RPC error answered by the agent. */
-export class AcpRequestError extends Error {
-  override readonly name = "AcpRequestError";
-  constructor(
-    readonly code: number,
-    message: string,
-    readonly data?: unknown,
-  ) {
-    super(message);
-  }
-}
-
-// ── JSON-RPC over stdio ─────────────────────────────────────────────────────────────────────────────────────────
-
-interface PendingCall {
-  method: string;
-  resolve: (value: unknown) => void;
-  reject: (error: Error) => void;
-  timer: NodeJS.Timeout | undefined;
-}
-
-export interface AcpConnectionOptions {
-  command: string;
-  args: string[];
-  cwd: string;
-  env?: Record<string, string>;
-  requestTimeoutMs?: number;
-  killGraceMs?: number;
-}
-
-/** Kills of the agent processes still running, for when the Connector's own process exits. */
-const RUNNING_AGENTS = new Set<() => void>();
-let exitHookInstalled = false;
-
-/** Kill `kill`'s agent if the Connector exits first: one `exit` listener for every agent, however many run. */
-function killOnProcessExit(kill: () => void): () => void {
-  if (!exitHookInstalled) {
-    exitHookInstalled = true;
-    process.on("exit", () => {
-      for (const killAgent of RUNNING_AGENTS) killAgent();
-    });
-  }
-  RUNNING_AGENTS.add(kill);
-  return () => RUNNING_AGENTS.delete(kill);
-}
-
-/** One agent process: line-delimited JSON-RPC 2.0 both ways. */
-export class AcpConnection {
-  readonly child: ChildProcess;
-  /** Resolves when the process has exited. */
-  readonly exited: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
-  onRequest: ((method: string, params: unknown) => Promise<unknown>) | undefined;
-  onNotification: ((method: string, params: unknown) => void) | undefined;
-  onExit: ((info: { code: number | null; signal: NodeJS.Signals | null; stderr: string }) => void) | undefined;
-
-  #buffer = "";
-  #nextId = 1;
-  #pending = new Map<JsonRpcId, PendingCall>();
-  #stderr = "";
-  #closed = false;
-  readonly #requestTimeoutMs: number;
-  readonly #killGraceMs: number;
-
-  private constructor(child: ChildProcess, options: AcpConnectionOptions) {
-    this.child = child;
-    this.#requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
-    this.#killGraceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
-    child.stdout?.setEncoding("utf8");
-    child.stdout?.on("data", (chunk: string) => this.#onData(chunk));
-    child.stderr?.setEncoding("utf8");
-    child.stderr?.on("data", (chunk: string) => {
-      this.#stderr = (this.#stderr + chunk).slice(-STDERR_TAIL_BYTES);
-    });
-    // A closed stdin (the agent died) must not crash the Connector with EPIPE.
-    child.stdin?.on("error", () => undefined);
-    const untrack = killOnProcessExit(() => this.#killSync());
-    this.exited = new Promise((resolve) => {
-      child.once("exit", (code, signal) => {
-        this.#closed = true;
-        untrack();
-        const error = new UnavailableError(`the agent exited (${signal ?? code ?? "unknown"})${this.#stderr ? `: ${this.#stderr.trim().slice(-500)}` : ""}`);
-        for (const call of this.#pending.values()) {
-          if (call.timer) clearTimeout(call.timer);
-          call.reject(error);
-        }
-        this.#pending.clear();
-        try {
-          this.onExit?.({ code, signal, stderr: this.#stderr });
-        } catch {
-          // Exit listeners never throw into the event loop.
-        }
-        resolve({ code, signal });
-      });
-    });
-  }
-
-  static async spawn(options: AcpConnectionOptions): Promise<AcpConnection> {
-    const env: Record<string, string> = {};
-    for (const [key, value] of Object.entries(process.env)) if (value !== undefined) env[key] = value;
-    Object.assign(env, options.env ?? {});
-    const child = spawn(options.command, options.args, {
-      cwd: options.cwd,
-      env,
-      stdio: ["pipe", "pipe", "pipe"],
-      detached: !IS_WINDOWS,
-      windowsHide: true,
-    });
-    await new Promise<void>((resolve, reject) => {
-      const onSpawn = () => {
-        child.off("error", onError);
-        resolve();
-      };
-      const onError = (error: Error) => {
-        child.off("spawn", onSpawn);
-        reject(new UnavailableError(`could not start ${options.command}: ${error.message}`));
-      };
-      child.once("spawn", onSpawn);
-      child.once("error", onError);
-    });
-    child.on("error", () => undefined);
-    return new AcpConnection(child, options);
-  }
-
-  get closed(): boolean {
-    return this.#closed;
-  }
-
-  get stderrTail(): string {
-    return this.#stderr;
-  }
-
-  request<M extends AcpAgentMethod>(method: M, params: AcpAgentMethods[M]["params"], timeoutMs?: number | null): Promise<AcpAgentMethods[M]["result"]>;
-  request(method: string, params: unknown, timeoutMs?: number | null): Promise<unknown>;
-  request(method: string, params: unknown, timeoutMs: number | null = this.#requestTimeoutMs): Promise<unknown> {
-    if (this.#closed) return Promise.reject(new UnavailableError("the agent is not running"));
-    const id = this.#nextId++;
-    return new Promise((resolve, reject) => {
-      const call: PendingCall = { method, resolve, reject, timer: undefined };
-      if (timeoutMs !== null && timeoutMs > 0) {
-        call.timer = setTimeout(() => {
-          this.#pending.delete(id);
-          reject(new UnavailableError(`the agent did not answer ${method} within ${timeoutMs} ms`));
-        }, timeoutMs);
-      }
-      this.#pending.set(id, call);
-      if (!this.#write({ jsonrpc: "2.0", id, method, params })) {
-        this.#pending.delete(id);
-        if (call.timer) clearTimeout(call.timer);
-        reject(new UnavailableError("the agent's stdin is closed"));
-      }
-    });
-  }
-
-  notify(method: string, params: unknown): void {
-    this.#write({ jsonrpc: "2.0", method, params });
-  }
-
-  /** SIGTERM the process group, SIGKILL after the grace period. */
-  async close(): Promise<void> {
-    if (this.#closed) return;
-    this.child.stdin?.end();
-    this.#signal("SIGTERM");
-    const timer = setTimeout(() => this.#signal("SIGKILL"), this.#killGraceMs);
-    timer.unref();
-    await this.exited;
-    clearTimeout(timer);
-  }
-
-  #write(message: unknown): boolean {
-    const stdin = this.child.stdin;
-    if (this.#closed || !stdin || stdin.destroyed || !stdin.writable) return false;
-    stdin.write(`${JSON.stringify(message)}\n`);
-    return true;
-  }
-
-  #onData(chunk: string): void {
-    this.#buffer += chunk;
-    let newline = this.#buffer.indexOf("\n");
-    while (newline >= 0) {
-      const line = this.#buffer.slice(0, newline).trim();
-      this.#buffer = this.#buffer.slice(newline + 1);
-      if (line.length > 0) this.#onLine(line);
-      newline = this.#buffer.indexOf("\n");
-    }
-  }
-
-  #onLine(line: string): void {
-    let message: unknown;
-    try {
-      message = JSON.parse(line);
-    } catch {
-      return; // agents sometimes log to stdout; not protocol
-    }
-    if (isJsonRpcResponse(message)) {
-      if (message.id === null) return;
-      const call = this.#pending.get(message.id);
-      if (call === undefined) return;
-      this.#pending.delete(message.id);
-      if (call.timer) clearTimeout(call.timer);
-      if ("error" in message) call.reject(new AcpRequestError(message.error.code, message.error.message, message.error.data));
-      else call.resolve(message.result);
-      return;
-    }
-    if (isJsonRpcRequest(message)) {
-      const { id, method, params } = message;
-      const handler = this.onRequest;
-      if (handler === undefined) {
-        this.#write({ jsonrpc: "2.0", id, error: { code: JsonRpcErrorCode.METHOD_NOT_FOUND, message: `unsupported: ${method}` } });
-        return;
-      }
-      handler(method, params).then(
-        (result) => this.#write({ jsonrpc: "2.0", id, result: result ?? null }),
-        (error: unknown) => this.#write({ jsonrpc: "2.0", id, error: toJsonRpcError(error) }),
-      );
-      return;
-    }
-    if (isJsonRpcNotification(message)) {
-      try {
-        this.onNotification?.(message.method, message.params);
-      } catch {
-        // A projection failure must not stop reading the agent.
-      }
-    }
-  }
-
-  #signal(signal: NodeJS.Signals): void {
-    const pid = this.child.pid;
-    if (pid === undefined || this.#closed) return;
-    if (IS_WINDOWS) {
-      spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true });
-      return;
-    }
-    try {
-      process.kill(-pid, signal);
-    } catch {
-      try {
-        this.child.kill(signal);
-      } catch {
-        // Already gone.
-      }
-    }
-  }
-
-  #killSync(): void {
-    this.#signal("SIGKILL");
-  }
-}
-
-function toJsonRpcError(error: unknown): { code: number; message: string; data?: unknown } {
-  if (error instanceof AcpRequestError) return { code: error.code, message: error.message, data: error.data };
-  if (error instanceof DeviceOpsError) {
-    const code = error.code === "not_found" ? JsonRpcErrorCode.RESOURCE_NOT_FOUND : JsonRpcErrorCode.INVALID_PARAMS;
-    return { code, message: error.message, data: { reason: error.code } };
-  }
-  return { code: JsonRpcErrorCode.INTERNAL_ERROR, message: error instanceof Error ? error.message : String(error) };
-}
-
 // ── AcpRuntime: one preset, many sessions ───────────────────────────────────────────────────────────────────────
 
+/** A conversation's ACP session in an agent process. */
 interface LiveSession {
   sessionId: string;
   acpSessionId: string;
   cwd: string;
-  conn: AcpConnection;
+  process: AgentProcess;
   projector: AcpTimelineProjector;
   turn: Promise<TurnResult> | undefined;
   /** Waiting `session/request_permission` calls, answered `cancelled` on cancel. */
   permissions: Map<string, (result: AcpRequestPermissionResult) => void>;
   supportsConfigOptions: boolean;
-  /** The agent accepts image content blocks (`promptCapabilities.image`). */
-  promptImages: boolean;
-  /** Stopped on purpose (`stop`): a turn the exit interrupts ended `cancelled`, not failed. */
+  /** Taken off on purpose (`stop`, a close): a turn that ends with it ended `cancelled`, not failed. */
   stopped: boolean;
-  /** The agent can reopen this session in a new process (`session/resume` or `session/load`): it may be closed when idle. */
-  restorable: boolean;
-  /** Closes the agent once nothing has been in flight for the idle TTL; unset while something is. */
+  /** Rejects once the session is taken off its process: the agent may never answer what it was asked. */
+  gone: Promise<never>;
+  leave: (reason: Error) => void;
+  /** Runs while nothing is in flight; see `#settle`. */
   idleTimer: NodeJS.Timeout | undefined;
-  /** Requests of ours the agent is answering (setting changes): the agent is not idle meanwhile. */
+  /** Idle for the whole idle close, in an agent that cannot close single sessions: it goes with the process. */
+  expired: boolean;
+  /** Requests of ours the agent is answering, and holds: the session is not idle meanwhile. */
   requests: number;
-  /** AA's approvals for this process (Pi): its mode file. */
-  approvals: PiApprovalsFile | undefined;
-}
-
-/** An agent process after `initialize` + `session/new` (or a reopened session), not yet projected into a session. */
-interface Launched {
-  conn: AcpConnection;
-  init: AcpInitializeResult;
-  result: AcpNewSessionResult & { sessionId: string };
-  /** `session/update`s sent before a session listened, oldest first (see `bufferUpdate`). */
-  updates: AcpSessionNotificationParams[];
-  /** `result` is the earlier ACP session, reopened this way. */
-  restored?: RestoreMethod;
-  /** AA's approvals for this process (Pi): its mode file, removed when the process exits. */
-  approvals?: PiApprovalsFile;
-  /** An earlier ACP session was to be reopened and could not be: why. `result` is a new session. */
-  restoreError?: string;
-}
-
-/**
- * How this agent can reopen an earlier session, in order: `session/resume` when it offers it (no replay), then
- * `session/load`.
- */
-function restoreMethodsOf(init: AcpInitializeResult): RestoreMethod[] {
-  const caps = init.agentCapabilities;
-  const resume = caps?.sessionCapabilities?.resume;
-  const methods: RestoreMethod[] = [];
-  if (typeof resume === "object" && resume !== null) methods.push("resume");
-  if (caps?.loadSession === true) methods.push("load");
-  return methods;
-}
-
-/** Updates that carry only the latest state: a newer one replaces the older one while they wait in a buffer. */
-const STATE_UPDATES: ReadonlySet<string> = new Set(["available_commands_update", "config_option_update", "current_mode_update"]);
-/** Other updates kept while no session listens; an idle agent sends few (a banner, say), this only bounds a chatty one. */
-const MAX_BUFFERED_UPDATES = 200;
-
-/** Commands, settings or mode: state, not part of the conversation. */
-function isStateUpdate(params: AcpSessionNotificationParams): boolean {
-  const kind = params?.update?.sessionUpdate;
-  return typeof kind === "string" && STATE_UPDATES.has(kind);
 }
 
 /** Output of an agent at work: outside a turn it restarts the idle clock (metadata such as usage reports does not). */
@@ -573,33 +273,22 @@ const ACTIVITY_UPDATES: ReadonlySet<string> = new Set([
   "plan",
 ]);
 
-function bufferUpdate(buffer: AcpSessionNotificationParams[], params: AcpSessionNotificationParams): void {
-  const kind = params?.update?.sessionUpdate;
-  if (typeof kind !== "string") return;
-  if (STATE_UPDATES.has(kind)) {
-    const older = buffer.findIndex((p) => p.sessionId === params.sessionId && p.update.sessionUpdate === kind);
-    if (older >= 0) buffer.splice(older, 1);
-  } else if (buffer.length >= MAX_BUFFERED_UPDATES) {
-    return;
-  }
-  buffer.push(params);
-}
-
-/** The settings of a launched agent: its `session/new` answer with the buffered setting changes applied. */
-function configOfLaunched(launched: Launched): ConfigOption[] {
-  let config = configFromSessionResult(launched.result);
-  for (const { sessionId, update } of launched.updates) {
-    if (sessionId !== launched.result.sessionId) continue;
+/** The settings of an opened session: its `session/new` answer with the buffered setting changes applied. */
+function configOfOpened(opened: OpenedSession): ConfigOption[] {
+  let config = configFromSessionResult(opened.result);
+  for (const { sessionId, update } of opened.updates) {
+    if (sessionId !== opened.result.sessionId) continue;
     if (update.sessionUpdate === "config_option_update" && Array.isArray(update.configOptions)) config = configOptionsFromAcp(update.configOptions);
     else if (update.sessionUpdate === "current_mode_update" && typeof update.currentModeId === "string") config = configWithMode(config, update.currentModeId);
   }
-  return withApprovals(config, launched.approvals);
+  return withApprovals(config, opened.process, opened.result.sessionId);
 }
 
 /** `config` with AA's approvals setting at its end when the process has approvals, and without it when not. */
-function withApprovals(config: readonly ConfigOption[], approvals: PiApprovalsFile | undefined): ConfigOption[] {
+function withApprovals(config: readonly ConfigOption[], process: AgentProcess, acpSessionId: string): ConfigOption[] {
   const others = config.filter((option) => option.id !== PI_APPROVALS_CONFIG_ID);
-  return approvals === undefined ? others : [...others, piApprovalsOption(approvals.mode)];
+  const approvals = process.approvals;
+  return approvals === undefined || approvals.off ? others : [...others, piApprovalsOption(approvals.mode(acpSessionId))];
 }
 
 /** The approvals mode a conversation's settings hold, if any. */
@@ -608,75 +297,69 @@ function approvalModeOf(config: readonly ConfigOption[] | undefined): PiApproval
   return isPiApprovalMode(current) ? current : undefined;
 }
 
-/** A change to AA's approvals setting: checked here, since the agent never sees it. */
-function checkApprovalMode(approvals: PiApprovalsFile | undefined, value: string): PiApprovalMode {
-  if (approvals === undefined) {
+/** Change AA's approvals setting of a session: kept here, since the agent never sees it. */
+async function setApprovalMode(process: AgentProcess, acpSessionId: string, value: string): Promise<void> {
+  const approvals = process.approvals;
+  if (approvals === undefined || approvals.off) {
     throw new InvalidArgumentError("approvals are off for this agent", { details: { reason: "unknown_config" } });
   }
   if (!isPiApprovalMode(value)) throw new InvalidArgumentError(`no approvals mode "${value}"`);
-  return value;
+  await approvals.set(acpSessionId, value);
 }
 
-/** `PreparedAgent` of an `AcpRuntime`: keeps buffering the agent's updates until a session takes it over. */
+/** `PreparedAgent` of an `AcpRuntime`: a session that waits, keeping the agent's updates until a conversation takes it over. */
 class WarmAgent implements PreparedAgent {
   readonly cwd: string;
   readonly acpSessionId: string;
+  readonly process: AgentProcess;
   onExit: (() => void) | undefined;
   readonly #owner: AcpRuntime;
-  readonly #launched: Launched;
+  readonly #opened: OpenedSession;
   readonly #onDone: () => void;
   #state: "waiting" | "taken" | "closed" = "waiting";
 
   constructor(
     owner: AcpRuntime,
     cwd: string,
-    launched: Launched,
+    opened: OpenedSession,
     onRequest: (method: string, params: unknown) => Promise<unknown>,
-    /** Once it stops waiting (taken over, closed or exited). */
+    /** Once it stops waiting (taken over, closed, or the process is gone). */
     onDone: () => void,
   ) {
     this.#owner = owner;
     this.cwd = cwd;
-    this.acpSessionId = launched.result.sessionId;
-    this.#launched = launched;
+    this.acpSessionId = opened.result.sessionId;
+    this.process = opened.process;
+    this.#opened = opened;
     this.#onDone = onDone;
-    const { conn, updates } = launched;
-    conn.onNotification = (method, params) => {
-      if (method === "session/update") bufferUpdate(updates, params as AcpSessionNotificationParams);
-    };
-    conn.onRequest = onRequest;
-    conn.onExit = () => {
-      if (this.#state !== "waiting") return;
-      this.#state = "closed";
-      this.#onDone();
-      try {
-        this.onExit?.();
-      } catch {
-        // Exit listeners never throw into the event loop.
-      }
-    };
+    opened.process.claim(this.acpSessionId, {
+      onUpdate: (params) => bufferUpdate(opened.updates, params),
+      onRequest,
+      onExit: () => this.gone(),
+    });
   }
 
   get config(): ConfigOption[] {
-    return configOfLaunched(this.#launched);
+    return configOfOpened(this.#opened);
   }
 
   get usable(): boolean {
-    return this.#state === "waiting" && !this.#launched.conn.closed;
+    return this.#state === "waiting" && !this.process.retired && !this.process.closed;
   }
 
   /**
    * Change a setting while it waits. The answer is buffered like the agent's own setting changes, so `config` shows
-   * it and the session that takes the agent over starts with it.
+   * it and the session that takes it over starts with it.
    */
   async setConfig(configId: string, value: string): Promise<ConfigOption[]> {
     if (!this.usable) throw new UnavailableError("the prepared agent is no longer running");
+    const sessionId = this.acpSessionId;
     if (configId === PI_APPROVALS_CONFIG_ID) {
-      await this.#launched.approvals?.set(checkApprovalMode(this.#launched.approvals, value));
+      await setApprovalMode(this.process, sessionId, value);
       return this.config;
     }
-    const { conn, result, updates } = this.#launched;
-    const sessionId = this.acpSessionId;
+    const { result, updates } = this.#opened;
+    const conn = this.process.conn;
     if (!Array.isArray(result.configOptions) && configId === MODE_CONFIG_ID) {
       await conn.request("session/set_mode", { sessionId, modeId: value });
       bufferUpdate(updates, { sessionId, update: { sessionUpdate: "current_mode_update", currentModeId: value } });
@@ -687,21 +370,31 @@ class WarmAgent implements PreparedAgent {
     return this.config;
   }
 
-  /** For `owner.startSession`: the process, now the session's; undefined when it cannot be taken over there. */
-  takeOver(owner: AcpRuntime, cwd: string): Launched | undefined {
+  /** For `owner.startSession`: the session, now the conversation's; undefined when it cannot be taken over there. */
+  takeOver(owner: AcpRuntime, cwd: string): OpenedSession | undefined {
     if (owner !== this.#owner || cwd !== this.cwd || !this.usable) return undefined;
     this.#state = "taken";
     this.#onDone();
-    return this.#launched;
+    return this.#opened;
+  }
+
+  /** The process is gone (or being stopped): nothing waits any more. */
+  gone(): void {
+    if (this.#state !== "waiting") return;
+    this.#state = "closed";
+    this.#onDone();
+    try {
+      this.onExit?.();
+    } catch {
+      // Exit listeners never throw into the event loop.
+    }
   }
 
   async close(): Promise<void> {
-    if (this.#state === "taken") return;
-    if (this.#state === "waiting") {
-      this.#state = "closed";
-      this.#onDone();
-    }
-    await this.#launched.conn.close();
+    if (this.#state !== "waiting") return;
+    this.#state = "closed";
+    await this.process.closeSession(this.acpSessionId);
+    this.#onDone();
   }
 }
 
@@ -750,39 +443,68 @@ export interface AcpRuntimeOptions {
   approvalsDir?: string;
   /** Pi's global extensions folder (default: `piExtensionsDir()`, as Pi resolves it). */
   piExtensionsDir?: string;
+  /**
+   * The folder agent processes start in (created if needed; default: the system's temporary folder). Every session
+   * names its own folder; this one belongs to none of them.
+   */
+  processCwd?: string;
+  /** The PATH agent processes get (default: the Connector's). */
+  agentPath?: () => string | undefined;
+  /** Where a command by its name is, when it can be found (default: the system looks for it). */
+  resolveCommand?: (command: string) => string | undefined;
+  /** Its own program with the arguments that make it sign in, when that is known and the program is there. */
+  programSignIn?: () => { command: string; args: string[] } | undefined;
+  /** The way that was signed in with is remembered (`undefined`: it no longer works). */
+  onSignInChange?: (methodId: string | undefined) => void;
+  /** How long a sign-in may take (default 10 min: someone does it in a browser). */
+  signInTimeoutMs?: number;
 }
 
 export class AcpRuntime implements AgentRuntime {
   readonly id: string;
   readonly #options: AcpRuntimeOptions;
-  #preset: AcpRuntimePreset;
+  #preset: AgentLaunch;
   readonly #sessions = new Map<string, LiveSession>();
   readonly #starting = new Map<string, Promise<StartedSession>>();
-  /** Agents between spawn and the end of `session/new`: `dispose` kills them too. */
-  readonly #launching = new Set<AcpConnection>();
-  /** Prepared agents not taken over yet. */
+  /** Prepared sessions not taken over yet. */
   readonly #prepared = new Set<WarmAgent>();
-  /** Sessions whose agent is closing: a new agent for the session waits until it is gone. */
+  /** The process sessions are opened in, once one was started. */
+  #process: AgentProcess | undefined;
+  #processStarting: Promise<AgentProcess> | undefined;
+  /** Every process that runs: the current one, retired ones, and sessions' own. */
+  readonly #processes = new Set<AgentProcess>();
+  /** Agents between spawn and the end of `initialize`: `dispose` kills them too. */
+  readonly #launching = new Set<AcpConnection>();
+  /** Run while a process has no session: it is closed after the idle close. */
+  readonly #processTimers = new Map<AgentProcess, NodeJS.Timeout>();
+  /** Sessions being closed: a new start of the same conversation waits until the agent has let go of it. */
   readonly #closing = new Map<string, Promise<void>>();
   /** Bumped by `dispose` / `stop`: a start that began before must not leave a process behind. */
   #generation = 0;
+  /** Bumped when processes must be started anew: one that started with the settings before is retired at once. */
+  #launch = 0;
   /** Why the last `dispose` / `stop` happened, for the starts it cut short. */
   #stoppedBecause = "the Connector stopped";
   /** AA's approvals are on: its preset has `approvals` and the user turned them on. */
   #approvalsOn = false;
-  /** Mode files of processes that run, or are just gone: each settles once its file is removed. */
+  /** Approvals files of processes that run, or are just gone: each settles once its file is removed. */
   readonly #approvalsFiles = new Set<Promise<void>>();
   /** The agent's own idle close (ms; 0: never); `undefined`: the host's `idleTtlMs`. */
   #idleCloseMs: number | undefined;
+  /** The ways to sign in its newest process named. */
+  #offered: AcpAuthMethod[] = [];
+  /** The way that was signed in with last, for processes that ask again. */
+  #signedInWith: string | undefined;
+  #signIn: { readonly methodId: string; readonly done: Promise<void>; readonly abort: AbortController } | undefined;
 
-  constructor(preset: AcpRuntimePreset, options: AcpRuntimeOptions) {
+  constructor(preset: AgentLaunch, options: AcpRuntimeOptions) {
     this.#preset = copyPreset(preset);
     this.id = preset.id;
     this.#options = options;
   }
 
   /** The preset agent processes are started with (`configure` changes it). */
-  get preset(): AcpRuntimePreset {
+  get preset(): AgentLaunch {
     return copyPreset(this.#preset);
   }
 
@@ -790,37 +512,165 @@ export class AcpRuntime implements AgentRuntime {
     return this.#preset.name;
   }
 
-  /** Start agent processes from now on with `preset`; running ones keep the settings they were started with. */
-  configure(preset: AcpRuntimePreset): void {
+  /**
+   * Run the agent with `preset` from now on. When that takes another process, the running one is retired: idle
+   * sessions move to the next one right away, the others once what they do has ended.
+   */
+  configure(preset: AgentLaunch): void {
     if (preset.id !== this.id) throw new TypeError(`a runtime keeps its id (${this.id}, not ${preset.id})`);
+    const before = this.#preset;
     this.#preset = copyPreset(preset);
+    if (!sameLaunch(before, this.#preset)) this.#relaunch();
   }
 
   processCount(): number {
-    return this.#sessions.size + this.#prepared.size + this.#launching.size;
+    return [...this.#processes].filter((process) => !process.stopping).length + this.#launching.size;
+  }
+
+  sessionCount(): number {
+    return this.#sessions.size + this.#prepared.size;
   }
 
   configureIdle(ms: number | undefined): void {
     this.#idleCloseMs = ms;
-    // Agents idle now count from now with the new time (or stop counting).
-    for (const live of this.#sessions.values()) this.#armIdle(live);
+    // Sessions and processes idle now count from now with the new time (or stop counting).
+    for (const live of [...this.#sessions.values()]) this.#settle(live);
+    for (const process of [...this.#processes]) this.#settleProcess(process);
   }
 
   configureApprovals(on: boolean): void {
     const was = this.#approvalsOn;
     this.#approvalsOn = on && this.#preset.approvals === "pi";
-    if (!was || this.#approvalsOn) return;
+    if (was !== this.#approvalsOn) this.#switchApprovals();
+    for (const { id, agent } of this.#options.store.list().sessions) if (agent === this.id) this.#showApprovals(id);
+  }
+
+  #switchApprovals(): void {
+    // Turned on: only a process started with them has approvals.
+    if (this.#approvalsOn) return this.#relaunch();
     // Turned off: the running processes keep the extension until they stop, so it reads "never ask" from now on,
     // and their conversations no longer show the setting.
+    for (const process of this.#processes) void process.approvals?.turnOff().catch(() => undefined);
     const store = this.#options.store;
     for (const live of this.#sessions.values()) {
-      const approvals = live.approvals;
-      if (approvals === undefined) continue;
-      live.approvals = undefined;
-      void approvals.set("full_access").catch(() => undefined);
-      const config = store.get(live.sessionId)?.config;
-      if (config !== undefined) store.updateSession(live.sessionId, { config: withApprovals(config, undefined) });
+      const config = live.process.approvals === undefined ? undefined : store.get(live.sessionId)?.config;
+      if (config !== undefined) store.updateSession(live.sessionId, { config: withApprovals(config, live.process, live.acpSessionId) });
     }
+  }
+
+  /**
+   * A conversation that is not open has the approvals setting while approvals are on (an open one gets it from its
+   * process): what is chosen there is used once it is opened.
+   */
+  #showApprovals(sessionId: string): void {
+    const store = this.#options.store;
+    const config = this.#sessions.has(sessionId) ? undefined : store.get(sessionId)?.config;
+    if (config === undefined) return;
+    const others = config.filter((option) => option.id !== PI_APPROVALS_CONFIG_ID);
+    if (this.#approvalsOn === others.length < config.length) return;
+    store.updateSession(sessionId, { config: this.#approvalsOn ? [...config, piApprovalsOption(DEFAULT_PI_APPROVAL_MODE)] : others }, { touch: false });
+  }
+
+  // ── Signing in ──
+
+  /**
+   * Sign in with one of the agent's ways (ACP `authenticate`; asking again joins the one that runs, another way ends
+   * it). Sessions can be opened in that process then, so it stays.
+   */
+  signIn(methodId: string): Promise<void> {
+    if (this.#signIn?.methodId === methodId) return this.#signIn.done;
+    this.cancelSignIn();
+    const abort = new AbortController();
+    const done = this.#authenticate(methodId, abort.signal).finally(() => {
+      if (this.#signIn === running) this.#signIn = undefined;
+    });
+    // Whoever asked may be gone by the time it ends.
+    done.catch(() => undefined);
+    const running = { methodId, done, abort };
+    this.#signIn = running;
+    return done;
+  }
+
+  /** Sign in this way when a process asks for it (the way that was signed in with before). */
+  configureSignIn(methodId: string | undefined): void {
+    this.#signedInWith = methodId;
+  }
+
+  #rememberSignIn(methodId: string | undefined): void {
+    if (this.#signedInWith === methodId) return;
+    this.#signedInWith = methodId;
+    this.#options.onSignInChange?.(methodId);
+  }
+
+  /**
+   * A process asks for a sign-in: try the way that worked before (some agents want `authenticate` from every process,
+   * signed in or not). Tried for a short time and, when it does not work, not again: it may have opened a browser.
+   */
+  async #signInAgain(process: AgentProcess): Promise<boolean> {
+    const methodId = this.#signedInWith;
+    if (methodId === undefined || this.#signIn !== undefined) return false;
+    const method = this.#offered.find(({ id }) => id === methodId);
+    try {
+      if (method === undefined || isTerminalMethod(method)) throw new UnavailableError(`it no longer offers ${methodId}`);
+      await process.authenticate(methodId, { timeoutMs: SIGN_IN_AGAIN_TIMEOUT_MS, signal: new AbortController().signal });
+      return true;
+    } catch (error) {
+      // Stopped or gone meanwhile: that says nothing about the sign-in.
+      if (!process.closed) {
+        this.#log("warn", `${this.name}: signing in again (${methodId}) failed: ${agentErrorText(error)}`);
+        this.#rememberSignIn(undefined);
+      }
+      return false;
+    }
+  }
+
+  cancelSignIn(): void {
+    this.#signIn?.abort.abort(new MeshCallError("failed_precondition", `signing in to ${this.name} was cancelled`, { details: { reason: "sign_in_cancelled", agent: this.id } }));
+  }
+
+  /** The ways to sign in that are known: the agent names its own once it was started. */
+  get signInMethods(): SignInMethod[] {
+    return signInMethods(this.#offered, this.#options.programSignIn?.());
+  }
+
+  /** What to run in a terminal to sign in this way. */
+  signInCommand(methodId: string): SignInCommand {
+    const searchPath = this.#options.agentPath?.();
+    const env = { ...(searchPath !== undefined ? { PATH: searchPath } : {}), ...(this.#preset.env ?? {}) };
+    if (methodId === PROGRAM_SIGN_IN) {
+      const program = this.#options.programSignIn?.();
+      if (program !== undefined) return { ...program, env };
+    }
+    const method = this.#offered.find(({ id }) => id === methodId);
+    if (method === undefined || !isTerminalMethod(method)) throw this.#unknownSignIn(methodId);
+    const named = method.type === "terminal" ? undefined : terminalCommand(method);
+    if (named !== undefined) return { ...named, env: { ...env, ...named.env } };
+    return {
+      command: this.#options.resolveCommand?.(this.#preset.command) ?? this.#preset.command,
+      args: [...(this.#preset.args ?? []), ...(method.args ?? [])],
+      env: { ...env, ...(method.env ?? {}) },
+    };
+  }
+
+  async #authenticate(methodId: string, signal: AbortSignal): Promise<void> {
+    const process = await this.#acquire();
+    this.#holdProcess(process);
+    try {
+      const method = this.#offered.find(({ id }) => id === methodId);
+      if (method === undefined || isTerminalMethod(method)) throw this.#unknownSignIn(methodId);
+      await process.authenticate(methodId, { timeoutMs: this.#options.signInTimeoutMs ?? SIGN_IN_TIMEOUT_MS, signal });
+      this.#rememberSignIn(methodId);
+    } catch (error) {
+      // As after a failed start: the next try starts anew.
+      if (!this.#isUsed(process)) await process.close();
+      if (error instanceof MeshCallError && !(error instanceof UnavailableError)) throw error;
+      throw new MeshCallError("failed_precondition", agentErrorText(error), { details: { reason: "sign_in_failed", agent: this.id } });
+    }
+    this.#settleProcess(process);
+  }
+
+  #unknownSignIn(methodId: string): InvalidArgumentError {
+    return new InvalidArgumentError(`${this.name} cannot be signed in to with ${methodId}`, { details: { reason: "unknown_sign_in_method", agent: this.id } });
   }
 
   hasSession(sessionId: string): boolean {
@@ -839,16 +689,27 @@ export class AcpRuntime implements AgentRuntime {
     const live = this.#sessions.get(input.sessionId);
     const pending = live === undefined ? this.#starting.get(input.sessionId) : undefined;
     const prepared = input.prepared;
-    const launched = live === undefined && pending === undefined && prepared instanceof WarmAgent ? prepared.takeOver(this, input.cwd) : undefined;
-    // A prepared agent handed over but not taken over (gone, another folder, already started) has no other owner.
-    if (prepared !== undefined && launched === undefined) void prepared.close();
-    if (live !== undefined) return Promise.resolve({ acpSessionId: live.acpSessionId, config: this.#options.store.get(input.sessionId)?.config ?? [] });
-    if (pending !== undefined) return pending;
-    if (launched !== undefined) {
+    const opened = live === undefined && pending === undefined && prepared instanceof WarmAgent ? prepared.takeOver(this, input.cwd) : undefined;
+    // A prepared session handed over but not taken over (gone, another folder, already started) has no other owner.
+    if (prepared !== undefined && opened === undefined) void prepared.close();
+    if (live !== undefined) {
+      return Promise.resolve({
+        acpSessionId: live.acpSessionId,
+        config: this.#options.store.get(input.sessionId)?.config ?? [],
+        ...(input.hold ? { release: this.#hold(live) } : {}),
+      });
+    }
+    if (pending !== undefined) {
+      return pending.then((started) => {
+        const now = this.#sessions.get(input.sessionId);
+        return input.hold && now !== undefined ? { ...started, release: this.#hold(now) } : started;
+      });
+    }
+    if (opened !== undefined) {
       try {
-        return Promise.resolve({ ...this.#attach(input.sessionId, input.cwd, launched), prepared: true });
+        return Promise.resolve({ ...this.#attach(input, opened), prepared: true });
       } catch (error) {
-        void launched.conn.close();
+        void opened.process.closeSession(opened.result.sessionId);
         return Promise.reject(error);
       }
     }
@@ -858,213 +719,320 @@ export class AcpRuntime implements AgentRuntime {
   }
 
   /**
-   * Start the agent ahead of a session in `cwd`: `initialize` + `session/new`, then it waits (buffering its updates)
-   * until `startSession({ prepared })` takes it over or it is closed. Rejects like a session start (`#startError`).
+   * Open a session in `cwd` ahead of a conversation: it waits (keeping its updates) until `startSession({ prepared })`
+   * takes it over or it is closed. Rejects like a session start (`#startError`).
    */
   async prepare(input: { cwd: string }): Promise<PreparedAgent> {
-    const generation = this.#generation;
-    const launched = await this.#launch(input.cwd);
+    const opened = await this.#open(input.cwd);
+    const process = opened.process;
     const agent: WarmAgent = new WarmAgent(
       this,
       input.cwd,
-      launched,
+      opened,
       (method, params) => this.#handleAgentRequest(input.cwd, undefined, method, params),
-      () => this.#prepared.delete(agent),
+      () => {
+        this.#prepared.delete(agent);
+        this.#settleProcess(process);
+      },
     );
     this.#prepared.add(agent);
-    if (generation !== this.#generation) {
-      await agent.close();
-      throw this.#startError(new UnavailableError(`${this.#stoppedBecause} while it started`));
-    }
     return agent;
   }
 
   async #start(input: StartSessionInput): Promise<StartedSession> {
     const generation = this.#generation;
-    // The session's previous agent (closed when idle, say) is gone first: it may still hold the session reopened here.
+    const stopped = () => this.#startError(new UnavailableError(`${this.#stoppedBecause} while it started`));
+    // The conversation's earlier session is closed first (idle, say): it may be the one reopened here.
     await this.#closing.get(input.sessionId);
-    if (generation !== this.#generation) throw this.#startError(new UnavailableError(`${this.#stoppedBecause} while it started`));
+    if (generation !== this.#generation) throw stopped();
     const store = this.#options.store;
     const earlier = store.has(input.sessionId) ? store.acpSessionId(input.sessionId) : undefined;
-    const launched = await this.#launch(input.cwd, earlier, approvalModeOf(store.get(input.sessionId)?.config));
+    const mode = approvalModeOf(store.get(input.sessionId)?.config);
+    const opened = await this.#open(input.cwd, earlier);
+    const { process, result } = opened;
+    if (process.approvals !== undefined && mode !== undefined) await process.approvals.set(result.sessionId, mode).catch(() => undefined);
     try {
-      if (generation !== this.#generation) throw this.#startError(new UnavailableError(`${this.#stoppedBecause} while it started`));
-      return this.#attach(input.sessionId, input.cwd, launched);
+      if (generation !== this.#generation) throw stopped();
+      return this.#attach(input, opened);
     } catch (error) {
-      await launched.conn.close();
+      await process.closeSession(result.sessionId);
+      this.#settleProcess(process);
       throw error;
     }
   }
 
-  /**
-   * Spawn the agent, `initialize`, then reopen the ACP session `earlier` (see `#reopen`: `session/resume`, then
-   * `session/load` if the agent refused the resume) or, without one or when that fails, `session/new`. Any failure
-   * to get a session rejects with `#startError`.
-   */
-  async #launch(cwd: string, earlier?: string, approvalMode: PiApprovalMode = DEFAULT_PI_APPROVAL_MODE): Promise<Launched> {
-    // The settings at this moment: a later `configure` applies to later starts only.
+  // ── Processes ──
+
+  /** The process to open a session in, started if there is none. */
+  async #acquire(): Promise<AgentProcess> {
+    for (;;) {
+      let process: AgentProcess;
+      if (this.#preset.own_process === true) {
+        process = await this.#startProcess(true);
+      } else {
+        const current = this.#process;
+        if (current !== undefined && !current.retired) return current;
+        this.#processStarting ??= this.#startProcess(false).finally(() => (this.#processStarting = undefined));
+        process = await this.#processStarting;
+      }
+      if (process.closed) throw this.#startError(exitedError(process.conn));
+      if (!process.retired) return process;
+      // The settings changed while it started: the next one has them.
+      this.#settleProcess(process);
+    }
+  }
+
+  async #startProcess(dedicated: boolean): Promise<AgentProcess> {
+    // The settings at this moment: a later change retires the process.
     const preset = this.#preset;
+    const launch = this.#launch;
     const generation = this.#generation;
-    const approvals = this.#approvalsOn ? await this.#approvalsFile(approvalMode) : undefined;
-    const env = { ...(preset.env ?? {}), ...(approvals ? { [PI_APPROVALS_ENV]: approvals.path } : {}) };
-    let conn: AcpConnection;
+    const cwd = this.#options.processCwd ?? os.tmpdir();
+    await mkdir(cwd, { recursive: true, mode: 0o700 }).catch(() => undefined);
+    const approvals = this.#approvalsOn ? await this.#approvalsFile() : undefined;
+    const searchPath = this.#options.agentPath?.();
+    const gateway = preset.gateway;
+    const env = {
+      ...(searchPath !== undefined ? { PATH: searchPath } : {}),
+      ...(preset.env ?? {}),
+      ...(gateway?.env ?? {}),
+      ...(approvals ? { [PI_APPROVALS_ENV]: approvals.path } : {}),
+    };
+    let conn: AcpConnection | undefined;
     try {
-      conn = await AcpConnection.spawn({
-        command: preset.command,
+      const process = await AgentProcess.start({
+        name: this.name,
+        dedicated,
+        command: this.#options.resolveCommand?.(preset.command) ?? preset.command,
         args: preset.args,
         cwd,
         ...(Object.keys(env).length > 0 ? { env } : {}),
         ...(this.#options.requestTimeoutMs !== undefined ? { requestTimeoutMs: this.#options.requestTimeoutMs } : {}),
         ...(this.#options.killGraceMs !== undefined ? { killGraceMs: this.#options.killGraceMs } : {}),
-      });
-    } catch (error) {
-      await approvals?.remove().catch(() => undefined);
-      throw this.#startError(error);
-    }
-    if (approvals !== undefined) {
-      const removed: Promise<void> = conn.exited
-        .then(() => approvals.remove())
-        .catch(() => undefined)
-        .finally(() => this.#approvalsFiles.delete(removed));
-      this.#approvalsFiles.add(removed);
-    }
-    this.#launching.add(conn);
-    // Listen before `session/new`: agents report commands and settings right behind the answer, often in the same read.
-    const updates: AcpSessionNotificationParams[] = [];
-    /** While an earlier session reopens: its conversation output is history AA has already (see `#reopen`). */
-    let replaying: string | undefined;
-    conn.onNotification = (method, params) => {
-      if (method !== "session/update") return;
-      const update = params as AcpSessionNotificationParams;
-      if (replaying !== undefined && update?.sessionId === replaying && !isStateUpdate(update)) return;
-      bufferUpdate(updates, update);
-    };
-    let init: AcpInitializeResult | undefined;
-    try {
-      const timeoutMs = this.#options.startupTimeoutMs ?? STARTUP_TIMEOUT_MS;
-      init = (await conn.request("initialize", {
-        protocolVersion: ACP_PROTOCOL_VERSION,
-        clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: false },
+        startupTimeoutMs: this.#options.startupTimeoutMs ?? STARTUP_TIMEOUT_MS,
         clientInfo: this.#options.clientInfo ?? { name: "agents-anywhere-connector", version: "3" },
-      }, timeoutMs)) as AcpInitializeResult;
-      if (typeof init?.protocolVersion !== "number") throw new UnavailableError("the agent answered initialize without a protocolVersion");
-      let restoreError: string | undefined;
-      if (earlier !== undefined) {
-        const methods = restoreMethodsOf(init);
-        if (methods.length === 0) restoreError = `${this.name} cannot reopen an earlier session (it offers neither session/resume nor session/load)`;
-        const failures: string[] = [];
-        for (const how of methods) {
-          replaying = earlier;
-          try {
-            const result = await this.#reopen(conn, how, earlier, cwd, timeoutMs);
-            return { conn, init, result, updates, restored: how, ...(approvals ? { approvals } : {}) };
-          } catch (error) {
-            // The agent is gone (or was stopped): no new session either.
-            if (conn.closed) throw error;
-            failures.push(`session/${how} failed: ${agentErrorText(error)}`);
-            // Only the agent's own refusal leaves room for the other method (Antigravity suggests session/load when
-            // session/resume cannot read a session); after a timeout it would only be waited for again.
-            if (!(error instanceof AcpRequestError)) break;
-          } finally {
-            replaying = undefined;
-          }
-        }
-        if (failures.length > 0) restoreError = failures.join("; ");
+        approvals,
+        sessionMeta: gateway?.sessionMeta,
+        ...(gateway?.provider !== undefined ? { onReady: (ready, init) => this.#setProvider(ready, init, gateway.provider as AcpSetProviderParams) } : {}),
+        onUnownedRequest: (folder, method, params) => this.#handleAgentRequest(folder, undefined, method, params),
+        onSpawn: (spawned) => {
+          conn = spawned;
+          this.#launching.add(spawned);
+          if (approvals === undefined) return;
+          const removed: Promise<void> = spawned.exited
+            .then(() => approvals.remove())
+            .catch(() => undefined)
+            .finally(() => this.#approvalsFiles.delete(removed));
+          this.#approvalsFiles.add(removed);
+        },
+      });
+      if (generation !== this.#generation) {
+        await process.close();
+        throw new UnavailableError(`${this.#stoppedBecause} while it started`);
       }
-      const result = await conn.request("session/new", { cwd, mcpServers: [] }, timeoutMs);
-      if (typeof result?.sessionId !== "string" || result.sessionId.length === 0) {
-        throw new UnavailableError("the agent answered session/new without a sessionId");
-      }
-      return {
-        conn,
-        init,
-        result: result as Launched["result"],
-        updates,
-        ...(restoreError !== undefined ? { restoreError } : {}),
-        ...(approvals ? { approvals } : {}),
-      };
+      this.#processes.add(process);
+      this.#offered = offeredMethods(process.init.authMethods);
+      void process.conn.exited.then(() => {
+        this.#processes.delete(process);
+        if (this.#process === process) this.#process = undefined;
+        this.#holdProcess(process);
+      });
+      if (launch !== this.#launch) process.retired = true;
+      else if (!dedicated) this.#process = process;
+      return process;
     } catch (error) {
-      await conn.close();
+      if (conn === undefined) await approvals?.remove().catch(() => undefined);
       // Killed by `dispose` / `stop` (it exited, so the request failed): say so rather than "the agent exited".
-      throw this.#startError(generation === this.#generation ? error : new UnavailableError(`${this.#stoppedBecause} while it started`), init);
+      throw this.#startError(generation === this.#generation ? error : new UnavailableError(`${this.#stoppedBecause} while it started`));
     } finally {
-      this.#launching.delete(conn);
+      if (conn !== undefined) this.#launching.delete(conn);
+    }
+  }
+
+  /** Point a process that has just started at its model gateway: it must not answer through anything else. */
+  async #setProvider(conn: AcpConnection, init: AcpInitializeResult, provider: AcpSetProviderParams): Promise<void> {
+    if (init.agentCapabilities?.providers == null) throw new UnavailableError("this version of it cannot be pointed at a model gateway");
+    try {
+      await conn.request("providers/set", provider);
+    } catch (error) {
+      throw new UnavailableError(`it refused the model gateway: ${agentErrorText(error)}`);
     }
   }
 
   /**
-   * A mode file for a process about to start, with the extension installed (again, if it was removed or is from an
-   * older Connector). Without them the process starts without approvals, which is said in the log.
+   * An approvals file for a process about to start, with the extension installed (again, if it was removed or is from
+   * an older Connector). Without them the process starts without approvals, which is said in the log.
    */
-  async #approvalsFile(mode: PiApprovalMode): Promise<PiApprovalsFile | undefined> {
+  async #approvalsFile(): Promise<PiApprovalsFile | undefined> {
     try {
       await installPiApprovals(this.#options.piExtensionsDir);
-      return await PiApprovalsFile.create(this.#options.approvalsDir ?? path.join(os.tmpdir(), "aa-pi-approvals"), mode);
+      return await PiApprovalsFile.create(this.#options.approvalsDir ?? path.join(os.tmpdir(), "aa-pi-approvals"));
     } catch (error) {
-      this.#log("warn", `${this.name} starts without approvals: ${error instanceof Error ? error.message : String(error)}`);
+      this.#log("warn", `${this.name} starts without approvals: ${errorMessage(error)}`);
       return undefined;
     }
   }
 
-  /**
-   * Reopen the ACP session `acpSessionId` with its context. `session/resume` does not replay it; `session/load`
-   * replays the whole conversation as `session/update`s before it answers. AA has that history already, so while the
-   * request runs (`#launch`'s `replaying`) the session's conversation updates are dropped, whichever method: only
-   * the latest commands, settings and mode are kept. Rejects with the agent's error when it cannot (an unknown or
-   * expired session, say).
-   */
-  async #reopen(conn: AcpConnection, how: RestoreMethod, acpSessionId: string, cwd: string, timeoutMs: number): Promise<Launched["result"]> {
-    const answer =
-      how === "resume"
-        ? await conn.request("session/resume", { sessionId: acpSessionId, cwd, mcpServers: [] }, timeoutMs)
-        : await conn.request("session/load", { sessionId: acpSessionId, cwd, mcpServers: [] }, timeoutMs);
-    return { ...(answer ?? {}), sessionId: acpSessionId };
+  /** Open a session (see `AgentProcess.open`) in a process with the settings of now. Rejects with `#startError`. */
+  async #open(cwd: string, earlier?: string): Promise<OpenedSession> {
+    const generation = this.#generation;
+    const stopped = () => this.#startError(new UnavailableError(`${this.#stoppedBecause} while it started`));
+    for (;;) {
+      const process = await this.#acquire();
+      this.#holdProcess(process);
+      let opened: OpenedSession;
+      try {
+        try {
+          opened = await process.open(cwd, earlier);
+        } catch (error) {
+          if (!isAuthRequired(error) || !(await this.#signInAgain(process))) throw error;
+          opened = await process.open(cwd, earlier);
+        }
+      } catch (error) {
+        // Nothing else needs it: the next try starts anew (the user may have signed in by then, say).
+        if (!this.#isUsed(process)) await process.close();
+        if (generation !== this.#generation) throw stopped();
+        throw this.#startError(error);
+      }
+      if (generation !== this.#generation || process.closed) {
+        await process.closeSession(opened.result.sessionId);
+        if (generation !== this.#generation) throw stopped();
+        throw this.#startError(exitedError(process.conn));
+      }
+      if (!process.retired) return opened;
+      // The settings changed while the session was opened: it has nothing to lose yet, so it is opened again.
+      await process.closeSession(opened.result.sessionId);
+      this.#settleProcess(process);
+    }
   }
 
-  /** Make a launched agent the live agent of a session, as if the projector had listened from the start. */
-  #attach(sessionId: string, cwd: string, launched: Launched): StartedSession {
+  /** Processes are started anew from now on; the running ones are retired. */
+  #relaunch(): void {
+    this.#launch++;
+    this.#process = undefined;
+    for (const process of [...this.#processes]) {
+      if (process.retired) continue;
+      process.retired = true;
+      for (const live of this.#sessionsOf(process)) this.#settle(live);
+      this.#settleProcess(process);
+    }
+  }
+
+  #sessionsOf(process: AgentProcess): LiveSession[] {
+    return [...this.#sessions.values()].filter((live) => live.process === process);
+  }
+
+  /** A conversation, a prepared session or one being opened needs it. */
+  #isUsed(process: AgentProcess): boolean {
+    return process.inUse || this.#sessionsOf(process).length > 0 || [...this.#prepared].some((agent) => agent.process === process);
+  }
+
+  /**
+   * Stop a process nothing needs any more: a retired or dedicated one at once, the shared one after the idle close
+   * (without a session, or when all of its sessions have been idle that long).
+   */
+  #settleProcess(process: AgentProcess): void {
+    this.#holdProcess(process);
+    if (process.stopping || process.closed || process.opening || [...this.#prepared].some((agent) => agent.process === process)) return;
+    const sessions = this.#sessionsOf(process);
+    if (process.retired || process.dedicated) {
+      if (sessions.length === 0) void process.close();
+      return;
+    }
+    const ttl = this.#idleTtlMs;
+    if (ttl === 0) return;
+    if (sessions.length === 0) {
+      const timer = setTimeout(() => {
+        this.#processTimers.delete(process);
+        if (this.#isUsed(process) || process.stopping || process.closed) return;
+        this.#log("info", `${this.name}: closing its process after ${formatDuration(ttl)} without a conversation`);
+        void process.close();
+      }, ttl);
+      timer.unref?.();
+      this.#processTimers.set(process, timer);
+    } else if (sessions.every((live) => live.expired)) {
+      this.#log("info", `${this.name}: closing its process after ${formatDuration(ttl)} idle; the next message of a conversation restores it`);
+      for (const live of sessions) this.#detach(live, "the agent was closed");
+      const closed = process.close();
+      for (const live of sessions) this.#whileClosing(live.sessionId, closed);
+    }
+  }
+
+  /** The agent is letting go of the conversation's session until `closed`: a new start of it waits for that. */
+  #whileClosing(sessionId: string, closed: Promise<void>): void {
+    const done: Promise<void> = closed
+      .catch(() => undefined)
+      .then(() => {
+        if (this.#closing.get(sessionId) === done) this.#closing.delete(sessionId);
+      });
+    this.#closing.set(sessionId, done);
+  }
+
+  #holdProcess(process: AgentProcess): void {
+    const timer = this.#processTimers.get(process);
+    if (timer !== undefined) clearTimeout(timer);
+    this.#processTimers.delete(process);
+  }
+
+  // ── Sessions ──
+
+  /** Make an opened session the live one of a conversation, as if the projector had listened from the start. */
+  #attach(input: StartSessionInput, opened: OpenedSession): StartedSession {
+    const { sessionId, cwd } = input;
     const store = this.#options.store;
-    const { conn, init, result, updates, restored, restoreError } = launched;
-    if (conn.closed) throw this.#startError(new UnavailableError(`the agent exited${conn.stderrTail ? `: ${conn.stderrTail.trim().slice(-500)}` : ""}`));
+    const { process, result, updates, restored, restoreError } = opened;
+    if (process.closed) throw this.#startError(exitedError(process.conn));
+    const acpSessionId = result.sessionId;
     const projector = new AcpTimelineProjector({
       store,
       sessionId,
       ...(this.#options.newId ? { newId: this.#options.newId } : {}),
       // AA's approvals setting is not the agent's: it stays when the agent reports its own settings.
-      decorateConfig: (config) => withApprovals(config, live.approvals),
+      decorateConfig: (config) => withApprovals(config, process, acpSessionId),
     });
     // A reopened session that reports no settings keeps the ones the conversation shows (and the modern API).
     const reportsConfig = result.configOptions != null || result.modes != null;
+    let leave: (reason: Error) => void = () => undefined;
+    const gone = new Promise<never>((_resolve, reject) => (leave = reject));
+    gone.catch(() => undefined);
     const live: LiveSession = {
       sessionId,
-      acpSessionId: result.sessionId,
+      acpSessionId,
       cwd,
-      conn,
+      process,
       projector,
       turn: undefined,
       permissions: new Map(),
       supportsConfigOptions: Array.isArray(result.configOptions) || (restored !== undefined && !reportsConfig),
-      promptImages: init.agentCapabilities?.promptCapabilities?.image === true,
       stopped: false,
-      restorable: restoreMethodsOf(init).length > 0,
+      gone,
+      leave,
       idleTimer: undefined,
+      expired: false,
       requests: 0,
-      approvals: launched.approvals,
     };
-    conn.onRequest = (method, params) => this.#handleAgentRequest(cwd, live, method, params);
-    conn.onExit = () => this.#onExit(live);
     this.#sessions.set(sessionId, live);
+    process.claim(acpSessionId, {
+      onRequest: (method, params) => this.#handleAgentRequest(cwd, live, method, params),
+      onExit: () => this.#onExit(live),
+      onUpdate: (params) => {
+        if (!store.has(sessionId)) return;
+        projector.handleNotification(params, acpSessionId);
+        // The agent working on its own between turns is activity too.
+        if (live.turn === undefined && ACTIVITY_UPDATES.has(String(params?.update?.sessionUpdate))) this.#settle(live);
+      },
+    });
     if (store.has(sessionId)) {
-      // Saved with the conversation: the next process of this session reopens it.
-      store.setAcpSessionId(sessionId, result.sessionId);
+      // Saved with the conversation: its next session reopens it.
+      store.setAcpSessionId(sessionId, acpSessionId);
       if (restored === undefined || reportsConfig) store.updateSession(sessionId, { config: configFromSessionResult(result) });
-      // The process's own approvals mode (the conversation's, or the default for a new one), or none.
-      store.updateSession(sessionId, { config: withApprovals(store.get(sessionId)?.config ?? [], live.approvals) });
+      // The session's own approvals mode (the conversation's, or the default for a new one), or none.
+      store.updateSession(sessionId, { config: withApprovals(store.get(sessionId)?.config ?? [], process, acpSessionId) });
       store.updateControl(sessionId, { state: "idle", error: undefined });
       // What the agent sent before anyone listened (commands, setting changes, a banner, …).
       for (const params of updates) {
         try {
-          projector.handleNotification(params, live.acpSessionId);
+          projector.handleNotification(params, acpSessionId);
         } catch {
           // As for live updates: a projection failure must not stop the session.
         }
@@ -1076,36 +1044,27 @@ export class AcpRuntime implements AgentRuntime {
       }
     }
     updates.length = 0;
-    conn.onNotification = (method, params) => {
-      if (method !== "session/update") return;
-      const p = params as AcpSessionNotificationParams;
-      if (!store.has(sessionId)) return;
-      projector.handleNotification(p, live.acpSessionId);
-      // The agent working on its own between turns is activity too.
-      if (live.turn === undefined && ACTIVITY_UPDATES.has(String(p?.update?.sessionUpdate))) this.#armIdle(live);
-    };
-    this.#armIdle(live);
-    const started: StartedSession = { acpSessionId: result.sessionId, config: store.get(sessionId)?.config ?? configFromSessionResult(result) };
+    const started: StartedSession = { acpSessionId, config: store.get(sessionId)?.config ?? configFromSessionResult(result) };
     if (restored !== undefined) started.restored = restored;
     if (restoreError !== undefined) started.restoreError = restoreError;
+    if (input.hold) started.release = this.#hold(live);
+    else this.#settle(live);
     return started;
   }
 
   /**
    * Why the agent did not start, worded for the user (one "could not start …" prefix) with a stable reason:
-   * `failed_precondition` / `agent_auth_required` when the agent wants a sign-in first (ACP `-32000`; the agent's
-   * `authMethods` go along as `auth_methods`), otherwise `unavailable` / `agent_start_failed` (program missing, it
-   * exited, it timed out, or it answered something unusable).
+   * `failed_precondition` / `agent_auth_required` when the agent wants a sign-in first (ACP `-32000`; the ways to sign
+   * in go along as `auth_methods`, what it said as `agent_message`), otherwise `unavailable` / `agent_start_failed`
+   * (program missing, it exited, it timed out, or it answered something unusable).
    */
-  #startError(error: unknown, init?: AcpInitializeResult): MeshCallError {
-    const raw = errorMessage(error);
+  #startError(error: unknown): MeshCallError {
+    const raw = agentErrorText(error);
     const message = raw.startsWith("could not start ") ? raw : `could not start ${this.name}: ${raw}`;
-    if (error instanceof AcpRequestError && error.code === JsonRpcErrorCode.AUTH_REQUIRED) {
-      const details: Record<string, unknown> = { reason: "agent_auth_required", agent: this.id };
-      const methods = Array.isArray(init?.authMethods) ? init.authMethods : [];
-      if (methods.length > 0) {
-        details.auth_methods = methods.map(({ id, name, description }) => (description ? { id, name, description } : { id, name }));
-      }
+    if (isAuthRequired(error)) {
+      const details: Record<string, unknown> = { reason: "agent_auth_required", agent: this.id, agent_message: raw };
+      const methods = this.signInMethods;
+      if (methods.length > 0) details.auth_methods = methods;
       return new MeshCallError("failed_precondition", message, { details });
     }
     return new UnavailableError(message, { details: { reason: "agent_start_failed", agent: this.id } });
@@ -1120,12 +1079,13 @@ export class AcpRuntime implements AgentRuntime {
       let outcome: TurnResult;
       let failure: string | undefined;
       try {
-        const prompt = live.promptImages ? await inlineImages(input.prompt) : input.prompt;
-        const result = await live.conn.request("session/prompt", { sessionId: live.acpSessionId, prompt }, null);
+        const prompt = live.process.promptImages ? await inlineImages(input.prompt) : input.prompt;
+        const answer = live.process.conn.request("session/prompt", { sessionId: live.acpSessionId, prompt }, null);
+        const result = await Promise.race([answer, live.gone]);
         outcome = result?.stopReason ?? "end_turn";
       } catch (error) {
         if (live.stopped) {
-          // `stop` ended it on purpose (an agent that did not answer `session/cancel` in time).
+          // Ended on purpose (an agent that did not answer `session/cancel` in time, a session closed meanwhile).
           outcome = "cancelled";
         } else {
           outcome = "error";
@@ -1143,7 +1103,7 @@ export class AcpRuntime implements AgentRuntime {
         }
       }
       this.#pushTurnEnd(sessionId, input.turnId, outcome, failure);
-      this.#armIdle(live);
+      this.#settle(live);
       return outcome;
     })();
     live.turn = turn;
@@ -1153,7 +1113,7 @@ export class AcpRuntime implements AgentRuntime {
   async cancel(sessionId: string): Promise<void> {
     const live = this.#sessions.get(sessionId);
     if (live === undefined) return;
-    live.conn.notify("session/cancel", { sessionId: live.acpSessionId });
+    live.process.conn.notify("session/cancel", { sessionId: live.acpSessionId });
     // ACP: the client answers every waiting permission request `cancelled`, or the prompt never returns.
     this.#cancelPermissions(live);
   }
@@ -1161,23 +1121,23 @@ export class AcpRuntime implements AgentRuntime {
   async setConfig(sessionId: string, configId: string, value: string): Promise<ConfigOption[]> {
     const live = this.#require(sessionId);
     const store = this.#options.store;
+    const { process, acpSessionId } = live;
     if (configId === PI_APPROVALS_CONFIG_ID) {
-      await live.approvals?.set(checkApprovalMode(live.approvals, value));
-      const config = withApprovals(store.get(sessionId)?.config ?? [], live.approvals);
+      await setApprovalMode(process, acpSessionId, value);
+      const config = withApprovals(store.get(sessionId)?.config ?? [], process, acpSessionId);
       if (store.has(sessionId)) store.updateSession(sessionId, { config });
       return config;
     }
-    live.requests++;
-    this.#holdIdle(live);
+    const release = this.#hold(live);
     try {
       let config: ConfigOption[];
       if (!live.supportsConfigOptions && configId === MODE_CONFIG_ID) {
-        await live.conn.request("session/set_mode", { sessionId: live.acpSessionId, modeId: value });
+        await process.conn.request("session/set_mode", { sessionId: acpSessionId, modeId: value });
         config = (store.get(sessionId)?.config ?? []).map((o) => (o.id === MODE_CONFIG_ID ? { ...o, current: value } : o));
       } else {
         try {
-          const result = await live.conn.request("session/set_config_option", { sessionId: live.acpSessionId, configId, value });
-          config = withApprovals(configOptionsFromAcp(result?.configOptions ?? []), live.approvals);
+          const result = await process.conn.request("session/set_config_option", { sessionId: acpSessionId, configId, value });
+          config = withApprovals(configOptionsFromAcp(result?.configOptions ?? []), process, acpSessionId);
         } catch (error) {
           if (error instanceof AcpRequestError && error.code === JsonRpcErrorCode.INVALID_PARAMS) throw new InvalidArgumentError(error.message);
           throw error;
@@ -1186,8 +1146,7 @@ export class AcpRuntime implements AgentRuntime {
       if (store.has(sessionId)) store.updateSession(sessionId, { config });
       return config;
     } finally {
-      live.requests--;
-      this.#armIdle(live);
+      release();
     }
   }
 
@@ -1196,24 +1155,20 @@ export class AcpRuntime implements AgentRuntime {
     return this.#options.store.answerPendingRequest(sessionId, input);
   }
 
-  /** Stop the session's agent (its saved ACP session stays: the next start reopens it). Resolves once it exited. */
+  /** Close the conversation's ACP session (saved with it: the next start reopens it). Resolves once the agent let go of it. */
   async closeSession(sessionId: string): Promise<void> {
     const live = this.#sessions.get(sessionId);
     if (live === undefined) {
       await this.#closing.get(sessionId);
       return;
     }
-    this.#sessions.delete(sessionId);
-    this.#holdIdle(live);
-    this.#cancelPermissions(live);
-    live.projector.dispose();
-    const closed: Promise<void> = live.conn
-      .close()
-      .catch(() => undefined)
-      .finally(() => {
-        if (this.#closing.get(sessionId) === closed) this.#closing.delete(sessionId);
-      });
-    this.#closing.set(sessionId, closed);
+    const { process, acpSessionId } = live;
+    const working = live.turn !== undefined;
+    live.stopped = true;
+    this.#detach(live, "the conversation was closed");
+    const last = (process.retired || process.dedicated) && this.#sessionsOf(process).length === 0 && !process.opening;
+    const closed = (last ? process.close() : process.closeSession(acpSessionId, { working })).catch(() => undefined).finally(() => this.#settleProcess(process));
+    this.#whileClosing(sessionId, closed);
     await closed;
   }
 
@@ -1228,13 +1183,15 @@ export class AcpRuntime implements AgentRuntime {
     return count;
   }
 
-  /** Close every session's agent, prepared agent and agent still starting; starts under way fail with `why`. */
+  /** Stop every process, with the sessions in it and the ones still starting; starts under way fail with `why`. */
   async #closeAll(why: string): Promise<void> {
     this.#generation++;
     this.#stoppedBecause = why;
+    this.#process = undefined;
+    for (const live of [...this.#sessions.values()]) this.#detach(live, why);
+    for (const agent of [...this.#prepared]) agent.gone();
     await Promise.all([
-      ...[...this.#sessions.keys()].map((id) => this.closeSession(id)),
-      ...[...this.#prepared].map((agent) => agent.close()),
+      ...[...this.#processes].map((process) => process.close()),
       ...[...this.#launching].map((conn) => conn.close()),
       ...this.#closing.values(),
     ]);
@@ -1249,22 +1206,34 @@ export class AcpRuntime implements AgentRuntime {
     return live;
   }
 
+  /** Take a session off its process: it is not live any more, and nothing waits for the agent's answers to it. */
+  #detach(live: LiveSession, reason: string): void {
+    if (this.#sessions.get(live.sessionId) === live) this.#sessions.delete(live.sessionId);
+    this.#holdIdle(live);
+    this.#cancelPermissions(live);
+    live.projector.dispose();
+    live.leave(new UnavailableError(reason));
+    this.#showApprovals(live.sessionId);
+  }
+
   #onExit(live: LiveSession): void {
     if (this.#sessions.get(live.sessionId) !== live) return;
+    // A running turn reports its own failure, with what the agent said last.
     this.#sessions.delete(live.sessionId);
     this.#holdIdle(live);
     this.#cancelPermissions(live);
     live.projector.dispose();
     const store = this.#options.store;
     if (live.turn === undefined && store.has(live.sessionId)) {
-      // Idle agent gone: the next prompt starts it again (reopening its session). A running turn reports its own failure.
+      // Idle agent gone: the next prompt starts it again (reopening its session).
       store.updateControl(live.sessionId, { state: "idle" });
     }
+    this.#showApprovals(live.sessionId);
   }
 
-  // ── Idle agents ──
+  // ── Idle sessions ──
 
-  /** How long an agent may sit idle (0: never): the agent's own setting, else the host's `idleTtlMs`, else never. */
+  /** How long a session may sit idle (0: for ever): the agent's own setting, else the host's `idleTtlMs`, else for ever. */
   get #idleTtlMs(): number {
     const ttl = this.#idleCloseMs ?? this.#options.idleTtlMs;
     return ttl !== undefined && ttl !== null && ttl > 0 ? ttl : 0;
@@ -1275,26 +1244,56 @@ export class AcpRuntime implements AgentRuntime {
     return live.turn === undefined && live.permissions.size === 0 && live.requests === 0;
   }
 
-  /** (Re)start the idle clock of a session's agent that can restore its context, when nothing is in flight. */
-  #armIdle(live: LiveSession): void {
+  /** The session is not idle until the result is called. */
+  #hold(live: LiveSession): () => void {
+    live.requests++;
     this.#holdIdle(live);
+    let held = true;
+    return () => {
+      if (!held) return;
+      held = false;
+      live.requests--;
+      this.#settle(live);
+    };
+  }
+
+  /**
+   * Something ended in a session. If nothing is in flight any more and the agent can restore its context: a session of
+   * a retired process moves on at once (its next message opens it in the next process), any other one is closed after
+   * the idle close.
+   */
+  #settle(live: LiveSession): void {
+    this.#holdIdle(live);
+    if (live.process.restoreMethods.length === 0 || !this.#isIdle(live) || this.#sessions.get(live.sessionId) !== live) return;
+    if (live.process.retired) {
+      void this.closeSession(live.sessionId);
+      return;
+    }
     const ttl = this.#idleTtlMs;
-    if (ttl === 0 || !live.restorable || !this.#isIdle(live) || this.#sessions.get(live.sessionId) !== live) return;
+    if (ttl === 0) return;
     live.idleTimer = setTimeout(() => this.#closeIdle(live, ttl), ttl);
     live.idleTimer.unref?.();
   }
 
-  /** Something is in flight: the agent is not idle. */
+  /** Something is in flight: the session is not idle. */
   #holdIdle(live: LiveSession): void {
     if (live.idleTimer !== undefined) clearTimeout(live.idleTimer);
     live.idleTimer = undefined;
+    live.expired = false;
   }
 
-  /** Idle for the whole TTL: close the agent. The conversation stays and its next message restores the agent. */
+  /**
+   * Idle for the whole idle close. The conversation stays, and its next message restores the session. The process goes
+   * when all of its sessions are idle that long; until then only this session does, in an agent that can close it alone.
+   */
   #closeIdle(live: LiveSession, ttl: number): void {
     live.idleTimer = undefined;
     if (this.#sessions.get(live.sessionId) !== live || !this.#isIdle(live)) return;
-    this.#log("info", `${this.name}: closing the agent of conversation ${live.sessionId} after ${formatDuration(ttl)} idle; its next message restores it`);
+    live.expired = true;
+    const process = live.process;
+    this.#settleProcess(process);
+    if (process.stopping || !process.closesSessions || this.#sessions.get(live.sessionId) !== live) return;
+    this.#log("info", `${this.name}: closing the session of conversation ${live.sessionId} after ${formatDuration(ttl)} idle; its next message restores it`);
     void this.closeSession(live.sessionId);
   }
 
@@ -1315,7 +1314,7 @@ export class AcpRuntime implements AgentRuntime {
     live.permissions.clear();
   }
 
-  /** Agent → client requests; `live` is undefined for a prepared agent no session has taken over yet. */
+  /** Agent → client requests; `live` is undefined for a session no conversation has taken over yet. */
   async #handleAgentRequest(cwd: string, live: LiveSession | undefined, method: string, params: unknown): Promise<unknown> {
     switch (method) {
       case "session/request_permission":
@@ -1345,7 +1344,7 @@ export class AcpRuntime implements AgentRuntime {
       return await Promise.race([outcome, cancelled]);
     } finally {
       live.permissions.delete(request.request_id);
-      this.#armIdle(live);
+      this.#settle(live);
     }
   }
 
@@ -1436,15 +1435,27 @@ function hasAgentOutput(store: SessionStore, sessionId: string): boolean {
 
 // ── AcpRuntimeHost: the runtimes of this device ─────────────────────────────────────────────────────────────────
 
-export interface AcpRuntimeHostOptions extends AcpRuntimeOptions {
+export interface AcpRuntimeHostOptions extends Omit<AcpRuntimeOptions, "agentPath" | "resolveCommand"> {
   presets?: AcpRuntimePreset[];
-  /** Add the default presets for ids not given in `presets`. Default true. */
+  /** Add the Connector's own agents (`builtin` in `agents()`) for ids not given in `presets`. Default true. */
   includeDefaultPresets?: boolean;
   /**
-   * The Connector's own presets (`builtin` in `agents()`): default `defaultAcpPresets()`, the built-in agents installed
-   * on this machine. An embedding app that ships its agents passes them here.
+   * The Connector's own agents, when the embedding app ships them: they count as installed. Default: the agents of the
+   * catalog, installed on this device or not.
    */
   defaultPresets?: AcpRuntimePreset[];
+  /** The agents Agents Anywhere knows (default `AGENT_CATALOG`; not used with `defaultPresets`). */
+  catalog?: readonly CatalogAgent[];
+  /** Looks for programs on this device. */
+  finder?: AgentFinder;
+  /** How long an agent's install may take. Default 30 min. */
+  installTimeoutMs?: number;
+  /** The agents that can be used here changed (one was installed, or is gone). */
+  onAgentsChanged?: () => void;
+  /** The agents the user added on this device (`custom-agents.json`). */
+  customAgents?: readonly CustomAgent[];
+  /** Persist them after `addAgent`, `updateAgent` or `removeAgent` changed one (all of them); a rejection refuses the change. */
+  onCustomAgentsChange?: (agents: CustomAgent[]) => void | Promise<void>;
   /** Each agent's switch and settings as saved on this device (`agents.json`), by agent id. */
   agentSettings?: AgentOverrides;
   /**
@@ -1480,6 +1491,8 @@ export interface AgentInfo {
   name: string;
   /** One of the Connector's default presets. */
   builtin: boolean;
+  /** Added by the user (`addAgent`): it can be renamed and removed. */
+  custom?: true;
   enabled: boolean;
   /** What a process started now would run. */
   command: string;
@@ -1488,12 +1501,40 @@ export interface AgentInfo {
   envKeys: string[];
   /** The command, args or environment differ from the preset. */
   customized: boolean;
-  /** Agent processes running now: the sessions' agents, prepared ones and ones still starting. */
+  /** Agent processes running now, ones still starting included: one, or two while its settings change. */
   running: number;
+  /** Conversations (and prepared ones) open in them. */
+  sessions: number;
   /** AA's approvals turned on (agents whose preset has `approvals`; absent for others). */
   approvals?: boolean;
+  /** Agents that can be pointed at a model gateway, and the one they are pointed at (its key never leaves the device). */
+  gateway?: { api: GatewayApi; modelRequired: boolean; baseUrl?: string; model?: string };
+  /** Known ways to sign in to it. */
+  signIn: SignInMethod[];
   /** Minutes a conversation's agent may sit idle before it is closed; 0: never. */
   idleCloseMinutes: number;
+  /**
+   * It can be started here: its own program is there, and what starts it (an agent the user added: its command; others
+   * the catalog does not know: always).
+   */
+  installed: boolean;
+  /** Its own program, where it was found (agents of the catalog). */
+  program?: string;
+  /** The program is the one the user named. */
+  programSet?: boolean;
+  /** Its own program is there, what starts it is not. */
+  missing?: string;
+  /** Agents of the catalog. */
+  website?: string;
+  /** How it can be installed on this device (agents of the catalog). */
+  install?: AgentInstallInfo;
+}
+
+export interface AgentInstallInfo {
+  /** The preferred one first; `available`: what its command needs is there. */
+  methods: { id: string; command: string; available: boolean; needs?: string }[];
+  /** The newest install since the Connector started. */
+  job?: InstallJob;
 }
 
 interface PreparedEntry {
@@ -1514,7 +1555,7 @@ interface PreparedEntry {
 /** Runtimes by id, and session-level operations routed to the runtime the session was created with. */
 export class AcpRuntimeHost {
   readonly store: SessionStore;
-  readonly #options: AcpRuntimeHostOptions;
+  readonly #options: AcpRuntimeHostOptions & Pick<AcpRuntimeOptions, "agentPath" | "resolveCommand">;
   readonly #runtimes = new Map<string, AgentRuntime>();
   /** Config chosen while the agent was not running, applied when it starts. */
   readonly #pendingConfig = new Map<string, Map<string, string>>();
@@ -1527,6 +1568,15 @@ export class AcpRuntimeHost {
   readonly #presets = new Map<string, AcpRuntimePreset>();
   /** Ids registered from the default presets. */
   readonly #builtin = new Set<string>();
+  readonly #finder: AgentFinder;
+  readonly #installer: AgentInstaller;
+  /** The catalog agents registered here. */
+  readonly #catalog = new Map<string, CatalogAgent>();
+  /** The agents the user added. */
+  readonly #custom = new Map<string, CustomAgent>();
+  /** What was found of each of them, and of the catalog's. */
+  readonly #found = new Map<string, FoundAgent>();
+  #lastScan = 0;
   /** Every agent's saved changes, ids not registered here included (kept as they are). */
   #overrides = new Map<string, AgentOverride>();
   /** The settings each agent's newest conversation was created with, by agent id. */
@@ -1538,7 +1588,23 @@ export class AcpRuntimeHost {
   constructor(options: AcpRuntimeHostOptions) {
     this.store = options.store;
     this.onPushEvent = options.onPushEvent;
-    this.#options = { ...options, onPushEvent: (event) => this.onPushEvent?.(event) };
+    const catalog = (options.includeDefaultPresets ?? true) && options.defaultPresets === undefined ? (options.catalog ?? AGENT_CATALOG) : [];
+    const finder = options.finder ?? new AgentFinder({ folders: agentFolders(catalog) });
+    this.#finder = finder;
+    this.#installer = new AgentInstaller({
+      path: () => finder.path,
+      ...(options.installTimeoutMs !== undefined ? { timeoutMs: options.installTimeoutMs } : {}),
+      isInstalled: async (agentId) => {
+        await this.refreshAgents();
+        return this.#found.get(agentId)?.program !== undefined;
+      },
+    });
+    this.#options = {
+      ...options,
+      onPushEvent: (event) => this.onPushEvent?.(event),
+      agentPath: () => finder.path,
+      resolveCommand: (command) => (/^~[\\/]/u.test(command) ? finder.userPath(command) : /[\\/]/u.test(command) ? undefined : finder.find([command])),
+    };
     this.#preparedTtlMs = options.preparedTtlMs ?? DEFAULT_PREPARED_TTL_MS;
     this.#maxPrepared = Math.max(1, options.maxPrepared ?? DEFAULT_MAX_PREPARED);
     // An entry with nothing left once unknown keys are dropped (only a `name`, from an earlier Connector) is no change.
@@ -1549,16 +1615,39 @@ export class AcpRuntimeHost {
     else this.#options.logger?.warn(`ignoring the saved settings of the newest conversations: ${last.error.issues[0]?.message ?? "invalid"}`);
     for (const preset of options.presets ?? []) this.registerPreset(preset);
     if (options.includeDefaultPresets ?? true) {
-      for (const preset of options.defaultPresets ?? defaultAcpPresets()) {
+      for (const preset of options.defaultPresets ?? []) {
         if (this.#runtimes.has(preset.id)) continue;
         this.registerPreset(preset);
         this.#builtin.add(preset.id);
       }
+      for (const agent of catalog) {
+        if (this.#runtimes.has(agent.id)) continue;
+        const found = this.#look(agent);
+        this.registerPreset(presetOf(agent, found.named));
+        this.#builtin.add(agent.id);
+        this.#catalog.set(agent.id, agent);
+        this.#found.set(agent.id, found);
+        this.#applySettings(agent.id);
+      }
+      this.#lastScan = Date.now();
+    }
+    for (const agent of CustomAgentsSchema.parse(options.customAgents ?? [])) {
+      if (!this.#runtimes.has(agent.id)) this.#registerCustom(agent);
     }
   }
 
+  #registerCustom(agent: CustomAgent): void {
+    this.registerPreset(agent);
+    this.#custom.set(agent.id, agent);
+    this.#found.set(agent.id, this.#lookCustom(agent));
+  }
+
   registerPreset(preset: AcpRuntimePreset): AcpRuntime {
-    const runtime = new AcpRuntime(preset, this.#options);
+    const runtime = new AcpRuntime(preset, {
+      ...this.#options,
+      programSignIn: () => this.#programSignIn(preset.id),
+      onSignInChange: (methodId) => void this.#saveSignIn(preset.id, methodId),
+    });
     this.registerRuntime(runtime);
     return runtime;
   }
@@ -1574,14 +1663,157 @@ export class AcpRuntimeHost {
       return;
     }
     this.#presets.set(runtime.id, copyPreset(preset));
-    runtime.configure?.(effectivePreset(preset, this.#overrides.get(runtime.id)));
-    runtime.configureApprovals?.(preset.approvals !== undefined && this.#overrides.get(runtime.id)?.approvals === true);
-    runtime.configureIdle?.(idleMs(this.#overrides.get(runtime.id)));
+    this.#catalog.delete(runtime.id);
+    this.#custom.delete(runtime.id);
+    this.#found.delete(runtime.id);
+    this.#applySettings(runtime.id);
   }
 
-  /** The agents that can be used here (`status.runtimes`): every registered one except those turned off. */
+  /** Run an agent with its preset and this device's settings of now. */
+  #applySettings(agentId: string): void {
+    const runtime = this.#runtimes.get(agentId);
+    const preset = this.#presets.get(agentId);
+    if (runtime === undefined || preset === undefined) return;
+    const override = this.#overrides.get(agentId);
+    runtime.configure?.(this.#launchOf(agentId));
+    runtime.configureApprovals?.(preset.approvals !== undefined && override?.approvals === true);
+    runtime.configureIdle?.(idleMs(override));
+    runtime.configureSignIn?.(override?.sign_in);
+  }
+
+  /** What a process of the agent is started with now: its preset with this device's changes, and what only the device adds. */
+  #launchOf(agentId: string): AgentLaunch {
+    const preset = this.#presets.get(agentId) as AcpRuntimePreset;
+    const override = this.#overrides.get(agentId);
+    const launch = effectivePreset(preset, override);
+    const agent = this.#catalog.get(agentId);
+    const added = agent === undefined ? {} : programEnv(agent, this.#found.get(agentId)?.named);
+    return {
+      ...launch,
+      ...(Object.keys(added).length > 0 ? { env: { ...added, ...(launch.env ?? {}) } } : {}),
+      ...(agent?.gateway !== undefined && override?.gateway !== undefined ? { gateway: agent.gateway.launch(override.gateway) } : {}),
+    };
+  }
+
+  // ── Installed agents ──
+
+  /** What is there of a catalog agent: the program the user named, else the first one found. */
+  #look(agent: CatalogAgent): FoundAgent {
+    const override = this.#overrides.get(agent.id);
+    const named = override?.program !== undefined && this.#finder.isProgram(override.program) ? override.program : undefined;
+    const program = named ?? this.#finder.find(agent.programs);
+    const launcher = launcherOf(agent);
+    const missing = program !== undefined && launcher !== undefined && this.#finder.find([launcher]) === undefined ? launcher : undefined;
+    // A command of the user's own needs neither.
+    const custom = override?.command !== undefined && this.#finder.resolve(override.command) !== undefined;
+    return { program, named, missing, installed: custom || (program !== undefined && missing === undefined) };
+  }
+
+  /** Whether the command of an agent the user added is there. */
+  #lookCustom(agent: CustomAgent): FoundAgent {
+    return { program: undefined, named: undefined, missing: undefined, installed: this.#finder.resolve(agent.command) !== undefined };
+  }
+
+  /**
+   * Look again what is installed, in the folders known by now (nothing when that was done less than `maxAgeMs` ago);
+   * tells `onAgentsChanged` when the usable agents changed.
+   */
+  rescanAgents(maxAgeMs = 0): void {
+    if (this.#catalog.size + this.#custom.size === 0 || Date.now() - this.#lastScan < maxAgeMs) return;
+    this.#lastScan = Date.now();
+    const before = JSON.stringify(this.list());
+    this.#finder.rescan();
+    for (const agent of this.#catalog.values()) {
+      const was = this.#found.get(agent.id);
+      const now = this.#look(agent);
+      this.#found.set(agent.id, now);
+      if (was?.named === now.named) continue;
+      this.#presets.set(agent.id, presetOf(agent, now.named));
+      this.#applySettings(agent.id);
+    }
+    for (const agent of this.#custom.values()) this.#found.set(agent.id, this.#lookCustom(agent));
+    if (JSON.stringify(this.list()) !== before) this.#options.onAgentsChanged?.();
+  }
+
+  /** `rescanAgents` with the PATH of a login shell read again (slow: the shell's profile runs). */
+  async refreshAgents(): Promise<void> {
+    if (this.#catalog.size + this.#custom.size > 0) await this.#finder.refresh();
+    this.rescanAgents();
+  }
+
+  /** Whether the agent can be started here (ids not registered: no). */
+  isInstalled(agentId: string): boolean {
+    if (!this.#runtimes.has(agentId)) return false;
+    return this.#found.get(agentId)?.installed ?? true;
+  }
+
+  /** Start installing an agent of the catalog with one of its methods; `agents()` reports how it goes. */
+  installAgent(agentId: string, methodId: string): AgentInfo {
+    const runtime = this.runtime(agentId);
+    const agent = this.#catalog.get(agentId);
+    const method = agent === undefined ? undefined : installMethods(agent, devicePlatform()).find((m) => m.id === methodId);
+    if (method === undefined) {
+      throw new InvalidArgumentError(`${runtime.name} cannot be installed this way on this device`, { details: { reason: "unknown_install_method", agent: agentId } });
+    }
+    if (method.needs !== undefined && this.#finder.find([method.needs]) === undefined) {
+      throw new MeshCallError("failed_precondition", `this needs ${method.needs}, which is not installed on this device`, {
+        details: { reason: "install_needs_program", agent: agentId, program: method.needs },
+      });
+    }
+    this.#installer.start(agentId, method.id, method.command);
+    return this.#info(runtime);
+  }
+
+  async cancelInstall(agentId: string): Promise<AgentInfo> {
+    const runtime = this.runtime(agentId);
+    await this.#installer.cancel(agentId);
+    return this.#info(runtime);
+  }
+
+  /**
+   * Sign in to an agent with one of the ways `agent_auth_required` lists (ACP `authenticate`). Resolves once signed in,
+   * which may take until someone did it in the device's browser; asking again joins.
+   */
+  async signIn(agentId: string, methodId: string): Promise<void> {
+    const runtime = this.runtime(agentId);
+    this.assertEnabled(agentId);
+    if (runtime.signIn === undefined) throw new InvalidArgumentError(`${runtime.name} cannot be signed in to here`, { details: { reason: "unknown_sign_in_method", agent: agentId } });
+    await runtime.signIn(methodId);
+  }
+
+  cancelSignIn(agentId: string): void {
+    this.runtime(agentId).cancelSignIn?.();
+  }
+
+  /** What to run in a terminal to sign in to an agent this way. */
+  signInCommand(agentId: string, methodId: string): SignInCommand {
+    const runtime = this.runtime(agentId);
+    this.assertEnabled(agentId);
+    if (runtime.signInCommand === undefined) throw new InvalidArgumentError(`${runtime.name} cannot be signed in to here`, { details: { reason: "unknown_sign_in_method", agent: agentId } });
+    return runtime.signInCommand(methodId);
+  }
+
+  #saveSignIn(agentId: string, methodId: string | undefined): Promise<void> {
+    return this.#inTurn(async () => {
+      const { sign_in: _before, ...others } = this.#overrides.get(agentId) ?? {};
+      const override: AgentOverride = methodId === undefined ? others : { ...others, sign_in: methodId };
+      const next = new Map(this.#overrides);
+      if (Object.keys(override).length > 0) next.set(agentId, override);
+      else next.delete(agentId);
+      await this.#options.onAgentSettingsChange?.(Object.fromEntries(next));
+      this.#overrides = next;
+    }).catch((error: unknown) => this.#options.logger?.warn(`could not save how ${agentId} was signed in to: ${errorMessage(error)}`));
+  }
+
+  #programSignIn(agentId: string): { command: string; args: string[] } | undefined {
+    const login = this.#catalog.get(agentId)?.login;
+    const program = this.#found.get(agentId)?.program;
+    return login === undefined || program === undefined ? undefined : { command: program, args: [...login] };
+  }
+
+  /** The agents that can be used here (`status.runtimes`): every registered one that is installed and not turned off. */
   list(): { id: string; name: string }[] {
-    return [...this.#runtimes.values()].filter((r) => !this.isDisabled(r.id)).map((r) => ({ id: r.id, name: r.name }));
+    return [...this.#runtimes.values()].filter((r) => !this.isDisabled(r.id) && this.isInstalled(r.id)).map((r) => ({ id: r.id, name: r.name }));
   }
 
   /** Registered here, turned off or not. */
@@ -1596,14 +1828,24 @@ export class AcpRuntimeHost {
     return this.#runtimes.has(agentId) && this.#overrides.get(agentId)?.enabled === false;
   }
 
-  /** Throws `failed_precondition` / `agent_disabled` when the agent is turned off: it starts no process, takes no turn. */
+  /**
+   * Throws `failed_precondition` when the agent cannot be used here: `agent_disabled` (turned off) or
+   * `agent_not_installed`; `invalid_argument` / `unknown_agent` when it is not there any more. It starts no process and
+   * takes no turn then.
+   */
   assertEnabled(agentId: string): void {
-    if (!this.isDisabled(agentId)) return;
-    const name = this.#runtimes.get(agentId)?.name ?? agentId;
-    throw new MeshCallError("failed_precondition", `${name} is turned off on this device`, { details: { reason: "agent_disabled", agent: agentId } });
+    const { name } = this.runtime(agentId);
+    if (this.isDisabled(agentId)) {
+      throw new MeshCallError("failed_precondition", `${name} is turned off on this device`, { details: { reason: "agent_disabled", agent: agentId } });
+    }
+    if (!this.isInstalled(agentId)) {
+      const missing = this.#found.get(agentId)?.missing;
+      const why = missing === undefined ? "is not installed on this device" : `needs ${missing}, which is not installed on this device`;
+      throw new MeshCallError("failed_precondition", `${name} ${why}`, { details: { reason: "agent_not_installed", agent: agentId } });
+    }
   }
 
-  /** Every registered agent, turned off ones included, in the order of `list()`. */
+  /** Every registered agent, turned off and not installed ones included, in the order of `list()`. */
   agents(): AgentInfo[] {
     return [...this.#runtimes.values()].map((runtime) => this.#info(runtime));
   }
@@ -1614,21 +1856,37 @@ export class AcpRuntimeHost {
   }
 
   /**
-   * Turn an agent on or off, or change its command, args or extra environment variables (see `AgentUpdate`); its name
-   * stays the preset's. Saved through `onAgentSettingsChange` before anything changes, then applied to agent processes
-   * started from now on: running ones keep their settings until stopped, and prepared agents whose command, args or
-   * environment changed (or that were turned off) are closed so the next `prepare` starts them anew.
+   * Turn an agent on or off (on: only an installed one), say where its program is, or change its command, args or extra
+   * environment variables (see `AgentUpdate`); its name stays the preset's, unless the user added it. Saved through
+   * `onAgentSettingsChange` (`onCustomAgentsChange`) before anything changes, then applied: idle conversations move to a
+   * process with the new settings, busy ones once what they do has ended (`AgentRuntime.configure`), and prepared ones
+   * (also when the agent was turned off) are closed so the next `prepare` opens them anew.
    */
   updateAgent(agentId: string, update: AgentUpdate): Promise<AgentInfo> {
     const run = async (): Promise<AgentInfo> => {
       const runtime = this.runtime(agentId);
       const parsed = AgentUpdateSchema.safeParse(update);
       if (!parsed.success) throw invalidAgentSettings(parsed.error);
-      const preset = this.#presets.get(agentId);
       const before = this.#overrides.get(agentId) ?? {};
-      const after = applyAgentUpdate(preset ?? bareSettings(runtime), before, parsed.data);
+      const agent = this.#catalog.get(agentId);
+      const program = this.#checkProgram(runtime, agent, parsed.data.program ?? undefined);
+      const gateway = this.#checkGateway(runtime, agent, before.gateway, parsed.data.gateway ?? undefined);
+      // One the user added is changed itself: there is nothing it could differ from.
+      const addedBefore = this.#custom.get(agentId);
+      const added = addedBefore === undefined ? undefined : this.#changeCustom(addedBefore, parsed.data);
+      // A program of its own changes what the agent starts with before anything else does.
+      const preset: AcpRuntimePreset | undefined = added ?? (agent !== undefined && program !== undefined ? presetOf(agent, program || undefined) : this.#presets.get(agentId));
+      const after = applyAgentUpdate(preset ?? bareSettings(runtime), before, {
+        ...parsed.data,
+        ...(program !== undefined ? { program } : {}),
+        ...(added !== undefined ? { command: null, args: null, env: null } : {}),
+      });
+      if (gateway !== undefined) after.gateway = gateway;
+      else if (parsed.data.gateway != null) delete after.gateway;
       const checked = AgentOverrideSchema.safeParse(after);
       if (!checked.success) throw invalidAgentSettings(checked.error);
+      // On only when installed; naming its program in the same change counts.
+      if (parsed.data.enabled === true && !program) this.#assertInstalled(agentId);
       if (preset === undefined && hasLaunchSettings(after)) {
         throw new MeshCallError("failed_precondition", `${runtime.name} has no settings to change, only its switch`, {
           details: { reason: "agent_not_configurable", agent: agentId },
@@ -1657,33 +1915,188 @@ export class AcpRuntimeHost {
       const next = new Map(this.#overrides);
       if (Object.keys(after).length > 0) next.set(agentId, after);
       else next.delete(agentId);
+      const launchBefore = preset !== undefined ? this.#launchOf(agentId) : undefined;
+      if (added !== undefined && JSON.stringify(added) !== JSON.stringify(addedBefore)) {
+        await this.#options.onCustomAgentsChange?.([...this.#custom.values()].map((each) => (each.id === agentId ? added : each)));
+        this.#custom.set(agentId, added);
+      }
       await this.#options.onAgentSettingsChange?.(Object.fromEntries(next));
       this.#overrides = next;
 
       let relaunch = false;
-      if (preset !== undefined) {
-        const now = effectivePreset(preset, after);
-        relaunch = !sameLaunch(effectivePreset(preset, before), now);
-        runtime.configure?.(now);
+      if (preset !== undefined && launchBefore !== undefined) {
+        if (agent !== undefined) this.#found.set(agentId, this.#look(agent));
+        if (added !== undefined) this.#found.set(agentId, this.#lookCustom(added));
+        this.#presets.set(agentId, copyPreset(preset));
+        relaunch = !sameLaunch(launchBefore, this.#launchOf(agentId));
       }
-      runtime.configureApprovals?.(approvalsAfter);
-      runtime.configureIdle?.(idleMs(after));
-      // A prepared agent runs the old command, args or environment (or approvals), or one that is off now: the next
-      // `prepare` starts anew.
+      this.#applySettings(agentId);
+      // A prepared session has the old command, args or environment (or approvals), or its agent is off now: the next
+      // `prepare` opens a new one.
       const turnedOff = before.enabled !== false && after.enabled === false;
       if (relaunch || turnedOff || approvalsAfter !== approvalsBefore) await this.#dropPreparedOf(agentId);
+      if (JSON.stringify(before.gateway) !== JSON.stringify(after.gateway)) await this.#forgetModel(agentId);
       return this.#info(runtime);
     };
+    return this.#inTurn(run);
+  }
+
+  /** Changes to agents run one at a time, so none is lost. */
+  #inTurn<T>(run: () => Promise<T>): Promise<T> {
     const result = this.#agentUpdates.then(run, run);
     this.#agentUpdates = result.catch(() => undefined);
     return result;
   }
 
+  // ── Agents the user added (`add_agent`, `remove_agent`) ──
+
+  /** Add an agent: a command that speaks ACP and is there. Saved through `onCustomAgentsChange` first. */
+  addAgent(input: NewAgent): Promise<AgentInfo> {
+    return this.#inTurn(async () => {
+      const parsed = NewAgentSchema.safeParse(input);
+      if (!parsed.success) throw invalidAgentSettings(parsed.error);
+      const { name, command, args, env } = parsed.data;
+      if (this.#custom.size >= MAX_CUSTOM_AGENTS) {
+        throw new MeshCallError("resource_exhausted", `at most ${MAX_CUSTOM_AGENTS} agents can be added`, { details: { reason: "too_many_agents" } });
+      }
+      this.#assertNameFree(name);
+      this.#assertCommand(command);
+      const agent: CustomAgent = {
+        id: this.#newCustomId(name),
+        name,
+        command,
+        args: [...(args ?? [])],
+        ...(env != null && Object.keys(env).length > 0 ? { env: { ...env } } : {}),
+      };
+      await this.#options.onCustomAgentsChange?.([...this.#custom.values(), agent]);
+      this.#registerCustom(agent);
+      return this.#info(this.runtime(agent.id));
+    });
+  }
+
   /**
-   * Stop every process of `agentId`: its sessions' agents, prepared ones and ones still starting. Sessions stay and
-   * start the agent again on their next message, with the settings of that moment, reopening their earlier ACP
-   * sessions where the agent can. Resolves with how many processes were stopped. Turns still running are not waited
-   * for (`SessionsService.stopAgent` cancels them first).
+   * Forget an agent the user added, its settings included, and stop its processes (see `stopAgent`). Its conversations
+   * stay, but cannot be continued.
+   */
+  removeAgent(agentId: string): Promise<void> {
+    return this.#inTurn(async () => {
+      const runtime = this.runtime(agentId);
+      this.assertCustom(agentId);
+      await this.#options.onCustomAgentsChange?.([...this.#custom.values()].filter((agent) => agent.id !== agentId));
+      this.#custom.delete(agentId);
+      this.#runtimes.delete(agentId);
+      this.#presets.delete(agentId);
+      this.#found.delete(agentId);
+      if (this.#overrides.has(agentId)) {
+        this.#overrides = new Map([...this.#overrides].filter(([id]) => id !== agentId));
+        await this.#options.onAgentSettingsChange?.(Object.fromEntries(this.#overrides));
+      }
+      if (this.#lastSessionConfig.delete(agentId)) await this.#saveLastSessionConfig(agentId);
+      await Promise.all([this.#dropPreparedOf(agentId), runtime.stop ? runtime.stop() : runtime.dispose()]);
+    });
+  }
+
+  /** `failed_precondition` / `agent_not_custom` for an agent the user did not add. */
+  assertCustom(agentId: string): void {
+    const runtime = this.runtime(agentId);
+    if (this.#custom.has(agentId)) return;
+    throw new MeshCallError("failed_precondition", `${runtime.name} was not added by you: it can be turned off instead`, {
+      details: { reason: "agent_not_custom", agent: agentId },
+    });
+  }
+
+  /** `agent` with `update` applied. */
+  #changeCustom(agent: CustomAgent, update: AgentUpdate): CustomAgent {
+    const name = update.name ?? agent.name;
+    const command = update.command ?? agent.command;
+    if (name.toLowerCase() !== agent.name.toLowerCase()) this.#assertNameFree(name);
+    if (command !== agent.command) this.#assertCommand(command);
+    const env: Record<string, string> = { ...(agent.env ?? {}) };
+    for (const [key, value] of Object.entries(update.env ?? {})) {
+      if (value === null) delete env[key];
+      else env[key] = value;
+    }
+    const next: CustomAgent = { id: agent.id, name, command, args: [...(update.args ?? agent.args)], ...(Object.keys(env).length > 0 ? { env } : {}) };
+    const checked = CustomAgentsSchema.safeParse([next]);
+    if (!checked.success) throw invalidAgentSettings(checked.error);
+    return next;
+  }
+
+  #assertNameFree(name: string): void {
+    const taken = [...this.#runtimes.values()].find((runtime) => runtime.name.toLowerCase() === name.toLowerCase());
+    if (taken === undefined) return;
+    throw new InvalidArgumentError(`there is already an agent called ${taken.name}`, { details: { reason: "agent_name_taken", agent: taken.id } });
+  }
+
+  #assertCommand(command: string): void {
+    if (this.#finder.resolve(command) !== undefined) return;
+    throw new InvalidArgumentError(`${command} was not found on this device`, { details: { reason: "command_not_found", command } });
+  }
+
+  #newCustomId(name: string): string {
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/gu, "-").replace(/^-+|-+$/gu, "").slice(0, 40).replace(/-+$/u, "") || "agent";
+    for (let n = 1; ; n++) {
+      const id = `${CUSTOM_AGENT_ID_PREFIX}${slug}${n === 1 ? "" : `-${n}`}`;
+      if (!this.#runtimes.has(id)) return id;
+    }
+  }
+
+  /** A program the user named (`""`: none any more), checked; `undefined`: not part of the change. */
+  #checkProgram(runtime: AgentRuntime, agent: CatalogAgent | undefined, program: string | undefined): string | undefined {
+    if (program === undefined) return undefined;
+    if (agent === undefined) {
+      throw new MeshCallError("failed_precondition", `${runtime.name} has no program to look for`, { details: { reason: "agent_not_configurable", agent: runtime.id } });
+    }
+    if (program === "") return "";
+    const file = this.#finder.userPath(program);
+    if (!path.isAbsolute(file)) {
+      throw new InvalidArgumentError("the path must be absolute", { details: { reason: "program_path_relative", agent: runtime.id } });
+    }
+    const found = this.#finder.resolve(file);
+    if (found === undefined) {
+      throw new InvalidArgumentError(`there is no program at ${file}`, { details: { reason: "program_not_found", agent: runtime.id } });
+    }
+    return found;
+  }
+
+  /** The gateway after `change` (`undefined`: none, or not part of the change), checked. */
+  #checkGateway(
+    runtime: AgentRuntime,
+    agent: CatalogAgent | undefined,
+    current: ModelGateway | undefined,
+    change: NonNullable<AgentUpdate["gateway"]> | undefined,
+  ): ModelGateway | undefined {
+    if (change === undefined) return undefined;
+    const details = (reason: string) => ({ details: { reason, agent: runtime.id } });
+    if (agent?.gateway === undefined) {
+      throw new MeshCallError("failed_precondition", `${runtime.name} cannot be pointed at a model gateway`, details("gateway_unsupported"));
+    }
+    const baseUrl = change.base_url ?? current?.base_url ?? "";
+    if (baseUrl === "") return undefined;
+    // A key is never sent to a host it was not entered for.
+    const keyStays = current !== undefined && new URL(current.base_url).origin === new URL(baseUrl).origin;
+    const apiKey = change.api_key ?? (keyStays ? current.api_key : "");
+    if (apiKey === "") throw new InvalidArgumentError("the gateway needs an API key", details("gateway_key_required"));
+    const model = change.model ?? current?.model ?? "";
+    if (model === "" && agent.gateway.modelRequired) {
+      throw new InvalidArgumentError(`${runtime.name} needs to know the gateway's model`, details("gateway_model_required"));
+    }
+    return { base_url: baseUrl, api_key: apiKey, ...(model !== "" ? { model } : {}) };
+  }
+
+  #assertInstalled(agentId: string): void {
+    const agent = this.#catalog.get(agentId);
+    if (agent !== undefined) this.#found.set(agentId, this.#look(agent));
+    if (this.isInstalled(agentId)) return;
+    const name = this.#runtimes.get(agentId)?.name ?? agentId;
+    throw new MeshCallError("failed_precondition", `${name} is not installed on this device`, { details: { reason: "agent_not_installed", agent: agentId } });
+  }
+
+  /**
+   * Stop every process of `agentId`, ones still starting included. Conversations stay and start the agent again on
+   * their next message, with the settings of that moment, reopening their earlier ACP sessions where the agent can.
+   * Resolves with how many processes were stopped. Turns still running are not waited for (`SessionsService.stopAgent`
+   * cancels them first).
    */
   async stopAgent(agentId: string): Promise<number> {
     const runtime = this.runtime(agentId);
@@ -1697,18 +2110,52 @@ export class AcpRuntimeHost {
     const preset = this.#presets.get(runtime.id);
     const override = this.#overrides.get(runtime.id) ?? {};
     const effective = effectivePreset(preset ?? bareSettings(runtime), override);
+    const agent = this.#catalog.get(runtime.id);
+    const found = this.#found.get(runtime.id);
+    const job = this.#installer.job(runtime.id);
     return {
       id: runtime.id,
       name: runtime.name,
       builtin: this.#builtin.has(runtime.id),
+      ...(this.#custom.has(runtime.id) ? { custom: true as const } : {}),
       enabled: override.enabled !== false,
       command: effective.command,
       args: effective.args,
       envKeys: Object.keys(effective.env ?? {}),
       customized: preset !== undefined && !sameLaunch(effective, preset),
       running: this.#processCount(runtime),
+      sessions: runtime.sessionCount?.() ?? this.#processCount(runtime),
+      signIn: runtime.signInMethods ?? [],
       ...(preset?.approvals !== undefined ? { approvals: override.approvals === true } : {}),
+      ...(agent?.gateway !== undefined
+        ? {
+            gateway: {
+              api: agent.gateway.api,
+              modelRequired: agent.gateway.modelRequired,
+              ...(override.gateway !== undefined ? { baseUrl: override.gateway.base_url } : {}),
+              ...(override.gateway?.model !== undefined ? { model: override.gateway.model } : {}),
+            },
+          }
+        : {}),
       idleCloseMinutes: override.idle_close_minutes ?? idleMinutes(this.#options.idleTtlMs),
+      installed: this.isInstalled(runtime.id),
+      ...(found?.program !== undefined ? { program: found.program } : {}),
+      ...(found?.named !== undefined ? { programSet: true } : {}),
+      ...(found?.missing !== undefined ? { missing: found.missing } : {}),
+      ...(agent !== undefined
+        ? {
+            website: agent.website,
+            install: {
+              methods: installMethods(agent, devicePlatform()).map(({ id, command, needs }) => ({
+                id,
+                command,
+                available: needs === undefined || this.#finder.find([needs]) !== undefined,
+                ...(needs !== undefined ? { needs } : {}),
+              })),
+              ...(job !== undefined ? { job } : {}),
+            },
+          }
+        : {}),
     };
   }
 
@@ -1763,19 +2210,24 @@ export class AcpRuntimeHost {
     this.assertEnabled(session.agent);
     const prepared = options.preparedId ? this.#takePrepared(options.preparedId, session.agent, session.cwd) : undefined;
     const wanted = new Map(session.config.map((option) => [option.id, option.current]));
-    await runtime.startSession({ sessionId, cwd: session.cwd, ...(prepared ? { prepared } : {}) });
-    // Chosen while it was not running (`setConfig` keeps them until it runs): the latest choice.
-    for (const [configId, value] of this.#pendingConfig.get(sessionId) ?? []) wanted.set(configId, value);
-    this.#pendingConfig.delete(sessionId);
-    for (const [configId, value] of wanted) {
-      // Read again each time: one setting (the model) can change the others' choices.
-      const option = this.store.get(sessionId)?.config.find((o) => o.id === configId);
-      if (option === undefined || option.current === value || !option.options.some((o) => o.value === value)) continue;
-      try {
-        await runtime.setConfig(sessionId, configId, value);
-      } catch {
-        // Refused: the agent's value stays (and is what the conversation shows).
+    // Held until its settings are back: a close in between would lose them.
+    const started = await runtime.startSession({ sessionId, cwd: session.cwd, hold: true, ...(prepared ? { prepared } : {}) });
+    try {
+      // Chosen while it was not running (`setConfig` keeps them until it runs): the latest choice.
+      for (const [configId, value] of this.#pendingConfig.get(sessionId) ?? []) wanted.set(configId, value);
+      this.#pendingConfig.delete(sessionId);
+      for (const [configId, value] of wanted) {
+        // Read again each time: one setting (the model) can change the others' choices.
+        const option = this.store.get(sessionId)?.config.find((o) => o.id === configId);
+        if (option === undefined || option.current === value || !option.options.some((o) => o.value === value)) continue;
+        try {
+          await runtime.setConfig(sessionId, configId, value);
+        } catch {
+          // Refused: the agent's value stays (and is what the conversation shows).
+        }
       }
+    } finally {
+      started.release?.();
     }
   }
 
@@ -1823,10 +2275,22 @@ export class AcpRuntimeHost {
     const session = this.store.get(sessionId);
     if (session === undefined || session.config.length === 0) return;
     this.#lastSessionConfig.set(session.agent, Object.fromEntries(session.config.map((option) => [option.id, option.current])));
+    await this.#saveLastSessionConfig(session.agent);
+  }
+
+  /** The next conversation starts with the agent's own choice of model again (another gateway has other models). */
+  async #forgetModel(agentId: string): Promise<void> {
+    const config = this.#lastSessionConfig.get(agentId);
+    if (config === undefined || !Object.keys(config).some(isModelSetting)) return;
+    this.#lastSessionConfig.set(agentId, Object.fromEntries(Object.entries(config).filter(([id]) => !isModelSetting(id))));
+    await this.#saveLastSessionConfig(agentId);
+  }
+
+  async #saveLastSessionConfig(agentId: string): Promise<void> {
     try {
       await this.#options.onLastSessionConfigChange?.(Object.fromEntries(this.#lastSessionConfig));
     } catch (error) {
-      this.#options.logger?.warn(`could not save the settings of the newest ${session.agent} conversation: ${String(error)}`);
+      this.#options.logger?.warn(`could not save the settings of the newest ${agentId} conversation: ${String(error)}`);
     }
   }
 
@@ -1945,8 +2409,12 @@ export class AcpRuntimeHost {
   async prompt(sessionId: string, turnId: string, prompt: AcpContentBlock[]): Promise<TurnResult> {
     const agent = this.store.get(sessionId)?.agent;
     if (agent !== undefined) this.assertEnabled(agent); // a turned-off agent takes no new turn, running or not
-    await this.ensureSession(sessionId);
-    return this.runtimeFor(sessionId).sendPrompt(sessionId, { turnId, prompt });
+    for (let attempt = 1; ; attempt++) {
+      await this.ensureSession(sessionId);
+      const runtime = this.runtimeFor(sessionId);
+      // Closed in that moment (its settings changed, an idle close): opened once more.
+      if (runtime.hasSession(sessionId) || attempt === 3) return runtime.sendPrompt(sessionId, { turnId, prompt });
+    }
   }
 
   async cancel(sessionId: string): Promise<void> {
@@ -1981,23 +2449,36 @@ export class AcpRuntimeHost {
     await this.#runtimes.get(session.agent)?.closeSession(sessionId);
   }
 
-  /** Close every session's agent and every prepared agent (the Connector stops). Later calls start them again. */
+  /** Close every session's agent and every prepared agent, and stop installs (the Connector stops). Later calls start agents again. */
   async dispose(): Promise<void> {
     const prepared = [...this.#prepared.values()];
-    await Promise.all([...prepared.map((entry) => this.#dropPrepared(entry)), ...[...this.#runtimes.values()].map((r) => r.dispose())]);
+    await Promise.all([this.#installer.stop(), ...prepared.map((entry) => this.#dropPrepared(entry)), ...[...this.#runtimes.values()].map((r) => r.dispose())]);
   }
+}
+
+/** What was found of a catalog agent. */
+interface FoundAgent {
+  /** Its own program. */
+  program: string | undefined;
+  /** The same, when it is the one the user named. */
+  named: string | undefined;
+  /** What starts it is not there. */
+  missing: string | undefined;
+  installed: boolean;
 }
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** An agent's error with the reason it gives beside the message (Codex: "Internal error", `data.details` says why). */
-function agentErrorText(error: unknown): string {
-  const message = errorMessage(error);
-  const data = error instanceof AcpRequestError ? error.data : undefined;
-  const details = typeof data === "object" && data !== null ? (data as { details?: unknown }).details : undefined;
-  return (typeof details === "string" && details.length > 0 && !message.includes(details) ? `${message} (${details})` : message).slice(0, 500);
+function isAuthRequired(error: unknown): boolean {
+  return error instanceof AcpRequestError && error.code === JsonRpcErrorCode.AUTH_REQUIRED;
+}
+
+/** Why a process that has exited cannot be used, with what it said last. */
+function exitedError(conn: AcpConnection): UnavailableError {
+  const said = conn.stderrTail.trim().slice(-500);
+  return new UnavailableError(`the agent exited${said ? `: ${said}` : ""}`);
 }
 
 /** `15 min`, `30 s`, `400 ms`. */
@@ -2009,7 +2490,7 @@ function formatDuration(ms: number): string {
 
 // ── Agent settings ──────────────────────────────────────────────────────────────────────────────────────────────
 
-function copyPreset(preset: AcpRuntimePreset): AcpRuntimePreset {
+function copyPreset(preset: AgentLaunch): AgentLaunch {
   return {
     id: preset.id,
     name: preset.name,
@@ -2017,6 +2498,8 @@ function copyPreset(preset: AcpRuntimePreset): AcpRuntimePreset {
     args: [...(preset.args ?? [])],
     ...(preset.env ? { env: { ...preset.env } } : {}),
     ...(preset.approvals ? { approvals: preset.approvals } : {}),
+    ...(preset.own_process ? { own_process: true } : {}),
+    ...(preset.gateway ? { gateway: structuredClone(preset.gateway) } : {}),
   };
 }
 
@@ -2035,6 +2518,7 @@ function effectivePreset(preset: AcpRuntimePreset, override: AgentOverride | und
     args: [...(override?.args ?? preset.args ?? [])],
     ...(env !== undefined && Object.keys(env).length > 0 ? { env: { ...env } } : {}),
     ...(preset.approvals ? { approvals: preset.approvals } : {}),
+    ...(preset.own_process ? { own_process: true } : {}),
   };
 }
 
@@ -2049,11 +2533,14 @@ function applyAgentUpdate(preset: AcpRuntimePreset, current: AgentOverride, upda
         ...(current.enabled === false ? { enabled: false } : {}),
         ...(current.approvals === true ? { approvals: true } : {}),
         ...(current.idle_close_minutes !== undefined ? { idle_close_minutes: current.idle_close_minutes } : {}),
+        ...(current.program !== undefined ? { program: current.program } : {}),
+        ...(current.gateway !== undefined ? { gateway: current.gateway } : {}),
       }
     : { ...current };
   if (update.enabled != null) next.enabled = update.enabled;
   if (update.approvals != null) next.approvals = update.approvals;
   if (update.idle_close_minutes != null) next.idle_close_minutes = update.idle_close_minutes;
+  if (update.program != null) next.program = update.program;
   if (update.command != null) next.command = update.command;
   if (update.args != null) next.args = [...update.args];
   if (update.env != null) {
@@ -2069,6 +2556,8 @@ function applyAgentUpdate(preset: AcpRuntimePreset, current: AgentOverride, upda
   if (next.enabled === false) kept.enabled = false;
   if (next.approvals === true) kept.approvals = true;
   if (next.idle_close_minutes !== undefined && next.idle_close_minutes > 0) kept.idle_close_minutes = next.idle_close_minutes;
+  if (next.program !== undefined && next.program.length > 0) kept.program = next.program;
+  if (next.gateway !== undefined) kept.gateway = { ...next.gateway };
   if (next.command !== undefined && next.command !== preset.command) kept.command = next.command;
   if (next.args !== undefined && !sameArgs(next.args, preset.args ?? [])) kept.args = next.args;
   if (next.env !== undefined && !sameEnv(next.env, preset.env ?? {})) kept.env = next.env;
@@ -2085,13 +2574,23 @@ function idleMinutes(ttlMs: number | null | undefined): number {
   return ttlMs !== undefined && ttlMs !== null && ttlMs > 0 ? Math.max(1, Math.round(ttlMs / 60_000)) : 0;
 }
 
+/** The id of a setting that picks the model. */
+function isModelSetting(configId: string): boolean {
+  return /model/iu.test(configId);
+}
+
 function hasLaunchSettings(override: AgentOverride): boolean {
   return override.command !== undefined || override.args !== undefined || override.env !== undefined;
 }
 
-/** Same command, args and environment: a process started with either is the same. */
-function sameLaunch(a: AcpRuntimePreset, b: AcpRuntimePreset): boolean {
-  return a.command === b.command && sameArgs(a.args ?? [], b.args ?? []) && sameEnv(a.env ?? {}, b.env ?? {});
+/** Same command, args, environment and gateway: a process started with either is the same. */
+function sameLaunch(a: AgentLaunch, b: AgentLaunch): boolean {
+  return (
+    a.command === b.command &&
+    sameArgs(a.args ?? [], b.args ?? []) &&
+    sameEnv(a.env ?? {}, b.env ?? {}) &&
+    JSON.stringify(a.gateway ?? null) === JSON.stringify(b.gateway ?? null)
+  );
 }
 
 function sameArgs(a: readonly string[], b: readonly string[]): boolean {

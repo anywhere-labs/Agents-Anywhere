@@ -3,10 +3,11 @@
 // approvals on in Pi's agent settings and removed when they turn it off (`runtime/pi-approvals.ts`).
 //
 // The extension does nothing in a Pi that AA did not start (the user's own terminal, another app). AA starts Pi with
-// `AA_APPROVALS_FILE`: a small JSON file holding the conversation's mode (`{"mode":"ask"}`), which the extension reads
-// before every tool call, so the mode can change while Pi runs. A call that needs approval is confirmed through Pi's
-// extension UI, which pi-acp turns into an ACP permission request about a tool call it makes up; `piApprovalRequest`
-// points it back at the call it is about, so AA asks about that one, with all of it on the card.
+// `AA_APPROVALS_FILE`: a small JSON file with the mode of each session of that process
+// (`{"default":"ask","modes":{"<session id>":"full_access"}}`; Pi's session id is its ACP session id, too), which the
+// extension reads before every tool call, so a mode can change while Pi runs. A call that needs approval is confirmed
+// through Pi's extension UI, which pi-acp turns into an ACP permission request about a tool call it makes up;
+// `piApprovalRequest` points it back at the call it is about, so AA asks about that one, with all of it on the card.
 //
 // The mode is a conversation setting like the model (`aa_approvals`, in the composer's permission chip): the Connector
 // adds it to the agent's own settings and keeps it itself; Pi never sees it as one.
@@ -126,10 +127,11 @@ import { readFileSync } from "node:fs";
 
 const needsApproval = ${piToolNeedsApproval.toString()};
 
-/** The conversation's mode; unreadable (it should not be while Agents Anywhere runs this Pi): ask. */
-function modeOf(file) {
+/** The session's mode; unreadable (it should not be while Agents Anywhere runs this Pi): ask. */
+function modeOf(file, sessionId) {
   try {
-    const mode = JSON.parse(readFileSync(file, "utf8")).mode;
+    const state = JSON.parse(readFileSync(file, "utf8"));
+    const mode = Object.hasOwn(state.modes, sessionId) ? state.modes[sessionId] : state.default;
     return typeof mode === "string" ? mode : "ask";
   } catch {
     return "ask";
@@ -152,7 +154,7 @@ export default function agentsAnywhereApprovals(pi) {
   const file = process.env.${PI_APPROVALS_ENV};
   if (!file) return;
   pi.on("tool_call", async (event, ctx) => {
-    if (!needsApproval(modeOf(file), event.toolName)) return undefined;
+    if (!needsApproval(modeOf(file, String(ctx.sessionManager?.getSessionId?.())), event.toolName)) return undefined;
     if (!ctx.hasUI) return { block: true, reason: "Agents Anywhere could not ask for approval." };
     // Read back by Agents Anywhere, which shows the call itself (by its id) rather than this dialog.
     const call = { id: event.toolCallId, tool: event.toolName, input: event.input ?? {} };

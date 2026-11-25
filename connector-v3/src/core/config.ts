@@ -113,6 +113,7 @@ export const AcpRuntimePresetSchema = z.object({
   args: z.array(z.string()).default([]),
   env: z.record(z.string(), z.string()).optional(),
   approvals: z.literal("pi").optional(),
+  own_process: z.boolean().optional(),
 });
 
 export interface AcpRuntimePreset {
@@ -126,6 +127,11 @@ export interface AcpRuntimePreset {
    * once the agent's `approvals` setting is turned on.
    */
   approvals?: "pi";
+  /**
+   * Every conversation gets a process of its own. Only for an agent that cannot run several ACP sessions in one
+   * process: the others share one process per agent.
+   */
+  own_process?: boolean;
 }
 
 // ── Per-agent settings (`aa.v3.Device/update_agent`) ────────────────────────────────────────────────────────────
@@ -142,16 +148,50 @@ const NO_NUL = "must not contain NUL characters";
 
 export const AgentIdSchema = z.string().min(1).max(64);
 export const AgentCommandSchema = z.string().trim().min(1).max(4096).refine(noNul, NO_NUL);
+/** Where an agent's program is on the device. */
+export const AgentProgramSchema = z.string().trim().max(4096).refine(noNul, NO_NUL);
 export const AgentArgsSchema = z.array(z.string().max(4096).refine(noNul, NO_NUL)).max(256);
 export const AgentEnvNameSchema = z.string().max(256).regex(AGENT_ENV_NAME_PATTERN, "must match ^[A-Za-z_][A-Za-z0-9_]*$");
 export const AgentEnvValueSchema = z.string().max(32_768).refine(noNul, NO_NUL);
+/** An agent's extra environment variables. */
+export const AgentEnvSchema = z
+  .record(AgentEnvNameSchema, AgentEnvValueSchema)
+  .refine((env) => Object.keys(env).length <= MAX_AGENT_ENV_VARS, `at most ${MAX_AGENT_ENV_VARS} environment variables`);
+export const AgentNameSchema = z.string().trim().min(1).max(128).refine(noNul, NO_NUL);
+
+/** Where a model gateway is: `http(s)`, without a user, query or fragment. */
+export const GatewayUrlSchema = z.string().trim().max(2048).refine(isGatewayUrl, "must be an http(s) address without a user, query or fragment");
+export const GatewayKeySchema = z.string().trim().max(8192).refine(noNul, NO_NUL);
+export const GatewayModelSchema = z.string().trim().max(256).refine(noNul, NO_NUL);
+
+/** The model gateway of an agent (`core/agent-gateway.ts`). */
+export const ModelGatewaySchema = z.object({
+  base_url: GatewayUrlSchema,
+  api_key: GatewayKeySchema.min(1),
+  model: GatewayModelSchema.min(1).optional(),
+});
+export interface ModelGateway {
+  base_url: string;
+  api_key: string;
+  model?: string;
+}
+
+function isGatewayUrl(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  return (url.protocol === "http:" || url.protocol === "https:") && url.username === "" && url.password === "" && !/[?#]/u.test(value);
+}
 
 /**
- * What this device changed about one agent against its preset: turned off, or another command, args or set of extra
- * environment variables. The name is always the preset's (the agent's product name). `env`, when present, is the
- * agent's whole set of extra variables (it takes the place of the preset's). Kept only on the device (`agents.json`,
- * 0600): the values of `env` never leave it. Keys it does not know (a `name` saved by an earlier Connector) are
- * dropped when it is read.
+ * What this device changed about one agent against its preset: turned off, where its program is, a model gateway, or
+ * another command, args or set of extra environment variables. The name is always the preset's (the agent's product
+ * name). `env`, when present, is the agent's whole set of extra variables (it takes the place of the preset's). Kept
+ * only on the device (`agents.json`, 0600): the values of `env` and the gateway's key never leave it. Keys it does not
+ * know (a `name` saved by an earlier Connector) are dropped when it is read.
  */
 export const AgentOverrideSchema = z.object({
   enabled: z.boolean().optional(),
@@ -159,18 +199,24 @@ export const AgentOverrideSchema = z.object({
   approvals: z.boolean().optional(),
   /** Close a conversation's agent after this many minutes idle; never (the default) is not stored. */
   idle_close_minutes: z.number().int().min(1).max(MAX_IDLE_CLOSE_MINUTES).optional(),
+  /** The agent's program, where the user said it is (agents of the catalog); searched for otherwise. */
+  program: AgentProgramSchema.min(1).optional(),
+  /** Its model requests go to this gateway (agents of the catalog that can be pointed at one). */
+  gateway: ModelGatewaySchema.optional(),
+  /** How the user signed in to it last (ACP `authenticate`): a process that asks for it is signed in to this way. */
+  sign_in: z.string().min(1).max(256).optional(),
   command: AgentCommandSchema.optional(),
   args: AgentArgsSchema.optional(),
-  env: z
-    .record(AgentEnvNameSchema, AgentEnvValueSchema)
-    .refine((env) => Object.keys(env).length <= MAX_AGENT_ENV_VARS, `at most ${MAX_AGENT_ENV_VARS} environment variables`)
-    .optional(),
+  env: AgentEnvSchema.optional(),
 });
 
 export interface AgentOverride {
   enabled?: boolean;
   approvals?: boolean;
   idle_close_minutes?: number;
+  program?: string;
+  gateway?: ModelGateway;
+  sign_in?: string;
   command?: string;
   args?: string[];
   env?: Record<string, string>;
@@ -183,10 +229,13 @@ export type AgentOverrides = Record<string, AgentOverride>;
 /**
  * A change to one agent (`update_agent` without its `id`). Absent or `null` fields stay as they are; in `env` a
  * string sets the variable and `null` removes it. `reset` first drops the changes to the command, args and
- * environment (back to the preset), then applies the other fields; it leaves `enabled`, `approvals` and
- * `idle_close_minutes` alone. Other fields are ignored, as in every request.
+ * environment (back to the preset), then applies the other fields; it leaves `enabled`, `approvals`,
+ * `idle_close_minutes`, `program` and `gateway` alone. An agent the user added (`add_agent`) has no preset: its
+ * `name`, `command`, `args` and `env` are changed themselves. Other fields are ignored, as in every request.
  */
 export const AgentUpdateSchema = z.object({
+  /** Only for an agent the user added: the others keep their product name. */
+  name: AgentNameSchema.nullish(),
   enabled: z.boolean().nullish(),
   /** Turn AA's approvals on or off (agents whose preset has `approvals`; `failed_precondition` for others). */
   approvals: z.boolean().nullish(),
@@ -195,6 +244,18 @@ export const AgentUpdateSchema = z.object({
    * context where the agent can); 0: never, the default.
    */
   idle_close_minutes: z.number().int().min(0).max(MAX_IDLE_CLOSE_MINUTES).nullish(),
+  /**
+   * Where the agent's program is, for one that is installed but not found (agents of the catalog; it must be there and
+   * runnable); an empty string goes back to searching for it.
+   */
+  program: AgentProgramSchema.nullish(),
+  /**
+   * The model gateway to use. Its absent fields stay as they are, except the key when the address moves to another
+   * host: it is never sent to one it was not entered for. An empty `base_url` removes the gateway.
+   */
+  gateway: z
+    .object({ base_url: z.union([z.literal(""), GatewayUrlSchema]).nullish(), api_key: GatewayKeySchema.nullish(), model: GatewayModelSchema.nullish() })
+    .nullish(),
   command: AgentCommandSchema.nullish(),
   args: AgentArgsSchema.nullish(),
   env: z
@@ -205,13 +266,56 @@ export const AgentUpdateSchema = z.object({
 });
 
 export interface AgentUpdate {
+  name?: string | null;
   enabled?: boolean | null;
   approvals?: boolean | null;
   idle_close_minutes?: number | null;
+  program?: string | null;
+  gateway?: { base_url?: string | null; api_key?: string | null; model?: string | null } | null;
   command?: string | null;
   args?: string[] | null;
   env?: Record<string, string | null> | null;
   reset?: boolean | null;
+}
+
+// ── Agents the user added (`aa.v3.Device/add_agent`) ────────────────────────────────────────────────────────────
+
+/** What their ids start with: no agent the Connector brings along has such an id. */
+export const CUSTOM_AGENT_ID_PREFIX = "custom-";
+export const MAX_CUSTOM_AGENTS = 64;
+
+/** A command of the user's that speaks ACP. Kept only on the device (`custom-agents.json`, 0600), like an override. */
+export const CustomAgentSchema = z.object({
+  id: AgentIdSchema.startsWith(CUSTOM_AGENT_ID_PREFIX),
+  name: AgentNameSchema,
+  command: AgentCommandSchema,
+  args: AgentArgsSchema,
+  env: AgentEnvSchema.optional(),
+});
+export interface CustomAgent {
+  id: string;
+  name: string;
+  command: string;
+  args: string[];
+  env?: Record<string, string>;
+}
+export const CustomAgentsSchema = z
+  .array(CustomAgentSchema)
+  .max(MAX_CUSTOM_AGENTS)
+  .refine((agents) => new Set(agents.map((agent) => agent.id)).size === agents.length, "every agent needs an id of its own");
+
+/** `add_agent`: the id is made from the name. */
+export const NewAgentSchema = z.object({
+  name: AgentNameSchema,
+  command: AgentCommandSchema,
+  args: AgentArgsSchema.nullish(),
+  env: AgentEnvSchema.nullish(),
+});
+export interface NewAgent {
+  name: string;
+  command: string;
+  args?: string[] | null;
+  env?: Record<string, string> | null;
 }
 
 // ── The settings of each agent's newest conversation (`last-session-config.json`) ───────────────────────────────
@@ -233,8 +337,11 @@ export type _ConfigSchemaChecks = [
   Assert<Same<z.infer<typeof PairedClientEntrySchema>, PairedClientEntry>>,
   Assert<Same<z.infer<typeof DeviceIdentitySchema>, DeviceIdentity>>,
   Assert<Same<z.infer<typeof AcpRuntimePresetSchema>, AcpRuntimePreset>>,
+  Assert<Same<z.infer<typeof ModelGatewaySchema>, ModelGateway>>,
   Assert<Same<z.infer<typeof AgentOverrideSchema>, AgentOverride>>,
   Assert<Same<z.infer<typeof AgentOverridesSchema>, AgentOverrides>>,
   Assert<Same<z.infer<typeof AgentUpdateSchema>, AgentUpdate>>,
+  Assert<Same<z.infer<typeof CustomAgentSchema>, CustomAgent>>,
+  Assert<Same<z.infer<typeof NewAgentSchema>, NewAgent>>,
   Assert<Same<z.infer<typeof LastSessionConfigSchema>, LastSessionConfig>>,
 ];

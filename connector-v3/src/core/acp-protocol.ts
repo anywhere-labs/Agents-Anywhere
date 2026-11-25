@@ -216,6 +216,8 @@ export interface AcpImplementationInfo {
 export interface AcpClientCapabilities {
   fs?: { readTextFile?: boolean; writeTextFile?: boolean };
   terminal?: boolean;
+  /** `terminal`: the agent may offer sign-ins to run in a terminal. */
+  auth?: { terminal?: boolean };
 }
 
 export interface AcpAgentCapabilities {
@@ -227,8 +229,46 @@ export interface AcpAgentCapabilities {
   sessionCapabilities?: {
     /** `session/resume`: reopen a session without replaying it. */
     resume?: Record<string, unknown> | null;
+    /** `session/close`: end a session's work and free what the agent holds for it; it can be reopened later. */
     close?: Record<string, unknown> | null;
   } | null;
+  /** `providers/list`, `providers/set`: the client may route the agent's model requests to another endpoint. */
+  providers?: Record<string, unknown> | null;
+}
+
+/** A model endpoint the agent uses (`providers/list`): what it can be pointed at, and what it is pointed at now. */
+export interface AcpProviderInfo {
+  providerId: string;
+  /** API types it can speak: `anthropic`, `openai`, `azure`, `vertex`, `bedrock`, or the agent's own (`_…`). */
+  supported: string[];
+  required?: boolean;
+  current?: { apiType: string; baseUrl: string } | null;
+}
+
+/** `providers/set`: replaces the endpoint's whole configuration, for sessions opened from then on. */
+export interface AcpSetProviderParams {
+  providerId: string;
+  apiType: string;
+  baseUrl: string;
+  headers?: Record<string, string>;
+}
+
+/**
+ * A way to sign in to the agent. `terminal`: its own program, run in a terminal with `args` added (exit code 0: signed
+ * in); without a type: `authenticate`, in which the agent does what it takes (it may open a browser on its computer).
+ */
+export interface AcpAuthMethod {
+  id: string;
+  name: string;
+  description?: string | null;
+  type?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  _meta?: Record<string, unknown> | null;
+}
+
+export interface AcpAuthenticateParams {
+  methodId: string;
 }
 
 export interface AcpInitializeParams {
@@ -240,7 +280,7 @@ export interface AcpInitializeParams {
 export interface AcpInitializeResult {
   protocolVersion: number;
   agentCapabilities?: AcpAgentCapabilities;
-  authMethods?: { id: string; name: string; description?: string | null }[];
+  authMethods?: AcpAuthMethod[];
   agentInfo?: AcpImplementationInfo;
 }
 
@@ -251,6 +291,8 @@ export type AcpMcpServer =
 export interface AcpNewSessionParams {
   cwd: string;
   mcpServers: AcpMcpServer[];
+  /** What the agent's adapter takes beyond the protocol. */
+  _meta?: Record<string, unknown>;
 }
 
 export interface AcpNewSessionResult {
@@ -263,6 +305,7 @@ export interface AcpLoadSessionParams {
   sessionId: string;
   cwd: string;
   mcpServers: AcpMcpServer[];
+  _meta?: Record<string, unknown>;
 }
 
 export interface AcpLoadSessionResult {
@@ -275,6 +318,7 @@ export interface AcpResumeSessionParams {
   sessionId: string;
   cwd: string;
   mcpServers?: AcpMcpServer[];
+  _meta?: Record<string, unknown>;
 }
 
 export type AcpResumeSessionResult = AcpLoadSessionResult;
@@ -348,12 +392,16 @@ export interface AcpWriteTextFileParams {
 /** Client → agent requests: params and result per method. */
 export interface AcpAgentMethods {
   initialize: { params: AcpInitializeParams; result: AcpInitializeResult };
+  authenticate: { params: AcpAuthenticateParams; result: Record<string, unknown> | null };
   "session/new": { params: AcpNewSessionParams; result: AcpNewSessionResult };
   "session/load": { params: AcpLoadSessionParams; result: AcpLoadSessionResult | null };
   "session/resume": { params: AcpResumeSessionParams; result: AcpResumeSessionResult | null };
   "session/prompt": { params: AcpPromptParams; result: AcpPromptResult };
   "session/set_config_option": { params: AcpSetConfigOptionParams; result: AcpSetConfigOptionResult };
   "session/set_mode": { params: AcpSetModeParams; result: Record<string, never> | null };
+  "session/close": { params: { sessionId: string }; result: Record<string, unknown> | null };
+  "providers/list": { params: Record<string, never>; result: { providers?: AcpProviderInfo[] | null } };
+  "providers/set": { params: AcpSetProviderParams; result: Record<string, unknown> | null };
 }
 
 /** Client → agent notifications. */

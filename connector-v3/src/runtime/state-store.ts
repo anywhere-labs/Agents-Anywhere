@@ -7,14 +7,16 @@
  *   settings.json        device-local settings (mode, MCP toggle, limits, name)
  *   paired-clients.json  device-gate trust list (PairedClientEntry[])
  *   sessions.json        opaque SessionStore snapshot array
- *   agents.json          per-agent switch and settings (name, command, args,
+ *   agents.json          per-agent switch and settings (program, gateway, command, args,
  *                        extra environment variables) — `{ agents: { <id>: AgentOverride } }`
+ *   custom-agents.json   the agents the user added — `{ agents: CustomAgent[] }`
  *
  * Every file is written atomically (temp file in the same directory, fsync,
  * rename) and with 0600 permissions on POSIX: identity holds secrets, the
  * paired-clients list is integrity-critical, sessions hold conversation
- * data that never leaves this machine, and agents.json holds the agents'
- * environment variables (API keys, say) and the programs the device runs.
+ * data that never leaves this machine, and agents.json and
+ * custom-agents.json hold the agents' environment variables and gateways (API
+ * keys, say) and the programs the device runs.
  *
  * The shapes here are intentionally self-contained and structurally match
  * `contracts/aa-v3/1.0/control.schema.json` (`DeviceMode`) and
@@ -27,7 +29,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { AgentOverridesSchema, LastSessionConfigSchema, type AgentOverrides, type LastSessionConfig } from "../core/config.js";
+import { AgentOverridesSchema, CustomAgentsSchema, LastSessionConfigSchema, type AgentOverrides, type CustomAgent, type LastSessionConfig } from "../core/config.js";
 
 /** `DeviceMode` in control.schema.json. */
 export type DeviceMode = "normal" | "encrypted";
@@ -72,6 +74,7 @@ export const STATE_FILES = {
   pairedClients: "paired-clients.json",
   sessions: "sessions.json",
   agents: "agents.json",
+  customAgents: "custom-agents.json",
   lastSessionConfig: "last-session-config.json",
 } as const;
 
@@ -298,6 +301,20 @@ export class StateStore {
     await this.#writeJson(STATE_FILES.agents, { agents });
   }
 
+  /** The agents the user added (`aa.v3.Device/add_agent`); missing file → none. Like agents.json it can hold secrets. */
+  async loadCustomAgents(): Promise<CustomAgent[]> {
+    const file = this.pathFor(STATE_FILES.customAgents);
+    const raw = await this.#readJson(file);
+    if (raw === undefined) return [];
+    await tightenMode(file);
+    return parseCustomAgents(raw, file);
+  }
+
+  async saveCustomAgents(custom: readonly CustomAgent[]): Promise<void> {
+    const agents = parseCustomAgents({ agents: custom }, undefined);
+    await this.#writeJson(STATE_FILES.customAgents, { agents });
+  }
+
   // -- the settings of each agent's newest conversation ---------------------
 
   /** The settings each agent's newest conversation was created with; missing file → none. */
@@ -445,6 +462,18 @@ function parseAgentSettings(raw: unknown, file: string | undefined): AgentOverri
   if (!isRecord(raw)) throw invalid(file, "agent settings must be a JSON object");
   if (raw.agents === undefined) return {};
   const parsed = AgentOverridesSchema.safeParse(raw.agents);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    const where = ["agents", ...(issue?.path ?? []).map(String)].join(".");
+    throw invalid(file, `${where}: ${issue?.message ?? "invalid"}`);
+  }
+  return parsed.data;
+}
+
+function parseCustomAgents(raw: unknown, file: string | undefined): CustomAgent[] {
+  if (!isRecord(raw)) throw invalid(file, "the added agents must be a JSON object");
+  if (raw.agents === undefined) return [];
+  const parsed = CustomAgentsSchema.safeParse(raw.agents);
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
     const where = ["agents", ...(issue?.path ?? []).map(String)].join(".");

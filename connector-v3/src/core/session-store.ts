@@ -359,7 +359,8 @@ export class SessionStore {
     return this.updateSession(id, { title });
   }
 
-  updateSession(id: string, patch: SessionPatch): Session {
+  /** `touch: false`: a change of the device's, not of the conversation; it keeps its place in the list. */
+  updateSession(id: string, patch: SessionPatch, options: { touch?: boolean } = {}): Session {
     const record = this.require(id);
     const session = record.session;
     // The agent's own session belongs to the agent and folder it was opened with.
@@ -374,7 +375,7 @@ export class SessionStore {
       if (patch.branch === undefined) delete session.branch;
       else session.branch = patch.branch;
     }
-    session.updated_at = this.iso();
+    if (options.touch !== false) session.updated_at = this.iso();
     this.changed(record, { session: true, list: true });
     return clone(session);
   }

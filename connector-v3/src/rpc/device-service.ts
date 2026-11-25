@@ -4,8 +4,10 @@
  * Every method passes the device gate first (`gate.assertBusinessCallAllowed`): on an encrypted device only paired
  * end-to-end clients get here. Settings and pairing are further limited: never from MCP, and pairing management
  * only from an authenticated, paired E2E client (the device's own CLI uses the local admin socket instead).
- * Changing or stopping agents (`update_agent`, `stop_agent`) runs or ends programs of the caller's choosing, so only
- * a client over a tunnel may: never the control plane's direct calls, never MCP.
+ * Adding, changing, removing, stopping, installing or signing in to agents (`add_agent`, `update_agent`, `remove_agent`,
+ * `stop_agent`, `install_agent`, `sign_in_agent`, `sign_in_terminal`) runs or ends programs, so only a client over a
+ * tunnel may: never the control plane's direct calls, never MCP. An install runs one of the catalog's fixed commands and
+ * a sign-in the agent's own program, never a command of the caller's.
  */
 
 import {
@@ -20,9 +22,9 @@ import {
   type RpcContext,
 } from "meshcall";
 
-import { AgentIdSchema, AgentUpdateSchema, ClientPlatformSchema, PairedClientEntrySchema, type AgentUpdate, type PairedClientEntry } from "../core/config.js";
+import { AgentIdSchema, AgentUpdateSchema, ClientPlatformSchema, NewAgentSchema, PairedClientEntrySchema, type AgentUpdate, type NewAgent, type PairedClientEntry } from "../core/config.js";
 import { PAIRING_CODE_ID, type DeviceGate, type GateDecision } from "../core/gate.js";
-import type { AgentInfo } from "../runtime/acp-host.js";
+import type { AgentInfo, AgentInstallInfo } from "../runtime/acp-host.js";
 import {
   DeviceOpsError,
   fetchDriveFile,
@@ -37,7 +39,8 @@ import {
   type DriveDownload,
 } from "../runtime/device-ops.js";
 import type { ConnectorSettings } from "../runtime/state-store.js";
-import { TerminalError } from "../runtime/terminal-manager.js";
+import { TerminalError, type TerminalInfo } from "../runtime/terminal-manager.js";
+import { TerminalInfoSchema } from "./terminal-schema.js";
 
 // ── Error mapping (shared by the business services) ─────────────────────────────────────────────────────────────
 
@@ -113,12 +116,25 @@ export interface DeviceServiceHost {
   updateSettings(patch: Partial<ConnectorSettings>): Promise<ConnectorSettings>;
   /** The agents that can be used here (turned-off ones left out). */
   runtimes(): { id: string; name: string }[];
-  /** Every agent, turned-off ones included, in the order of `runtimes()`. */
+  /** Every agent, turned-off and not installed ones included, in the order of `runtimes()`. */
   agents(): AgentStatus[];
+  /** The same, once the device was searched again for installed agents (with the PATH of a login shell read again). */
+  refreshAgents(): Promise<AgentStatus[]>;
+  /** Start installing an agent with one of its methods (`agents()` reports how it goes). */
+  installAgent(id: string, method: string): Promise<AgentStatus>;
+  /** Stop its install; resolves once it has ended. */
+  cancelInstall(id: string): Promise<AgentStatus>;
   /** Change an agent (`invalid_argument` / `unknown_agent` for an id not registered here); resolves with it afterwards. */
   updateAgent(id: string, update: AgentUpdate): Promise<AgentStatus>;
+  addAgent(input: NewAgent): Promise<AgentStatus>;
+  removeAgent(id: string, options: { force?: boolean }): Promise<void>;
   /** Stop an agent's processes (`failed_precondition` / `turns_running` while turns run, unless `force`); how many. */
   stopAgent(id: string, options: { force: boolean }): Promise<number>;
+  /** Sign in to an agent (ACP `authenticate`); resolves once signed in, asking again joins. */
+  signInAgent(id: string, method: string): Promise<void>;
+  cancelSignIn(id: string): void;
+  /** Start a terminal in which the agent's program signs in. */
+  signInTerminal(id: string, method: string, size: { cols?: number; rows?: number }): Promise<TerminalInfo>;
   /** A conversation's working directory (its attachments go to `<cwd>/.agents-anywhere/attachments/<id>/`). */
   sessionCwd?(sessionId: string): string | undefined;
   /** Cloud-drive download link for `fileId` as this device; undefined when the device has no control plane. */
@@ -158,6 +174,26 @@ export const DeviceStatusResponseSchema = z.object({
   runtimes: z.array(RuntimeSchema),
 });
 
+const AgentInstallSchema = z.object({
+  /** The preferred one first; `available`: the program its command needs (`needs`) is there. */
+  methods: z.array(z.object({ id: z.string(), command: z.string(), available: z.boolean(), needs: z.string().optional() })),
+  /** The newest install since the Connector started. */
+  job: z
+    .object({
+      method: z.string(),
+      command: z.string(),
+      state: z.enum(["waiting", "running", "succeeded", "failed", "cancelled"]),
+      started_at: z.string(),
+      ended_at: z.string().optional(),
+      exit_code: z.number().int().optional(),
+      /** Why it failed, when it was not its exit code. */
+      error: z.string().optional(),
+      /** The end of what it printed. */
+      output: z.string(),
+    })
+    .optional(),
+});
+
 /** `agents` entry. Built field by field: the values of an agent's environment variables have no field to travel in. */
 export const AgentEntrySchema = z.object({
   id: z.string(),
@@ -165,6 +201,8 @@ export const AgentEntrySchema = z.object({
   name: z.string(),
   /** One of the Connector's default presets. */
   builtin: z.boolean(),
+  /** Added by the user (`add_agent`): it can be renamed and removed. */
+  custom: z.literal(true).optional(),
   enabled: z.boolean(),
   /** What a process started now runs. */
   command: z.string(),
@@ -182,14 +220,43 @@ export const AgentEntrySchema = z.object({
    * that (Pi). Absent for every other agent.
    */
   approvals: z.boolean().optional(),
+  /**
+   * Agents that can be pointed at a model gateway: the API it must speak, whether it must be told a model, and the
+   * gateway it uses now (its key never leaves the device). Absent for every other agent.
+   */
+  gateway: z
+    .object({ api: z.enum(["anthropic", "openai-chat", "openai-responses"]), model_required: z.boolean(), base_url: z.string().optional(), model: z.string().optional() })
+    .optional(),
   /** Minutes a conversation's agent may sit idle before it is closed (restored by its next message); 0: never. */
   idle_close_minutes: z.number().int().nonnegative(),
+  /** Conversations (and prepared ones) open in its processes. */
+  sessions: z.number().int().nonnegative(),
+  /** Known ways to sign in to it: of kind agent (`sign_in_agent`) or terminal (`sign_in_terminal`). The agent names its own once it was started. */
+  sign_in: z.array(z.object({ id: z.string(), name: z.string(), description: z.string().optional(), kind: z.enum(["agent", "terminal"]) })).optional(),
+  /** It can be started here. Only an installed agent can be turned on and used. */
+  installed: z.boolean(),
+  /** Its own program, where it was found, or where the user said it is (`program_set`). */
+  program: z.string().optional(),
+  program_set: z.boolean().optional(),
+  /** Its own program is there, but not this one, which starts it (`npx`). */
+  missing: z.string().optional(),
+  website: z.string().optional(),
+  /** How it can be installed on this device (agents the Connector knows). */
+  install: AgentInstallSchema.optional(),
 });
 export type AgentEntry = z.output<typeof AgentEntrySchema>;
 const AgentsResponseSchema = z.object({ agents: z.array(AgentEntrySchema) });
 export const UpdateAgentRequestSchema = AgentUpdateSchema.extend({ id: AgentIdSchema });
 export const StopAgentRequestSchema = z.object({ id: AgentIdSchema, force: z.boolean().nullish() });
+const InstallAgentRequestSchema = z.object({ id: AgentIdSchema, method: z.string().min(1).max(32) });
+const AgentRequestSchema = z.object({ id: AgentIdSchema });
+const SignInRequestSchema = z.object({ id: AgentIdSchema, method: z.string().min(1).max(256) });
+const SignInTerminalRequestSchema = SignInRequestSchema.extend({
+  cols: z.number().int().min(1).max(1000).nullish(),
+  rows: z.number().int().min(1).max(1000).nullish(),
+});
 const StopAgentResponseSchema = z.object({ stopped: z.number().int().nonnegative() });
+const RemoveAgentResponseSchema = z.object({ removed: z.boolean() });
 
 const UpdateSettingsSchema = z.object({
   mode: ModeSchema.nullish(),
@@ -319,6 +386,7 @@ function toAgentEntry(agent: AgentStatus): AgentEntry {
     id: agent.id,
     name: agent.name,
     builtin: agent.builtin,
+    ...(agent.custom ? { custom: true as const } : {}),
     enabled: agent.enabled,
     command: agent.command,
     args: [...agent.args],
@@ -327,7 +395,46 @@ function toAgentEntry(agent: AgentStatus): AgentEntry {
     running: agent.running,
     busy: agent.busy,
     ...(agent.approvals !== undefined ? { approvals: agent.approvals } : {}),
+    ...(agent.gateway !== undefined
+      ? {
+          gateway: {
+            api: agent.gateway.api,
+            model_required: agent.gateway.modelRequired,
+            ...(agent.gateway.baseUrl !== undefined ? { base_url: agent.gateway.baseUrl } : {}),
+            ...(agent.gateway.model !== undefined ? { model: agent.gateway.model } : {}),
+          },
+        }
+      : {}),
     idle_close_minutes: agent.idleCloseMinutes,
+    sessions: agent.sessions,
+    ...(agent.signIn.length > 0 ? { sign_in: agent.signIn } : {}),
+    installed: agent.installed,
+    ...(agent.program !== undefined ? { program: agent.program } : {}),
+    ...(agent.programSet ? { program_set: true } : {}),
+    ...(agent.missing !== undefined ? { missing: agent.missing } : {}),
+    ...(agent.website !== undefined ? { website: agent.website } : {}),
+    ...(agent.install !== undefined ? { install: toInstall(agent.install) } : {}),
+  };
+}
+
+function toInstall(install: AgentInstallInfo): NonNullable<AgentEntry["install"]> {
+  const job = install.job;
+  return {
+    methods: install.methods.map(({ id, command, available, needs }) => ({ id, command, available, ...(needs !== undefined ? { needs } : {}) })),
+    ...(job !== undefined
+      ? {
+          job: {
+            method: job.method,
+            command: job.command,
+            state: job.state,
+            started_at: new Date(job.startedAt).toISOString(),
+            ...(job.endedAt !== undefined ? { ended_at: new Date(job.endedAt).toISOString() } : {}),
+            ...(job.exitCode !== undefined ? { exit_code: job.exitCode } : {}),
+            ...(job.error !== undefined ? { error: job.error } : {}),
+            output: job.output,
+          },
+        }
+      : {}),
   };
 }
 
@@ -393,7 +500,8 @@ export class DeviceService {
   // ── Agents ──
 
   @method({
-    description: "Every agent of this device, turned-off ones included, with its effective settings and running processes. Environment variable values never leave the device: only their names.",
+    description:
+      "Every agent of this device, turned-off and not installed ones included, with its effective settings, running processes and how it can be installed. Environment variable values never leave the device: only their names.",
     readOnly: true,
     request: EmptySchema,
     response: AgentsResponseSchema,
@@ -404,8 +512,44 @@ export class DeviceService {
   }
 
   @method({
+    description: "The same as agents, after the device was searched again for installed agents (the PATH of a login shell included, which takes a moment).",
+    idempotent: true,
+    request: EmptySchema,
+    response: AgentsResponseSchema,
+  })
+  async refresh_agents(_request: z.output<typeof EmptySchema>, ctx: RpcContext) {
+    this.#host.gate.assertBusinessCallAllowed(ctx);
+    return { agents: (await rpcGuard(() => this.#host.refreshAgents())).map(toAgentEntry) };
+  }
+
+  @method({
     description:
-      "Turn an agent on or off, or change its command, args and extra environment variables (a string sets one, null removes it); reset goes back to the preset first. Its name is always the preset's. Applies to agent processes started afterwards. Only from a client over a tunnel.",
+      "Install an agent with one of the methods agents lists for it: a fixed command of the Connector's, run on the device without a terminal, after the installs started before it. agents reports how it goes. Only from a client over a tunnel.",
+    idempotent: false,
+    request: InstallAgentRequestSchema,
+    response: AgentEntrySchema,
+  })
+  async install_agent(request: z.output<typeof InstallAgentRequestSchema>, ctx: RpcContext) {
+    const decision = this.#host.gate.assertBusinessCallAllowed(ctx);
+    requireClientTunnel(decision, "install agents");
+    return toAgentEntry(await rpcGuard(() => this.#host.installAgent(request.id, request.method)));
+  }
+
+  @method({
+    description: "Stop an agent's install that is waiting or running. Only from a client over a tunnel.",
+    idempotent: true,
+    request: AgentRequestSchema,
+    response: AgentEntrySchema,
+  })
+  async cancel_install(request: z.output<typeof AgentRequestSchema>, ctx: RpcContext) {
+    const decision = this.#host.gate.assertBusinessCallAllowed(ctx);
+    requireClientTunnel(decision, "install agents");
+    return toAgentEntry(await rpcGuard(() => this.#host.cancelInstall(request.id)));
+  }
+
+  @method({
+    description:
+      "Turn an agent on (only an installed one) or off, say where its program is, or change its command, args and extra environment variables (a string sets one, null removes it); reset goes back to the preset first. Its name is always the preset's. Idle conversations move to a process with the new settings at once, others when their turn has ended. Only from a client over a tunnel.",
     idempotent: true,
     request: UpdateAgentRequestSchema,
     response: AgentEntrySchema,
@@ -415,6 +559,34 @@ export class DeviceService {
     requireClientTunnel(decision, "change agents");
     const { id, ...update } = request;
     return toAgentEntry(await rpcGuard(() => this.#host.updateAgent(id, update)));
+  }
+
+  @method({
+    description:
+      "Add an agent of the user's own: a command that speaks ACP and is on the device. Its id is made from its name. Only from a client over a tunnel.",
+    idempotent: false,
+    request: NewAgentSchema,
+    response: AgentEntrySchema,
+  })
+  async add_agent(request: z.output<typeof NewAgentSchema>, ctx: RpcContext) {
+    const decision = this.#host.gate.assertBusinessCallAllowed(ctx);
+    requireClientTunnel(decision, "add agents");
+    return toAgentEntry(await rpcGuard(() => this.#host.addAgent(request)));
+  }
+
+  @method({
+    description:
+      "Remove an agent the user added, its settings included. Its conversations stay, but cannot be continued. Refused while turns run unless force, which cancels them first. Only from a client over a tunnel.",
+    destructive: true,
+    idempotent: true,
+    request: StopAgentRequestSchema,
+    response: RemoveAgentResponseSchema,
+  })
+  async remove_agent(request: z.output<typeof StopAgentRequestSchema>, ctx: RpcContext) {
+    const decision = this.#host.gate.assertBusinessCallAllowed(ctx);
+    requireClientTunnel(decision, "remove agents");
+    await rpcGuard(() => this.#host.removeAgent(request.id, { force: request.force === true }));
+    return { removed: true };
   }
 
   @method({
@@ -429,6 +601,51 @@ export class DeviceService {
     const decision = this.#host.gate.assertBusinessCallAllowed(ctx);
     requireClientTunnel(decision, "stop agents");
     return { stopped: await rpcGuard(() => this.#host.stopAgent(request.id, { force: request.force === true })) };
+  }
+
+  @method({
+    description:
+      "Sign in to an agent with one of the methods of kind agent that agent_auth_required listed: the agent is asked to (ACP authenticate), and may open a browser on the device. Answers once signed in; asking again joins the sign-in that runs, so a call that timed out is simply repeated. Only from a client over a tunnel.",
+    idempotent: true,
+    request: SignInRequestSchema,
+    response: OkSchema,
+  })
+  async sign_in_agent(request: z.output<typeof SignInRequestSchema>, ctx: RpcContext) {
+    const decision = this.#host.gate.assertBusinessCallAllowed(ctx);
+    requireClientTunnel(decision, "sign in to agents");
+    await rpcGuard(() => this.#host.signInAgent(request.id, request.method));
+    return { ok: true as const };
+  }
+
+  @method({
+    description: "End a sign-in that runs: what waits for it is refused (sign_in_cancelled). Only from a client over a tunnel.",
+    idempotent: true,
+    request: AgentRequestSchema,
+    response: OkSchema,
+  })
+  async cancel_sign_in(request: z.output<typeof AgentRequestSchema>, ctx: RpcContext) {
+    const decision = this.#host.gate.assertBusinessCallAllowed(ctx);
+    requireClientTunnel(decision, "sign in to agents");
+    await rpcGuard(() => this.#host.cancelSignIn(request.id));
+    return { ok: true as const };
+  }
+
+  @method({
+    description:
+      "Start a terminal in which the agent's own program signs in, with one of the methods of kind terminal that agent_auth_required listed. Exit code 0: signed in. Only from a client over a tunnel.",
+    idempotent: false,
+    request: SignInTerminalRequestSchema,
+    response: TerminalInfoSchema,
+  })
+  async sign_in_terminal(request: z.output<typeof SignInTerminalRequestSchema>, ctx: RpcContext) {
+    const decision = this.#host.gate.assertBusinessCallAllowed(ctx);
+    requireClientTunnel(decision, "sign in to agents");
+    return rpcGuard(() =>
+      this.#host.signInTerminal(request.id, request.method, {
+        ...(request.cols != null ? { cols: request.cols } : {}),
+        ...(request.rows != null ? { rows: request.rows } : {}),
+      }),
+    );
   }
 
   // ── Files, git and attachments ──
