@@ -3,8 +3,8 @@
 状态：方向已确认。2026-11-24 起 Orches 定位为编排子产品，是工作台的一级模块（第 1、2 节），界面按 2.5 分步实现；运行底座、同步、加密、云盘和实验性能力（第 3–7 节）不变。代码里仍沿用 `assistant` 这个名字（`lib/assistant/`、`assistant-context`、偏好字段 `assistantPrimary`），界面上一律叫 Orches。
 
 相关主干设计：
-- 总体架构（控制面、隧道、聚合 RPC 与 MCP）：[architecture-proposal.md](architecture-proposal.md)
-- 加密设备准入与端到端加密：[e2ee-admission-proposal.md](e2ee-admission-proposal.md)
+- 总体架构：[next-architecture-proposal.md](next-architecture-proposal.md)
+- 加密设备配对与端到端加密：[next-architecture-proposal.md](next-architecture-proposal.md) §1.1、§1.9
 - 客户端信息架构与界面模式：[client-experience-proposal.md](client-experience-proposal.md)
 
 ---

@@ -23,7 +23,7 @@
     └── 文件
 ```
 
-- 对话属于「设备 × Agent × 目录」。跨设备的地方只有两处：首页/侧栏的「最近对话」（按 `updated_at` 合并，规则见 `contracts/aa-v3/1.0` 的合并 fixtures），以及 Orches（一个 Orches 对话可以连接多台设备上的对话）。
+- 对话属于「设备 × Agent × 目录」。跨设备的地方只有两处：首页/侧栏的「最近对话」（按 `updated_at` 合并，规则见 `_deprecated/contracts/aa-v3/1.0` 的合并 fixtures），以及 Orches（一个 Orches 对话可以连接多台设备上的对话）。
 - 项目就是工作目录，不是另一种实体：同一目录下不同 Agent 的对话归在同一项目下，项目名默认取目录名。
 - 设备的状态（在线 / 离线只读缓存 / 加密且未配对）在每一层都可见；离线设备的对话可以读缓存，不能发消息。
 
@@ -97,7 +97,7 @@
 ### 2.7 全局
 
 - ⌘K 搜索：设备、Agent、项目、对话、助手对话、设置项。
-- 新对话：先选设备 → Agent → 目录（记住上次的选择），然后直接进入输入框。选好 Agent 和目录时，客户端调用 `aa.v3.Sessions/prepare` 预先启动这个 Agent：输入框旁直接显示它的模型、模式（权限）、推理强度等选项，第一次下载 Agent 也发生在用户打字的时候；启动失败（例如 Agent 未登录，`agent_auth_required`）在用户打字前就提示。发送第一条消息时 `create` 带上 `prepared_id` 接管这个 Agent，用户选的选项随 `config` 一起提交（接口见 [Connector README](../../connector-v3/README.md#新对话预先启动-agentprepare)）。
+- 新对话：先选设备 → Agent → 目录（记住上次的选择），然后直接进入输入框。选好 Agent 和目录时，客户端调用 `aa.v3.Sessions/prepare` 预先启动这个 Agent：输入框旁直接显示它的模型、模式（权限）、推理强度等选项，第一次下载 Agent 也发生在用户打字的时候；启动失败（例如 Agent 未登录，`agent_auth_required`）在用户打字前就提示。发送第一条消息时 `create` 带上 `prepared_id` 接管这个 Agent，用户选的选项随 `config` 一起提交（接口见 [Connector README](../../_deprecated/connector-v3/README.md#新对话预先启动-agentprepare)）。
 - 空状态：没有设备时引导安装 Connector 或 Desktop；设备没有可用 Agent 时说明缺什么。
 
 ## 3. 附件

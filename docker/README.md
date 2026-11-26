@@ -1,6 +1,6 @@
 # Docker
 
-> AA v3 的自托管部署在 [`docker/v3/`](v3/)，说明见 [docs/v3/self-hosting.md](../docs/v3/self-hosting.md)。本页其余内容只适用于 v2。
+> AA v3 正在按 [新版架构](../docs/v3/next-architecture-proposal.md) 重写，旧的 v3 自托管部署已移到 [`_deprecated/docker/v3/`](../_deprecated/docker/v3/)（说明见 [docs/_deprecated/v3/self-hosting.md](../docs/_deprecated/v3/self-hosting.md)）。本页其余内容只适用于 v2。
 
 Docker deployment for the Agents Anywhere v2 mainline. For existing databases,
 read [Upgrading](../docs/upgrading.md) before running Compose. The current

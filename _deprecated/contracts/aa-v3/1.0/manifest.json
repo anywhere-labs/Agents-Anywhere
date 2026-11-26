@@ -1,0 +1,49 @@
+{
+  "contract": "aa-v3",
+  "version": "1.0",
+  "status": "finalized",
+  "updated_at": "2026-11-20",
+  "design_docs": [
+    "docs/_deprecated/v3/architecture-proposal.md",
+    "docs/_deprecated/v3/e2ee-admission-proposal.md",
+    "docs/_deprecated/v3/v3poc-alignment.md",
+    "docs/v3/terminal-proposal.md"
+  ],
+  "meshcall_requirements": {
+    "token_principal_metadata": "meshcall-token-principal",
+    "e2e_protocols": {
+      "pairing": "Noise_IKpsk2_25519_AESGCM_SHA256",
+      "paired": "Noise_IK_25519_AESGCM_SHA256"
+    },
+    "require_e2e_peer_mount": true,
+    "sdks": [
+      "go",
+      "python",
+      "typescript",
+      "swift",
+      "jvm"
+    ]
+  },
+  "services": {
+    "control_plane": [
+      "aa.v3.Control"
+    ],
+    "device_admin": [
+      "aa.v3.DeviceAdmin"
+    ],
+    "device_business": [
+      "aa.v3.Sessions",
+      "aa.v3.Terminals",
+      "aa.v3.Device"
+    ]
+  },
+  "schemas": [
+    "control.schema.json",
+    "pairing.schema.json",
+    "terminals.schema.json"
+  ],
+  "fixtures": [
+    "fixtures/session-merge.json",
+    "fixtures/pairing-code.json"
+  ]
+}

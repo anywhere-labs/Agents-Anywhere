@@ -60,12 +60,8 @@ jobs:
       connector: ${{ steps.paths.outputs.connector }}
       acp: ${{ steps.paths.outputs.acp }}
       server: ${{ steps.paths.outputs.server }}
-      server_v3: ${{ steps.paths.outputs.server_v3 }}
-      connector_v3: ${{ steps.paths.outputs.connector_v3 }}
       web: ${{ steps.paths.outputs.web }}
-      web_v3: ${{ steps.paths.outputs.web_v3 }}
       desktop: ${{ steps.paths.outputs.desktop }}
-      desktop_v3: ${{ steps.paths.outputs.desktop_v3 }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -80,12 +76,8 @@ jobs:
           connector=false
           acp=false
           server=false
-          server_v3=false
-          connector_v3=false
           web=false
-          web_v3=false
           desktop=false
-          desktop_v3=false
 
           run_everything() {
             echo "::notice::$1; running every check"
@@ -93,12 +85,8 @@ jobs:
             connector=true
             acp=true
             server=true
-            server_v3=true
-            connector_v3=true
             web=true
-            web_v3=true
             desktop=true
-            desktop_v3=true
           }
 
           if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
@@ -122,7 +110,7 @@ jobs:
                   ;;
                 .github/workflows/dsh-bridge.yml) plugin=true ;;
                 .github/actions/setup-yarn/action.yml)
-                  plugin=true; web=true; web_v3=true; desktop=true; connector_v3=true; desktop_v3=true ;;
+                  plugin=true; web=true; desktop=true ;;
                 .github/workflows/*|.github/actions/*|contracts/*)
                   run_everything "shared file changed: $path"
                   ;;
@@ -136,17 +124,13 @@ jobs:
                   ;;
                 connector/*) connector=true; acp=true; server=true; plugin=true ;;
                 server/*) server=true; plugin=true ;;
-                server-v3/*) server_v3=true; connector_v3=true ;;
-                connector-v3/*) connector_v3=true ;;
                 web-next/*) web=true ;;
-                web-v3/*) web_v3=true ;;
                 desktop-workbench/*) desktop=true ;;
-                desktop-v3/*) desktop_v3=true ;;
               esac
             done < "$RUNNER_TEMP/changed-paths"
           fi
 
-          for scope in plugin connector acp server server_v3 connector_v3 web web_v3 desktop desktop_v3; do
+          for scope in plugin connector acp server web desktop; do
             echo "$scope=${!scope}" >> "$GITHUB_OUTPUT"
             echo "$scope: ${!scope}"
           done
@@ -423,139 +407,3 @@ jobs:
           corepack yarn renderer:typecheck
           corepack yarn workspace agents-anywhere-desktop-renderer protocol:check
           corepack yarn test:main
-
-  server_v3:
-    name: Server v3 control plane
-    needs: changes
-    if: needs.changes.outputs.server_v3 == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: aa_control_test
-        ports:
-          - 5432:5432
-        options: >-
-          --tmpfs /var/lib/postgresql/data:rw
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-      redis:
-        image: redis:8-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      AA_CONTROL_TEST_DB_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/aa_control_test
-      AA_CONTROL_TEST_REDIS_URL: redis://localhost:6379/0
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-      - name: Set up uv and Python
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
-        with:
-          version: ${{ env.UV_VERSION }}
-          python-version: ${{ env.PYTHON_VERSION }}
-          enable-cache: true
-          cache-dependency-glob: server-v3/pyproject.toml
-      - name: Validate AA v3 contracts
-        run: python3 contracts/aa-v3/1.0/validate.py
-      - name: Install Server v3 dependencies
-        run: uv sync --project server-v3
-      - name: Lint and test Server v3 (real PostgreSQL + Redis)
-        working-directory: server-v3
-        run: |
-          uv run --no-sync ruff check aa_control migrations tests
-          uv run --no-sync pytest -v
-
-  connector_v3:
-    name: Connector v3 (TS + Local Router + Server v3 interop)
-    needs: changes
-    if: needs.changes.outputs.connector_v3 == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-      - name: Install Connector v3 dependencies
-        uses: ./.github/actions/setup-yarn
-        with:
-          project: connector-v3
-          node-version: ${{ env.NODE_VERSION }}
-      - name: Set up uv and Python (for three-language Server v3 interop test)
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
-        with:
-          version: ${{ env.UV_VERSION }}
-          python-version: ${{ env.PYTHON_VERSION }}
-          enable-cache: true
-          cache-dependency-glob: server-v3/pyproject.toml
-      - name: Install Server v3 dependencies
-        run: uv sync --project server-v3
-      - name: Validate AA v3 contracts
-        run: python3 contracts/aa-v3/1.0/validate.py
-      - name: Typecheck and test Connector v3
-        working-directory: connector-v3
-        run: |
-          corepack yarn typecheck
-          corepack yarn test
-
-  web_v3:
-    name: Web v3 workbench & Portable Assistant
-    needs: changes
-    if: needs.changes.outputs.web_v3 == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-      - name: Validate AA v3 contracts
-        run: python3 contracts/aa-v3/1.0/validate.py
-      - name: Install Web v3 dependencies
-        uses: ./.github/actions/setup-yarn
-        with:
-          project: web-v3
-          node-version: ${{ env.NODE_VERSION }}
-      - name: Typecheck, lint, test and build Web v3
-        working-directory: web-v3
-        run: |
-          corepack yarn typecheck
-          corepack yarn lint
-          corepack yarn test
-          corepack yarn build
-      - name: Build the static export that Desktop v3 ships
-        working-directory: web-v3
-        env:
-          AA_DESKTOP_EXPORT: "1"
-        run: corepack yarn build
-
-  desktop_v3:
-    name: Desktop v3 headless checks
-    needs: changes
-    if: needs.changes.outputs.desktop_v3 == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    env:
-      # The unit tests never start Electron itself.
-      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-      - name: Install Desktop v3 dependencies
-        uses: ./.github/actions/setup-yarn
-        with:
-          project: desktop-v3
-          node-version: ${{ env.NODE_VERSION }}
-      - name: Typecheck and test Desktop v3 main process
-        working-directory: desktop-v3
-        run: |
-          corepack yarn typecheck
-          corepack yarn test

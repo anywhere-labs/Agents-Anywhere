@@ -14,7 +14,6 @@ Agents Anywhere 是一个跨设备的 Agent 工作台。工作设备上的 **Con
 | `connector/` | 工作设备侧进程，连接 Server 并驱动 Runtime | Python、uv |
 | `web-next/` | Web 客户端（另有自己的 [AGENTS.md](web-next/AGENTS.md)） | Next.js、TypeScript、Yarn |
 | `desktop-workbench/` | **当前**桌面客户端，内含受管理的本机 Connector | Electron、TypeScript、Yarn |
-| `desktop-v3/` | v3 桌面客户端：从安装包加载 `web-v3` 静态导出，并管理本机的 `connector-v3` 与本地 `meshcall-router`，见 [README](desktop-v3/README.md) | Electron、TypeScript、Yarn |
 | `android/` | Android 客户端，见 `android/ARCHITECTURE.md` | Kotlin、Gradle、JDK 17 |
 | `ios/` | iOS / iPadOS 客户端，见 `ios/ARCHITECTURE.md` | Swift、Xcode |
 | `dsh-bridge-next/` | **当前** DSH 插件（npm 包，也随 DSH Desktop 分发） | TypeScript、Yarn |
@@ -26,6 +25,7 @@ Agents Anywhere 是一个跨设备的 Agent 工作台。工作设备上的 **Con
 
 - `desktop-next/`、`dsh-bridge/`：已分别被 `desktop-workbench/`、`dsh-bridge-next/` 取代，除非任务明确要求，否则不要修改。
 - `_deprecated/`、`_reference/`，以及各子项目内同名目录：历史代码或参考实现，不参与构建，不要从中导入。
+- 旧 v3 实现（`_deprecated/` 下的 `connector-v3/`、`server-v3/`、`web-v3/`、`desktop-v3/`、`contracts/aa-v3/1.0/`、`docker/v3/` 与 `scripts/v3-*`）：2026-11-26 起停用，v3 按 [docs/v3/next-architecture-proposal.md](docs/v3/next-architecture-proposal.md) 干净重写。要复用其中某个模块时，把它移回新项目并按新架构改写，不要从 `_deprecated/` 导入或在原处修改。
 - `docs/` 中名字带 proposal、plan、target、gap 的文档，以及 `docs/migrations/`：描述设计或某个时间点的状态，使用前要和源码、契约核对。
 
 ## 开发与验证
@@ -39,7 +39,6 @@ Agents Anywhere 是一个跨设备的 Agent 工作台。工作设备上的 **Con
   - Connector：`cd connector && uv run ruff check connector tests && uv run pytest -q`
   - Web：`cd web-next && yarn test && yarn typecheck && yarn protocol:check`
   - Desktop：`cd desktop-workbench && yarn test:main && yarn renderer:typecheck`
-  - Desktop v3：`cd desktop-v3 && corepack yarn typecheck && corepack yarn test`（改了 `web-v3` 的路由或服务端功能时，再跑一次 `cd web-v3 && AA_DESKTOP_EXPORT=1 corepack yarn build`，确认 Desktop 用的静态导出还能构建）
   - DSH 插件：`cd dsh-bridge-next && corepack yarn check`（集成测试会在进程内拉起 Connector 探针和 Server，同样需要 `AGENT_SERVER_TEST_DB_URL`）
 - 本地联调用 `./local-up.sh`（Server + Web，可加 `--with-connector`）或 `./desktop-local-up.sh`。**不要**使用 `--reset-data`，除非用户明确要求，因为它会删除本地数据库。
 - Server 测试需要 PostgreSQL：通过 `AGENT_SERVER_TEST_DB_URL` 指向一个名字含 `test` 的一次性数据库（本地用 `docker/docker-compose.local.yml` 的 postgres，建库和环境变量见[开发指南](docs/development.md)）；测试会清空该库的所有表，绝不能指向开发库或生产库，也不要把生产 URL 带进测试进程。

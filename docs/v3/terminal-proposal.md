@@ -1,6 +1,6 @@
 # AA v3 终端：控制权、第一帧与滚动
 
-状态：已定稿（2026-11-22）。服务定义见 [contracts/aa-v3/1.0/terminals.schema.json](../../contracts/aa-v3/1.0/terminals.schema.json)，总体架构见 [architecture-proposal.md](architecture-proposal.md)。
+状态：已定稿（2026-11-22）。服务定义见 [_deprecated/contracts/aa-v3/1.0/terminals.schema.json](../../_deprecated/contracts/aa-v3/1.0/terminals.schema.json)（旧契约，重写时迁入新契约），总体架构见 [next-architecture-proposal.md](next-architecture-proposal.md)。
 
 ## 1. 前提
 
