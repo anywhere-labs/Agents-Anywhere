@@ -12,7 +12,7 @@
 4. **两阶段登录、显式无默认加密上线**：Connector 先通过统一 Device Flow 登录获取用户级凭据（此时不注册设备、不连云端）；首次登录某 `(server_url, user_id)` 档案时，必须由用户手动显式选择「是否注册上线」以及「`encrypted` / `normal`（无默认值）」，持久化后才接入云端——零安全空隙窗口。
 5. **防中间人且极简的跨设备配对**：废除旧的 `aa-pair://` 二维码/长链接、10 位手输配对码与 `Noise_IKpsk2`，统一改为 **Commit-Reveal + 8 位 Crockford Base32 SAS 核对码 + 双端确认**（Desktop 主审批弹窗，CLI 仅作 headless 兜底），配对后直接走 `Noise_IK_25519_AESGCM_SHA256`。
 6. **薄 ACP 客户端**：Connector 不再持久化对话消息正文，也不持久化/重放事件；仅持久化界面元数据与轻量辅助关联元数据，由 ACP 协议（`session/load`）还原内容并合成对外暴露的 `Timeline / Turn / Item(seq) + Meta + Interactions + Subagent/Task 槽位` 模型。
-7. **Orches 与移动端范围**：Orches（编排）拆出主干后续独立重新设计；移动端前端留到最后再设计，当前仅保持跨端契约干净。
+7. **产品形态范围**：Orches 作为独立子产品纳入本方案（支持实验性 Orches 模式与经典模式切换）；移动端前端留到最后再设计，当前仅保持跨端契约干净。
 
 ```mermaid
 flowchart TB
@@ -74,7 +74,7 @@ flowchart TB
 | **`aa.v3.Sessions`** | `LocalMesh` + `RemoteMesh` | `true` | 薄 ACP 客户端 + Timeline 对话服务（`list`, `watch_list`, `refresh_list`, `get_snapshot`, `watch`, `get_slot_snapshot`, `watch_slot`, `start_turn`, `steer_turn`, `interrupt_turn`, `answer_interaction`, `fork_turn`, `rewind_turn` 等，详见 1.3） |
 | **`aa.v3.Agents`** | `LocalMesh` + `RemoteMesh` | `true` | 从原 `aa.v3.Device` 拆出的独立 Agent 管理服务：安装探测、**设备本地 Agent 设置读写（`agents.json` / `custom-agents.json`）**、**启用 / 禁用 / 重启 ACP 进程**、增删自定义 Agent、安装与登录、CC Switch Provider、订阅用量（详见 1.4） |
 | **`aa.v3.Terminals`** | `LocalMesh` + `RemoteMesh` | `true` | 伪终端服务（`list`, `create`, `resize`, `close`, `attach` [duplex]） |
-| **`aa.v3.Device`** | `LocalMesh` + `RemoteMesh` | `true` | 设备状态与全局设置（含空闲休眠时长）、**FS 目录列举/文件读写（支持本地与远程对话直接引用路径）**、Git status/diff、小附件与云盘大文件拉取、已配对客户端查询与撤销（**移除旧 `create_pairing`**） |
+| **`aa.v3.Device`** | `LocalMesh` + `RemoteMesh` | `true` | 设备状态与全局设置（含空闲休眠时长）、**设备级项目实体管理（`projects.json`：`cwd` 持久化、自定义名称、置顶与排序）**、**FS 目录列举/文件读写（支持本地与远程对话直接引用路径）**、Git status/diff、小附件与云盘大文件拉取、已配对客户端查询与撤销（**移除旧 `create_pairing`**） |
 | **`aa.v3.Logs`** | `LocalMesh` + `RemoteMesh` | `true` | 持久化轮转日志服务（仅 `list` 与 `watch` 两方法，详见 1.5） |
 | **`aa.v3.Previews`** | `LocalMesh` + `RemoteMesh` | `true` | 本地端口 FRP 公网预览服务（`list`, `open`, `update`, `close`, `watch`，详见第 5 节） |
 
@@ -171,7 +171,8 @@ dataDir/
 ├── machine.json                           # 机器级稳定 UUID (machine_id)，纯离线本机身份
 ├── active-profile.json                    # 当前活跃的 (server_url, user_id) 指针，离线时为 null
 ├── settings.json (0600)                   # 机器级全局设置（如空闲休眠时长、默认目录等）
-├── sessions-meta.json                     # 机器级对话 meta + 辅助关联元数据（不含消息正文）
+├── projects.json (0600)                   # 机器级项目实体（cwd、自定义名称、置顶、sort_key）
+├── sessions-meta.json                     # 机器级对话 meta（含 pinned/sort_key）+ 辅助关联元数据（不含消息正文）
 ├── agents.json / custom-agents.json (0600)# 机器级 ACP Agent 本地设置（含启用开关与 env）
 ├── local-router-auth.json (0600)          # 本机 meshcall-router 随机账密
 ├── local-admin.json (0600)                # 运行中 Connector 本机发现文件（取代 admin.sock）
@@ -233,7 +234,7 @@ dataDir/
 - **控制面 `aa.v3.Control` 扩展**：
   - `TUNNEL_SCOPES` 统一包含 6 个业务服务：`aa.v3.Sessions`、`aa.v3.Agents`、`aa.v3.Terminals`、`aa.v3.Device`、`aa.v3.Logs`、`aa.v3.Previews`。
   - 新增 3 个 SAS 配对公开信息中转方法：`pairing_start`、`pairing_reveal`、`pairing_status`（校验设备归属后转发 `DeviceAdmin`，服务端不接触私钥也不参与决策）。
-  - 普通设备聚合 `list_sessions` 仅拉各在线设备的轻量 `meta` 列表（不触发 ACP `session/load`）；加密设备推送依然严格剥离一切正文。
+  - 普通设备聚合与缓存代理：针对经典模式下「列出所有未加密设备的最近会话与项目」等跨设备 RPC，`server-v3` 作为代理层扇出查询在线普通设备，并在 **Redis** 中按 `(user_id, device_id)` 缓存每台普通设备的轻量项目/会话摘要（不存正文、**绝不缓存加密设备**），通过扇出回填与设备变化通知保持新鲜，既实现侧边栏秒开也支持普通设备短暂离线时的只读展示；加密设备推送依然严格剥离一切正文。
 
 ---
 
@@ -268,13 +269,71 @@ dataDir/
 
 ---
 
-## 6. 已定稿决策汇总（v3 干净重写基线）
+## 6. Orches 子产品与双工作台模式
 
-- **重写策略**：接下来直接按本文档**干净重写 v3**，不保留旧版 alpha 的兼容包袱（彻底清理 `admin.sock`、`aa-pair://`、10 位手输配对码、`Noise_IKpsk2`、扁平 `Message[] + Control` 与 `sessions.json` 全量消息持久化）。
+### 6.1 Orches 核心定位与运行架构（不再是侧边栏）
+
+- **产品定位**：独立的一级编排子产品（不再作为侧边栏挂载），运行在浏览器前端（Electron Desktop 加载同一套页面），仅在页面打开时运行。
+- **同步与加密底座**：沿用类 Effi 侧边助手的**对话级整包同步**（4 个 CRUD 接口 + Redis Pub/Sub 跨端变更通知 + 本地双指纹 `hash` / `synced` / `agreed` 冲突裁决）与**任意密码 KEK/DEK 多设备端侧加密**。
+- **两项核心运行能力**：
+  1. **前端 Pi SDK + MCP 接入 AA + 网盘联动**：
+     - 浏览器内运行 `@earendil-works/pi-agent-core` + `@earendil-works/pi-ai`；
+     - 通过 Streamable HTTP MCP 接入 AA `/mcp`（及外部 MCP），调度连接到 AA 且符合条件的设备 Agent；
+     - 与限额云盘深度联动：`/Orches` 文件夹映射为云端虚拟文件系统（Cloud VFS，本地 OPFS/IndexedDB 热缓存 + 按哈希异步同步，开启加密时用账号 DEK 加密），`/Transfers` 与 `drive:/…` 用于与各工作设备进行大文件中转。
+  2. **实验性 QuickJS-WASM 沙箱 + 注入 `aa` 服务对象**：
+     - 保持严格沙箱隔离（独立 Worker 内运行 QuickJS-WASM，零 DOM、零 IndexedDB、零直连网络、带内存与执行超时上限，绝不暴露用户 Token / 设备密钥 / E2EE 私钥）；
+     - 除工作区 `vfs` 桥之外，在 QuickJS 中注入受控的 **`aa` 服务对象**（如 `aa.devices`、`aa.projects`、`aa.sessions`、`aa.drive` 等），支持 Orches 用脚本**程序化批量调用**连接到 AA 且符合条件的 Agent 并与网盘联动（单次脚本设调用次数限额，写操作/高风险动作受权限与确认策略约束）。
+
+### 6.2 双工作台模式（经典模式 vs 实验性 Orches 模式）
+
+- **经典模式（默认，延续 AA v2 形态）**：
+  - 侧边栏展示所有未加密设备（及客户端直连的本机/已配对加密设备）的最近会话、项目与设备列表；
+  - 依赖 `server-v3` 代理跨普通设备的聚合 RPC 并在 Redis 缓存普通设备轻量会话/项目列表，保证秒开；
+  - Orches 作为独立一级子产品入口访问。
+- **实验性 Orches 模式（开关启用）**：
+  - 启用后，侧边栏主列表**只显示 Orches 的对话**（及当前 Orches 对话关联的设备会话）；
+  - 侧边栏同时列出设备入口，**点击某台设备 → 侧边栏翻页（drill-down）进入该设备视图**，即可直接操作该设备上的项目与 Agent，点击返回翻回 Orches 列表。
+
+---
+
+## 7. 项目机制、设备色标与自定义持久化排序
+
+### 7.1 项目实体（设备级持久化 `cwd`）
+- **一个项目 = 工作设备上的一个规范化绝对路径 `cwd`**，持久化保存在工作设备 Connector 的 `dataDir/projects.json`（通过 RPC 读写）：
+  `{ id, cwd, name, pinned, sort_key, archived, created_at, updated_at }`
+- 默认 `name` 取目录名，**支持用户自定义项目名称**。
+- **多 Agent 共存**：一个项目下可包含多种 Agent（Claude Code、Codex、Pi 等）的多个对话——业务层级统一为 **`设备 → 项目 (cwd) → 对话（每条对话标注对应 Agent 图标）`**。
+- 扫描 `session/list` 或新建对话遇到新 `cwd` 时自动登记项目，也支持手动添加目录、重命名、置顶、排序与归档。
+
+### 7.2 设备颜色标识（在线状态与项目归属一体呈现）
+- 每台设备分配一个专属彩色标识（语义色板自动分配，允许用户自定义并按账号持久同步）：
+  - **彩色圆点** = 该设备**在线**；
+  - **灰色圆点** = 该设备**离线**。
+- 跨设备与侧边栏视图中，**每个项目前面显示所属设备对应颜色的圆点**——彩色标明项目归属哪台在线设备，灰色表示所属设备已下线。
+
+### 7.3 可自定义且持久化的列表顺序（Fractional Indexing）
+- 参考 Cursor / Codex / Zed / Linear / Slack / Notion 的多端协同实践，采用 **Fractional Indexing（字典序分数索引 `sort_key`）+ `pinned`**：
+  - 每次拖拽调整顺序仅修改被拖动那 1 条记录的 `sort_key = midpoint(prev, next)`，避免整数重排引起的全表写与多端并发冲突。
+- **持久化分层**：
+  - **设备内项目顺序 & 项目内对话顺序**（`pinned` + `sort_key`）：持久化在工作设备 Connector（`projects.json` / `sessions-meta.json`），经 RPC 读写，离线与多端一致；
+  - **跨设备全局 UI 偏好**（设备顺序、设备自定义颜色、排序模式、全局置顶顺序）：保存在账号级轻量偏好（离线 Desktop 存本地，登录后随账号同步；只记 ID/颜色/顺序键，不含正文）；
+  - **Orches 对话列表顺序**：同样用 `pinned` + `sort_key` 随 Orches 元数据同步。
+
+---
+
+## 8. 已定稿决策汇总 & 局部待确认细节
+
+### 已定稿决策（v3 干净重写基线）
+- **重写策略**：直接按本文档**干净重写 v3**，不保留旧版 alpha 兼容包袱（彻底清理 `admin.sock`、`aa-pair://`、10 位手输配对码、`Noise_IKpsk2`、扁平 `Message[] + Control` 与 `sessions.json` 全量消息持久化）。
 - **默认数据目录**：Desktop 与 CLI 统一以 CLI 为准，默认 `~/.agents-anywhere/connector-v3`。
-- **会话发现**：自动扫描所有已启用（enabled）ACP Agent 的 `session/list` 并与本地 `meta` 合并。
-- **内存水合回收**：随对应 ACP 进程一起销毁，具体闲置销毁时间由用户设置决定。
-- **Web 预览权限**：暂设 `private` / `public` 两档，管理后台可精确到人分别授予开启 `private` 或 `public` 预览的权限，并支持实时下线。
+- **会话发现与刷新**：自动扫描所有已启用（enabled）ACP Agent 的 `session/list` 并与本地 `meta` 合并；运行态 Agent 超过 10 分钟未刷新则由 Connector 定期异步刷新写入磁盘缓存（不唤醒休眠进程）。
+- **Agent 进程与本地设置**：拆出独立 `aa.v3.Agents` 服务；设置持久化在工作设备本机并统一经 RPC 读写；进程状态收口为启用 / 禁用 / 重启 + 用户设定的空闲休眠，内存水合的 Timeline 随 ACP 进程一起销毁。
+- **Web 预览权限**：暂设 `private` / `public` 两档，管理后台可精确到人分别授予开启 `private` 或 `public` 预览的权限，并支持实时下线；`frpc`（Apache-2.0）随包内置分发。
 - **OIDC 状态同步**：服务端自签 `device` / `full` Token，定期回查上游 OIDC 同步账号状态与 `entitlements`。
-- **后续独立专项**：Orches（编排）另行重新设计；移动端前端留到最后再设计。
+- **移动端**：移动端前端留到最后再设计。
+
+### 局部待拍板细节（动工到对应模块前确认）
+1. **QuickJS 注入的 `aa` 对象权限范围**：是严格限定为与 `/mcp` 相同条件（仅普通模式 + 开 `allow_mcp` 的设备），还是允许经用户授权通过前端通道调本机/已配对加密设备；以及是否彻底移除旧的 `⌘J` 右侧 Orches 侧边栏入口。
+2. **自定义对话排序交互范围**：支持全列表在「按最近活跃 / 自定义拖拽排序」间切换，还是仅「置顶区自由拖拽 + 未置顶区按最近活跃冒泡」。
+3. **经典模式服务端普通设备会话列表缓存**：采用 Redis 按 `(user_id, device_id)` 缓存轻量项目/会话摘要（TTL + 扇出回填 + 变化触发刷新），不落 PG 也不缓存加密设备。
 
