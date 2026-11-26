@@ -7309,6 +7309,53 @@ def test_connector_source_event_archives_without_restoring_aa_archive(tmp_path):
     assert session["sourceAvailability"] == "available"
 
 
+def test_connector_source_deleted_archives_once_and_keeps_the_timeline(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    connector_headers = {"Authorization": f"Bearer {access_token}"}
+
+    def observe(availability, reason, observed_at):
+        response = client.post(
+            "/connector/ingest",
+            headers=connector_headers,
+            json={
+                "notifications": [
+                    {
+                        "method": "session.source.updated",
+                        "params": {
+                            "sessionId": session_id,
+                            "runtime": "codex",
+                            "externalSessionId": "thr_1",
+                            "availability": availability,
+                            "reason": reason,
+                            "observedAt": observed_at,
+                            "observationOrigin": "inventory",
+                        },
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 200, response.text
+
+    # A session the runtime reports deleted is archived, with its timeline kept.
+    observe("deleted", "deleted_in_runtime", "2026-08-27T12:00:00Z")
+    session = session_view_for_assertions(client, session_id, headers)["session"]
+    assert session["archived"] is True
+    assert session["archivedAt"] is not None
+    assert session["sourceAvailability"] == "deleted"
+    assert session["sourceObservationOrigin"] == "inventory"
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+    assert snapshot.status_code == 200, snapshot.text
+
+    # The user unarchives it in AA; the same deletion observed again changes nothing.
+    unarchived = client.post("/sessions/unarchive", headers=headers, json=[session_id])
+    assert unarchived.status_code == 200, unarchived.text
+    observe("deleted", "deleted_in_runtime", "2026-08-27T12:05:00Z")
+    session = session_view_for_assertions(client, session_id, headers)["session"]
+    assert session["archived"] is False
+    assert session["sourceAvailability"] == "deleted"
+
+
 def test_session_inventory_does_not_overwrite_newer_source_event(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)

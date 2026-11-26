@@ -67,6 +67,8 @@ export class SyncFeed {
   private bufferedOperations: SyncOperation[] | undefined
   private bufferedBytes = 0
   private checkpointDirty = new Set<string>()
+  /** A published session left memory; whether DSH deleted it only a fresh inventory tells. */
+  private inventoryStale = false
 
   get retainedProjectionCount(): number { return this.projections.size }
 
@@ -308,6 +310,7 @@ export class SyncFeed {
           this.projections.delete(id); this.projections.set(id, projection)
           this.published.set(id, platformId)
           this.sourceAvailability.set(id, 'available')
+          await this.rememberPublished(id)
           await this.notification('session.meta.upsert', { sessionId: platformId, ...meta })
           await this.items(id, delta.items)
           this.checkpointDirty.add(id)
@@ -338,6 +341,7 @@ export class SyncFeed {
       this.checkpointDirty.add(id)
       this.published.set(id, platformId)
       this.sourceAvailability.set(id, 'available')
+      await this.rememberPublished(id)
       await this.notices(id)
       await this.state(id, log)
       this.native.diagnostics.log('info', 'snapshot.completed', { streamId: this.id, sessionId: id, items: snapshotItems.length, elapsedMs: Math.round(performance.now() - start) })
@@ -390,6 +394,8 @@ export class SyncFeed {
     await this.notification('session.state.updated', { sessionId: this.published.get(id), externalSessionId: id, status, ...configuration })
   }
   private async reconcile(): Promise<void> {
+    // A session that left memory may be one DSH deleted: judge the candidates on a fresh inventory.
+    if (this.inventoryStale) { this.inventoryStale = false; await this.reportDeleted(await this.refreshInventory()) }
     for (const id of this.native.candidates()) await this.sessionOperation(id, 'visibility', async () => {
       if (!await this.native.visible(id)) await this.unavailable(id)
     })
@@ -409,6 +415,47 @@ export class SyncFeed {
     }
     if (this.durableCheckpoints) await this.delivery(() => this.transport.deleteCheckpoint(id))
     this.published.delete(id); this.projections.delete(id)
+  }
+  /** Published once: from now on a fresh inventory without this session means DSH deleted it. */
+  private async rememberPublished(id: string): Promise<void> {
+    try { await this.native.published.add(this.namespace, id) }
+    catch (error) {
+      if (this.closed || error instanceof Error && error.name === 'AbortError') throw error
+      this.native.diagnostics.log('warn', 'sync.published_store_failed', { streamId: this.id, sessionId: id }, error)
+    }
+  }
+  /** One fresh listing of DSH's sessions; false when DSH could not list them, so nothing may be inferred. */
+  private async refreshInventory(): Promise<boolean> {
+    try { await this.native.source.refresh(this.abort.signal); return true }
+    catch (error) {
+      if (this.closed || error instanceof Error && error.name === 'AbortError') throw error
+      this.native.diagnostics.log('warn', 'sync.inventory_refresh_failed', { streamId: this.id }, error)
+      return false
+    }
+  }
+  /**
+   * Sessions DSH deleted since this Host published them, as far as a fresh
+   * inventory can tell: one source observation each, then forgotten here so the
+   * deletion is reported once. AA keeps the timeline and archives the session.
+   */
+  private async reportDeleted(fresh: boolean): Promise<void> {
+    if (!fresh) return
+    const candidates = new Set(this.native.candidates())
+    for (const id of await this.native.published.ids(this.namespace)) {
+      if (candidates.has(id)) continue
+      const source = await this.native.source.state(id)
+      // A listing that skipped persistence (not ready, or failing) must not archive every session.
+      if (source.availability !== 'missing' || await this.native.source.persisted(id)) continue
+      // The deletion follows everything already buffered for that session.
+      if (this.bufferedOperations?.length) await this.flushOperations()
+      await this.notification('session.source.updated', { sessionId: sessionId(this.namespace, id), externalSessionId: id,
+        availability: 'deleted', reason: 'deleted_in_dsh', observedAt: source.observedAt, observationOrigin: 'inventory' })
+      if (this.durableCheckpoints) await this.delivery(() => this.transport.deleteCheckpoint(id))
+      this.published.delete(id); this.projections.delete(id); this.failedSessions.delete(id)
+      this.sourceAvailability.set(id, 'deleted')
+      await this.native.published.remove(this.namespace, id)
+      this.native.diagnostics.log('info', 'sync.session_deleted', { streamId: this.id, sessionId: id })
+    }
   }
   private async sourceState(id: string): Promise<SourceState> {
     const source = await this.native.source.state(id)
@@ -509,6 +556,7 @@ export class SyncFeed {
       await this.sessionOperation(id, change.type, async () => {
         if (!await this.native.visible(id)) {
           if (this.published.has(id)) reconcile = true
+          if (change.type === 'session' && change.disposed) this.inventoryStale = true
           return
         }
         if (change.type === 'refresh') {
@@ -522,6 +570,8 @@ export class SyncFeed {
         }
         if (!this.published.has(id)) await this.baseline(id)
         if (!this.published.has(id)) return
+      // A session that left memory may be one DSH deleted; reconcile on a fresh inventory.
+      if (change.type === 'session' && change.disposed) { reconcile = true; this.inventoryStale = true }
         if (change.type === 'question' || change.type === 'approval') await this.notices(id)
         if (change.type === 'stream') {
           const mode = await this.native.planning.read(id as SessionId)
@@ -609,6 +659,8 @@ export class SyncFeed {
     // capability update incurs a separate transport round trip per session.
     this.bufferedOperations = []
     await this.changes(this.takeChanges())
+    // Sessions DSH deleted while nothing was connected: only a fresh inventory knows them.
+    if ((await this.native.published.ids(this.namespace)).length) await this.reportDeleted(await this.refreshInventory())
     const sessions = []
     for (const id of this.native.candidates()) sessions.push({ sessionId: sessionId(this.namespace, id),
       externalSessionId: id, sourceState: await this.sourceState(id) })

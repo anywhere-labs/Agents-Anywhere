@@ -166,6 +166,18 @@ export class NativeSessionSource {
     } catch { this.revisions.delete(id); return undefined }
   }
 
+  /**
+   * Whether DSH's persistence still holds a log for this session. Also true
+   * when it cannot tell (no backend, or a failing one): only the backend's own
+   * answer may confirm a deletion, never a listing that skipped persistence.
+   */
+  async persisted(id: string): Promise<boolean> {
+    const persistence = this.ctx.get('sessionPersistence')
+    if (!persistence) return true
+    try { return (await persistence.stat(id as SessionId)) !== undefined }
+    catch { return true }
+  }
+
   candidates(): string[] { return [...new Set([...this.records.keys(), ...this.archived])] }
   retry(id: string): void { this.failedReads.delete(id) }
   markReadFailed(id: string): void {

@@ -60,11 +60,13 @@ def _source_archive_update(
     archived: bool | int,
     observed_at: str,
 ) -> dict[str, Any]:
-    # Import a newly observed archive once. Repeated observations must not undo
-    # a later unarchive in AA. Missing/unavailable observations do not establish
-    # a new archive transition, and source recovery must not unarchive AA.
+    # Import a newly observed archive once, and a session the runtime reports
+    # deleted the same way: its timeline stays in AA, off the default list, and
+    # the user can unarchive it. Repeated observations must not undo a later
+    # unarchive in AA. Missing/unavailable observations do not establish a new
+    # archive transition, and source recovery must not unarchive AA.
     if (
-        source_state == "archived"
+        source_state in {"archived", "deleted"}
         and previous_source_state in {None, "visible", "available"}
         and not archived
     ):

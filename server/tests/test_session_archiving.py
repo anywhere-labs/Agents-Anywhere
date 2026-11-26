@@ -186,7 +186,7 @@ def test_aa_unarchive_survives_sync_until_a_new_agent_archive(
 
 
 @pytest.mark.parametrize("runtime", ["codex", "claude", "dsh"])
-@pytest.mark.parametrize("state", ["unavailable", "deleted", "missing", "hidden"])
+@pytest.mark.parametrize("state", ["unavailable", "missing", "hidden"])
 def test_unavailable_agent_sessions_are_not_aa_archives(archive_client, runtime, state):
     api = archive_client
     api.sync("session", runtime, state)
@@ -194,6 +194,30 @@ def test_unavailable_agent_sessions_are_not_aa_archives(archive_client, runtime,
     assert api.session("session")["archived"] is False
     assert "session" not in api.listed_ids(archived=True)
     assert "session" in api.listed_ids(archived=False)
+
+
+@pytest.mark.parametrize("runtime", ["codex", "claude", "dsh"])
+@pytest.mark.parametrize("mode", ["meta", "event", "inventory"])
+def test_deleted_agent_session_is_archived_once_like_an_agent_archive(
+    archive_client, runtime, mode
+):
+    # A session the runtime deleted leaves the active list the way an agent
+    # archive does: archived, timeline kept, and reversible by the user.
+    api = archive_client
+    session_id = f"session_{runtime}"
+    api.sync(session_id, runtime, "available")
+    assert api.stored_state(session_id) == (0, "available")
+    api.sync(session_id, runtime, "deleted", mode=mode)
+    assert api.stored_state(session_id) == (1, "deleted")
+    assert api.session(session_id)["archived"] is True
+    assert session_id in api.listed_ids(archived=True)
+    assert session_id not in api.listed_ids(archived=False)
+
+    api.unarchive(session_id)
+    for _ in range(2):
+        api.sync(session_id, runtime, "deleted", mode=mode)
+    assert api.stored_state(session_id) == (0, "deleted")
+    assert session_id in api.listed_ids(archived=False)
 
 
 def test_project_unarchive_persists_for_synced_sessions_and_refreshes_counts(
