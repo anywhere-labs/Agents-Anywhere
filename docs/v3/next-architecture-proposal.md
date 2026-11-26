@@ -135,7 +135,7 @@ flowchart TB
 - **极简进程生命周期（彻底移除旧版 `Sessions/prepare` 预热池与双进程 `retire` 交接）**：
   - 进程状态清晰收敛为 4 态：`disabled`（未启用） / `starting`（启动与 `initialize` 协商中） / `running`（运行中） / `error`（异常退出，附最后错误并可重启）。
   - 仅保留 3 个用户操作：**启用（打开开关）**、**禁用（关闭开关，停进程并清会话列表缓存）**、**重启（杀掉旧进程并重开，释放旧内存 Timeline，使新配置立即生效）**。
-  - **拉起与空闲休眠**：新扫描到的已安装 Agent 默认为 `disabled`（由用户按需打开主力 Agent 开关）；有客户端活跃时，所有已启用 Agent 均保持 `running`；当所有客户端断开且无运行中 Turn/后台任务超过**用户设定的闲置时长**（可配置永不休眠或 N 分钟）时，优雅关闭 ACP 进程（连同内存 Timeline 销毁），下次任一客户端连接时自动拉起全部已启用 Agent。控制面 `DeviceAdmin/ping` 与后台定时巡检**绝不唤醒**休眠中的 Agent。
+  - **拉起与空闲休眠**：新扫描到的已安装 Agent 默认为 `disabled`（由用户按需打开主力 Agent 开关）；有客户端活跃时，所有已启用 Agent 均保持 `running`；当所有客户端断开且无运行中 Turn/后台任务超过**用户设定的闲置时长**（可配置永不休眠或 N 分钟）时，优雅关闭 ACP 进程（连同内存 Timeline 销毁），下次任一客户端连接时（包括经隧道连接加密设备、只拉会话列表）自动拉起全部已启用 Agent。控制面 `DeviceAdmin/ping` 与后台定时巡检**绝不唤醒**休眠中的 Agent。
   - **闲置时长只有一个全局设置**，存于 `dataDir/settings.json`、经 `aa.v3.Device` 读写，作用于全部 Agent；Agent 设置里不再有单独的休眠项。
 - **Agent 设置保存在工作设备本地并统一经 RPC 读写**：
   - 持久化在 `dataDir/agents.json`（内置 Agent 本地覆盖）与 `dataDir/custom-agents.json`（自定义 Agent），权限 `0600`，**绝不上传云端 Server，绝不把 `env` 值写入日志**。
@@ -441,7 +441,7 @@ v3 不再手写一份与代码平行的 JSON Schema 契约目录；**定义类�
 - **MeshCall 拓扑**：云端为多 Router 网络，接入任一边缘 Router 即等同接入整个 Mesh，并通过 Router 内置端点服务获取集群内多个可用边缘端点用于故障转移（集群未落地前单 Router 同引导地址无缝运行）；用户工作设备上的本机 Router 始终由 Connector 启动、不属于云端网络；局域网直连放到下一期，见 1.10。
 - **经典模式服务端缓存**：Server 在 Redis 中按 `(user_id, device_id)` 缓存普通设备的轻量项目/会话摘要（标题、`cwd`、更新时间；TTL + 扇出回填 + 变化触发刷新），不存正文、不落 PG、不缓存加密设备。这是「Server 不存会话数据」原则对普通设备摘要的明确例外。
 - **新对话配置**：沿用该 Agent 最近一次新建对话时的配置，不设 `default_config`。
-- **进程休眠**：只有一个全局闲置时长；任一客户端连接即拉起全部已启用 Agent。
+- **进程休眠**：只有一个全局闲置时长；任一客户端连接（含经隧道连接加密设备、只拉会话列表）即拉起全部已启用 Agent；仅控制面 `DeviceAdmin/ping` 与后台定时巡检不唤醒。
 - **Provider**：直接读写 CC Switch 数据库的 `providers` 行，选择只作用于 AA 拉起的进程。
 - **`⌘J`**：改为跳转到 Orches。
 - **QuickJS `aa` 对象权限**：可调用的设备与 `/mcp` 相同（仅普通模式 + 开启 `allow_mcp`），见 6.1。
@@ -449,6 +449,5 @@ v3 不再手写一份与代码平行的 JSON Schema 契约目录；**定义类�
 
 ### 局部待拍板细节（动工到对应模块前确认）
 1. **自定义对话排序交互范围**：支持全列表在「按最近活跃 / 自定义拖拽排序」间切换，还是仅「置顶区自由拖拽 + 未置顶区按最近活跃冒泡」。
-2. **加密设备侧栏列表是否唤醒休眠 Agent**：经典模式下打开客户端自动向已配对加密设备拉 `Sessions/list` 时，若目标设备的 Agent 正处于闲置休眠，是命中磁盘缓存先返回不唤醒（直到点开对话或手动刷新才唤醒），还是连上隧道即唤醒全部已启用 Agent。
-3. **ACP 主力适配器实测核查**：重写 `connector-v3` 前实测 `claude-agent-acp`、`codex-acp`、`@openma/pi-acp` 的 `initialize` 响应，核对三者对 `loadSession` 与 `session/list` 能力位的实际声明格式。
+2. **ACP 主力适配器实测核查**：重写 `connector-v3` 前实测 `claude-agent-acp`、`codex-acp`、`@openma/pi-acp` 的 `initialize` 响应，核对三者对 `loadSession` 与 `session/list` 能力位的实际声明格式。
 
