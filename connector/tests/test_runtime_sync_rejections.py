@@ -329,3 +329,66 @@ def test_a_stalled_timeline_ends_the_timeline_reads_of_a_scan_what_needs_none_st
             assert harness.runner._recovered.get("claude") == harness.runner._recovery_generation
 
     asyncio.run(run())
+
+
+def test_a_scan_that_is_only_a_recovery_reads_no_timeline_during_a_wait_either(monkeypatch):
+    from connector.server import ingest as ingest_module
+
+    monkeypatch.setattr(ingest_module, "SNAPSHOT_STALL_WAIT_SECONDS", 0.5)
+
+    async def run() -> None:
+        harness = _Harness({
+            "sess_starter": [_item("sess_starter", 0, 100)],
+            "sess_next": [_item("sess_next", 0, 100)],
+        })
+        async with harness.http:
+            # A scan with one session asking for its timeline stalls: the wait is on.
+            harness.proxy.stall_pages = True
+            await harness.scan()
+            assert harness.runtime.reads == ["sess_starter"]
+            # The backend reconnected: every session is to be recovered.
+            await harness.runner.reconnect_event_runtimes()
+
+            # No session asks for a timeline now; the scan is here only to recover. A recovery
+            # reads a history as well.
+            harness.runtime.no_timeline = {"sess_starter", "sess_next"}
+            await harness.scan()
+            assert harness.runtime.reads == [], "a recovery scan during a wait reads no history"
+            assert harness.runner._recovered.get("claude") != harness.runner._recovery_generation
+
+            # The wait is over: the recovery reads both and completes.
+            harness.proxy.stall_pages = False
+            await asyncio.sleep(0.6)
+            await harness.scan()
+            assert harness.runtime.reads == ["sess_starter", "sess_next"]
+            assert harness.runner._recovered.get("claude") == harness.runner._recovery_generation
+    asyncio.run(run())
+
+
+def test_a_scan_with_nothing_to_read_is_not_reported_as_deferred_during_a_wait(monkeypatch):
+    from connector.server import ingest as ingest_module
+    from connector.server import runtime_sync
+
+    monkeypatch.setattr(ingest_module, "SNAPSHOT_STALL_WAIT_SECONDS", 0.5)
+
+    async def run() -> None:
+        harness = _Harness({
+            "sess_starter": [_item("sess_starter", 0, 100)],
+            "sess_next": [_item("sess_next", 0, 100)],
+        })
+        lines: list[str] = []
+        sink = runtime_sync.logger.add(lines.append, level="WARNING")
+        async with harness.http:
+            try:
+                harness.proxy.stall_pages = True
+                await harness.scan()
+                assert harness.runtime.reads == ["sess_starter"]
+                # Steady state: no session asks for a timeline, and no recovery is due.
+                harness.runtime.no_timeline = {"sess_starter", "sess_next"}
+                del lines[:]
+                await harness.scan()
+                assert harness.runtime.reads == []
+                assert not [line for line in lines if "existing session sync deferred" in line], lines
+            finally:
+                runtime_sync.logger.remove(sink)
+    asyncio.run(run())

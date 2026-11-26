@@ -195,7 +195,13 @@ class RuntimeSyncRunner:
                 recovery_budget = RECOVERY_SESSIONS_PER_SCAN
                 recovery_deferred = False
                 timeline_wait = False
-                if timeline_sync_count and self.snapshot_wait is not None and self.snapshot_wait() > 0:
+                # A recovery reads a timeline as well: a pending one counts here.
+                recovery_pending = recover and any(
+                    (runtime_id, session.session_id) not in self._recovered_sessions for session in sessions
+                )
+                if (timeline_sync_count or recovery_pending) and (
+                    self.snapshot_wait is not None and self.snapshot_wait() > 0
+                ):
                     # Snapshot uploads wait after a stall, so a timeline read now is refused unread:
                     # this scan reads none. What needs no timeline still goes out; the next scan
                     # tries again, one line per scan.

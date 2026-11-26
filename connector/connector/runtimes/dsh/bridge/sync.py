@@ -191,6 +191,8 @@ class SyncRelay:
         self.snapshot_wait = snapshot_wait
         self.wait_poll_interval = 1.0
         self.retry_tasks: set[asyncio.Task[None]] = set()
+        # The retry task that speaks for a quarantined session right now (its newest refusal's).
+        self.retry_owners: dict[str, asyncio.Task[None]] = {}
         self.streaming_post_interval = streaming_post_interval
         # When the previous post started, if it carried only drafts.
         self.last_draft_post = float("-inf")
@@ -363,7 +365,20 @@ class SyncRelay:
     def _schedule_retry(self, session_id: str, record: _Quarantine) -> None:
         task = asyncio.create_task(self.retry_capture(session_id, record), name="dsh-sync-quarantine-retry")
         self.retry_tasks.add(task)
-        task.add_done_callback(self.retry_tasks.discard)
+        self.retry_owners[session_id] = task
+
+        def answered(done: asyncio.Task[None]) -> None:
+            self.retry_tasks.discard(done)
+            if self.retry_owners.get(session_id) is done:
+                del self.retry_owners[session_id]
+
+        task.add_done_callback(answered)
+
+    def _retry_pending(self, session_id: str) -> bool:
+        """Whether a retry task of this session is still to ask, or is asking."""
+
+        task = self.retry_owners.get(session_id)
+        return task is not None and not task.done()
 
     async def retry_capture(self, session_id: str, record: _Quarantine) -> None:
         """Ask the plugin for a fresh complete capture of a quarantined session once it is due."""
@@ -406,6 +421,12 @@ class SyncRelay:
                     self._retry_base(record.reason == "history_too_large") * 2 ** (attempts - 1),
                     QUARANTINE_MAX_RETRY_DELAY_SECONDS,
                 )
+                continue
+            if follows_wait and self.snapshot_wait() > 0:
+                # A wait that began while the request was out keeps the capture it asked for:
+                # the plugin drops its pages, and nothing here would ask again until the
+                # session changes or the feed restarts. Ask once it is over.
+                delay = 0.0
                 continue
             return
 
@@ -739,19 +760,38 @@ class SyncRelay:
         if capture_id is not None and snapshot.get("captureId") != capture_id:
             raise ValueError("Snapshot commit belongs to a different capture")
         session_id = snapshot["sessionId"]
-        if not snapshot["withheld"]:
+        withheld = snapshot["withheld"]
+        if not withheld:
             await self.deliver_snapshot(session_id, snapshot)
         self.clear_snapshot()
         record = self.quarantined.get(session_id)
         if record is None:
             return SnapshotResult(accepted=True)
+        if withheld:
+            self._rearm_if_alone(session_id)
         return SnapshotResult(accepted=False, quarantined=True, reason=record.reason)
+
+    def _rearm_if_alone(self, session_id: str) -> None:
+        """Schedule the retry of a session whose withheld capture just ended, if nothing else will ask."""
+
+        record = self.quarantined.get(session_id)
+        if record is not None and not self._retry_pending(session_id):
+            # The capture answered a retry that has been answered itself (the plugin answers
+            # a refresh at once and captures after it does), and a wait that began since made
+            # the relay drop it: nothing would ask again until the session changes or the
+            # feed restarts. Ask once the wait is over.
+            self._schedule_retry(session_id, record)
 
     async def abort_snapshot(self, capture_id: str | None = None) -> None:
         # A stale stream must not clear the capture its replacement started.
         if capture_id is not None and self.snapshot is not None and self.snapshot.get("captureId") != capture_id:
             return
+        snapshot = self.snapshot
         self.clear_snapshot()
+        if snapshot is not None and snapshot["withheld"] and not self._closing:
+            # The plugin gave a withheld capture up (its read failed): as with a commit,
+            # nothing would ask again until the session changes or the feed restarts.
+            self._rearm_if_alone(snapshot["sessionId"])
 
 
 def _streaming_draft(notice: Mapping[str, Any]) -> bool:

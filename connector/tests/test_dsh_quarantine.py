@@ -486,3 +486,229 @@ def test_a_deferred_session_whose_refresh_keeps_failing_is_asked_again_only_afte
         finally:
             await relay.close()
     asyncio.run(exercise())
+
+
+def test_a_capture_dropped_because_a_new_wait_began_after_the_refresh_was_answered_is_asked_for_again():
+    async def exercise():
+        wait = [600.0]
+        harness = Harness(failure=ConnectorIngestDeferredError(600.0))
+        relay = harness.relay
+        relay.snapshot_wait, relay.wait_poll_interval = lambda: wait[0], 0.01
+        try:
+            assert (await harness.capture()).accepted is False
+            wait[0] = 0.0  # the client's wait ends early
+            harness.failure = None
+            for _ in range(300):
+                if harness.requests:
+                    break
+                await asyncio.sleep(0.01)
+            assert len(harness.requests) == 1
+            # The plugin answers a refresh at once and captures after it does; a new wait begins
+            # in between. The capture is dropped, and the retry that asked for it has answered.
+            wait[0] = 600.0
+            result = await harness.capture(through_seq=20)
+            assert result.accepted is False and harness.uploads == 1, "withheld: the client takes no snapshot"
+            await asyncio.sleep(0.05)
+            assert len(harness.requests) == 1, "the new wait is on: nothing is asked"
+            wait[0] = 0.0
+            for _ in range(300):
+                if len(harness.requests) >= 2:
+                    break
+                await asyncio.sleep(0.01)
+            assert len(harness.requests) == 2, "the dropped capture is asked for again once the new wait is over"
+            result = await harness.capture(through_seq=20)
+            assert result.accepted is True and relay.quarantined == {}
+        finally:
+            await relay.close()
+    asyncio.run(exercise())
+
+
+def test_a_capture_dropped_because_a_new_wait_began_before_the_refresh_was_answered_is_asked_for_again():
+    async def exercise():
+        wait = [600.0]
+        harness = Harness(failure=ConnectorIngestDeferredError(600.0))
+        relay = harness.relay
+        relay.snapshot_wait, relay.wait_poll_interval = lambda: wait[0], 0.01
+        held = asyncio.Event()
+        refreshes = 0
+
+        async def capturing_before_the_answer(method, params=None):
+            nonlocal refreshes
+            refreshes += 1
+            harness.requests.append((method, params))
+            if refreshes == 1:
+                # This plugin captures before it answers; meanwhile a new wait began.
+                wait[0] = 600.0
+                result = await harness.capture(through_seq=20)
+                assert result.accepted is False and harness.uploads == 1, "withheld: the client takes no snapshot"
+                held.set()
+            return {"ok": True}
+
+        relay.client.request = capturing_before_the_answer
+        try:
+            assert (await harness.capture()).accepted is False
+            wait[0] = 0.0  # the client's wait ends early
+            harness.failure = None
+            await asyncio.wait_for(held.wait(), 5)
+            await asyncio.sleep(0.05)
+            assert len(harness.requests) == 1, "the new wait is on: nothing is asked"
+            wait[0] = 0.0
+            for _ in range(300):
+                if len(harness.requests) >= 2:
+                    break
+                await asyncio.sleep(0.01)
+            assert len(harness.requests) == 2, "the retry that asked does not give up on an answered request"
+            result = await harness.capture(through_seq=20)
+            assert result.accepted is True and relay.quarantined == {}
+        finally:
+            await relay.close()
+    asyncio.run(exercise())
+
+
+def test_a_withheld_capture_the_plugin_gives_up_is_asked_for_again():
+    async def exercise():
+        wait = [600.0]
+        harness = Harness(failure=ConnectorIngestDeferredError(600.0))
+        relay = harness.relay
+        relay.snapshot_wait, relay.wait_poll_interval = lambda: wait[0], 0.01
+        meta = {"externalSessionId": "native", "sourceState": {"availability": "available"}}
+        try:
+            assert (await harness.capture()).accepted is False
+            wait[0] = 0.0  # the client's wait ends early
+            harness.failure = None
+            for _ in range(300):
+                if harness.requests:
+                    break
+                await asyncio.sleep(0.01)
+            assert len(harness.requests) == 1
+            # A new wait begins and the plugin's capture is withheld; the plugin gives that
+            # capture up (its read failed): aborted, not committed.
+            wait[0] = 600.0
+            await begin_snapshot(relay, session_id="session", meta=meta, through_seq=20)
+            await relay.abort_snapshot()
+            await asyncio.sleep(0.05)
+            assert len(harness.requests) == 1, "the new wait is on: nothing is asked"
+            wait[0] = 0.0
+            for _ in range(300):
+                if len(harness.requests) >= 2:
+                    break
+                await asyncio.sleep(0.01)
+            assert len(harness.requests) == 2, "a withheld capture that was aborted is asked for again too"
+            result = await harness.capture(through_seq=20)
+            assert result.accepted is True and relay.quarantined == {}
+            await asyncio.sleep(0.05)
+            assert relay.retry_owners == {}, "nothing is left speaking for a released session"
+        finally:
+            await relay.close()
+    asyncio.run(exercise())
+
+
+def test_after_a_failed_refresh_the_next_ask_does_not_sleep_the_backoff_of_that_failure():
+    async def exercise():
+        wait = [30.0]
+        harness = Harness(failure=ConnectorIngestDeferredError(0.0))  # due at once by retry_at
+        relay = harness.relay
+        relay.snapshot_wait, relay.wait_poll_interval = lambda: wait[0], 0.01
+        relay.quarantine_retry_delay = 0.5
+        asks: list[float] = []
+
+        async def answering(method, params=None):
+            asks.append(asyncio.get_running_loop().time())
+            if len(asks) == 1:
+                raise RuntimeError("the plugin is not answering")
+            if len(asks) == 2:
+                wait[0] = 30.0  # a wait began before this answer
+            return {"ok": True}
+
+        relay.client.request = answering
+        try:
+            assert (await harness.capture()).accepted is False
+            wait[0] = 0.0
+            for _ in range(300):
+                if len(asks) >= 2:
+                    break
+                await asyncio.sleep(0.01)
+            assert len(asks) == 2 and asks[1] - asks[0] >= 0.4, "a failed ask keeps its backoff"
+            await asyncio.sleep(0.05)
+            assert len(asks) == 2, "a wait is on after the answer: nothing is asked"
+            # The wait is over: asked at once, not after the backoff of the failed ask.
+            over = asyncio.get_running_loop().time()
+            wait[0] = 0.0
+            for _ in range(300):
+                if len(asks) >= 3:
+                    break
+                await asyncio.sleep(0.01)
+            assert len(asks) == 3 and asks[2] - over < 0.3, f"the third ask came {asks[2] - over if len(asks) > 2 else -1:.2f} s after the wait was over"
+        finally:
+            await relay.close()
+    asyncio.run(exercise())
+
+
+def test_an_abort_that_arrives_while_the_relay_is_closing_schedules_nothing():
+    async def exercise():
+        wait = [600.0]
+        harness = Harness(failure=ConnectorIngestDeferredError(600.0))
+        relay = harness.relay
+        relay.snapshot_wait, relay.wait_poll_interval = lambda: wait[0], 0.01
+        meta = {"externalSessionId": "native", "sourceState": {"availability": "available"}}
+        try:
+            assert (await harness.capture()).accepted is False
+            relay.retry_owners.clear()  # its retry has answered, as after a wait that ended early
+            relay._closing = True
+            await begin_snapshot(relay, session_id="session", meta=meta, through_seq=20)
+            await relay.abort_snapshot()
+            assert relay.retry_owners == {}, "a closing relay schedules no retry"
+        finally:
+            await relay.close()
+    asyncio.run(exercise())
+
+
+def test_an_abort_that_arrives_while_a_retry_is_still_to_ask_does_not_make_a_second_one():
+    async def exercise():
+        wait = [600.0]
+        harness = Harness(failure=ConnectorIngestDeferredError(600.0))
+        relay = harness.relay
+        relay.snapshot_wait, relay.wait_poll_interval = lambda: wait[0], 0.01
+        meta = {"externalSessionId": "native", "sourceState": {"availability": "available"}}
+        try:
+            assert (await harness.capture()).accepted is False
+            # The retry of that refusal is polling the wait; the plugin gives a withheld capture up.
+            await begin_snapshot(relay, session_id="session", meta=meta, through_seq=20)
+            await relay.abort_snapshot()
+            await asyncio.sleep(0.05)
+            assert len(relay.retry_tasks) == 1, "no second retry is made while one is still to ask"
+            assert relay.retry_owners == {"session": next(iter(relay.retry_tasks))}
+            wait[0] = 0.0
+            for _ in range(300):
+                if harness.requests:
+                    break
+                await asyncio.sleep(0.01)
+            await asyncio.sleep(0.1)
+            assert len(harness.requests) == 1, "the retry that was already there asks once"
+            assert relay.retry_owners == {}
+        finally:
+            await relay.close()
+    asyncio.run(exercise())
+
+
+def test_a_retry_that_ends_after_its_record_was_replaced_does_not_take_the_newer_one_s_place():
+    async def exercise():
+        wait = [600.0]
+        harness = Harness(failure=ConnectorIngestDeferredError(0.2))
+        relay = harness.relay
+        relay.snapshot_wait, relay.wait_poll_interval = lambda: wait[0], 0.01
+        try:
+            assert (await harness.capture()).accepted is False
+            await asyncio.sleep(0.3)  # past the first retry_at; the wait keeps that retry from asking
+            assert (await harness.capture()).accepted is False
+            assert relay.quarantined["session"].attempts == 2, "a newer refusal replaced the record"
+            for _ in range(300):  # the first retry has seen that its record is gone, and is discarded
+                if len(relay.retry_tasks) == 1:
+                    break
+                await asyncio.sleep(0.01)
+            assert len(relay.retry_tasks) == 1
+            assert relay.retry_owners == {"session": next(iter(relay.retry_tasks))}, "the newer retry keeps its place"
+            assert relay._retry_pending("session") is True
+        finally:
+            await relay.close()
+    asyncio.run(exercise())
