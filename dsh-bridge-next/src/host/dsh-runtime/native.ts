@@ -23,6 +23,7 @@ import { RuntimePlanning } from './planning.js'
 import type { Selections } from './selections.js'
 import { capabilities } from './capabilities.js'
 import { CreationIntents } from './creation-intents.js'
+import { PublishedSessions } from './published-sessions.js'
 import { continuationRequestId, latestTurnOutcome, turnOutcomeNoticeId, type TurnOutcome } from './turn-outcome.js'
 import { RuntimeAttachments, attachmentFingerprint, attachmentReferences, type AttachmentSnapshot, type StagedAttachment } from './attachments.js'
 declare module '@deepseek-ai/cordis' {
@@ -31,7 +32,8 @@ declare module '@deepseek-ai/cordis' {
 
 export type NativeChange = { type: 'stream', id: string, turn: number, step: number, chunk: StreamChunk, time: number, throughSeq: number }
   | { type: 'event', id: string, event: SessionEvent }
-  | { type: 'session', id: string } | { type: 'status', id: string }
+  /** `disposed`: the session left memory, which is also how a deletion in DSH shows. */
+  | { type: 'session', id: string, disposed?: boolean } | { type: 'status', id: string }
   // `resume` recalibrates from the session's committed checkpoint when it still matches.
   | { type: 'refresh', id: string, interrupted?: boolean, resume?: boolean }
   | { type: 'question', id: string } | { type: 'approval', id: string } | { type: 'capabilities' }
@@ -75,6 +77,8 @@ export class NativeRuntime {
   private writes = new Map<string, Promise<unknown>>()
   private closed = false
   private creations: CreationIntents
+  /** What this Host published per namespace, kept across restarts to notice deletions in DSH. */
+  readonly published: PublishedSessions
   readonly attachments: RuntimeAttachments
   private readonly facts = new Map<string, { revision: string, value: SessionFacts }>()
 
@@ -82,6 +86,8 @@ export class NativeRuntime {
     readonly diagnostics = new RuntimeDiagnostics(),
     legacyAttachmentStaging?: string) {
     this.creations = new CreationIntents(creationDirectory)
+    this.published = new PublishedSessions(join(dirname(creationDirectory), 'published-sessions.json'),
+      error => this.diagnostics.log('warn', 'published_sessions.unreadable', {}, error))
     this.attachments = new RuntimeAttachments(join(dirname(creationDirectory), 'attachments'), legacyAttachmentStaging)
     this.catalogs = new RuntimeCatalogs(ctx, () => this.emit({ type: 'catalogs', catalogType: 'model' }))
     this.configuration = new RuntimeConfiguration(ctx)
@@ -115,7 +121,7 @@ export class NativeRuntime {
     }, { global: true })
     ctx.on('session/disposed', session => {
       this.source.release(session.id)
-      this.emit({ type: 'session', id: session.id })
+      this.emit({ type: 'session', id: session.id, disposed: true })
     }, { global: true })
     const attempts = new Map<string, { attemptId: string, turn: number, step: number }>()
     ctx.on('agent/assistant-stream', ({ agent, frame }) => {

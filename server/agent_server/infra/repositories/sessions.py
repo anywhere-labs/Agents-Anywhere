@@ -60,16 +60,33 @@ def _source_archive_update(
     archived: bool | int,
     observed_at: str,
 ) -> dict[str, Any]:
-    # Import a newly observed archive once. Repeated observations must not undo
-    # a later unarchive in AA. Missing/unavailable observations do not establish
-    # a new archive transition, and source recovery must not unarchive AA.
-    if (
+    # Import a newly observed archive once, and a session the runtime reports
+    # deleted the same way: its timeline stays in AA, off the default list, and
+    # the user can unarchive it. Repeated observations must not undo a later
+    # unarchive in AA. Missing/unavailable observations do not establish a new
+    # archive transition, and source recovery must not unarchive AA.
+    #
+    # A deletion is a transition from every other state but a previous deletion:
+    # the Server's own inference (a complete inventory without the session,
+    # see complete_session_inventory) usually lands before the runtime's word
+    # does, and a session the runtime deleted must not stay listed for that.
+    if not archived and (
         source_state == "archived"
         and previous_source_state in {None, "visible", "available"}
-        and not archived
+        or source_state == "deleted"
+        and previous_source_state != "deleted"
     ):
         return {"archived": 1, "archived_at": observed_at, "dsh_archive_legacy": 0}
     return {}
+
+
+def _is_inferred_missing(row: Any) -> bool:
+    """Whether the row's `missing` is the Server's own guess, not an observation."""
+    return (
+        row.source_state == "missing"
+        and row.source_observation_origin == "inventory"
+        and row.source_state_reason == _SESSION_INVENTORY_MISSING_REASON
+    )
 
 
 def _session_cursor_values(row: Any) -> tuple[int, str, int, int, str]:
@@ -978,6 +995,10 @@ class SessionRepositoryMixin:
                     row["source_changed_seq"], started_seq
                 ):
                     continue
+                if row["source_state"] == "deleted":
+                    # The runtime said so; the session not being listed is what
+                    # that looks like, not new information.
+                    continue
                 if row["source_state"] != "missing":
                     if await self._complete_session_inventory_missing(
                         session_id=session_id,
@@ -1225,7 +1246,20 @@ class SessionRepositoryMixin:
             ).first()
             if row is None:
                 raise KeyError(session_id)
-            if row.source_state_at is not None and effective_observed_at < row.source_state_at:
+            # An observation older than the last write is stale, with one exception:
+            # the inference above is stamped with the Server's clock when the scan
+            # lands, and a runtime reporting the deletion it already saw must not
+            # lose to that guess.
+            stale = (
+                row.source_state_at is not None
+                and effective_observed_at < row.source_state_at
+            )
+            if stale and availability == "deleted" and _is_inferred_missing(row):
+                # Accepted, but the record of when the state was last written
+                # does not go back with it.
+                stale = False
+                effective_observed_at = row.source_state_at
+            if stale:
                 pass
             else:
                 changed = (
