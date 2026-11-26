@@ -127,8 +127,8 @@ class RuntimeWorkflowService:
             total = sum(len(_decode_inline_attachment(item)) for item in payload.attachments)
         except SessionRunInvalidConfigError as error:
             raise WorkflowError("invalid_attachment", str(error), 422) from error
-        if total > 32 * 1024 * 1024:
-            raise WorkflowError("attachments_too_large", "附件总大小不能超过 32 MiB。", 422)
+        if total > 64 * 1024 * 1024:
+            raise WorkflowError("attachments_too_large", "附件总大小不能超过 64 MiB。", 422)
         prep = await self.store.get_runtime_workflow(
             payload.preparationId, user_id=user_id, kind="preparation"
         )
