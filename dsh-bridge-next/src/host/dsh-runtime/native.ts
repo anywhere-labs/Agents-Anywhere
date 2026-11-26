@@ -86,7 +86,8 @@ export class NativeRuntime {
     readonly diagnostics = new RuntimeDiagnostics(),
     legacyAttachmentStaging?: string) {
     this.creations = new CreationIntents(creationDirectory)
-    this.published = new PublishedSessions(join(dirname(creationDirectory), 'published-sessions.json'))
+    this.published = new PublishedSessions(join(dirname(creationDirectory), 'published-sessions.json'),
+      error => this.diagnostics.log('warn', 'published_sessions.unreadable', {}, error))
     this.attachments = new RuntimeAttachments(join(dirname(creationDirectory), 'attachments'), legacyAttachmentStaging)
     this.catalogs = new RuntimeCatalogs(ctx, () => this.emit({ type: 'catalogs', catalogType: 'model' }))
     this.configuration = new RuntimeConfiguration(ctx)

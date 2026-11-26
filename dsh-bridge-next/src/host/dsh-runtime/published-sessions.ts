@@ -1,4 +1,4 @@
-import { readJson, writeJson } from '../storage/files.js'
+import { hasCode, readJson, writeJson } from '../storage/files.js'
 
 type Stored = { version: 1, namespaces: Record<string, string[]> }
 
@@ -13,14 +13,26 @@ export class PublishedSessions {
   private loading: Promise<void> | undefined
   private writes: Promise<void> = Promise.resolve()
 
-  /** Without a path the record lives and dies with the process. */
-  constructor(private readonly path?: string) {}
+  /**
+   * Without a path the record lives and dies with the process. `unreadable` hears
+   * of a record that exists but cannot be used: the deletions it would have
+   * told are lost, which nobody finds out from the Host staying silent.
+   */
+  constructor(private readonly path?: string, private readonly unreadable?: (error: unknown) => void) {}
 
   private async load(): Promise<void> {
     if (!this.path) return
     let stored: Stored | null = null
-    try { stored = await readJson<Stored>(this.path) } catch { stored = null }
-    if (stored?.version !== 1) return
+    try { stored = await readJson<Stored>(this.path) }
+    catch (error) {
+      if (!hasCode(error, 'ENOENT')) this.unreadable?.(error)
+      return
+    }
+    if (stored === null) return
+    if (stored?.version !== 1 || typeof stored.namespaces !== 'object' || stored.namespaces === null) {
+      this.unreadable?.(new Error('published-sessions.json: not a record of this version'))
+      return
+    }
     for (const [namespace, ids] of Object.entries(stored.namespaces)) {
       if (!Array.isArray(ids)) continue
       this.namespaces.set(namespace, new Set(ids.filter((id): id is string => typeof id === 'string')))

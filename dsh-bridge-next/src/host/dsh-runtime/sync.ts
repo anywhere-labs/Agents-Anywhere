@@ -553,10 +553,15 @@ export class SyncFeed {
       }
       if (change.type === 'visibility') { reconcile = true; continue }
       const { id } = change
+      // A published session that left memory and left DSH's persistence is one DSH deleted; only a fresh
+      // inventory tells. A session DSH still holds merely left memory, which is no reason to list again.
+      const maybeDeleted = change.type === 'session' && change.disposed && this.published.has(id)
+        && !(await this.native.source.persisted(id))
       await this.sessionOperation(id, change.type, async () => {
+        // Before the visibility check: DSH may already have dropped the session from its registry.
+        if (maybeDeleted) { reconcile = true; this.inventoryStale = true }
         if (!await this.native.visible(id)) {
           if (this.published.has(id)) reconcile = true
-          if (change.type === 'session' && change.disposed) this.inventoryStale = true
           return
         }
         if (change.type === 'refresh') {
@@ -570,8 +575,6 @@ export class SyncFeed {
         }
         if (!this.published.has(id)) await this.baseline(id)
         if (!this.published.has(id)) return
-      // A session that left memory may be one DSH deleted; reconcile on a fresh inventory.
-      if (change.type === 'session' && change.disposed) { reconcile = true; this.inventoryStale = true }
         if (change.type === 'question' || change.type === 'approval') await this.notices(id)
         if (change.type === 'stream') {
           const mode = await this.native.planning.read(id as SessionId)

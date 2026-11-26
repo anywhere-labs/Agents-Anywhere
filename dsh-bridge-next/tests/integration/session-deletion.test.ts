@@ -117,9 +117,16 @@ test('a published session that leaves memory is reported deleted only when a fre
   fixture.ctx.sessions.announce(goneSession)
   goneSession.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: '丢弃' }] }), { surfaceOp: 'append' })
   await until(() => published(gone), 'the unpersisted session is published')
+  // DSH evicting a session it still holds is not a reason to list every session again.
+  const query = fixture.ctx.sessionQuery
+  const listSessions = query.listSessions.bind(query)
+  let listings = 0
+  query.listSessions = async (signal?: AbortSignal) => { listings++; return listSessions(signal) }
+  t.after(() => { query.listSessions = listSessions })
   keepAttached()
   await delay(400)
   assert.equal(deletions(stream.notes()).length, 0, 'a session DSH still holds is not reported deleted')
+  assert.equal(listings, 0, 'and no inventory was taken for it')
   goneAttached()
   await until(() => deletions(stream.notes()).length === 1, 'the session that is gone is reported')
   assert.equal(deletions(stream.notes())[0].params.externalSessionId, gone)
