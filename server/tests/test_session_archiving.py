@@ -221,6 +221,19 @@ def test_deleted_agent_session_is_archived_once_like_an_agent_archive(
 
 
 @pytest.mark.parametrize("runtime", ["codex", "claude-code", "dsh"])
+@pytest.mark.parametrize("previous", ["unavailable", "unknown", "hidden"])
+def test_a_deletion_is_a_transition_from_every_other_state(archive_client, runtime, previous):
+    # Whatever state the session was in, the runtime's word archives it once.
+    api = archive_client
+    session_id = f"session_{runtime}"
+    api.sync(session_id, runtime, previous)
+    assert api.stored_state(session_id) == (0, previous)
+    api.sync(session_id, runtime, "deleted", mode="inventory")
+    assert api.stored_state(session_id) == (1, "deleted")
+    assert session_id in api.listed_ids(archived=True)
+
+
+@pytest.mark.parametrize("runtime", ["codex", "claude-code", "dsh"])
 @pytest.mark.parametrize("mode", ["meta", "event"])
 def test_a_deletion_reported_after_the_server_inferred_missing_still_archives(
     archive_client, runtime, mode
@@ -252,9 +265,12 @@ def test_a_deletion_reported_after_the_server_inferred_missing_still_archives(
     api.sync(session_id, runtime, "available")
     complete_inventory_without_it("first")
     assert api.stored_state(session_id) == (0, "missing")
+    inferred_at = api.session(session_id)["sourceAvailabilityUpdatedAt"]
     api.sync(session_id, runtime, "deleted", mode=mode)
     assert api.stored_state(session_id) == (1, "deleted")
     assert session_id in api.listed_ids(archived=True)
+    # The write time does not follow the older observation back.
+    assert api.session(session_id)["sourceAvailabilityUpdatedAt"] >= inferred_at
     # Later scans keep the runtime's word rather than guessing again.
     complete_inventory_without_it("later")
     assert api.stored_state(session_id) == (1, "deleted")

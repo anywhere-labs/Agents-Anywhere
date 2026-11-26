@@ -1250,11 +1250,16 @@ class SessionRepositoryMixin:
             # the inference above is stamped with the Server's clock when the scan
             # lands, and a runtime reporting the deletion it already saw must not
             # lose to that guess.
-            if (
+            stale = (
                 row.source_state_at is not None
                 and effective_observed_at < row.source_state_at
-                and not (availability == "deleted" and _is_inferred_missing(row))
-            ):
+            )
+            if stale and availability == "deleted" and _is_inferred_missing(row):
+                # Accepted, but the record of when the state was last written
+                # does not go back with it.
+                stale = False
+                effective_observed_at = row.source_state_at
+            if stale:
                 pass
             else:
                 changed = (
