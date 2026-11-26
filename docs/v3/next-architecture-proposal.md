@@ -35,7 +35,7 @@ flowchart TB
 
   subgraph Cloud["云端控制面 + 路由 + 预览网关"]
     Server["server-v3 (FastAPI + asyncpg + Redis)"]
-    CloudRouter["云端多 Router 网络（边缘 Router 集群）<br/>任一边缘接入即全网 + 端点列表自动故障转移"]
+    CloudRouter["云端多 Router 网络（边缘 Router 集群）<br/>任一边缘接入即全网 + 内置端点服务故障转移"]
     FrpGw["frps (HTTP Plugin) + 鉴权反向代理<br/>https://<id>.preview.<domain>"]
     Server <-->|"挂载 aa.v3.Control<br/>定向调 DeviceAdmin / 普通设备"| CloudRouter
     FrpGw <-->|"Login / NewProxy / Auth 回调"| Server
@@ -135,7 +135,7 @@ flowchart TB
 - **极简进程生命周期（彻底移除旧版 `Sessions/prepare` 预热池与双进程 `retire` 交接）**：
   - 进程状态清晰收敛为 4 态：`disabled`（未启用） / `starting`（启动与 `initialize` 协商中） / `running`（运行中） / `error`（异常退出，附最后错误并可重启）。
   - 仅保留 3 个用户操作：**启用（打开开关）**、**禁用（关闭开关，停进程并清会话列表缓存）**、**重启（杀掉旧进程并重开，释放旧内存 Timeline，使新配置立即生效）**。
-  - **拉起与空闲休眠**：新扫描到的已安装 Agent 默认为 `disabled`（由用户按需打开主力 Agent 开关）；有客户端活跃时，所有已启用 Agent 均保持 `running`；当所有客户端断开且无运行中 Turn/后台任务超过**用户设定的闲置时长**（可配置永不休眠或 N 分钟）时，优雅关闭 ACP 进程（连同内存 Timeline 销毁），下次任一客户端连接时自动拉起全部已启用 Agent。
+  - **拉起与空闲休眠**：新扫描到的已安装 Agent 默认为 `disabled`（由用户按需打开主力 Agent 开关）；有客户端活跃时，所有已启用 Agent 均保持 `running`；当所有客户端断开且无运行中 Turn/后台任务超过**用户设定的闲置时长**（可配置永不休眠或 N 分钟）时，优雅关闭 ACP 进程（连同内存 Timeline 销毁），下次任一客户端连接时自动拉起全部已启用 Agent。控制面 `DeviceAdmin/ping` 与后台定时巡检**绝不唤醒**休眠中的 Agent。
   - **闲置时长只有一个全局设置**，存于 `dataDir/settings.json`、经 `aa.v3.Device` 读写，作用于全部 Agent；Agent 设置里不再有单独的休眠项。
 - **Agent 设置保存在工作设备本地并统一经 RPC 读写**：
   - 持久化在 `dataDir/agents.json`（内置 Agent 本地覆盖）与 `dataDir/custom-agents.json`（自定义 Agent），权限 `0600`，**绝不上传云端 Server，绝不把 `env` 值写入日志**。
@@ -227,20 +227,20 @@ dataDir/
 
 | 步骤 | 方向 | 内容 |
 | --- | --- | --- |
-| 1. `pairing_start` | `C → D` | `pairing_id`（C 生成的 128-bit 随机数）、`c_pub`、`client_label`（设备名/浏览器、平台）、**承诺** `commit = SHA-256("aa-v3/sas/commit" ‖ pairing_id ‖ c_pub ‖ nonce_c)`，其中 `nonce_c` 为 32 字节随机数，**此时不发送** |
+| 1. `pairing_start` | `C → D` | `pairing_id`（C 生成的 128-bit 随机数）、`c_pub`、`client_label`（设备名/浏览器、平台）、**承诺** `commit = SHA-256("aa-v3/sas/commit" ‖ device_id ‖ pairing_id ‖ c_pub ‖ nonce_c)`，其中 `nonce_c` 为 32 字节随机数，**此时不发送**（哈希输入各变长字段统一采用 `uint32be(byte_len) ‖ utf8_bytes` 长度前缀编码，公钥与随机数为定长 32 字节原始字节，消除拼接边界歧义） |
 | 2. 响应 | `D → C` | `device_id`、`d_pub`、`nonce_d`（32 字节随机数，明文） |
 | 3. `pairing_reveal` | `C → D` | `nonce_c`；D 重新计算并校验 `commit`，不一致立即作废该 `pairing_id` 并计入失败次数 |
-| 4. 计算核对码 | 双方各自 | `sas = SHA-256("aa-v3/sas/code" ‖ pairing_id ‖ device_id ‖ c_pub ‖ d_pub ‖ nonce_c ‖ nonce_d)`，取前 40 bit 编码为 8 位 Crockford Base32，按 `XXXX-XXXX` 展示 |
+| 4. 计算核对码 | 双方各自 | `sas = SHA-256("aa-v3/sas/code" ‖ device_id ‖ pairing_id ‖ c_pub ‖ d_pub ‖ nonce_c ‖ nonce_d)`（同上长度前缀编码），取前 40 bit 编码为 8 位 Crockford Base32，按 `XXXX-XXXX` 展示 |
 | 5. 双端人工确认 | — | C 端用户核对后点「确认一致」，C 才信任 `d_pub`；D 端 Desktop 弹窗（或 CLI `pair approve <id>`）展示同一核对码与 `client_label`，经 `LocalAdmin/resolve_pairing` 同意后才把 `c_pub` 写入该档案 `paired-clients.json` |
-| 6. 建立隧道 | `C ↔ D` | C 以 `d_pub` 发起 `Noise_IK_25519_AESGCM_SHA256`；首次握手成功即配对完成，`pairing_status` 返回 `completed` |
+| 6. 建立隧道 | `C ↔ D` | C 以 `d_pub` 发起 `Noise_IK_25519_AESGCM_SHA256`；首次握手成功即配对完成（`pairing_status` 仅用于 UI 提示设备侧是否已点同意，不作为信任依据） |
 
 **安全要点**：
-- **承诺先于对方随机数**：C 在看到 `nonce_d` 之前就已锁定 `nonce_c`，D 发出 `nonce_d` 时不知道 `nonce_c`，中间人无法预先挑选随机数凑出两边相同的核对码；单次尝试的成功概率为 2⁻⁴⁰。
+- **承诺先于对方随机数且绑定目标设备**：C 在看到 `nonce_d` 之前就已锁定 `device_id`、`c_pub` 与 `nonce_c`，D 发出 `nonce_d` 时不知道 `nonce_c`，中间人既无法跨设备转发，也无法预先挑选随机数凑出两边相同的核对码；单次尝试的成功概率为 2⁻⁴⁰。
 - **核对码绑定全部上下文**：`pairing_id`、`device_id` 与双方公钥都进入哈希，替换任一公钥都会使两端核对码不同。
 - **Server 传来的状态一律不作为信任依据**：D 只以本机用户的 `resolve_pairing` 为准，C 只以本端用户的「确认一致」为准；Server 伪造的 `confirmed` / `approved` 状态不改变任何一方的白名单或信任。
 - **单次与时效**：每个 `pairing_id` 只能 reveal 一次，从 `pairing_start` 起 120 秒内未完成双端确认即过期；核对码不一致只能重新发起（新的 `pairing_id` 与新随机数），不允许在同一会话内重试。
 - **防反复撞码（由 Connector 本地强制，不依赖 Server）**：每个档案同时最多 3 个待处理配对；10 分钟内被拒绝、过期或承诺校验失败累计 5 次后，暂停接受新配对 10 分钟，并在 `watch_pairings` 推送告警。每次尝试都需要设备端真人审批，攻击者无法自动化撞码。
-- **撤销**：`LocalAdmin/revoke_client` 或 `Device` 撤销接口从白名单删除 `c_pub`，并通过 `DeviceAdmin/close_tunnel_sessions` 立即断开该客户端现有隧道。
+- **撤销**：`LocalAdmin/revoke_client` 或 `Device` 撤销接口从白名单删除 `c_pub`，并由 Connector **本地直接按 `c_pub` 立即掐断该客户端的全部活跃会话与流**（不依赖不可信服务端），同时可尽力通知控制面回收对应隧道。
 
 ### 1.10 MeshCall 网络：云端多 Router 网络与本机 Router
 
@@ -260,7 +260,8 @@ dataDir/
 - MeshCall `docs/zh-CN/router.md` 第 4 节「无状态多 Router 高可用」与 #24「Router 不保存状态」的前提需要按此重写。
 - **共享状态存储（etcd）不可用时只能降级**：需要写存储的操作（签发 / 吊销 Token、开隧道、注册新实例、成员变化）失败并返回可重试的错误；已建立的连接与调用继续工作，读取来自本地缓存、可能过期（停机期间的吊销无法同步到其他节点）。集群负责发现并报告这种状态，不保证服务正确运行。
 - **幂等去重靠节点间通信，不在 etcd 里逐次写**：指定实例的调用由该实例所在节点去重（一个实例同一时间只连一个节点，所有发往它的调用都经过那里）；未指定实例的调用按去重键做一致性哈希选出负责节点，接入节点先到负责节点登记。保证与现在相同：去重表是缓存，节点丢失或成员变化时最坏多执行一次。
-- **端点列表暂不做**：以后若客户端需要自己知道各边缘 Router 的地址，做成与 `Registry` / `AuthService` 并列的内置服务供 SDK 读取，而不是在握手里下发。
+- **端点列表作为 Router 内置服务**：与 `Registry` / `AuthService` / `TunnelService` 并列，提供内置端点服务供 SDK 接入任一边缘 Router 后主动查询集群内的多个可用边缘端点，用于自动故障转移（而不是在握手里下发）。
+- **前置演进兼容**：`meshcall#88` 落地前，AA v3 直接通过同一引导地址连单云端 Router 即可完整开发运行，集群上线后 AA 侧零业务改动即可接入。
 - 设计 issue：[t4wefan/meshcall#88](https://github.com/t4wefan/meshcall/issues/88)。
 
 **本机 Router**：
@@ -282,7 +283,7 @@ dataDir/
 
 ## 3. 第三层：Server（`server-v3`）
 
-- **框架与并发特性**：Python 3.12 + FastAPI + Pydantic v2 + SQLAlchemy Core/`asyncpg` + `redis.asyncio` + MeshCall（经引导地址接入任一边缘 Router，由集群下发端点列表并自动故障转移，不在应用里管理多个 Router，见 1.10；严格守住 `test_architecture.py` 分层；`aa.v3.Control` 中所有方法在 MeshCall `WorkerLoop` 线程执行，必须经 `_on_app_loop` / `_stream_on_app_loop` 回切 FastAPI 主循环）。
+- **框架与并发特性**：Python 3.12 + FastAPI + Pydantic v2 + SQLAlchemy Core/`asyncpg` + `redis.asyncio` + MeshCall（经引导地址接入任一边缘 Router，通过 Router 内置端点服务获取可用边缘端点并自动故障转移，不在应用里管理多个 Router，见 1.10；严格守住 `test_architecture.py` 分层；`aa.v3.Control` 中所有方法在 MeshCall `WorkerLoop` 线程执行，必须经 `_on_app_loop` / `_stream_on_app_loop` 回切 FastAPI 主循环）。
 - **统一 Device Flow 登录 & 两档自签 Token（同时兼容 `auth_mode = local | oidc`）**：
   - 端点：`POST /auth/device/start`（返回 `device_code` + 8 位 Crockford Base32 `user_code` `XXXX-XXXX` + `verification_uri` + `verification_uri_complete`）、`GET /auth/device/preview`、`POST /auth/device/claim`（网页点击或自动化以用户身份调）、`POST /auth/device/poll`（原子消费一次性返回凭据）。
   - **两档 `access_level`（由 `server-v3` 自己签发并管理刷新与撤销）**：
@@ -437,7 +438,7 @@ v3 不再手写一份与代码平行的 JSON Schema 契约目录；**定义类�
 - **跨设备配对**：Commit-Reveal SAS 协议细节见 1.9。
 - **预览鉴权**：推荐独立可注册域名，`__Host-` host-only Cookie，网关剥离鉴权 Cookie 后再转发给 dev server，见第 5 节。
 - **契约**：代码即契约（Zod / Pydantic → MeshCall 客户端与 OpenAPI），不手写平行契约目录，见第 8 节。
-- **MeshCall 拓扑**：云端为多 Router 网络，接入任一边缘 Router 即等同接入整个 Mesh，并自动获得边缘端点列表用于故障转移；用户工作设备上的本机 Router 始终由 Connector 启动、不属于云端网络；局域网直连放到下一期，见 1.10。
+- **MeshCall 拓扑**：云端为多 Router 网络，接入任一边缘 Router 即等同接入整个 Mesh，并通过 Router 内置端点服务获取集群内多个可用边缘端点用于故障转移（集群未落地前单 Router 同引导地址无缝运行）；用户工作设备上的本机 Router 始终由 Connector 启动、不属于云端网络；局域网直连放到下一期，见 1.10。
 - **经典模式服务端缓存**：Server 在 Redis 中按 `(user_id, device_id)` 缓存普通设备的轻量项目/会话摘要（标题、`cwd`、更新时间；TTL + 扇出回填 + 变化触发刷新），不存正文、不落 PG、不缓存加密设备。这是「Server 不存会话数据」原则对普通设备摘要的明确例外。
 - **新对话配置**：沿用该 Agent 最近一次新建对话时的配置，不设 `default_config`。
 - **进程休眠**：只有一个全局闲置时长；任一客户端连接即拉起全部已启用 Agent。
@@ -448,4 +449,6 @@ v3 不再手写一份与代码平行的 JSON Schema 契约目录；**定义类�
 
 ### 局部待拍板细节（动工到对应模块前确认）
 1. **自定义对话排序交互范围**：支持全列表在「按最近活跃 / 自定义拖拽排序」间切换，还是仅「置顶区自由拖拽 + 未置顶区按最近活跃冒泡」。
+2. **加密设备侧栏列表是否唤醒休眠 Agent**：经典模式下打开客户端自动向已配对加密设备拉 `Sessions/list` 时，若目标设备的 Agent 正处于闲置休眠，是命中磁盘缓存先返回不唤醒（直到点开对话或手动刷新才唤醒），还是连上隧道即唤醒全部已启用 Agent。
+3. **ACP 主力适配器实测核查**：重写 `connector-v3` 前实测 `claude-agent-acp`、`codex-acp`、`@openma/pi-acp` 的 `initialize` 响应，核对三者对 `loadSession` 与 `session/list` 能力位的实际声明格式。
 
