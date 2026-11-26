@@ -32,14 +32,14 @@ from connector.server.runtime_sync import RuntimeSyncRunner
 PROXY_LIMIT = 64 * 1024
 
 
-def _meta(session_id: str) -> SessionMeta:
+def _meta(session_id: str, *, timeline: bool = True) -> SessionMeta:
     return SessionMeta(
         session_id=session_id,
         external_session_id=f"ext_{session_id}",
         runtime="claude",
         title=session_id,
         ordering_time="2026-11-09T00:00:00Z",
-        metadata={"sync": {"changed": True, "requires_timeline_sync": True}},
+        metadata={"sync": {"changed": True, "requires_timeline_sync": timeline}},
     )
 
 
@@ -66,9 +66,13 @@ class _Runtime(FakeAgentRuntime):
         self.histories = histories
         self.reads: list[str] = []
         self.commits: list[str] = []
+        self.no_timeline: set[str] = set()
 
     async def list_sessions(self, limit: int = 100, cursor: str | None = None, force: bool = False):
-        return tuple(_meta(session_id) for session_id in self.histories if session_id not in self.commits)
+        return tuple(
+            _meta(session_id, timeline=session_id not in self.no_timeline)
+            for session_id in self.histories if session_id not in self.commits
+        )
 
     async def get_session_state(self, session_id: str, external_session_id: str | None = None):
         return SessionState(
@@ -103,11 +107,14 @@ class _Proxy(httpx.AsyncBaseTransport):
         self.accepted: list[dict[str, Any]] = []
         self.refused: list[int] = []
         self.fail_with: Exception | None = None
+        self.stall_pages = False
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         raw = b"".join([chunk async for chunk in request.stream])
         if self.fail_with is not None:
             raise self.fail_with
+        if self.stall_pages and b'"method":"timeline.sync"' in raw:
+            raise httpx.WriteTimeout("stalled")
         if len(raw) > PROXY_LIMIT:
             self.refused.append(len(raw))
             return httpx.Response(413, request=request)
@@ -135,6 +142,7 @@ class _Harness:
             send_notification=unused_notification_sender,
             ingest_notifications=self.ingest.ingest_notifications,
             ingest_snapshot=self.ingest.ingest_snapshot,
+            snapshot_wait=self.ingest.snapshot_wait,
         )
 
     async def scan(self) -> None:
@@ -276,3 +284,48 @@ def test_retryable_rejections_do_not_pause_the_session():
 
     assert runtime_sync._permanently_rejected(ConnectorIngestRetryableError("lock busy")) is False
     assert runtime_sync._permanently_rejected(ConnectorIngestRejectedError("invalid")) is True
+
+
+def test_a_stalled_timeline_ends_the_timeline_reads_of_a_scan_what_needs_none_still_goes_out(monkeypatch):
+    from connector.server import ingest as ingest_module
+
+    monkeypatch.setattr(ingest_module, "SNAPSHOT_STALL_WAIT_SECONDS", 0.5)
+
+    def metas(harness) -> list[str]:
+        return [n["params"].get("sessionId") for n in harness.proxy.notifications() if n["method"] == "session.meta.upsert"]
+
+    def timelines(harness) -> list[str]:
+        return [n for n in harness.proxy.notifications() if n["method"] == "timeline.sync"]
+
+    async def run() -> None:
+        harness = _Harness({
+            "sess_stalled": [_item("sess_stalled", 0, 100)],
+            "sess_next": [_item("sess_next", 0, 100)],
+            "sess_last": [_item("sess_last", 0, 100)],
+            "sess_meta_only": [],
+        })
+        async with harness.http:
+            harness.runtime.no_timeline = {"sess_meta_only"}
+            harness.proxy.stall_pages = True
+            await harness.scan()
+            # The stalled page was given up at once and the scan read no further timeline...
+            assert harness.runtime.reads == ["sess_stalled"]
+            assert harness.runtime.commits == [] and timelines(harness) == []
+            # ...while the session ordered after it that needs no timeline still published its meta.
+            assert metas(harness) == ["sess_meta_only"]
+            assert harness.runner._recovered.get("claude") != harness.runner._recovery_generation
+
+            # While the wait is on, every scan reads no history at all, one line, the rest published.
+            await harness.scan()
+            assert harness.runtime.reads == [] and metas(harness) == ["sess_meta_only"]
+            assert harness.proxy.accepted, "small batches pass during a wait"
+
+            # The wait is over and the path carries pages again: everything syncs.
+            harness.proxy.stall_pages = False
+            await asyncio.sleep(0.6)
+            await harness.scan()
+            assert harness.runtime.reads == ["sess_stalled", "sess_next", "sess_last"]
+            assert harness.runtime.commits == ["sess_stalled", "sess_next", "sess_last"]
+            assert harness.runner._recovered.get("claude") == harness.runner._recovery_generation
+
+    asyncio.run(run())

@@ -37,10 +37,13 @@ SNAPSHOT_PAGE_RETRIES = 4
 SNAPSHOT_PAGE_RETRY_BACKOFF_SECONDS = 0.5
 # A page whose body stalls for the whole write timeout is given up at once,
 # and snapshot uploads then wait this long before the next attempt. The wait
-# doubles with each upload that stalls and is reset by one that gets through.
-# It starts as long as the wait for a timeline the Server rejected (runtime_sync)
-# and is capped at an hour: once the path is back, the history should not have
-# to wait most of a day for it.
+# doubles with each upload that stalls (stalls while a wait is on are one slow
+# path) and is reset by one that gets through. A caller that asks during the
+# wait meets ConnectorIngestDeferredError, which says how long the wait still
+# is: asking again sooner cannot help, and a caller that retries at its own
+# pace stays busy for the whole wait. It starts as long as the wait for a
+# timeline the Server rejected (runtime_sync) and is capped at an hour: once
+# the path is back, the history should not have to wait most of a day for it.
 SNAPSHOT_STALL_WAIT_SECONDS = 600.0
 SNAPSHOT_STALL_WAIT_MAX_SECONDS = 3600.0
 # A synchronous batch (for example one DSH sync batch the plugin waits on) that
@@ -72,6 +75,23 @@ class ConnectorIngestRejectedError(RuntimeError):
 
 class ConnectorIngestRetryableError(ConnectorNetworkError):
     """The backend rejected notifications that are safe to retry."""
+
+
+class ConnectorIngestDeferredError(ConnectorNetworkError):
+    """A snapshot upload was not attempted: an earlier one stalled and its wait is not over.
+
+    The wait is the same for every snapshot of the client. `retry_in` is how
+    many seconds of it are left, so that a caller can wait exactly that long
+    instead of asking again. It is still a network failure for a caller that
+    does not look: nothing reached the backend.
+    """
+
+    def __init__(self, retry_in: float) -> None:
+        super().__init__(
+            f"snapshot upload deferred for {retry_in:.0f}s: the last one stalled "
+            "and the path cannot carry bulk traffic right now"
+        )
+        self.retry_in = max(retry_in, 0.0)
 
 
 def _rejection_is_retryable(rejected: list[Any]) -> bool:
@@ -159,14 +179,12 @@ class ConnectorIngestClient:
         once, and snapshot uploads then wait before the next attempt: a path
         that could not carry one page cannot carry it sent again, and for as
         long as the upload is kept up the backend WebSocket's keepalive starves
-        and the Server drops the connection.
+        and the Server drops the connection. A caller that asks during the wait
+        meets ConnectorIngestDeferredError before anything is sent.
         """
-        wait = self._snapshot_retry_at - time.monotonic()
+        wait = self.snapshot_wait()
         if wait > 0:
-            raise ConnectorNetworkError(
-                f"snapshot upload deferred for {wait:.0f}s: the last one stalled "
-                "and the path cannot carry bulk traffic right now"
-            )
+            raise ConnectorIngestDeferredError(wait)
         task = asyncio.create_task(asyncio.to_thread(
             encode_snapshot, runtime, runtime_id, session_id, meta, items, complete=complete, trailing=list(trailing),
         ))
@@ -182,26 +200,52 @@ class ConnectorIngestClient:
                 async with self._post_lock:
                     self._posting = True
                     try:
+                        # This one could not know: a wait may have begun while it
+                        # queued for the lock behind another upload.
+                        wait = self.snapshot_wait()
+                        if wait > 0:
+                            raise ConnectorIngestDeferredError(wait)
                         await self._drain_pending(on_progress)
                         await self._upload_snapshot(snapshot, on_progress)
                     finally:
                         self._posting = False
                         if not self.has_pending:
                             self._available.clear()
-            self._snapshot_stalls = 0
+            self._reset_snapshot_wait()
         except ConnectorNetworkError as exc:
             if _body_stalled(exc):
                 self._defer_snapshots(exc)
+                # The upload that found the stall is told what every later one is: it did
+                # not land, and nothing will for a while.
+                # The transport error stays its cause, as for every failed upload;
+                # the wrapper stays as its context.
+                deferred = ConnectorIngestDeferredError(self.snapshot_wait())
+                deferred.__cause__ = exc.__cause__
+                raise deferred
             raise
         finally:
             snapshot.close()
 
+    def snapshot_wait(self) -> float:
+        """How much longer snapshot uploads are deferred; 0 when they are not."""
+        return max(0.0, self._snapshot_retry_at - time.monotonic())
+
+    def _reset_snapshot_wait(self) -> None:
+        # An upload that got through was admitted before the wait began, so the
+        # path carries bulk again.
+        self._snapshot_stalls = 0
+        self._snapshot_retry_at = 0.0
+
     def _defer_snapshots(self, error: Exception) -> None:
-        self._snapshot_stalls += 1
+        # Uploads admitted before a wait began may stall while it is on: one slow path, one wait.
+        if time.monotonic() >= self._snapshot_retry_at:
+            self._snapshot_stalls += 1
         delay = _snapshot_stall_wait(self._snapshot_stalls)
         self._snapshot_retry_at = time.monotonic() + delay
+        # A stalled batch sent ahead of an ordered snapshot is given up here as well:
+        # the path cannot carry that either.
         logger.warning(
-            "snapshot upload stalled and was given up; snapshot uploads wait {:.0f}s stalls={} error={}",
+            "an upload body stalled and was given up; snapshot uploads wait {:.0f}s stalls={} error={}",
             delay, self._snapshot_stalls, error,
         )
 
@@ -237,7 +281,7 @@ class ConnectorIngestClient:
                 await self._post_snapshot_page(client, snapshot, start, end, first, on_progress)
             except (ConnectorNetworkError, httpx.HTTPStatusError) as exc:
                 size = snapshot.page_size(start, end, first=first)
-                smaller = _smaller_page_bytes(size, exc) if end - start > 1 and not _body_stalled(exc) else None
+                smaller = _smaller_page_bytes(size, exc) if end - start > 1 else None
                 if smaller is None or self._closed is not None:
                     raise
                 logger.warning(

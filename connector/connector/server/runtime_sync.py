@@ -30,7 +30,10 @@ from connector.runtime_protocol import (
     SessionState,
 )
 from connector.server.errors import ConnectorNetworkError
-from connector.server.ingest import ConnectorIngestRejectedError
+from connector.server.ingest import (
+    ConnectorIngestDeferredError,
+    ConnectorIngestRejectedError,
+)
 from connector.server.runtime_host import _drop_none, _timeline_item_payload
 from connector.server.runtime_rpc_payloads import session_notice_payload
 
@@ -88,6 +91,7 @@ class RuntimeSyncRunner:
         ingest_notifications: IngestNotificationSender | None = None,
         flush_sync_state: SyncStateFlusher | None = None,
         ingest_snapshot: SnapshotIngester | None = None,
+        snapshot_wait: Callable[[], float] | None = None,
     ) -> None:
         self.config = config
         self.supervisor = supervisor
@@ -96,6 +100,7 @@ class RuntimeSyncRunner:
         self.send_notification = send_notification
         self.ingest_notifications = ingest_notifications
         self.ingest_snapshot = ingest_snapshot
+        self.snapshot_wait = snapshot_wait
         self.flush_sync_state = flush_sync_state
         self._recovery_generation = 0
         self._recovered: dict[str, int] = {}
@@ -189,6 +194,18 @@ class RuntimeSyncRunner:
                 )
                 recovery_budget = RECOVERY_SESSIONS_PER_SCAN
                 recovery_deferred = False
+                timeline_wait = False
+                if timeline_sync_count and self.snapshot_wait is not None and self.snapshot_wait() > 0:
+                    # Snapshot uploads wait after a stall, so a timeline read now is refused unread:
+                    # this scan reads none. What needs no timeline still goes out; the next scan
+                    # tries again, one line per scan.
+                    timeline_wait = True
+                    logger.warning(
+                        "existing session sync deferred runtime={} error=snapshot upload deferred for {:.0f}s: "
+                        "the last one stalled and the path cannot carry bulk traffic right now",
+                        runtime_id,
+                        self.snapshot_wait(),
+                    )
                 for session in sessions:
                     try:
                         recovery_key = (runtime_id, session.session_id)
@@ -205,11 +222,26 @@ class RuntimeSyncRunner:
                         completed = await self.sync_existing_session(
                             runtime, session, source_in_inventory=source_in_inventory,
                             recovering=recover_session,
+                            timeline_wait=timeline_wait,
                         )
                         if completed is False:
                             failed = True
                         elif recover_session and recovery_generation == self._recovery_generation:
                             self._recovered_sessions.add(recovery_key)
+                    except ConnectorIngestDeferredError as exc:
+                        # The wait is the same for every timeline: the rest of this scan reads
+                        # none. What needs no timeline (meta, state, source) still goes out.
+                        # The next scan tries again: one line per scan, not one per session.
+                        logger.warning(
+                            "existing session sync deferred runtime={} session_id={} external_session_id={} error={}",
+                            session.runtime,
+                            session.session_id,
+                            session.external_session_id,
+                            exc,
+                        )
+                        failed = True
+                        timeline_wait = True
+                        continue
                     except ConnectorNetworkError as exc:
                         logger.warning(
                             "existing session sync network failure runtime={} session_id={} external_session_id={} error={}",
@@ -345,6 +377,7 @@ class RuntimeSyncRunner:
         *,
         source_in_inventory: bool = False,
         recovering: bool = False,
+        timeline_wait: bool = False,
     ) -> bool | None:
         """Publish one discovered session and any required fresh timeline.
 
@@ -404,6 +437,10 @@ class RuntimeSyncRunner:
             )
             return
         self._last_active_session_updates.pop(session.session_id, None)
+        if timeline_wait:
+            # An earlier timeline of this scan was deferred, and the wait is the same for
+            # every timeline: this one is not read. What needs no timeline has gone out above.
+            return False
         backoff = self._timeline_backoffs.get(session.session_id)
         if backoff is not None and time.monotonic() < backoff.retry_at:
             logger.debug(

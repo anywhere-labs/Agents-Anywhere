@@ -11,7 +11,10 @@ from connector.runtime_protocol import timeline_content_hash
 from connector.runtimes.dsh.bridge.host import SubscriptionRegistry
 from connector.runtimes.dsh.bridge.sync import SyncRelay
 from connector.server.errors import ConnectorNetworkError
-from connector.server.ingest import ConnectorIngestRejectedError
+from connector.server.ingest import (
+    ConnectorIngestDeferredError,
+    ConnectorIngestRejectedError,
+)
 from tests.dsh_sync_helpers import add_page, begin_snapshot, ingest, ready_relay
 
 
@@ -254,6 +257,232 @@ def test_transient_failures_still_fail_the_subscription_instead_of_quarantining(
                 await harness.capture()
             assert relay.quarantined == {}
             assert all(n["method"] != "session.source.updated" for n in harness.published())
+        finally:
+            await relay.close()
+    asyncio.run(exercise())
+
+
+def test_a_deferred_snapshot_is_quarantined_until_the_wait_is_over():
+    async def exercise():
+        harness = Harness(failure=ConnectorIngestDeferredError(600.0))
+        relay, receiver = harness.relay, harness.receiver
+        try:
+            result = await harness.capture()  # acknowledged: returning, so the feed moves on
+            assert result.accepted is False and result.quarantined is True
+            assert result.reason == "history_deferred"
+            record = relay.quarantined["session"]
+            assert record.reason == "history_deferred" and record.attempts == 1
+            remaining = record.retry_at - asyncio.get_running_loop().time()
+            assert 595 < remaining <= 600, "a fresh capture is asked for when the wait is over"
+            source = harness.published()[-1]
+            assert source["method"] == "session.source.updated"
+            assert source["params"]["availability"] == "unavailable" and source["params"]["reason"] == "history_deferred"
+            await relay.save_checkpoint("native", checkpoint())
+            receiver.sync_state_write.assert_not_awaited()
+
+            # A capture the plugin makes before then is acknowledged without being uploaded...
+            record.retry_at = asyncio.get_running_loop().time() + 60
+            result = await harness.capture()
+            assert result.accepted is False and result.quarantined is True
+            assert harness.uploads == 1 and harness.requests == []
+
+            # ...and once it is over, one fresh capture is asked for.
+            record.retry_at = asyncio.get_running_loop().time()
+            for _ in range(100):
+                if harness.requests:
+                    break
+                await asyncio.sleep(0.01)
+            assert harness.requests == [("refreshSync", {"sessionId": "session", "externalSessionId": "native"})]
+            harness.failure = None
+            result = await harness.capture(through_seq=20)
+            assert result.accepted is True and relay.quarantined == {}
+            assert harness.published()[-1]["params"]["availability"] == "available"
+            await relay.save_checkpoint("native", checkpoint(20))
+            receiver.sync_state_write.assert_awaited_once()
+        finally:
+            await relay.close()
+    asyncio.run(exercise())
+
+
+class PluginFeed:
+    """The plugin's sync feed as its SyncService runs it: the inventory, then the baseline of a session without a checkpoint."""
+
+    def __init__(self) -> None:
+        self.subscribes = self.captures = self.failures = self.quarantined = self.refreshes = 0
+        self.ended: asyncio.Event | None = None
+        self.relay: SyncRelay | None = None
+        self.client = SimpleNamespace(
+            host=SimpleNamespace(registry=SubscriptionRegistry()), connected=True,
+            stream=self.stream, request=self.request,
+        )
+
+    async def stream(self, method, params):
+        assert method == "sync"
+        self.subscribes += 1
+        self.ended = asyncio.Event()
+        yield {"kind": "subscribed", "projectionVersion": 3, "checkpointVersion": 1}
+        baseline = asyncio.ensure_future(self.baseline())
+        try:
+            await self.ended.wait()  # the stream lives as long as the plugin's feed does
+        finally:
+            baseline.cancel()
+
+    async def request(self, method, params):
+        assert method == "refreshSync"
+        self.refreshes += 1
+        await self.baseline()
+
+    async def baseline(self):
+        meta = {"externalSessionId": "native", "sourceState": {"availability": "available"}}
+        try:
+            await ingest(self.relay, {"kind": "notifications", "notifications": [
+                {"method": "session.inventory.begin", "params": {"scanToken": "scan"}},
+            ]})
+            await begin_snapshot(self.relay, session_id="session", meta=meta, through_seq=12)
+            await add_page(self.relay, [item()])
+            self.captures += 1
+            result = await self.relay.commit_snapshot()
+        except Exception:  # noqa: BLE001 - the plugin's delivery(): any error fails the whole feed
+            self.failures += 1
+            self.ended.set()
+            return
+        self.quarantined += result.accepted is False
+
+
+def test_a_deferred_baseline_keeps_the_feed_instead_of_failing_every_resubscribe():
+    async def exercise():
+        harness = Harness(failure=ConnectorIngestDeferredError(600.0))
+        feed = PluginFeed()
+        # The production delay is one second; a fraction of it shows a resubscribe loop without a long test.
+        relay = SyncRelay(feed.client, harness.receiver, retry_delay=0.01)
+        feed.relay = relay
+        running = asyncio.ensure_future(relay.run())
+        try:
+            await asyncio.sleep(0.3)
+            assert (feed.subscribes, feed.captures, feed.failures) == (1, 1, 0), "one feed, one capture, nothing failed"
+            assert feed.quarantined == 1 and relay.quarantined["session"].reason == "history_deferred"
+            assert harness.uploads == 1, "the stalled path saw one upload attempt in that time"
+
+            # The wait is over: the relay asks for one fresh capture, which now gets through.
+            harness.failure = None
+            # The retry task went to sleep for the whole wait when it was scheduled: ask again now that it is over.
+            relay.quarantined["session"].retry_at = asyncio.get_running_loop().time()
+            relay._schedule_retry("session", relay.quarantined["session"])
+            for _ in range(300):
+                if not relay.quarantined:
+                    break
+                await asyncio.sleep(0.01)
+            assert relay.quarantined == {} and feed.refreshes == 1 and feed.captures == 2
+            assert feed.subscribes == 1 and feed.failures == 0, "the same feed carried the retry"
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+            await relay.close()
+            await harness.relay.close()
+    asyncio.run(exercise())
+
+
+def test_a_deferred_session_is_taken_again_as_soon_as_the_wait_ends_early():
+    async def exercise():
+        wait = [600.0]
+        harness = Harness(failure=ConnectorIngestDeferredError(600.0))
+        relay = harness.relay
+        relay.snapshot_wait, relay.wait_poll_interval = lambda: wait[0], 0.01
+        try:
+            assert (await harness.capture()).accepted is False
+            # The client's wait ends early: an upload it had admitted before the stall got through.
+            wait[0] = 0.0
+            harness.failure = None
+            for _ in range(300):
+                if harness.requests:
+                    break
+                await asyncio.sleep(0.01)
+            assert len(harness.requests) == 1, "asked for once the wait is over, not at retry_at"
+            result = await harness.capture(through_seq=20)
+            assert result.accepted is True and relay.quarantined == {}
+            assert harness.uploads == 2 and harness.snapshots == ["session"], "the capture was not withheld"
+        finally:
+            await relay.close()
+    asyncio.run(exercise())
+
+
+def test_the_retry_of_a_deferred_session_waits_for_a_wait_that_grew():
+    async def exercise():
+        wait = [30.0]
+        harness = Harness(failure=ConnectorIngestDeferredError(0.0))  # due at once by retry_at
+        relay = harness.relay
+        relay.snapshot_wait, relay.wait_poll_interval = lambda: wait[0], 0.01
+        try:
+            assert (await harness.capture()).accepted is False
+            assert relay.quarantined["session"].retry_at <= asyncio.get_running_loop().time()
+            await asyncio.sleep(0.05)
+            assert harness.requests == [], "retry_at is due, but the client still waits: nothing is asked"
+            wait[0] = 0.0
+            for _ in range(300):
+                if harness.requests:
+                    break
+                await asyncio.sleep(0.01)
+            assert len(harness.requests) == 1
+        finally:
+            await relay.close()
+    asyncio.run(exercise())
+
+
+def test_without_the_clients_say_so_a_deferral_lasts_until_retry_at():
+    async def exercise():
+        harness = Harness(failure=ConnectorIngestDeferredError(600.0))
+        relay = harness.relay
+        try:
+            assert (await harness.capture()).accepted is False
+            harness.failure = None
+            result = await harness.capture(through_seq=20)
+            assert result.accepted is False and harness.uploads == 1, "still withheld: the relay knows no better"
+        finally:
+            await relay.close()
+    asyncio.run(exercise())
+
+
+def test_a_deferred_session_whose_refresh_keeps_failing_is_asked_again_only_after_the_backoff():
+    async def exercise():
+        wait = [30.0]
+        harness = Harness(failure=ConnectorIngestDeferredError(0.0))  # due at once by retry_at
+        relay = harness.relay
+        relay.snapshot_wait, relay.wait_poll_interval = lambda: wait[0], 0.01
+        relay.quarantine_retry_delay = 0.5
+        calls = 0
+
+        async def not_answering(method, params=None):
+            nonlocal calls
+            calls += 1
+            raise RuntimeError("the plugin is not answering")
+
+        relay.client.request = not_answering
+        try:
+            assert (await harness.capture()).accepted is False
+            wait[0] = 0.0  # the wait is over: asked at once
+            for _ in range(300):
+                if calls:
+                    break
+                await asyncio.sleep(0.01)
+            assert calls == 1
+            # The plugin keeps failing and no wait is on: the backoff of the failed request holds.
+            await asyncio.sleep(0.3)
+            assert calls == 1, f"asked {calls} times in 0.3 s after a failed request: the backoff must hold"
+            for _ in range(300):
+                if calls >= 2:
+                    break
+                await asyncio.sleep(0.01)
+            assert calls == 2
+            # A wait that begins during the next backoff holds the request until it is over.
+            wait[0] = 30.0
+            await asyncio.sleep(1.0)
+            assert calls == 2
+            wait[0] = 0.0
+            for _ in range(300):
+                if calls >= 3:
+                    break
+                await asyncio.sleep(0.01)
+            assert calls == 3
         finally:
             await relay.close()
     asyncio.run(exercise())

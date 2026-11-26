@@ -38,7 +38,10 @@ from connector.runtimes.dsh.bridge.models import (
 )
 from connector.runtimes.dsh.bridge.models import notice as session_notice
 from connector.server.errors import ConnectorNetworkError
-from connector.server.ingest import ConnectorIngestRejectedError
+from connector.server.ingest import (
+    ConnectorIngestDeferredError,
+    ConnectorIngestRejectedError,
+)
 
 # Consecutive subscription failures back off up to this long between attempts.
 MAX_RETRY_DELAY_SECONDS = 30.0
@@ -73,6 +76,10 @@ _DURABLE_NOTIFICATIONS = {
 # timeline that never received a baseline) and a fresh capture is requested
 # after a growing delay. Captures the plugin makes before then are acknowledged
 # without uploading. Transient failures keep the resubscribe path.
+# A snapshot the ingest client deferred, because an earlier upload stalled and
+# its wait is still on, is quarantined the same way until that wait is over.
+# Failing the capture instead would end the feed, and every resubscribe would
+# capture every session again, about a second apart, for as long as the wait lasts.
 QUARANTINE_RETRY_DELAY_SECONDS = 30.0
 QUARANTINE_TOO_LARGE_RETRY_DELAY_SECONDS = 5 * 60.0
 QUARANTINE_MAX_RETRY_DELAY_SECONDS = 30 * 60.0
@@ -83,7 +90,7 @@ _QUARANTINED_HISTORY = {"timeline.itemUpsert", "session.turnEnded"}
 class _Quarantine:
     external_session_id: str | None
     through_seq: Any
-    reason: str  # history_too_large | history_rejected
+    reason: str  # history_too_large | history_rejected | history_deferred
     attempts: int = 1
     # Live history arrived while quarantined; the next capture must be fresh.
     stale: bool = False
@@ -155,6 +162,7 @@ class SyncRelay:
         quarantine_retry_delay: float = QUARANTINE_RETRY_DELAY_SECONDS,
         quarantine_too_large_retry_delay: float = QUARANTINE_TOO_LARGE_RETRY_DELAY_SECONDS,
         quarantined: dict[str, _Quarantine] | None = None,
+        snapshot_wait: Callable[[], float] | None = None,
         streaming_post_interval: float = STREAMING_POST_INTERVAL_SECONDS,
     ) -> None:
         self.client, self.host = client, host
@@ -178,6 +186,10 @@ class SyncRelay:
         # to every relay it builds, so neither a resubscription nor a rebuilt
         # relay uploads a refused session again before its retry is due.
         self.quarantined: dict[str, _Quarantine] = {} if quarantined is None else quarantined
+        # The ingest client's say-so on its wait for snapshots (seconds left, 0 when it takes
+        # them), for the sessions it deferred. None: the relay goes by retry_at alone.
+        self.snapshot_wait = snapshot_wait
+        self.wait_poll_interval = 1.0
         self.retry_tasks: set[asyncio.Task[None]] = set()
         self.streaming_post_interval = streaming_post_interval
         # When the previous post started, if it carried only drafts.
@@ -301,28 +313,45 @@ class SyncRelay:
                 raise
             await self.quarantine(session_id, meta.get("externalSessionId"), snapshot.get("throughSeq"), error)
             return
+        except ConnectorIngestDeferredError as error:
+            # Not sent: an earlier upload stalled and the wait is still on. Failing the
+            # capture here would end the feed, and its resubscription would capture every
+            # session again, about a second apart, for as long as the wait lasts.
+            await self.quarantine(session_id, meta.get("externalSessionId"), snapshot.get("throughSeq"), error)
+            return
         await self.release(session_id, meta)
 
     async def quarantine(self, session_id: str, external_id: str | None, through_seq: Any, error: Exception) -> None:
-        """Isolate one session whose history the backend refused for good."""
+        """Isolate one session whose history the backend refused for good, or that waits for a slow path."""
 
+        deferred = isinstance(error, ConnectorIngestDeferredError)
         too_large = isinstance(error, httpx.HTTPStatusError) and error.response.status_code == 413
         previous = self.quarantined.get(session_id)
         attempts = previous.attempts + 1 if previous is not None else 1
-        delay = min(self._retry_base(too_large) * 2 ** (attempts - 1), QUARANTINE_MAX_RETRY_DELAY_SECONDS)
+        reason = "history_deferred" if deferred else "history_too_large" if too_large else "history_rejected"
+        # A deferred upload is taken again when the ingest client takes snapshots again: it says when.
+        delay = error.retry_in if deferred else min(
+            self._retry_base(too_large) * 2 ** (attempts - 1), QUARANTINE_MAX_RETRY_DELAY_SECONDS,
+        )
         record = _Quarantine(
-            external_id, through_seq,
-            "history_too_large" if too_large else "history_rejected",
+            external_id, through_seq, reason,
             attempts=attempts, retry_at=asyncio.get_running_loop().time() + delay,
         )
         self.quarantined[session_id] = record
         # Captures are withheld until the retry, so it must exist even if the
         # report below fails.
         self._schedule_retry(session_id, record)
-        logger.warning(
-            "DSH session history refused by the backend; session quarantined session_id={} reason={} attempts={} error={}",
-            session_id, record.reason, record.attempts, error,
-        )
+        if deferred:
+            logger.warning(
+                "DSH session history deferred: the path cannot carry it now; session quarantined until the wait is over "
+                "session_id={} attempts={} retry_in={:.0f}s error={}",
+                session_id, record.attempts, error.retry_in, error,
+            )
+        else:
+            logger.warning(
+                "DSH session history refused by the backend; session quarantined session_id={} reason={} attempts={} error={}",
+                session_id, record.reason, record.attempts, error,
+            )
         await self.host.publish_runtime_notifications("dsh", [{
             "method": "session.source.updated",
             "params": {"sessionId": session_id, "externalSessionId": external_id, **record.source_state()},
@@ -341,10 +370,29 @@ class SyncRelay:
 
         attempts = record.attempts
         delay = record.retry_at - asyncio.get_running_loop().time()
+        # A deferral is over when the client's wait is: earlier than retry_at if an upload it
+        # had admitted before the stall got through, later if a new stall grew it. The client
+        # says; ask once it is over. The backoff of a failed request below is not touched.
+        follows_wait = record.reason == "history_deferred" and self.snapshot_wait is not None
+        if follows_wait:
+            # Not before retry_at, unless the wait is over before it: then at once.
+            while delay > 0 and self.snapshot_wait() > 0:
+                await asyncio.sleep(min(delay, self.wait_poll_interval))
+                if self.quarantined.get(session_id) is not record:
+                    return  # Released, or a newer refusal owns the retry.
+                delay = record.retry_at - asyncio.get_running_loop().time()
+            delay = min(delay, 0.0)
         while True:
             await asyncio.sleep(max(delay, 0.0))
             if self.quarantined.get(session_id) is not record:
                 return  # Released, or a newer refusal owns the retry.
+            if follows_wait and self.snapshot_wait() > 0:
+                # A wait that began since keeps the client from taking a snapshot: ask once it
+                # is over, after the backoff has run in full.
+                while self.snapshot_wait() > 0:
+                    await asyncio.sleep(self.wait_poll_interval)
+                    if self.quarantined.get(session_id) is not record:
+                        return
             try:
                 await self.client.request("refreshSync", {
                     "sessionId": session_id, "externalSessionId": record.external_session_id,
@@ -657,12 +705,17 @@ class SyncRelay:
     async def begin_snapshot(self, request: SnapshotRequest) -> None:
         self.clear_snapshot()
         record = self.quarantined.get(request.sessionId)
+        withheld = record is not None and asyncio.get_running_loop().time() < record.retry_at
+        if withheld and record.reason == "history_deferred" and self.snapshot_wait is not None and self.snapshot_wait() <= 0:
+            # The client's wait ended early (an upload it had admitted before the stall got
+            # through): this capture can land now.
+            withheld = False
         self.snapshot = {"captureId": request.captureId, "sessionId": request.sessionId,
                          "meta": request.meta, "throughSeq": request.throughSeq,
                          # The plugin captures an unpublished session again on each of its
                          # changes. Before the retry is due such a capture would only be
                          # refused again: drop its pages and keep the quarantine.
-                         "withheld": record is not None and asyncio.get_running_loop().time() < record.retry_at}
+                         "withheld": withheld}
 
     async def add_snapshot_page(self, page: SnapshotPage) -> None:
         snapshot = self.snapshot

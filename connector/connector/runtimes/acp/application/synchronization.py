@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 
+from connector.server.ingest import ConnectorIngestDeferredError
+
 
 class SynchronizationService:
     def __init__(self, store, publish):
@@ -26,6 +28,12 @@ class SynchronizationService:
             try:
                 await self.flush()
                 self.last_error = None
+            except ConnectorIngestDeferredError as error:
+                # The queue is ordered: the rows behind the deferred one wait with it.
+                # Asking again every second would only be told the same thing.
+                self.last_error = type(error).__name__
+                await asyncio.sleep(error.retry_in)
+                continue
             except Exception as error:  # noqa: BLE001 -- durable queue retains all unacknowledged facts
                 self.last_error = type(error).__name__
             await asyncio.sleep(0.1 if self.last_error is None else 1)
