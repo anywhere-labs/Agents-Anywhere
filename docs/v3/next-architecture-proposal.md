@@ -35,7 +35,7 @@ flowchart TB
 
   subgraph Cloud["云端控制面 + 路由 + 预览网关"]
     Server["server-v3 (FastAPI + asyncpg + Redis)"]
-    CloudRouter["云端 meshcall-router (一个或多个)"]
+    CloudRouter["云端 MeshCall Router 集群<br/>(可信节点互联 + etcd 控制状态)"]
     FrpGw["frps (HTTP Plugin) + 鉴权反向代理<br/>https://<id>.preview.<domain>"]
     Server <-->|"挂载 aa.v3.Control<br/>定向调 DeviceAdmin / 普通设备"| CloudRouter
     FrpGw <-->|"Login / NewProxy / Auth 回调"| Server
@@ -62,6 +62,7 @@ flowchart TB
   - 强类型 Zod Schema + `@service` / 完整 `description` 与方法语义标注（`read_only` / `idempotent` / `destructive`），开启 `MESHCALL_STRICT=1`。
   - 所有设备业务与 `DeviceAdmin` 服务为 `targeted: true`（绑定 `instanceId = active_device_id`）；`aa.v3.LocalAdmin` 为 `targeted: false`（单本机实例）。
   - 四种通信形态各司其职：`unary`（查询/操作）、`server_stream`（Timeline 更新、日志流、本机状态/配对审批流、预览状态流，自动信用流控）、`client_stream`（控制面心跳 `presence`）、`duplex`（仅 `Terminals/attach`）。
+  - **两张独立网络、两套凭据**：`LocalMesh` 注册在本机边缘 Router，`RemoteMesh` 连云端 Router 集群（见 1.10）；Connector 同时加入两者，任何一方都不是另一方的上行。
   - `LocalRouter` 绑定 `127.0.0.1` 随机端口 + 0600 随机账密（无 `anonymous`），对外签发带 scope 的 `mt_` token 与**本机普通隧道 `mtun_...`**（使渲染层连接本机与连接远端隧道在调用代码上 100% 一致，均无需手动传 `instance`）。
   - 仅 `RemoteMesh` 启用 `DeviceGate`：加密模式在 MeshCall 挂载层启用 `requireE2E: true` + `requireE2EPeer: true` + `authorizeE2EPeer`，仅接受已完成 `Noise_IK_25519_AESGCM_SHA256` 双向认证的已配对客户端（彻底移除 `Noise_IKpsk2`）。
 
@@ -134,10 +135,16 @@ flowchart TB
 - **极简进程生命周期（彻底移除旧版 `Sessions/prepare` 预热池与双进程 `retire` 交接）**：
   - 进程状态清晰收敛为 4 态：`disabled`（未启用） / `starting`（启动与 `initialize` 协商中） / `running`（运行中） / `error`（异常退出，附最后错误并可重启）。
   - 仅保留 3 个用户操作：**启用（打开开关）**、**禁用（关闭开关，停进程并清会话列表缓存）**、**重启（杀掉旧进程并重开，释放旧内存 Timeline，使新配置立即生效）**。
-  - **拉起与空闲休眠**：新扫描到的已安装 Agent 默认为 `disabled`（由用户按需打开主力 Agent 开关）；有客户端活跃时，所有已启用 Agent 均保持 `running`；当所有客户端断开且无运行中 Turn/后台任务超过**用户设定的闲置时长**（可配置永不休眠或 N 分钟）时，优雅关闭 ACP 进程（连同内存 Timeline 销毁），下次客户端连接时自动拉起全部已启用 Agent。
+  - **拉起与空闲休眠**：新扫描到的已安装 Agent 默认为 `disabled`（由用户按需打开主力 Agent 开关）；有客户端活跃时，所有已启用 Agent 均保持 `running`；当所有客户端断开且无运行中 Turn/后台任务超过**用户设定的闲置时长**（可配置永不休眠或 N 分钟）时，优雅关闭 ACP 进程（连同内存 Timeline 销毁），下次任一客户端连接时自动拉起全部已启用 Agent。
+  - **闲置时长只有一个全局设置**，存于 `dataDir/settings.json`、经 `aa.v3.Device` 读写，作用于全部 Agent；Agent 设置里不再有单独的休眠项。
 - **Agent 设置保存在工作设备本地并统一经 RPC 读写**：
   - 持久化在 `dataDir/agents.json`（内置 Agent 本地覆盖）与 `dataDir/custom-agents.json`（自定义 Agent），权限 `0600`，**绝不上传云端 Server，绝不把 `env` 值写入日志**。
-  - 设置项包含：`enabled`、`program`/`command`/`args`、`env`、`gateway`/`provider`（CC Switch）、`idle_sleep_minutes`、`default_config` 等。
+  - 设置项包含：`enabled`、`program`/`command`/`args`、`env`、`gateway`、`provider`（所选 CC Switch Provider 的 id）等。
+  - **新对话的配置不设默认项**：新建对话沿用该 Agent 在本设备**最近一次新建对话时**的配置（模型、模式等，`dataDir/last-session-config.json`），从未建过时取 Agent 自身的默认值。
+  - **「模型与订阅」基于 CC Switch（Powered by CC Switch，MIT）**：
+    - Provider 数据就是用户本机 CC Switch 的数据库 `~/.cc-switch/cc-switch.db`（`providers` 表），AA 不另存一份 Provider 列表；AA 可以增删改该表的行（远端与未安装 CC Switch 的设备也能管理），**绝不修改 `is_current`、`live-state.json`、`settings.json`、日志模式或表结构**。
+    - 为某个 Agent 选定 Provider **只作用于 AA 拉起的进程**：启动时把该 Provider 的 `settings_config` 转换为 env / 会话 `_meta` / ACP `providers/set`；不切换 CC Switch 的当前项，也不改写 Agent 自身的配置文件。
+    - 订阅用量移植自 CC Switch 的实现（保留 MIT 声明）。
   - 通过 `aa.v3.Agents` 的 `list`、`watch`、`refresh_scan`、`get_settings`、`update_settings`、`add_custom`、`remove_custom`、`enable`、`disable`、`restart`、`install`、`sign_in`、`list_providers`/`save_provider`/`remove_provider`、`subscription_usage` 统一读写；本机与已授权远端客户端完全同构，**一律拒绝 MCP 与控制面直接调用**。变更启动类参数（`command`/`args`/`env`/`gateway`）时标记 `restart_required` 或按请求参数立即重启进程。
 
 ### 1.5 持久化轮转日志服务（`aa.v3.Logs`）
@@ -178,6 +185,7 @@ dataDir/
 ├── projects.json (0600)                   # 机器级项目实体（cwd、自定义名称、置顶、sort_key）
 ├── sessions-meta.json                     # 机器级对话 meta（含 pinned/sort_key）+ 辅助关联元数据（不含消息正文）
 ├── agents.json / custom-agents.json (0600)# 机器级 ACP Agent 本地设置（含启用开关与 env）
+├── last-session-config.json               # 每个 Agent 最近一次新建对话时的配置（新对话沿用）
 ├── local-router-auth.json (0600)          # 本机 meshcall-router 随机账密
 ├── local-admin.json (0600)                # 运行中 Connector 本机发现文件（取代 admin.sock）
 ├── logs/connector-NNNNNN.ndjson (0600)    # ≤ 10 MiB 轮转日志
@@ -234,6 +242,13 @@ dataDir/
 - **防反复撞码（由 Connector 本地强制，不依赖 Server）**：每个档案同时最多 3 个待处理配对；10 分钟内被拒绝、过期或承诺校验失败累计 5 次后，暂停接受新配对 10 分钟，并在 `watch_pairings` 推送告警。每次尝试都需要设备端真人审批，攻击者无法自动化撞码。
 - **撤销**：`LocalAdmin/revoke_client` 或 `Device` 撤销接口从白名单删除 `c_pub`，并通过 `DeviceAdmin/close_tunnel_sessions` 立即断开该客户端现有隧道。
 
+### 1.10 MeshCall 网络：云端 Router 集群与本机边缘 Router
+
+- **云端 Router 集群（高可用）**：一组互相可达的可信 Router 节点，控制状态（Token、隧道、吊销、实例所在节点、成员关系）存放在 etcd，节点之间转发调用；连上任意一个节点即加入整个网络。Server（`aa.v3.Control`）、Connector 的 `RemoteMesh` 与远端客户端都经负载均衡地址连任一节点，**不由客户端在多个独立 Router 之间选路**（放弃 MeshCall #87 的客户端多 Router 方案）。无状态的单 Router 做不到高可用，因为 Token、隧道与吊销只存在签发它的 Router 内存里。
+- **本机边缘 Router（`LocalRouter`）**：即 Connector 内嵌的 `meshcall-router`，**始终由 Connector 启动**（不再是可选开关）。职责：本机 IPC（Connector ↔ Desktop 主进程 / CLI）与本地优先（本机客户端免配对直连）。它与云端集群无关：既不加入集群，也不作为集群的上行或下级节点。
+- **局域网直连（下一期）**：在边缘 Router 上增加一个独立的局域网监听，与 `127.0.0.1` 本机监听分开；局域网路径对两种模式都要求 `Noise_IK`（普通模式设备先经云端隧道登记客户端公钥），设备局域网地址经 E2E 通道交给已配对客户端，mDNS 默认关闭、开启时使用不透明且轮换的标识。云端签发的 `mtun_` 凭据在边缘 Router 上无效，需另行签发。首版只交付经云端集群的远程控制。
+- **MeshCall 侧待定**：etcd 不可用时集群的降级行为；一元调用幂等去重如何跨节点生效。
+
 ---
 
 ## 2. 第二层：Desktop（`desktop-v3`）
@@ -251,7 +266,7 @@ dataDir/
 
 ## 3. 第三层：Server（`server-v3`）
 
-- **框架与并发特性**：Python 3.12 + FastAPI + Pydantic v2 + SQLAlchemy Core/`asyncpg` + `redis.asyncio` + `MeshCallRouterPool`（严格守住 `test_architecture.py` 分层；`aa.v3.Control` 中所有方法在 MeshCall `WorkerLoop` 线程执行，必须经 `_on_app_loop` / `_stream_on_app_loop` 回切 FastAPI 主循环）。
+- **框架与并发特性**：Python 3.12 + FastAPI + Pydantic v2 + SQLAlchemy Core/`asyncpg` + `redis.asyncio` + MeshCall（经负载均衡地址连云端 Router 集群任一节点，不在客户端做多 Router 选路，见 1.10；严格守住 `test_architecture.py` 分层；`aa.v3.Control` 中所有方法在 MeshCall `WorkerLoop` 线程执行，必须经 `_on_app_loop` / `_stream_on_app_loop` 回切 FastAPI 主循环）。
 - **统一 Device Flow 登录 & 两档自签 Token（同时兼容 `auth_mode = local | oidc`）**：
   - 端点：`POST /auth/device/start`（返回 `device_code` + 8 位 Crockford Base32 `user_code` `XXXX-XXXX` + `verification_uri` + `verification_uri_complete`）、`GET /auth/device/preview`、`POST /auth/device/claim`（网页点击或自动化以用户身份调）、`POST /auth/device/poll`（原子消费一次性返回凭据）。
   - **两档 `access_level`（由 `server-v3` 自己签发并管理刷新与撤销）**：
@@ -330,6 +345,7 @@ dataDir/
   - 启用后，侧边栏第 1 页**只显示 Orches 的对话**（及当前 Orches 对话关联的设备会话）；
   - 侧边栏同时列出设备入口，**点击某台设备 → 侧边栏翻页（drill-down）进入该设备视图**，即可直接操作该设备上的项目与 Agent，点击 `← 返回` 翻回 Orches 列表。
 - 两种模式共用同一套侧栏翻页机制（仅第 1 页与第 2 页互换），保持完全一致的交互心智。
+- **快捷键 `⌘J`**：不再有右侧 Orches 侧边栏；`⌘J` 改为跳转到 Orches（经典模式下侧栏翻到 Orches 页、主区进入 `/orches`，再按一次返回原视图）。
 
 ### 6.3 Orches 模型凭据：Tokens Anywhere 集成与 BYOK 云同步
 
@@ -371,7 +387,24 @@ dataDir/
 
 ---
 
-## 8. 已定稿决策汇总 & 局部待确认细节
+## 8. 契约与代码生成（代码即契约）
+
+v3 不再手写一份与代码平行的 JSON Schema 契约目录；**定义类型的源代码就是契约**，其余各端的类型与客户端一律由它生成，CI 重新生成并比对差异（`git diff --exit-code`）来发现漂移。
+
+| 接口 | 契约来源 | 生成物 |
+| --- | --- | --- |
+| Connector 的 MeshCall 服务（`aa.v3.LocalAdmin` / `DeviceAdmin` / 业务六件套） | `connector-v3` 中的 Zod Schema + `@service` 定义（含 `description` 与 `read_only` / `idempotent` / `destructive` 标注，`MESHCALL_STRICT=1`） | `meshcall generate` 生成 TypeScript 客户端供 `web-v3` / `desktop-v3` 使用；移动端届时生成 Swift / Kotlin 客户端 |
+| Server 的 MeshCall 服务（`aa.v3.Control`） | `server-v3` 中的 Pydantic 模型 + `@service` 定义 | 同上，生成 TypeScript 客户端 |
+| Server 的 HTTP 端点（`/auth/*`、`/devices/*`、`/previews`、`/drive/*`、`/assistant/*`、`/admin/*` 等） | Pydantic v2 请求/响应模型，FastAPI 导出 OpenAPI | 由 OpenAPI 生成 `web-v3` 与 `connector-v3` 使用的 TypeScript 类型；`openapi.json` 快照入库便于审阅变更 |
+| 外部格式（`frps` HTTP Plugin 回调、ACP、Tokens Anywhere） | 对方的规范 | 手写 Pydantic / Zod 模型，不生成 |
+
+- **生成物入库**：生成的客户端与 OpenAPI 快照随代码一起提交，评审时直接看接口差异；不要手改生成物。
+- **`contracts/` 只放代码表达不了的东西**：跨语言测试向量（SAS 承诺与核对码、Crockford Base32 编码、会话合并规则等 fixtures），以及多步协议的说明（SAS 配对、Device Flow）。
+- **变更流程**：改接口先改源头的 Schema / 模型，再重新生成并同步所有受影响的端；不兼容的变更通过新的服务版本名（如 `aa.v3.X` → 新版本）或 MeshCall 的 `deprecated` 标注过渡。
+
+---
+
+## 9. 已定稿决策汇总 & 局部待确认细节
 
 ### 已定稿决策（v3 干净重写基线）
 - **重写策略**：直接按本文档**干净重写 v3**，不保留旧版 alpha 兼容包袱（彻底清理 `admin.sock`、`aa-pair://`、10 位手输配对码、`Noise_IKpsk2`、扁平 `Message[] + Control` 与 `sessions.json` 全量消息持久化）。
@@ -386,10 +419,16 @@ dataDir/
 - **设备 ID**：每个 `(server, account)` 档案独立生成 UUID `device_id`，`machine_id` 不上报。
 - **跨设备配对**：Commit-Reveal SAS 协议细节见 1.9。
 - **预览鉴权**：推荐独立可注册域名，`__Host-` host-only Cookie，网关剥离鉴权 Cookie 后再转发给 dev server，见第 5 节。
+- **契约**：代码即契约（Zod / Pydantic → MeshCall 客户端与 OpenAPI），不手写平行契约目录，见第 8 节。
+- **MeshCall 拓扑**：云端为基于 etcd 的可信 Router 集群；本机边缘 Router 始终由 Connector 启动、与集群无关；局域网直连放到下一期，见 1.10。
+- **经典模式服务端缓存**：Server 在 Redis 中按 `(user_id, device_id)` 缓存普通设备的轻量项目/会话摘要（标题、`cwd`、更新时间；TTL + 扇出回填 + 变化触发刷新），不存正文、不落 PG、不缓存加密设备。这是「Server 不存会话数据」原则对普通设备摘要的明确例外。
+- **新对话配置**：沿用该 Agent 最近一次新建对话时的配置，不设 `default_config`。
+- **进程休眠**：只有一个全局闲置时长；任一客户端连接即拉起全部已启用 Agent。
+- **Provider**：直接读写 CC Switch 数据库的 `providers` 行，选择只作用于 AA 拉起的进程。
+- **`⌘J`**：改为跳转到 Orches。
 - **本机信任边界**：能操作用户电脑的就是用户本人；读得到 `dataDir` 中 0600 文件的本机进程（含 CLI）可经 `LocalAdmin/get_access_token` 拿到与 Desktop 相同的 Token，暂不按调用方分级。
 
 ### 局部待拍板细节（动工到对应模块前确认）
-1. **QuickJS 注入的 `aa` 对象权限范围**：是严格限定为与 `/mcp` 相同条件（仅普通模式 + 开 `allow_mcp` 的设备），还是允许经用户授权通过前端通道调本机/已配对加密设备；以及是否彻底移除旧的 `⌘J` 右侧 Orches 侧边栏入口。
+1. **QuickJS 注入的 `aa` 对象权限范围**：是严格限定为与 `/mcp` 相同条件（仅普通模式 + 开 `allow_mcp` 的设备），还是允许经用户授权通过前端通道调本机/已配对加密设备。
 2. **自定义对话排序交互范围**：支持全列表在「按最近活跃 / 自定义拖拽排序」间切换，还是仅「置顶区自由拖拽 + 未置顶区按最近活跃冒泡」。
-3. **经典模式服务端普通设备会话列表缓存**：采用 Redis 按 `(user_id, device_id)` 缓存轻量项目/会话摘要（TTL + 扇出回填 + 变化触发刷新），不落 PG 也不缓存加密设备。
 
