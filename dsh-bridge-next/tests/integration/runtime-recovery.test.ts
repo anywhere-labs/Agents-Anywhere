@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict'
-import test from 'node:test'
+import test, { type TestContext } from 'node:test'
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { LocalRouter, Mesh, MeshCallError, Router, mutates, query, service, z } from 'meshcall'
 import { BridgeConnection } from '../../src/host/dsh-runtime/connection.js'
 import { sessionId } from '../../src/host/dsh-runtime/identity.js'
+import { SYNC_FLUSH_MS, SyncFeed, type SyncTransport } from '../../src/host/dsh-runtime/sync.js'
 import { writeJson } from '../../src/host/storage/files.js'
 import { nativeRuntime } from '../fixtures/native-runtime.js'
 
@@ -254,4 +256,122 @@ test('a refused session snapshot is isolated and recovers without losing the hea
     'an explicit refresh captures the repaired session')
   await delay(100)
   assert.deepEqual(errors, [], 'neither refusal nor recovery closes the stream')
+})
+
+/** The feed's view of `backend` without the RPC layer: how a feed recovers from a refusal is its own behaviour. */
+function feedTransport(backend: SyncBackend, hold?: { sessionId: string, before: () => Promise<void> }): SyncTransport {
+  return {
+    ingestBatch: async batch => { await backend.ingestBatch(batch as unknown as WireBatch) },
+    loadCheckpoint: async id => backend.checkpoint(id),
+    saveCheckpoint: async () => {},
+    deleteCheckpoint: async () => {},
+    // A held capture stalls the startup scan on that session, like a slow upload would.
+    ingestSnapshot: async (request, pages) => { if (request.sessionId === hold?.sessionId) await hold.before(); return backend.recordSnapshot(request, pages) },
+  }
+}
+
+/**
+ * A feed whose capture of the live `native-main` session the Connector refuses,
+ * with a short refusal interval; started until its inventory completes. With
+ * `hold` (a session visited after the live one) the scan is held on that
+ * session's capture until `release()`, and the feed is returned before the inventory completes.
+ */
+async function feedWithRefusedLiveSession(t: TestContext, intervalMs: number, hold?: string) {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-refused-capture-'))
+  const fixture = await nativeRuntime(home)
+  const native = fixture.ctx.agentsAnywhereRuntime.native
+  const backend = new SyncBackend()
+  const live = sessionId('recovery', fixture.session.id)
+  let refusing = true
+  backend.snapshotRejection = request => refusing && request.sessionId === live ? 'history_deferred' : undefined
+  const errors: unknown[] = []
+  let enterHold!: () => void, release!: () => void
+  const held = new Promise<void>(resolve => { enterHold = resolve })
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const transport = feedTransport(backend, hold === undefined ? undefined : { sessionId: sessionId('recovery', hold), before: async () => { enterHold(); await gate } })
+  const feed = new SyncFeed(native, 'recovery', 'refused-capture', transport, error => errors.push(error), false, intervalMs)
+  feed.start()
+  t.after(async () => { release(); feed.close(); await fixture.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) })
+  await until(() => backend.snapshots.some(snapshot => snapshot.request.sessionId === live && !snapshot.accepted), 'the live session is refused')
+  const completed = () => backend.batches.some(batch => JSON.stringify(batch.operations).includes('session.inventory.complete'))
+  if (hold === undefined) await until(completed, 'the inventory completes despite the refusal')
+  const title = (text: string) => fixture.session.append('session/title', { title: text, source: { kind: 'user' }, messageSeqs: [] })
+  return {
+    fixture, native, backend, errors, title, held, release, completed,
+    captures: () => backend.snapshots.filter(snapshot => snapshot.request.sessionId === live).length,
+    notes: () => backend.batches.flatMap(batch => batch.operations)
+      .filter(operation => operation.kind === 'notifications')
+      .flatMap(operation => (operation.notifications as { method: string, params: Record<string, unknown> }[]) ?? []),
+    accept: () => { refusing = false },
+  }
+}
+
+test('a refused capture is not repeated on every change while the Connector waits; only its refresh or the interval capture again', { timeout: 30_000 }, async t => {
+  const interval = 1_500
+  const f = await feedWithRefusedLiveSession(t, interval)
+  assert.equal(f.captures(), 1)
+  for (const text of ['one', 'two', 'three']) { f.title(text); await delay(SYNC_FLUSH_MS * 3) }
+  assert.equal(f.captures(), 1, 'changes within the interval do not capture the refused session again')
+  // The Connector asks for one fresh capture once its own retry is due: after one interval,
+  // so a refusal of that refresh must restart the interval for the change that follows.
+  await delay(interval)
+  f.native.refresh(f.fixture.session.id)
+  await until(() => f.captures() === 2, 'a refresh from the Connector always captures')
+  f.title('still waiting')
+  await delay(SYNC_FLUSH_MS * 3)
+  assert.equal(f.captures(), 2, 'a refresh the Connector still refuses restarts the interval')
+  await delay(interval)
+  f.title('after the interval')
+  await until(() => f.captures() === 3, 'the next change after the interval captures again (fallback)')
+  assert.deepEqual(f.errors, [])
+})
+
+test('a session the Connector accepts after a refusal is published and streams live again instead of being captured whole', { timeout: 30_000 }, async t => {
+  // A long interval: a stale refusal must not outlive the acceptance.
+  const f = await feedWithRefusedLiveSession(t, 60_000)
+  f.accept()
+  f.native.refresh(f.fixture.session.id)
+  await until(() => f.notes().some(note => note.method === 'session.state.updated' && note.params.externalSessionId === f.fixture.session.id),
+    'the accepted capture publishes the session')
+  assert.equal(f.captures(), 2)
+  f.fixture.session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'live after the refusal' }] }), { surfaceOp: 'append' })
+  await until(() => f.notes().some(note => note.method === 'timeline.itemUpsert' && JSON.stringify(note.params).includes('live after the refusal')),
+    'a later change arrives as a live operation')
+  await delay(SYNC_FLUSH_MS * 3)
+  assert.equal(f.captures(), 2, 'a published session is not captured whole again')
+  assert.deepEqual(f.errors, [])
+})
+
+test('a change that arrives while the startup scan is held on another session does not capture the refused session again', { timeout: 30_000 }, async t => {
+  // The scan delivers live changes after every session it visits, before the main loop runs.
+  const f = await feedWithRefusedLiveSession(t, 60_000, 'persisted-only')
+  await f.held
+  f.title('during the scan')
+  f.release()
+  await until(f.completed, 'the inventory completes despite the refusal')
+  await delay(SYNC_FLUSH_MS * 3)
+  assert.equal(f.captures(), 1, 'a change during the scan does not capture the refused session again')
+  assert.deepEqual(f.errors, [])
+})
+
+test('a refusal does not outlive its acceptance: a session the feed unpublishes again is captured by its next change', { timeout: 30_000 }, async t => {
+  // A long interval: only the forgotten refusal lets the next change capture at once.
+  const f = await feedWithRefusedLiveSession(t, 60_000)
+  f.accept()
+  f.native.refresh(f.fixture.session.id)
+  const live = f.fixture.session.id
+  await until(() => f.notes().some(note => note.method === 'session.state.updated' && note.params.externalSessionId === live), 'the accepted capture publishes the session')
+  // One change the feed cannot handle isolates the session again (sessionOperation's catch unpublished it).
+  const visible = f.native.visible.bind(f.native)
+  let failing = true
+  f.native.visible = async (id: string) => {
+    if (failing && id === live) { failing = false; throw new Error('visibility read failed') }
+    return visible(id)
+  }
+  f.title('unpublished again')
+  await until(() => f.notes().some(note => note.method === 'session.source.updated' && note.params.externalSessionId === live && note.params.availability === 'unavailable'),
+    'the failed change unpublishes the session')
+  f.title('after the failure')
+  await until(() => f.captures() === 3, 'the next change captures at once: the acceptance forgot the refusal')
+  assert.deepEqual(f.errors, [])
 })
