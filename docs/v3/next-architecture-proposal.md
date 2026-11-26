@@ -83,8 +83,10 @@ flowchart TB
 ### 1.3 薄 ACP 客户端与 Timeline 模型（`aa.v3.Sessions`）
 
 #### 对外对话数据模型（面向 UI 直接渲染，不暴露 ACP）
-1. **主对话 `snapshot`（`get_snapshot({ id, limit?, before_seq? })`）**：
+1. **主对话 `snapshot`（`get_snapshot({ id, limit?, before_seq?, epoch? })`）**：
    - **`meta`**：会话轻量元数据（`id`, `acp_session_id`, `agent`, `cwd`, `branch`, `title`, `pinned`, `unread`, `created_at`, `updated_at`, `config`, `capabilities`, `forked_from`）。
+   - **`load`**：水合状态 `{ state: "loading" | "ready" | "failed", error?: { code, message, retryable } }`。`session/load` 失败（例如 Codex 拒绝加载「创建时所用模型供应商已不在配置中」的会话、ACP 进程启动失败、会话已被外部删除）时返回 `failed` 并附原因，`timeline` 为空、`meta` 照常可用；客户端展示明确的「无法打开」提示与可行操作（重试 / 改回供应商 / 删除），不得无限转圈。
+   - **`timeline_epoch`**：本次水合的不透明标识。Timeline 每次经 `session/load` 重新生成（ACP 进程启动/重启/休眠后唤醒、`rewind_turn`、重新加载）都换一个新 epoch，**`seq` 只在同一 epoch 内单调且有意义**。`before_seq` 分页请求须同时带 `epoch`，epoch 不匹配时返回 `epoch_mismatch` 错误，客户端整体重拉 `get_snapshot`；远端设备离线只读缓存同样以 epoch 为单位整体替换。（注：`before_seq` 分页只减少传输量，ACP 侧每次水合仍完整回放历史。）
    - **`timeline: Turn[]` + `cutoff_seq` + `has_more`**：
      - 一个 **`Turn`** 代表用户发出消息到 AI 主动结束（或被打断/出错）的一整轮对话：`{ turn_id, status: "running" | "completed" | "interrupted" | "error", started_at, ended_at?, items: TimelineItem[] }`。
      - 每个 **`TimelineItem`** 持有全局单调递增的 **`seq`**（用户消息、steer 注入消息、文本、思考、工具调用、子代理引用卡片、压缩等），支持按 `before_seq` 向上分页且按整 Turn 对齐不截断。
@@ -98,7 +100,9 @@ flowchart TB
      - `slot_upsert`（更新某个 subagent / 后台任务槽位的摘要引用）
      - `meta_upsert`（更新 `meta`）
      - `interactions_upsert`（更新审批、错误、goal、plan、队列、用量）
-     - `snapshot_required`（发生 `rewind_turn` 或整条 timeline 重放时发出，要求客户端拉取新 `snapshot`）
+     - `load_upsert`（水合状态变化：`loading` → `ready` / `failed`）
+     - `snapshot_required`（`timeline_epoch` 变化时发出，例如 `rewind_turn`、进程重启后重新水合或整条 timeline 重放，携带新 `epoch`，要求客户端拉取新 `snapshot`）
+   - 所有 `watch` 事件都带当前 `epoch`，客户端收到与本地不一致的 epoch 时丢弃该事件并重拉 `get_snapshot`。
 3. **写操作**：`start_turn`（带 `client_msg_id` 幂等）、`steer_turn`、`interrupt_turn`、`answer_interaction`、`fork_turn`（按能力）、`rewind_turn`（按能力，广播 `snapshot_required`）、`queue_cancel` / `steer_queued`、`set_config`、`rename`、`pin`、`mark_read`、`delete`。
 
 #### 磁盘持久化边界与会话列表刷新机制（零消息正文，轻量辅助元数据合成）
@@ -114,8 +118,8 @@ flowchart TB
   1. 驱动侧边栏的会话 `meta`（含 `acp_session_id`、`agent`、`cwd`、`title`、`pinned`、`unread`、`updated_at`、上次 `config`）；
   2. **辅助关联元数据（Sidecar）**：记录 ACP 本身缺失的界面信息——每条消息/每轮的发信设备与作者、精确时间戳、审批处理人与处理设备、`client_msg_id` 映射。水合时按 **`messageId` / `toolCallId` 优先精确匹配**，对暂未发 `messageId` 的旧 ACP v1 Agent 用 **`turn_index` + 摘要兜底** 关联合成。
 
-#### ACP 双驱动架构（硬门槛：必须支持 `session/load`）
-- **硬门槛**：`initialize` 探测 `loadSession !== true` 的 ACP Agent **不支持调用**。
+#### ACP 双驱动架构（硬门槛：必须同时支持 `session/list` 与 `session/load`）
+- **硬门槛**：`initialize` 探测时，`loadSession !== true` **或**未声明 `session/list` 能力的 ACP Agent **不支持调用**（会话列表完全来自 `session/list`，打开会话完全依赖 `session/load`，两者缺一不可，不做降级）。
 - **双驱动隔离（遵循 ACP 官方 side-by-side 迁移规范）**：
   - **`AcpV2Driver`（主驱动，优先协商 `protocolVersion: 2`）**：原生对接 Claude Code（`@agentclientprotocol/claude-agent-acp`）、Codex（`@agentclientprotocol/codex-acp`）及后续 v2 Agent，完整利用必填 `messageId`、异步 `session/prompt` + `state_update`、基线 Subagent 与 Background Work、多 Plan 与统一 Patch-by-ID。
   - **`AcpV1Driver`（独立可插拔驱动，回退协商 `protocolVersion: 1`）**：对接 Pi（`@openma/pi-acp`）、OpenCode、Gemini CLI、Copilot CLI、Goose、Kimi、Qwen 等，**补齐 2026-11 最新 ACP v1 能力**：`session/load`、`session/list`、可选 `messageId`、Subagent 子会话 opt-in、`usage_update`、预标准扩展 **`_session/steering`**（让 Pi 等在 v1 也能原生 `steer: "native"`）、`session/fork`（unstable）以及 `resource_link`。未来生态迁完 v2 可整文件删除，零侵入主干。
@@ -168,7 +172,7 @@ flowchart TB
 
 ```text
 dataDir/
-├── machine.json                           # 机器级稳定 UUID (machine_id)，纯离线本机身份
+├── machine.json                           # 机器级稳定 UUID (machine_id)，仅本机离线身份，绝不上报任何 Server
 ├── active-profile.json                    # 当前活跃的 (server_url, user_id) 指针，离线时为 null
 ├── settings.json (0600)                   # 机器级全局设置（如空闲休眠时长、默认目录等）
 ├── projects.json (0600)                   # 机器级项目实体（cwd、自定义名称、置顶、sort_key）
@@ -190,7 +194,7 @@ dataDir/
 ```
 
 - **首次登录某 `(server_url, user_id)`**：档案下无 `binding.json` → 强制要求用户显式选择「是否注册上线」以及（若上线）「`encrypted` 或 `normal`（无默认）」→ 持久化后再上线。
-- **设备 ID 策略**：本机首次启动生成稳定 UUID `machine_id`；首个上线档案默认直接使用 `machine_id` 作为 `device_id` 上报给 Server；换号或换 Server 时（或服务端该 ID 已被他人占用），为新档案生成独立 UUID 与全新 X25519 密钥对、空白白名单，**零主键冲突、零密钥串号、零旧配对泄漏**。
+- **设备 ID 策略（按档案独立 UUID）**：`machine_id` 只作本机离线身份（本机隧道等），**绝不上报给任何 Server**。每个 `(server_url, user_id)` 档案首次注册上线时都新生成独立的 UUID `device_id`、全新 X25519 密钥对与空白白名单，写入该档案的 `binding.json`；服务端返回该 ID 已被占用时重新生成。不同 Server / 账号之间无法通过设备 ID 关联同一台机器，且**零主键冲突、零密钥串号、零旧配对泄漏**。
 - **退出登录 vs 解绑**：
   - **普通退出（Logout）**：立即断开云端 `RemoteMesh` 与 `presence`，向 Server 吊销 `refresh_token` 并删除 `auth.json`，退回离线态；保留该档案的 `binding.json` / 密钥 / 白名单，便于**同一账号再次登回**时免重做手机 SAS 配对（若设备已在云端被删，探测失效后自动清空档案重选）。
   - **退出并解绑（`--unbind`）**：通知 Server 删除设备记录并彻底删除本机对应 `profiles/<id>/` 目录。
@@ -204,6 +208,31 @@ dataDir/
 - **接口二：CLI 模式（Headless 运维、脚本、云编排）**
   - 默认 TTY 文本模式允许交互；带 `--json` / `--non-interactive` 或非 TTY **强制非交互**（单条命令一个原子动作，状态通过参数 / 环境变量 / `dataDir` 文件传递，输出 `{ ok, data | error }` 或 NDJSON，带规范退出码）。
   - 核心命令：`serve`、`login [start|poll|status]`、`logout [--unbind]`、`online --mode <encrypted|normal>`、`offline`、`status`、`mode`、`mcp`、`agents [list|enable|disable|restart|settings]`、`logs [--lines N] [--follow]`、`pair [watch|list|approve|reject]`、`clients [list|add|revoke]`、`previews [list|open|update|close]`、`cache clear`、`local-token`。
+
+### 1.9 跨设备 SAS 配对协议（加密模式）
+
+仅加密模式设备需要配对（普通模式直接接受客户端隧道）。Server 只中转公开信息，**视为不可信信道**：协议保证恶意 Server 无法在用户不察觉的情况下插入中间人。
+
+**角色与密钥**：客户端 `C`（Web / 另一台 Desktop / 移动端）持有静态 X25519 密钥对 `(c_priv, c_pub)`；设备 `D`（Connector 当前档案）持有 `binding.json` 中的 `(d_priv, d_pub)`。
+
+**流程（经 `aa.v3.Control` → `aa.v3.DeviceAdmin` 中转）**：
+
+| 步骤 | 方向 | 内容 |
+| --- | --- | --- |
+| 1. `pairing_start` | `C → D` | `pairing_id`（C 生成的 128-bit 随机数）、`c_pub`、`client_label`（设备名/浏览器、平台）、**承诺** `commit = SHA-256("aa-v3/sas/commit" ‖ pairing_id ‖ c_pub ‖ nonce_c)`，其中 `nonce_c` 为 32 字节随机数，**此时不发送** |
+| 2. 响应 | `D → C` | `device_id`、`d_pub`、`nonce_d`（32 字节随机数，明文） |
+| 3. `pairing_reveal` | `C → D` | `nonce_c`；D 重新计算并校验 `commit`，不一致立即作废该 `pairing_id` 并计入失败次数 |
+| 4. 计算核对码 | 双方各自 | `sas = SHA-256("aa-v3/sas/code" ‖ pairing_id ‖ device_id ‖ c_pub ‖ d_pub ‖ nonce_c ‖ nonce_d)`，取前 40 bit 编码为 8 位 Crockford Base32，按 `XXXX-XXXX` 展示 |
+| 5. 双端人工确认 | — | C 端用户核对后点「确认一致」，C 才信任 `d_pub`；D 端 Desktop 弹窗（或 CLI `pair approve <id>`）展示同一核对码与 `client_label`，经 `LocalAdmin/resolve_pairing` 同意后才把 `c_pub` 写入该档案 `paired-clients.json` |
+| 6. 建立隧道 | `C ↔ D` | C 以 `d_pub` 发起 `Noise_IK_25519_AESGCM_SHA256`；首次握手成功即配对完成，`pairing_status` 返回 `completed` |
+
+**安全要点**：
+- **承诺先于对方随机数**：C 在看到 `nonce_d` 之前就已锁定 `nonce_c`，D 发出 `nonce_d` 时不知道 `nonce_c`，中间人无法预先挑选随机数凑出两边相同的核对码；单次尝试的成功概率为 2⁻⁴⁰。
+- **核对码绑定全部上下文**：`pairing_id`、`device_id` 与双方公钥都进入哈希，替换任一公钥都会使两端核对码不同。
+- **Server 传来的状态一律不作为信任依据**：D 只以本机用户的 `resolve_pairing` 为准，C 只以本端用户的「确认一致」为准；Server 伪造的 `confirmed` / `approved` 状态不改变任何一方的白名单或信任。
+- **单次与时效**：每个 `pairing_id` 只能 reveal 一次，从 `pairing_start` 起 120 秒内未完成双端确认即过期；核对码不一致只能重新发起（新的 `pairing_id` 与新随机数），不允许在同一会话内重试。
+- **防反复撞码（由 Connector 本地强制，不依赖 Server）**：每个档案同时最多 3 个待处理配对；10 分钟内被拒绝、过期或承诺校验失败累计 5 次后，暂停接受新配对 10 分钟，并在 `watch_pairings` 推送告警。每次尝试都需要设备端真人审批，攻击者无法自动化撞码。
+- **撤销**：`LocalAdmin/revoke_client` 或 `Device` 撤销接口从白名单删除 `c_pub`，并通过 `DeviceAdmin/close_tunnel_sessions` 立即断开该客户端现有隧道。
 
 ---
 
@@ -256,13 +285,20 @@ dataDir/
 
 ## 5. 跨层能力：Web 预览（FRP + 鉴权网关 + 精确到人后台策略）
 
-- **域名隔离**：独立通配符子域 `https://<preview_id>.preview.<domain>`（每个预览随机子域），彻底与主站跨源隔离，防 dev server 窃取主站登录态。
+- **域名隔离**：独立通配符子域 `https://<preview_id>.<preview_domain>`（每个预览随机子域），防 dev server 窃取主站登录态：
+  - **推荐 `preview_domain` 使用与主站不同的可注册域名**（例如主站 `aa.example.com`、预览 `*.aa-preview.net`），使预览与主站跨站（cross-site）而不仅是跨源；
+  - 若自托管只能用主站下的子域（`*.preview.<domain>`），则预览与主站同站：主站所有 Cookie 必须为 host-only（`__Host-` 前缀、不带 `Domain`），不得设置到父域 `.<domain>`，否则会被发往预览子域；
+  - 公共部署将 `preview_domain` 提交到 Public Suffix List，使浏览器把每个预览子域视为独立站点，一个预览无法给父域或其他预览写 Cookie。
 - **FRP 动态签发与加密**：
   - Connector 凭业务级用户 Token 调 `POST /previews` 申请槽位，服务端返回 `url`、`frp_server_addr`、`frp_tls_config`（TLS 加密，支持 CA/mTLS）、一次性 `preview_ticket` 与唯一 `subdomain`；
   - `frps` 通过 **HTTP Plugin** 回调 `server-v3` 校验 `Login`（票据有效）与 `NewProxy`（限定 `http` 类型且子域严格匹配）；
   - Connector 侧 `local_host` 默认 `127.0.0.1`，允许自定义本机可达的 `host:port`（如 Docker 容器 / WSL / 局域网测试机），由内置 `frpc`（Apache-2.0）按需拉起并在关闭/退出时清理。
 - **入口鉴权与后台权限控制（两档权限，精确到人）**：
-  - 访问权限暂设两档：**`private`**（默认，仅设备所属用户本人登录可访，跨子域一次性跳转换取子域 `HttpOnly; Secure` Cookie，WebSocket/HMR 天然穿透）与 **`public`**（完全公开，附 `X-Robots-Tag: noindex, nofollow`）；
+  - 访问权限暂设两档：**`private`**（默认，仅设备所属用户本人登录可访，跨子域一次性跳转换取子域鉴权 Cookie，WebSocket/HMR 天然穿透）与 **`public`**（完全公开，附 `X-Robots-Tag: noindex, nofollow`）；
+  - **`private` 鉴权 Cookie 隔离**（防一个预览的 dev server 伪造或读取另一个预览、主站的凭据）：
+    - Cookie 名为 `__Host-aa_preview`，属性 `HttpOnly; Secure; SameSite=Lax; Path=/`，**不带 `Domain`**（浏览器强制 host-only，只发往签发它的那一个预览子域），值绑定 `preview_id` 与用户，网关校验子域与 Cookie 中的 `preview_id` 一致；
+    - 一次性跳转：主站签发 60 秒内单次有效的 `code` 跳到 `https://<preview_id>.<preview_domain>/__aa/auth?code=…`，网关兑换后 `302` 到原路径以去掉 URL 中的 `code`，避免经 `Referer` / 历史记录泄漏；
+    - 网关转发给 dev server 前**从 `Cookie` 请求头中剥离 `__Host-aa_preview`**，dev server 永远拿不到鉴权凭据；同时丢弃上游响应里名称以 `__Host-aa_` 开头、或带 `Domain` 指向父域的 `Set-Cookie`；
   - 三级策略覆盖（对齐现有云盘策略范式）：① 全局开关（`preview_enabled`、`preview_public_enabled`）→ ② Entitlements（`aa.preview_allow_private`、`aa.preview_allow_public`、`aa.preview_max_active`、`aa.preview_max_ttl_minutes`）→ ③ **管理后台精确到人授权**（`preview_policies`，`/admin/previews`：管理员可针对任意单个用户分别授予/撤销「开启 `private` 预览」权限、「开启 `public` 预览」权限、设置并发与 TTL 限额，并实时查看所有活跃预览、一键强制下线）。
   - 自托管部署（`docker/v3/`）中 `frps` + 预览网关作为**可选模块**，未配置时系统零依赖正常运行。
   - 加密设备安全提示：恶意服务端无法命令设备开预览（`aa.v3.Previews` 受 `DeviceGate` 保护）；用户主动开某端口预览时明确提示「仅该端口的 HTTP 预览流量经服务端网关中转，其余会话/终端/文件仍端到端加密」。
@@ -345,6 +381,12 @@ dataDir/
 - **Web 预览权限**：暂设 `private` / `public` 两档，管理后台可精确到人分别授予开启 `private` 或 `public` 预览的权限，并支持实时下线；`frpc`（Apache-2.0）随包内置分发。
 - **OIDC 状态同步**：服务端自签 `device` / `full` Token，定期回查上游 OIDC 同步账号状态与 `entitlements`。
 - **移动端**：移动端前端留到最后再设计。
+- **ACP 硬门槛**：同时支持 `session/list` 与 `session/load` 的 Agent 才可用，不做降级。
+- **Timeline 版本**：`snapshot` 带 `timeline_epoch`，`seq` 仅在同一 epoch 内有效；`snapshot` 带水合状态 `load`，加载失败明确报错。
+- **设备 ID**：每个 `(server, account)` 档案独立生成 UUID `device_id`，`machine_id` 不上报。
+- **跨设备配对**：Commit-Reveal SAS 协议细节见 1.9。
+- **预览鉴权**：推荐独立可注册域名，`__Host-` host-only Cookie，网关剥离鉴权 Cookie 后再转发给 dev server，见第 5 节。
+- **本机信任边界**：能操作用户电脑的就是用户本人；读得到 `dataDir` 中 0600 文件的本机进程（含 CLI）可经 `LocalAdmin/get_access_token` 拿到与 Desktop 相同的 Token，暂不按调用方分级。
 
 ### 局部待拍板细节（动工到对应模块前确认）
 1. **QuickJS 注入的 `aa` 对象权限范围**：是严格限定为与 `/mcp` 相同条件（仅普通模式 + 开 `allow_mcp` 的设备），还是允许经用户授权通过前端通道调本机/已配对加密设备；以及是否彻底移除旧的 `⌘J` 右侧 Orches 侧边栏入口。
