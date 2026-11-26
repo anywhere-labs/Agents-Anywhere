@@ -277,6 +277,9 @@ class RuntimeTimelineItem:
     source: Mapping[str, Any] = field(default_factory=dict)
     revision: int = 1
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    # When the Runtime created this item at its source, as an ISO-8601 instant; a timeline
+    # rebuilt from a store after the fact keeps its original times. None: the backend stamps it.
+    created_at: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
