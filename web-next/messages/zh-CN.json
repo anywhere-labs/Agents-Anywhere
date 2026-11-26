@@ -2459,7 +2459,7 @@
     "agent_version_unsupported": "当前 Agent 版本不受支持，请升级后重试。",
     "attachment_cache_invalid": "本机附件缓存校验失败。",
     "attachment_mismatch": "附件内容与上传记录不一致。",
-    "attachments_too_large": "附件超过上限：每条消息最多 16 个，总大小不超过 32 MiB。",
+    "attachments_too_large": "附件超过上限：每条消息最多 5 个，单文件不超过 50 MiB，总大小不超过 64 MiB。",
     "attachments_unsupported": "当前执行者不支持首条附件。",
     "capability_unavailable": "该会话当前不能执行此操作。",
     "claude_resume_no_response": "Claude 恢复会话后没有回复这条消息。",

@@ -87,8 +87,8 @@
       "en": "The attachment content does not match its upload record."
     },
     "attachments_too_large": {
-      "zh-CN": "附件超过上限：每条消息最多 16 个，总大小不超过 32 MiB。",
-      "en": "Attachments exceed the limit: up to 16 per message and 32 MiB in total."
+      "zh-CN": "附件超过上限：每条消息最多 5 个，单文件不超过 50 MiB，总大小不超过 64 MiB。",
+      "en": "Attachments exceed the limit: up to 5 per message, 50 MiB per file, 64 MiB in total."
     },
     "attachments_unsupported": {
       "zh-CN": "当前执行者不支持首条附件。",

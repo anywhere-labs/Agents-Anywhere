@@ -2459,7 +2459,7 @@
     "agent_version_unsupported": "This agent version is not supported. Upgrade it and try again.",
     "attachment_cache_invalid": "The local attachment cache failed verification.",
     "attachment_mismatch": "The attachment content does not match its upload record.",
-    "attachments_too_large": "Attachments exceed the limit: up to 16 per message and 32 MiB in total.",
+    "attachments_too_large": "Attachments exceed the limit: up to 5 per message, 50 MiB per file, 64 MiB in total.",
     "attachments_unsupported": "The current agent does not support attachments on the first message.",
     "capability_unavailable": "This session cannot perform this action right now.",
     "claude_resume_no_response": "Claude did not reply to this message after resuming the session.",
