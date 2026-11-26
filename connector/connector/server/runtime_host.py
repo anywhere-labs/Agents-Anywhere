@@ -56,6 +56,7 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         *,
         ingest_snapshot: Callable[..., Awaitable[None]] | None = None,
         defer_payload_projection: bool = False,
+        snapshot_wait: Callable[[], float] | None = None,
     ) -> None:
         self._connector_id = connector_id
         self._notifier = notifier
@@ -65,6 +66,8 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         self._ingest_notifications = ingest_notifications
         self._ingest_snapshot = ingest_snapshot
         self._defer_payload_projection = defer_payload_projection
+        # The ingest client's say-so on its wait for snapshots: seconds left, 0 when it takes them.
+        self.snapshot_wait: Callable[[], float] = snapshot_wait if snapshot_wait is not None else lambda: 0.0
         self._runtime_storage = RuntimeStorageManager(sync_state_store) if isinstance(sync_state_store, JsonSyncStateStore) else None
         self._runtime_kv = None
 
@@ -469,6 +472,7 @@ def _timeline_item_payload(item: RuntimeTimelineItem) -> dict[str, Any]:
             "orderSeq": item.order_seq,
             "revision": item.revision,
             "contentHash": item.content_hash,
+            "createdAt": item.created_at,
         }
     )
 

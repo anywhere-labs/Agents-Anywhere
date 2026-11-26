@@ -26,6 +26,10 @@ def test_connector_runtime_host_maps_timeline_item_to_backend_notification() -> 
     asyncio.run(_exercise_timeline_item_notification())
 
 
+def test_connector_runtime_host_carries_the_time_an_item_was_created_at(tmp_path) -> None:
+    asyncio.run(_exercise_timeline_item_time())
+
+
 def test_connector_runtime_host_persists_sync_state(tmp_path) -> None:
     asyncio.run(_exercise_persistent_sync_state(tmp_path))
 
@@ -121,6 +125,35 @@ async def _exercise_timeline_item_notification() -> None:
             },
         )
     ]
+
+
+async def _exercise_timeline_item_time() -> None:
+    notifications: list[tuple[str, dict[str, Any]]] = []
+
+    async def notify(method: str, params: dict[str, Any]) -> None:
+        notifications.append((method, params))
+
+    async def download(session_id: str, file_id: str) -> tuple[bytes, str, str]:
+        raise AssertionError(f"unexpected download: {session_id}/{file_id}")
+
+    host = ConnectorRuntimeHost("conn_1", notify, download)
+    item = RuntimeTimelineItem(
+        id="item_1",
+        session_id="sess_1",
+        type="message",
+        status="done",
+        order_seq=1,
+        content_hash="sha256:abc",
+        role="user",
+        created_at="2026-11-23T10:00:00.000Z",
+    )
+    await host.timeline_item_upsert(item)
+    await host.timeline_sync("sess_1", "codex", (item,), external_session_id="thr_1", complete=True)
+
+    # The time goes on the wire when the item has one; without one the backend stamps the item
+    # itself, and nothing on the wire changes (the test above pins the exact payload for that).
+    assert notifications[0][1]["item"]["createdAt"] == "2026-11-23T10:00:00.000Z"
+    assert [wire["createdAt"] for wire in notifications[1][1]["items"]] == ["2026-11-23T10:00:00.000Z"]
 
 
 async def _exercise_session_source_notification() -> None:
