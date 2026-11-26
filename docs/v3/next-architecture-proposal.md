@@ -284,15 +284,29 @@ dataDir/
      - 保持严格沙箱隔离（独立 Worker 内运行 QuickJS-WASM，零 DOM、零 IndexedDB、零直连网络、带内存与执行超时上限，绝不暴露用户 Token / 设备密钥 / E2EE 私钥）；
      - 除工作区 `vfs` 桥之外，在 QuickJS 中注入受控的 **`aa` 服务对象**（如 `aa.devices`、`aa.projects`、`aa.sessions`、`aa.drive` 等），支持 Orches 用脚本**程序化批量调用**连接到 AA 且符合条件的 Agent 并与网盘联动（单次脚本设调用次数限额，写操作/高风险动作受权限与确认策略约束）。
 
-### 6.2 双工作台模式（经典模式 vs 实验性 Orches 模式）
+### 6.2 双工作台模式（经典模式 vs 实验性 Orches 模式，双向对称侧栏翻页）
 
 - **经典模式（默认，延续 AA v2 形态）**：
-  - 侧边栏展示所有未加密设备（及客户端直连的本机/已配对加密设备）的最近会话、项目与设备列表；
+  - 侧边栏第 1 页展示所有未加密设备（及客户端直连的本机/已配对加密设备）的最近会话、项目与设备列表；
   - 依赖 `server-v3` 代理跨普通设备的聚合 RPC 并在 Redis 缓存普通设备轻量会话/项目列表，保证秒开；
-  - Orches 作为独立一级子产品入口访问。
+  - 点击侧边栏的 **「Orches」** 入口 → **侧边栏向左翻页（drill-down）进入 Orches 子页面**（顶部带 `← 返回`，下方为新建与完整 Orches 对话列表），主内容区同步切入 `/orches`；点击 `← 返回` 翻回经典模式视图。
 - **实验性 Orches 模式（开关启用）**：
-  - 启用后，侧边栏主列表**只显示 Orches 的对话**（及当前 Orches 对话关联的设备会话）；
-  - 侧边栏同时列出设备入口，**点击某台设备 → 侧边栏翻页（drill-down）进入该设备视图**，即可直接操作该设备上的项目与 Agent，点击返回翻回 Orches 列表。
+  - 启用后，侧边栏第 1 页**只显示 Orches 的对话**（及当前 Orches 对话关联的设备会话）；
+  - 侧边栏同时列出设备入口，**点击某台设备 → 侧边栏翻页（drill-down）进入该设备视图**，即可直接操作该设备上的项目与 Agent，点击 `← 返回` 翻回 Orches 列表。
+- 两种模式共用同一套侧栏翻页机制（仅第 1 页与第 2 页互换），保持完全一致的交互心智。
+
+### 6.3 Orches 模型凭据：Tokens Anywhere 集成与 BYOK 云同步
+
+- **本地存储与沙箱红线**：
+  - Web 端存浏览器本机 IndexedDB；Desktop 端经 `safeStorage` 存 OS 系统钥匙串（IndexedDB 仅留占位符）；
+  - 任何 API Key 均**绝不注入 QuickJS-WASM 沙箱**。
+- **主推：Tokens Anywhere 单账号托管 Key 复用**：
+  - OAuth 2.0 + PKCE（S256）连接 Tokens Anywhere → 申请 App 绑定的 Managed Key → 经 `PUT /assistant/tokens` 在 `server-v3` 加密存储唯一一份（每账号一份，服务端负责 `refresh_token` 定期自动续期，多端并发连接自动 RFC 7009 吊销多余授权）；
+  - 其他端登录同一 AA 账号后经 `GET /assistant/tokens`（仅限**完整用户会话**——Web 登录态或 Desktop 持有的 `full` 档 Token；响应带 `Cache-Control: no-store`，绝不发给第三方 MCP 或 `device` 档受限 Token）免重复授权直接复用同一把 Managed Key，并调 `GET /v1/models?protocol=any` 发现可用模型与协议端点喂给 Pi SDK；断开时 `DELETE /assistant/tokens` 同步吊销托管 Key；
+  - **Desktop 回调修正**：Web 端使用 `https://<web-origin>/oauth/tokens/callback`；Desktop（`app://aa` 源无法被外部浏览器回调）改为拉起系统浏览器授权并通过已注册 Deep Link **`agents-anywhere://oauth/tokens/callback`**（或本机临时回环端口）回跳完成交换。
+- **兜底：BYOK（用户自填第三方 API Key）**：
+  - **禁止明文上云**：未开启 Orches 端侧加密时，BYOK Key 仅保存在本机；
+  - **端侧加密同步**：开启 Orches 端侧加密后，将 BYOK 配置（`providers / apiKeys`）用账号多设备共享的 **DEK（`AES-256-GCM`）** 加密后同步至云端，换设备输同一 Orches 密码即可安全解密同步，服务端全程不可见明文。
 
 ---
 
