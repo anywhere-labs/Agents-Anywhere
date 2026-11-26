@@ -8,7 +8,7 @@ import css from './bridge-logs-panel.module.css'
 
 type LogViewMode = 'all' | RuntimeLogSource | 'bootstrap'
 
-export function BridgeLogsPanel({ t, host }: { t: Translate; host: OnboardingHostApi }) {
+export function BridgeLogsPanel({ t, host, externallyManaged }: { t: Translate; host: OnboardingHostApi; externallyManaged?: boolean | undefined }) {
   const [view, setView] = useState<LogViewMode>('all')
   return <div>
     <div className={css.sources} role="group" aria-label={t('日志来源')}>
@@ -19,7 +19,7 @@ export function BridgeLogsPanel({ t, host }: { t: Translate; host: OnboardingHos
       <Button variant={view === 'bootstrap' ? 'primary' : 'outline'} aria-pressed={view === 'bootstrap'} onClick={() => setView('bootstrap')}>{t('启动前诊断')}</Button>
     </div>
     {view === 'bootstrap'
-      ? <ConnectorLogsPanel t={t} host={host} />
+      ? <ConnectorLogsPanel t={t} host={host} externallyManaged={externallyManaged} />
       : <UnifiedRuntimeLogView t={t} host={host} source={view} onOpenBootstrap={() => setView('bootstrap')} />}
   </div>
 }

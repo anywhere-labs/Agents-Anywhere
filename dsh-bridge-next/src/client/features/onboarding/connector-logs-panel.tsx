@@ -5,7 +5,9 @@ import type { OnboardingHostApi } from '../../../contracts/index.js'
 import type { ConnectorLogEntry, StartupFailureDiagnostic } from '../../../contracts/logs.js'
 import css from './bridge-logs-panel.module.css'
 
-export function ConnectorLogsPanel({ t, host }: { t: Translate; host: OnboardingHostApi }) {
+export function ConnectorLogsPanel({ t, host, externallyManaged = false }: {
+  t: Translate; host: OnboardingHostApi; externallyManaged?: boolean | undefined
+}) {
   const [entries, setEntries] = useState<ConnectorLogEntry[]>([])
   const [older, setOlder] = useState(false)
   const [paused, setPaused] = useState(false)
@@ -103,7 +105,9 @@ export function ConnectorLogsPanel({ t, host }: { t: Translate; host: Onboarding
     <div ref={viewport} className={css.terminal} tabIndex={0} aria-label={t('Connector 终端输出')}
       onScroll={event => { if (event.currentTarget.scrollTop <= 24 && older) void refresh('older') }}>
       {older ? <Button variant="ghost" disabled={busy} onClick={() => void refresh('older')}>{t('加载更早的 200 行')}</Button> : null}
-      {!entries.length && !busy ? <p className={css.empty}>{t('暂无启动前诊断输出。uv 引导与 Connector 进程拉起输出会显示在这里。')}</p> : null}
+      {!entries.length && !busy ? <p className={css.empty}>{t(externallyManaged
+        ? '本机 Connector 由系统服务管理，不由插件拉起，这里没有它的启动输出；它的运行日志可在“日志来源”中选择“Connector”查看。'
+        : '暂无启动前诊断输出。uv 引导与 Connector 进程拉起输出会显示在这里。')}</p> : null}
       {entries.map(entry => <div key={entry.id} className={css.terminalLine}><time dateTime={entry.time}>{new Date(entry.time).toLocaleTimeString(t('locale.code'))}</time>{' '}{entry.text}</div>)}
     </div>
   </section>

@@ -21,6 +21,7 @@ DSH 左侧边栏「设置」上方 → 远程控制 → 云端登录或连接自
 ```
 
 - 插件负责账号、设备凭据和自己启动的 Connector；账号与设备 token 不进入页面状态或跳转 URL。
+- 本机 Connector 由系统服务启动和管理时，可以改设 `connectorMode: attached`：插件不启动 Connector，只读取并跟随它发布的 rendezvous，详见下文「跟随系统服务管理的 Connector」。
 - OAuth 使用临时回环端口、state、PKCE S256 和一次性授权码。取消、超时、重复回调有明确处理。
 - 同一账号与服务复用已有设备。重试丢失的注册响应不会重复创建设备，失效凭据可恢复。
 - 本机设备被删除时，点击“重新配置”会先创建并连接新设备，再打开 Web 完整引导。链接携带新设备 ID 和新的流程标识，从欢迎页开始，随后进入设备配置、手机连接和完成页；浏览器未自动打开时可点击“继续配置”。
@@ -163,6 +164,7 @@ Host 配置位于 DSH 的插件配置行。常用项如下：
 | `stateRoot` | 操作系统用户主目录下 `.agents-anywhere/dsh-bridge-next` |
 | `connectorSourceDir` | 包内 `lib/bundled-connector`；覆盖时必须为绝对路径 |
 | `uvPath` | 优先使用显式配置或 `UV_PATH`，否则使用 npm 依赖 `@dataiku/uv` 中的平台二进制；依赖不可用时尝试系统 PATH |
+| `connectorMode` | `managed`（默认）：安装并启动内置 Connector；`attached`：跟随由系统服务启动和管理的本机 Connector，见下文「跟随系统服务管理的 Connector」。留空等同 `managed`，其他值插件拒绝加载 |
 
 设置页将 uv 路径、Python 下载镜像、PyPI 镜像和同步间隔原子写入 `connector-settings.json`；下次启动时恢复，uv 路径覆盖配置行中的 `uvPath`。首次初始化且没有保存过镜像选择时，Host 根据系统首选语言自动设置镜像：包含中文时直接使用阿里云，否则使用官方 PyPI，不弹出询问。macOS 读取系统语言列表，其他平台使用 Intl / POSIX 语言环境，headless 启动同样生效。选择在创建 venv 前持久化后再传给实际子进程：所选镜像是 uv 的首选源（`UV_INDEX`），官方 PyPI 是后备源（`UV_DEFAULT_INDEX`、`UV_INDEX_URL`）；`PIP_INDEX_URL` 跟随所选镜像，选择官方 PyPI 时清除继承来的 `UV_INDEX`。uv 会从第一个有该包的源下载，所以镜像上没有的包会改从 PyPI 下载，例如清华、中科大、北外镜像都没有 `openai-codex`。镜像只有旧版本时不会回退到 PyPI。规则与 Desktop 相同；已保存的镜像（包括手动选择默认 PyPI）保持不变。恢复出厂设置会重新应用系统默认镜像。
 
@@ -202,6 +204,34 @@ Python 下载镜像独立于 PyPI 镜像，提供官方源与 npmmirror。首次
 点击该按钮由 Host 重新校验安装记录，生成一次性 `flowId`，再通过 `agents-anywhere-desktop://onboarding?source=dsh-plugin&flowId=...` 唤起桌面端；macOS 走系统协议处理器，Windows、Linux 和开发态用记录中的可执行文件与启动参数传参。URL 由 Host 拼装，不接受客户端传入的路径、命令或回跳地址，也不携带任何凭据。桌面端每次收到该入口都进入自己的引导页，与是否已完成过引导无关。
 
 检测到 Desktop 正在运行时，插件跳过 Connector 自动恢复和账号资料刷新，账号、设备与 Connector 交由桌面端管理；插件只保留桥接（连接 Connector 发布的 `~/.agents-anywhere/dsh-bridge/connector.json`，位于操作系统用户主目录，不随 `DSH_HOME` 变化）和桥接日志。Desktop 退出后，插件可以恢复先前已授权的连接。
+
+## 跟随系统服务管理的 Connector
+
+默认的 `managed` 模式下，插件把包内 Connector 源码复制到数据目录、创建虚拟环境、写入 `connector/connector.json`，再启动自己的 Connector 进程。本机的 Connector 如果已经由系统服务（例如 launchd、systemd）启动和管理，这些动作会覆盖该服务正在使用的环境和配置。此时在 DSH 的插件配置行里设置 `connectorMode: "attached"`，插件不再启动任何进程，只读取该 Connector 发布的 rendezvous（`<操作系统用户主目录>/.agents-anywhere/dsh-bridge/connector.json`，与 `DSH_HOME`、`stateRoot` 无关）并跟随它；账号页、设置页里的只读信息和本机桥接照常工作。
+
+这个模式要求部署方准备好两样东西：
+
+- 一个由系统服务启动、与插件运行在同一系统用户下并照常发布 rendezvous（含 `pid`）的 Connector。
+- 该 Connector 使用的设备凭据（连接器 ID 与令牌）已经写进插件的私有绑定记录（`<stateRoot>/bindings/`）。插件不会替它认领设备：没有记录时只提示并等待，不自行创建；记录与服务器不符（凭据被拒绝，或设备已不存在）时，提示用该服务当前使用的凭据更新绑定记录后点「重新检查」，「重新检查」只重新读取磁盘上的记录。
+
+它做的事：
+
+- 启动、登录或恢复连接时最多等待 120 秒直到出现可跟随的 rendezvous，期间每秒检查一次，随后在后台每秒复查。服务重启或重新部署换了一个 Connector 实例，插件自动切到新的实例，不需要用户操作；Connector 消失先给 30 秒宽限，超过才报「已停止」，重新发布后自动恢复并清除错误。
+- 核对发布者身份：rendezvous 里的 pid 已经不存在，或者这个 pid 现在属于一个在文件写入之后才启动的进程（比较进程启动时间与文件修改时间，允许 1 秒误差），都不当作 Connector。核对只在采纳时做一次；「已过时」的结论会记住，因为那个进程不可能写过这个文件；pid 被看到死亡后会重新核对，不沿用旧结论；读不到进程启动时间时不作判断。
+- 只校验磁盘上已有的绑定记录，从不改写它。没有记录、没有正在运行的 Connector，都按部署尚未完成处理：显示「未跟随」和原因，按 5、15、30、60 秒的间隔继续重试，以信息级别记日志，不计入「启动前诊断」；部署随后补齐，下一次重试即连上，不需要刷新或重载插件。
+- 数据目录里只写插件自己的文件：`.manager-lock.json`、`account.json`、`bindings/`、`connector-settings.json`、`settings.json` 和 `logs/`。
+
+它不做的事：
+
+- 不复制 Connector 源码，不创建或安装 `connector-venv/`，不解析 uv，不写 `connector/` 下的任何文件，不启动、停止或重启任何进程。
+- 不认领、不重新连接、不重新创建设备，不轮换凭据，也不改写绑定记录。退出登录只停止跟随，Connector 继续运行。
+- 旧数据目录（`~/.agentsanywhere/dsh-bridge-next/`）迁移时跳过 `connector/` 和 `connector-source/`，既不复制也不改写；其余文件照常迁移并写入完成记录。
+- 设置页不显示启动、停止、重启、重装依赖环境、恢复出厂设置和连接设置表单；对应的 RPC 一律拒绝，并且先拒绝、再中断进行中的流程，不会打断正在等待 Connector 的启动。打开目录只打开已经存在的目录，不会创建；「打开日志目录」指向 Connector 自己的 `~/.agents-anywhere/logs/`。
+- 「启动前诊断」改读从未写入的 `logs/attached/`，不会把插件以前自己启动的 Connector 留下的输出当成当前状态；Connector 的运行日志仍通过日志服务读取，不受影响。
+
+切回插件管理：从插件配置行删掉 `connectorMode`（或改为 `managed`）后重新加载插件，下次启动照常安装并运行内置 Connector，已有的绑定记录照常复用。
+
+`tests/unit/attached-manager.test.ts`、`tests/unit/connector-mode.test.ts` 和 `tests/integration/attached-connector.test.ts` 覆盖以上每一条，包括拒绝先于中断、过时的 rendezvous、排队中的启动被 `stop()` 作废，以及数据目录里只出现插件自己的文件。
 
 ## 原生命令桥接
 
@@ -259,7 +289,7 @@ src/host/config.ts      连接地址、数据目录、运行路径
 src/host/desktop/       只读安装检测与本机 ID 历史读取
 src/host/onboarding/    OAuth 回调、流程状态和 Web 交接
 src/host/account/       用户授权、设备绑定及凭据恢复
-src/host/connector/     内部 Python Connector 的进程管理
+src/host/connector/     内部 Python Connector 的进程管理，以及 attached 模式下对外部 Connector 的跟随
 src/host/rpc/           公开的连接管理接口
 src/host/storage/       私有文件存储与实例锁
 src/host/dsh-runtime/   DSH 原生读写、可见性、Timeline 投影与事件端点

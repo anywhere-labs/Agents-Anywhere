@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { rm } from 'node:fs/promises'
+import { rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { CLOUD_API_BASE_URL, type ConnectionSettings, type DesktopDetection, type DesktopLaunch, type DeviceRecovery, type DeviceRecoveryAction, type DeviceRecoveryResult, type FlowStage, type LoginRequest, type OnboardingSnapshot } from '../../contracts/index.js'
@@ -9,10 +9,11 @@ import { DeviceRecoveryRequired, ensureBinding, readBoundDevice, recoverBinding,
 import { checkServer, normalizeServerOrigin, resolveOAuthWebOrigin } from '../account/server.js'
 import type { ResolvedConfig } from '../config.js'
 import { ConnectorCredentialError, ConnectorOwnershipError, SourceConnector, type ConnectorProcess } from '../connector/process.js'
+import { AttachedConnector, EXTERNALLY_MANAGED, isConnectorAbsent } from '../connector/attached.js'
 import { detectDesktop } from '../desktop/detect.js'
 import { desktopOnboardingUrl, launchDesktop, newDesktopFlowId, type DesktopLauncher } from '../desktop/launch.js'
 import type { LocalMachineRegistry } from '../desktop/machine-state.js'
-import { acquireManagerLock, readJson, writeJson } from '../storage/files.js'
+import { acquireManagerLock, hasCode, readJson, writeJson } from '../storage/files.js'
 import { migrateStateRoot } from '../storage/migration.js'
 import { LoopbackFlow } from './loopback.js'
 import type { ConnectorAction, ConnectorFolder, ConnectorSettings } from '../../contracts/connector.js'
@@ -44,6 +45,13 @@ interface Dependencies {
 }
 
 const RESUME_RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 300_000]
+/** A Connector that is not published is the service's doing, and only time fixes it: keep looking every minute, not every five. */
+const ATTACHED_RESUME_RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000]
+/** Attached mode has no reconnect or recreate to offer, so the recovery prompt says what to do instead. */
+const ATTACHED_RECOVERY: Record<DeviceRecoveryRequired['reason'], string> = {
+  disconnected: '插件保存的设备凭据未被服务器接受。本机 Connector 由系统服务管理，插件不会轮换它的凭据：请用该服务当前使用的那份凭据更新插件的绑定记录，然后点“重新检查”。',
+  deleted: '插件保存的设备在服务器上已不存在。本机 Connector 由系统服务管理，插件不会重新创建设备：请核对该服务使用的设备凭据，更新插件的绑定记录后点“重新检查”。',
+}
 /** Account tokens this close to expiry are treated as expired, matching the login check. */
 const ACCOUNT_EXPIRY_MARGIN_MS = 30_000
 
@@ -107,7 +115,8 @@ export class OnboardingManager {
     this.connectorSettings = new ConnectorSettingsStore(config, dependencies.systemLanguages)
     this.logOutput = dependencies.logOutput ?? new RpcLogOutput(512, 'plugin')
     this.diagnostics = dependencies.diagnostics ?? new RuntimeDiagnostics(this.logOutput, {}, 'dsh-plugin')
-    this.connector = dependencies.connector ?? new SourceConnector(
+    // attached mode leaves the Connector to the system service that runs it; the plugin only follows it.
+    this.connector = dependencies.connector ?? (config.connectorMode === 'attached' ? new AttachedConnector({ diagnostics: this.diagnostics }) : new SourceConnector(
       config,
       undefined,
       () => this.connectorSettings.get(),
@@ -115,7 +124,7 @@ export class OnboardingManager {
       undefined,
       this.diagnostics,
       this.logOutput,
-    )
+    ))
     this.detect = dependencies.detect ?? detectDesktop
     this.launchDesktop = dependencies.launchDesktop ?? launchDesktop
     this.apiFactory = dependencies.api ?? (base => new AccountApi(base))
@@ -129,6 +138,14 @@ export class OnboardingManager {
   hasRuntimeLogs(): boolean { return this.connector.hasRuntimeLogs?.() ?? false }
   get logsPath(): string | null { return this.connector.logsPath ?? null }
   get pluginLogOutput(): RpcLogOutput { return this.logOutput }
+
+  /** attached mode: a system service starts and owns the Connector; this plugin only follows it. */
+  private get externallyManaged(): boolean { return this.config.connectorMode === 'attached' }
+
+  /** The one place that keeps the service's Connector out of the plugin's reach. */
+  private requirePluginManaged(operation: keyof typeof EXTERNALLY_MANAGED): void {
+    if (this.externallyManaged) throw new Error(EXTERNALLY_MANAGED[operation])
+  }
 
   async readRuntimeLogs(query?: RuntimeLogQuery): Promise<RuntimeLogPage> {
     if (this.connector.readRuntimeLogs && this.connector.hasRuntimeLogs?.()) {
@@ -155,10 +172,13 @@ export class OnboardingManager {
   private async load(): Promise<void> {
     this.releaseLock = await acquireManagerLock(join(this.config.stateRoot, 'manager.lock'), () => this.loseOwnership())
     try {
-      await migrateStateRoot(this.config.stateRoot, this.config.legacyStateRoot)
+      // The Connector's configuration and sources belong to the service; a migrated copy would be written as if they were ours.
+      await migrateStateRoot(this.config.stateRoot, this.config.legacyStateRoot,
+        this.externallyManaged ? { skip: ['connector', 'connector-source'] } : undefined)
       await this.refreshRole()
       await this.connectorSettings.load()
-      this.resolvedUvPath = await resolveUv(this.config, this.connectorSettings.get())
+      // Nothing runs uv in attached mode, and resolving it may unpack a binary into the data directory.
+      if (!this.externallyManaged) this.resolvedUvPath = await resolveUv(this.config, this.connectorSettings.get())
       const settings = await readJson<ConnectionSettings>(join(this.config.stateRoot, 'settings.json'))
       if (settings) {
         this.settings = this.validateSettings(settings)
@@ -205,7 +225,7 @@ export class OnboardingManager {
     await this.initialize()
     const controller = new AbortController()
     this.resumeController = controller
-    const delays = this.dependencies.resumeRetryDelaysMs ?? RESUME_RETRY_DELAYS_MS
+    const delays = this.dependencies.resumeRetryDelaysMs ?? (this.externallyManaged ? ATTACHED_RESUME_RETRY_DELAYS_MS : RESUME_RETRY_DELAYS_MS)
     try {
       for (let attempt = 0; ; attempt += 1) {
         if (controller.signal.aborted || this.disposed || !this.account || this.desktop.status !== 'absent') return
@@ -225,7 +245,7 @@ export class OnboardingManager {
           if (controller.signal.aborted || this.disposed || this.desktop.status !== 'absent' || this.recovery) return
           if (!canRetryResume(error)) { this.setProgress('error', safeMessage(error)); return }
           const wait = delays[Math.min(attempt, delays.length - 1)] ?? RESUME_RETRY_DELAYS_MS[0]!
-          this.diagnostics.log('warn', 'onboarding.resume_retry', { attempt: attempt + 1, delayMs: wait }, error)
+          this.diagnostics.log(isDeploymentState(error) ? 'info' : 'warn', 'onboarding.resume_retry', { attempt: attempt + 1, delayMs: wait }, error)
           this.setProgress('error', `${safeMessage(error)}（${Math.ceil(wait / 1000)} 秒后自动重试）`)
           try { await delay(wait, undefined, { signal: controller.signal }) } catch { return }
         }
@@ -357,7 +377,7 @@ export class OnboardingManager {
 
   private launch(flow: LoopbackFlow, controller: AbortController, code?: string): void {
     this.work = this.connect(flow, controller.signal, code).catch(async (error: unknown) => {
-      if (this.flow === flow && !controller.signal.aborted) await this.connectionFailed(error)
+      if (this.flow === flow && !controller.signal.aborted && !await this.deferUntilDeployed(error)) await this.connectionFailed(error)
       await this.connector.stop()
     })
   }
@@ -380,10 +400,18 @@ export class OnboardingManager {
     signal.throwIfAborted()
     this.setProgress('pairing', '登录成功，正在连接本机设备…')
     const previousId = this.binding?.connectorId
-    this.binding = await ensureBinding(this.config.stateRoot, account, api, signal, {
-      ...(this.dependencies.machineState ? { machineState: this.dependencies.machineState } : {}),
-      renew: Boolean(code),
-    })
+    if (this.externallyManaged) {
+      // Attached mode verifies the binding on disk and leaves it as the deployer wrote it: it adopts nothing,
+      // and rotating the Connector's credential would cut it off.
+      const saved = await readBoundDevice(this.config.stateRoot, account)
+      if (!saved) throw new Error(EXTERNALLY_MANAGED.binding)
+      this.binding = await verifyBoundDevice(saved, account, api, signal)
+    } else {
+      this.binding = await ensureBinding(this.config.stateRoot, account, api, signal, {
+        ...(this.dependencies.machineState ? { machineState: this.dependencies.machineState } : {}),
+        renew: Boolean(code),
+      })
+    }
     // A Connector kept running on its own credential while signed out must not keep the old device.
     if (previousId && previousId !== this.binding.connectorId) await this.connector.stop()
     this.recovery = null
@@ -433,10 +461,10 @@ export class OnboardingManager {
         const device = await this.apiFactory(account.apiBaseUrl).device(account.accessToken, id, controller.signal)
         controller.signal.throwIfAborted()
         if (device.userId !== account.userId) throw new Error('设备归属与当前账号不一致。')
-        this.setRecovery(id, 'disconnected', new DeviceRecoveryRequired(id, 'disconnected').message)
+        this.setRecovery(id, 'disconnected', this.deviceMessage(id, 'disconnected'))
       } catch (error) {
         if (controller.signal.aborted || this.disposed) return
-        if (error instanceof ApiError && error.status === 404) this.setRecovery(id, 'deleted', new DeviceRecoveryRequired(id, 'deleted').message)
+        if (error instanceof ApiError && error.status === 404) this.setRecovery(id, 'deleted', this.deviceMessage(id, 'deleted'))
         else if (error instanceof ApiError && error.status === 401) {
           await this.markAccountExpired(account)
           this.setRecovery(id, 'login_required', '账号登录已失效，请重新登录后恢复设备连接。')
@@ -449,9 +477,21 @@ export class OnboardingManager {
     return task
   }
 
+  /** The binding record on disk, when it verifies now. Finding out claims and rotates nothing. */
+  private async verifySavedBinding(account: Account): Promise<BoundDevice | null> {
+    const saved = await readBoundDevice(this.config.stateRoot, account)
+    if (!saved) return null
+    try { return await verifyBoundDevice(saved, account, this.apiFactory(account.apiBaseUrl), new AbortController().signal) }
+    catch { return null }
+  }
+
+  private deviceMessage(connectorId: string, reason: DeviceRecoveryRequired['reason']): string {
+    return this.externallyManaged ? ATTACHED_RECOVERY[reason] : new DeviceRecoveryRequired(connectorId, reason).message
+  }
+
   private async connectionFailed(error: unknown): Promise<void> {
     this.recordConnectionFailure(error)
-    if (error instanceof DeviceRecoveryRequired) this.setRecovery(error.connectorId, error.reason, error.message)
+    if (error instanceof DeviceRecoveryRequired) this.setRecovery(error.connectorId, error.reason, this.deviceMessage(error.connectorId, error.reason))
     else if (error instanceof AccountLoginRequired && error.connectorId) this.setRecovery(error.connectorId, 'login_required', error.message)
     else if (error instanceof ConnectorCredentialError && this.binding) await this.checkDeviceRecovery(this.binding.connectorId)
     else if (error instanceof ApiError && error.status === 401 && this.binding) this.setRecovery(this.binding.connectorId, 'login_required', '账号登录已失效，请重新登录后恢复设备连接。')
@@ -461,12 +501,25 @@ export class OnboardingManager {
   recoverDevice(action: DeviceRecoveryAction): Promise<DeviceRecoveryResult> {
     this.stopResume()
     return this.serial(async () => {
+      if (action === 'reconnect' || action === 'recreate') this.requirePluginManaged('device')
       await this.initialize()
       if (this.disposed) throw new Error('插件已关闭。')
       await this.requireStandalone()
       const recovery = this.recovery, account = this.account
       if (!recovery || !account) throw new Error('设备状态已变化，请重新打开插件。')
-      if (action === 'check') { await this.checkDeviceRecovery(recovery.connectorId); return null }
+      if (action === 'check') {
+        // In attached mode the record is the deployer's to write: one that verifies now is what there was to re-check.
+        const corrected = this.externallyManaged ? await this.verifySavedBinding(account) : null
+        if (corrected) {
+          this.binding = corrected
+          this.recovery = null
+          this.setProgress('starting', '正在连接本机 Connector…')
+          if (!this.disposed && this.desktop.status === 'absent') void this.resume()
+          return null
+        }
+        await this.checkDeviceRecovery(recovery.connectorId)
+        return null
+      }
       if ((action !== 'reconnect' || recovery.status !== 'disconnected') && (action !== 'recreate' || recovery.status !== 'deleted')) {
         throw new Error('设备状态已变化，请先重新检查。')
       }
@@ -496,7 +549,7 @@ export class OnboardingManager {
       } catch (error) {
         if (!controller.signal.aborted) {
           if (error instanceof DeviceRecoveryRequired || error instanceof ConnectorCredentialError) await this.connectionFailed(error)
-          else {
+          else if (!await this.deferUntilDeployed(error)) {
             this.recordConnectionFailure(error)
             this.setRecovery(this.binding?.connectorId ?? recovery.connectorId,
               error instanceof ApiError && error.status === 401 ? 'login_required' : 'unavailable',
@@ -545,10 +598,12 @@ export class OnboardingManager {
 
   controlConnector(action: ConnectorAction): Promise<null> {
     this.stopResume()
-    if (action === 'stop' && !this.disposed && this.desktop.status === 'absent') {
+    // A stop is refused in attached mode, and the refusal must not cut short the start still waiting for the Connector.
+    if (action === 'stop' && !this.externallyManaged && !this.disposed && this.desktop.status === 'absent') {
       this.controller?.abort()
     }
     return this.serial(async () => {
+      if (action !== 'start') this.requirePluginManaged('stop')
       await this.requireStandalone()
       if (!['start', 'stop', 'restart'].includes(action)) throw new Error('不支持的 Connector 操作。')
       await this.cancelFlow()
@@ -587,8 +642,10 @@ export class OnboardingManager {
       this.setProgress('ready', '本机设备已连接。')
     } catch (error) {
       if (!controller.signal.aborted) {
-        await this.connectionFailed(error)
-        await this.connector.stop()
+        if (!await this.deferUntilDeployed(error)) {
+          await this.connectionFailed(error)
+          await this.connector.stop()
+        }
         throw error
       }
       await this.connector.stop()
@@ -596,13 +653,32 @@ export class OnboardingManager {
     } finally { if (this.controller === controller) this.controller = null }
   }
 
+  /**
+   * A Connector that is not published right now, or a binding record the deployer has not written yet,
+   * is the deployment's state, not a failure to record: the plugin detaches, says so, and keeps looking.
+   */
+  private async deferUntilDeployed(error: unknown): Promise<boolean> {
+    if (!this.externallyManaged || !isDeploymentState(error)) return false
+    await this.connector.stop()
+    // Inside the resume loop the retry notice that follows carries the message.
+    if (!this.resuming) this.setProgress('error', safeMessage(error))
+    if (!this.disposed && this.desktop.status === 'absent' && !this.recovery) void this.resume()
+    return true
+  }
+
   private async startWithAccount(account: Account, signal: AbortSignal): Promise<void> {
     const api = this.apiFactory(account.apiBaseUrl)
     this.setProgress('pairing', '正在检查本机设备…')
-    this.binding = this.binding ? await verifyBoundDevice(this.binding, account, api, signal)
-      : await ensureBinding(this.config.stateRoot, account, api, signal, {
+    // Adopting a device rotates the credential the service's Connector runs on, so in attached mode only the saved
+    // binding may be verified. It is read again here: one written since the plugin loaded needs no reload.
+    if (!this.binding && this.externallyManaged) this.binding = await readBoundDevice(this.config.stateRoot, account)
+    if (this.binding) this.binding = await verifyBoundDevice(this.binding, account, api, signal)
+    else {
+      if (this.externallyManaged) throw new Error(EXTERNALLY_MANAGED.binding)
+      this.binding = await ensureBinding(this.config.stateRoot, account, api, signal, {
         ...(this.dependencies.machineState ? { machineState: this.dependencies.machineState } : {}),
       })
+    }
     await this.requireStandalone()
     signal.throwIfAborted()
     if (this.disposed) throw new Error('插件已关闭。')
@@ -634,6 +710,7 @@ export class OnboardingManager {
 
   saveConnectorSettings(input: ConnectorSettings): Promise<null> {
     return this.serial(async () => {
+      this.requirePluginManaged('settings')
       await this.requireStandalone()
       if (this.stage === 'authorizing' || this.stage === 'pairing' || this.stage === 'starting') throw new Error('连接正在进行，请完成或取消后再保存设置。')
       const next = validateConnectorSettings(input)
@@ -658,18 +735,25 @@ export class OnboardingManager {
     await this.requireStandalone()
     if (folder !== 'data' && folder !== 'logs') throw new Error('不支持的目录。')
     if (folder === 'data') {
-      await (this.dependencies.openFolder ?? openFolder)(join(this.config.stateRoot, 'connector'))
+      await this.openExistingFolder(join(this.config.stateRoot, 'connector'))
       return null
     }
     const logsPath = (await this.connector.resolveLogsPath?.()) ?? this.connector.logsPath ?? fallbackLogsPath ?? null
     if (!logsPath) throw new Error('Connector 尚未就绪，暂未获取到日志目录。')
-    await (this.dependencies.openFolder ?? openFolder)(logsPath)
+    await this.openExistingFolder(logsPath)
     return null
+  }
+
+  /** openFolder creates a missing directory; in attached mode the directories are the service's to create. */
+  private async openExistingFolder(path: string): Promise<void> {
+    if (this.externallyManaged && !await exists(path)) throw new Error('Connector 的目录尚未由系统服务创建。')
+    await (this.dependencies.openFolder ?? openFolder)(path)
   }
 
   resetConnector(forceLocal: boolean): Promise<null> {
     this.stopResume()
     return this.serial(async () => {
+      this.requirePluginManaged('reset')
       await this.requireStandalone()
       if (typeof forceLocal !== 'boolean') throw new Error('重置参数无效。')
       if (this.binding && this.account && !forceLocal) {
@@ -700,9 +784,10 @@ export class OnboardingManager {
   /** Rebuilds the Connector's dependency environment; account, device binding and settings stay. */
   resetConnectorEnvironment(): Promise<null> {
     this.stopResume()
-    // A stuck installation holds the queue, and clearing it is the reason to be here.
-    if (!this.disposed && this.desktop.status === 'absent') this.controller?.abort()
+    // A stuck installation holds the queue, and clearing it is the reason to be here. Attached mode is refused below, so nothing is interrupted.
+    if (!this.externallyManaged && !this.disposed && this.desktop.status === 'absent') this.controller?.abort()
     return this.serial(async () => {
+      this.requirePluginManaged('reinstall')
       await this.requireStandalone()
       await this.cancelFlow()
       await this.connector.resetEnvironment()
@@ -764,7 +849,7 @@ export class OnboardingManager {
     this.binding = null
     this.recovery = null
     await rm(join(this.config.stateRoot, 'account.json'), { force: true })
-    this.setProgress('idle', '已退出登录，本机连接已停止。')
+    this.setProgress('idle', this.externallyManaged ? '已退出登录，插件已停止跟随本机 Connector；它由系统服务管理，仍在运行。' : '已退出登录，本机连接已停止。')
   }
 
   async dispose(): Promise<void> {
@@ -857,6 +942,7 @@ export class OnboardingManager {
         settings: this.connectorSettings.get(), resolvedUvPath: this.resolvedUvPath,
         dataPath: join(this.config.stateRoot, 'connector'), logsPath: this.connector.logsPath ?? '',
         canOpenFolders: canOpenFolders(), deviceName: this.binding?.name ?? null,
+        externallyManaged: this.externallyManaged,
         lastError: this.connector.lastError ?? null,
       },
     }
@@ -870,6 +956,15 @@ function canRetryResume(error: unknown): boolean {
     || error instanceof AccountLoginRequired || error instanceof ConnectorOwnershipError) return false
   if (error instanceof Error && 'code' in error && error.code === 'CONNECTOR_SYNC_STATE_INVALID') return false
   return !(error instanceof Error && error.message === '插件已关闭。')
+}
+
+/** The deployment is not finished yet: no Connector published, or the service's credential not written to the binding record. */
+function isDeploymentState(error: unknown): boolean {
+  return isConnectorAbsent(error) || (error instanceof Error && error.message === EXTERNALLY_MANAGED.binding)
+}
+
+async function exists(path: string): Promise<boolean> {
+  try { await stat(path); return true } catch (error) { if (hasCode(error, 'ENOENT')) return false; throw error }
 }
 
 function safeMessage(error: unknown): string {

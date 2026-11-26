@@ -7,6 +7,7 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { HOST_NAMESPACE, type DesktopLaunch, type DeviceRecoveryAction, type DeviceRecoveryResult, type LoginRequest, type OnboardingHostApi, type OnboardingSnapshot } from '../../contracts/index.js'
 import { Config, resolveConfig } from '../config.js'
+import { connectorOutputDirectory } from '../connector/attached.js'
 import { OnboardingManager } from '../onboarding/manager.js'
 import type {} from '../dsh-runtime/index.js'
 import type { ConnectorAction, ConnectorFolder, ConnectorSettings } from '../../contracts/connector.js'
@@ -32,10 +33,12 @@ export class OnboardingService extends TypertRemoteService implements Onboarding
   private readonly pluginLogOutput = new RpcLogOutput(512, 'plugin')
   private readonly diagnostics: RuntimeDiagnostics
   private readonly logsDirectory: string
+  private readonly connectorOutput: string
 
   constructor(ctx: Context, config: Config) {
     super(ctx, HOST_NAMESPACE)
     this.logsDirectory = join(stateRoot(config), 'logs')
+    this.connectorOutput = connectorOutputDirectory(this.logsDirectory, resolveConfig(config).connectorMode === 'attached')
     this.diagnostics = onboardingDiagnostics(ctx.logger('agents-anywhere-onboarding'), this.logsDirectory, this.pluginLogOutput)
     this.makeManager = () => new OnboardingManager(resolveConfig(config), {
       diagnostics: this.diagnostics,
@@ -136,7 +139,7 @@ export class OnboardingService extends TypertRemoteService implements Onboarding
   }
   @Remote('readConnectorLogs')
   readConnectorLogs(query?: ConnectorLogQuery): Promise<ConnectorLogPage> {
-    return readConnectorLogs(this.logsDirectory, query)
+    return readConnectorLogs(this.connectorOutput, query)
   }
   @Remote('readStartupDiagnostics')
   async readStartupDiagnostics(): Promise<StartupFailureDiagnostic[]> {

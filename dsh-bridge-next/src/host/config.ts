@@ -11,6 +11,11 @@ export interface Config {
   stateRoot?: string
   connectorSourceDir?: string
   uvPath?: string
+  /**
+   * managed (default): install and run the bundled Connector. attached: a system service starts
+   * and owns the Connector; the plugin only follows the rendezvous it publishes.
+   */
+  connectorMode?: string
 }
 
 export const Config: z<Config> = z.object({
@@ -19,6 +24,7 @@ export const Config: z<Config> = z.object({
   stateRoot: z.string(),
   connectorSourceDir: z.string(),
   uvPath: z.string(),
+  connectorMode: z.string(),
 })
 
 export interface ResolvedConfig extends ConnectionSettings {
@@ -27,6 +33,8 @@ export interface ResolvedConfig extends ConnectionSettings {
   legacyStateRoot?: string
   connectorSourceDir: string
   uvPath: string
+  /** Present only when it is not the default, so a config built by hand still means the default. */
+  connectorMode?: 'attached'
 }
 
 export function stateRoot(config: Config): string {
@@ -52,6 +60,9 @@ export function resolveConfig(config: Config): ResolvedConfig {
   const root = stateRoot(config)
   const connectorSourceDir = config.connectorSourceDir ?? fileURLToPath(new URL('./bundled-connector/', import.meta.url))
   if (!isAbsolute(root) || !isAbsolute(connectorSourceDir)) throw new Error('数据目录和 Connector 源码目录必须是绝对路径。')
+  // Blank is unset: a template that leaves the key empty must not keep the plugin from loading.
+  const connectorMode = config.connectorMode?.trim() || 'managed'
+  if (connectorMode !== 'managed' && connectorMode !== 'attached') throw new Error('connectorMode 只能是 managed 或 attached。')
   return {
     ...(config.dshHome !== undefined ? { dshHome: config.dshHome } : {}),
     stateRoot: root,
@@ -59,5 +70,6 @@ export function resolveConfig(config: Config): ResolvedConfig {
     connectorSourceDir,
     apiBaseUrl: normalizeServerOrigin(config.apiBaseUrl ?? CLOUD_API_BASE_URL),
     uvPath: config.uvPath ?? process.env['UV_PATH'] ?? 'uv',
+    ...(connectorMode === 'attached' ? { connectorMode } : {}),
   }
 }
