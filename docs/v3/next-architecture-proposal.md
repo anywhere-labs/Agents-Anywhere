@@ -35,7 +35,7 @@ flowchart TB
 
   subgraph Cloud["云端控制面 + 路由 + 预览网关"]
     Server["server-v3 (FastAPI + asyncpg + Redis)"]
-    CloudRouter["云端 MeshCall Router 集群<br/>(可信节点互联 + etcd 控制状态)"]
+    CloudRouter["云端多 Router 网络（边缘 Router 集群）<br/>任一边缘接入即全网 + 端点列表自动故障转移"]
     FrpGw["frps (HTTP Plugin) + 鉴权反向代理<br/>https://<id>.preview.<domain>"]
     Server <-->|"挂载 aa.v3.Control<br/>定向调 DeviceAdmin / 普通设备"| CloudRouter
     FrpGw <-->|"Login / NewProxy / Auth 回调"| Server
@@ -62,7 +62,7 @@ flowchart TB
   - 强类型 Zod Schema + `@service` / 完整 `description` 与方法语义标注（`read_only` / `idempotent` / `destructive`），开启 `MESHCALL_STRICT=1`。
   - 所有设备业务与 `DeviceAdmin` 服务为 `targeted: true`（绑定 `instanceId = active_device_id`）；`aa.v3.LocalAdmin` 为 `targeted: false`（单本机实例）。
   - 四种通信形态各司其职：`unary`（查询/操作）、`server_stream`（Timeline 更新、日志流、本机状态/配对审批流、预览状态流，自动信用流控）、`client_stream`（控制面心跳 `presence`）、`duplex`（仅 `Terminals/attach`）。
-  - **两张独立网络、两套凭据**：`LocalMesh` 注册在本机边缘 Router，`RemoteMesh` 连云端 Router 集群（见 1.10）；Connector 同时加入两者，任何一方都不是另一方的上行。
+  - **两张独立网络、两套凭据**：`LocalMesh` 注册在本机 Router，`RemoteMesh` 连云端多 Router 网络中的某个边缘 Router（见 1.10）；Connector 同时加入两者，任何一方都不是另一方的上行。
   - `LocalRouter` 绑定 `127.0.0.1` 随机端口 + 0600 随机账密（无 `anonymous`），对外签发带 scope 的 `mt_` token 与**本机普通隧道 `mtun_...`**（使渲染层连接本机与连接远端隧道在调用代码上 100% 一致，均无需手动传 `instance`）。
   - 仅 `RemoteMesh` 启用 `DeviceGate`：加密模式在 MeshCall 挂载层启用 `requireE2E: true` + `requireE2EPeer: true` + `authorizeE2EPeer`，仅接受已完成 `Noise_IK_25519_AESGCM_SHA256` 双向认证的已配对客户端（彻底移除 `Noise_IKpsk2`）。
 
@@ -242,14 +242,27 @@ dataDir/
 - **防反复撞码（由 Connector 本地强制，不依赖 Server）**：每个档案同时最多 3 个待处理配对；10 分钟内被拒绝、过期或承诺校验失败累计 5 次后，暂停接受新配对 10 分钟，并在 `watch_pairings` 推送告警。每次尝试都需要设备端真人审批，攻击者无法自动化撞码。
 - **撤销**：`LocalAdmin/revoke_client` 或 `Device` 撤销接口从白名单删除 `c_pub`，并通过 `DeviceAdmin/close_tunnel_sessions` 立即断开该客户端现有隧道。
 
-### 1.10 MeshCall 网络：云端 Router 集群与本机边缘 Router
+### 1.10 MeshCall 网络：云端多 Router 网络与本机 Router
 
-- **云端 Router 集群（高可用）**：一组互相可达的可信 Router 节点，控制状态（Token、隧道、吊销、实例所在节点、成员关系）存放在 etcd，节点之间转发调用；连上任意一个节点即加入整个网络。Server（`aa.v3.Control`）、Connector 的 `RemoteMesh` 与远端客户端都经负载均衡地址连任一节点，**不由客户端在多个独立 Router 之间选路**（放弃 MeshCall #87 的客户端多 Router 方案）。无状态的单 Router 做不到高可用，因为 Token、隧道与吊销只存在签发它的 Router 内存里。
-- **本机边缘 Router（`LocalRouter`）**：即 Connector 内嵌的 `meshcall-router`，**始终由 Connector 启动**（不再是可选开关）。职责：本机 IPC（Connector ↔ Desktop 主进程 / CLI）与本地优先（本机客户端免配对直连）。它与云端集群无关：既不加入集群，也不作为集群的上行或下级节点。
-- **局域网直连（下一期）**：在边缘 Router 上增加一个独立的局域网监听，与 `127.0.0.1` 本机监听分开；局域网路径对两种模式都要求 `Noise_IK`（普通模式设备先经云端隧道登记客户端公钥），设备局域网地址经 E2E 通道交给已配对客户端，mDNS 默认关闭、开启时使用不透明且轮换的标识。云端签发的 `mtun_` 凭据在边缘 Router 上无效，需另行签发。首版只交付经云端集群的远程控制。
-- **MeshCall 侧待定**：etcd 不可用时集群的降级行为；一元调用幂等去重如何跨节点生效。
+**术语**：
+- **边缘 Router**：云端多 Router 网络中直接接受外部连接的 Router 节点。工作设备上的服务（Connector 的 `RemoteMesh`）、Server（`aa.v3.Control`）以及 Web / Desktop / 移动端客户端都连边缘 Router。
+- **本机 Router（`LocalRouter`）**：Connector 内嵌在用户工作设备上的 `meshcall-router`。它**不是**边缘 Router，也不属于云端网络。
 
----
+**多 Router 网络要解决的两个问题**：
+1. **接入任一边缘 Router，就等同接入整个 Mesh**：连上任何一个边缘 Router，用起来就像只有一个 Router——能调用注册在任一边缘 Router 上的服务和实例（含 `targeted` 调用、四种通信形态、隧道与 E2E），Token、隧道凭据与吊销在所有边缘 Router 上同样有效。集群为此维护共享的实例目录与控制状态（此前定的方向是 etcd），调用由接入节点转发到目标实例所在节点；E2E 隧道是端到端加密的，经节点转发不影响安全性。无状态、互不协调的多个 Router 做不到这一点：Token、隧道和吊销只存在签发它的 Router 内存里，实例也只对注册它的 Router 可见。
+2. **自动获得多个边缘 Router 端点，故障时自动转移**：服务与客户端只需配置一个引导地址（如 `wss://router.<domain>`）；连上后由集群下发当前可用的边缘 Router 端点列表，成员变化时推送更新，SDK 自行保存。当前边缘 Router 故障时 SDK 自动换到列表里的另一个：
+   - 服务实例在新节点重新注册，实例目录随之更新；切换期间对它的调用返回可重试的 `instance_offline`；
+   - 客户端重连后通过凭据提供函数（MeshCall #86）继续使用凭据，幂等的一元调用自动重试；
+   - 流式调用随连接中断，由应用重新订阅：AA 的 `watch` 断线后本就重拉 `get_snapshot`，终端 `attach` 重新附着即可。
+
+**对 MeshCall 现有方向的影响**：
+- 与 MeshCall #87（一个 Mesh 同时注册到多个独立 Router、由应用侧选路）不同：一个 Mesh 同一时间只连一个边缘 Router，跨节点路由由集群完成；#87 中的故障转移逻辑可以保留，改为使用集群下发的端点列表。
+- MeshCall `docs/zh-CN/router.md` 第 4 节「无状态多 Router 高可用」与 #24「Router 不保存状态」的前提需要按此重写。
+- 待定：共享状态存储不可用时的降级；幂等去重如何跨节点生效；服务是否同时连两个边缘 Router 以缩短切换窗口；端点列表是否按地域或延迟排序。
+
+**本机 Router**：
+- **始终由 Connector 启动**（不再是可选开关），职责是本机 IPC（Connector ↔ Desktop 主进程 / CLI）与本地优先（本机客户端免配对直连）。它不注册到云端网络，也不作为任何边缘 Router 的上行或下级。Connector 同时连本机 Router（`LocalMesh`）与某个边缘 Router（`RemoteMesh`），两套凭据互不相通。
+- **局域网直连（下一期）**：在本机 Router 上增加一个独立的局域网监听，与 `127.0.0.1` 本机监听分开；局域网路径对两种模式都要求 `Noise_IK`（普通模式设备先经云端隧道登记客户端公钥），设备局域网地址经 E2E 通道交给已配对客户端，mDNS 默认关闭、开启时使用不透明且轮换的标识。云端签发的 `mtun_` 凭据在本机 Router 上无效，需另行签发。首版只交付经云端网络的远程控制。
 
 ## 2. 第二层：Desktop（`desktop-v3`）
 
@@ -266,7 +279,7 @@ dataDir/
 
 ## 3. 第三层：Server（`server-v3`）
 
-- **框架与并发特性**：Python 3.12 + FastAPI + Pydantic v2 + SQLAlchemy Core/`asyncpg` + `redis.asyncio` + MeshCall（经负载均衡地址连云端 Router 集群任一节点，不在客户端做多 Router 选路，见 1.10；严格守住 `test_architecture.py` 分层；`aa.v3.Control` 中所有方法在 MeshCall `WorkerLoop` 线程执行，必须经 `_on_app_loop` / `_stream_on_app_loop` 回切 FastAPI 主循环）。
+- **框架与并发特性**：Python 3.12 + FastAPI + Pydantic v2 + SQLAlchemy Core/`asyncpg` + `redis.asyncio` + MeshCall（经引导地址接入任一边缘 Router，由集群下发端点列表并自动故障转移，不在应用里管理多个 Router，见 1.10；严格守住 `test_architecture.py` 分层；`aa.v3.Control` 中所有方法在 MeshCall `WorkerLoop` 线程执行，必须经 `_on_app_loop` / `_stream_on_app_loop` 回切 FastAPI 主循环）。
 - **统一 Device Flow 登录 & 两档自签 Token（同时兼容 `auth_mode = local | oidc`）**：
   - 端点：`POST /auth/device/start`（返回 `device_code` + 8 位 Crockford Base32 `user_code` `XXXX-XXXX` + `verification_uri` + `verification_uri_complete`）、`GET /auth/device/preview`、`POST /auth/device/claim`（网页点击或自动化以用户身份调）、`POST /auth/device/poll`（原子消费一次性返回凭据）。
   - **两档 `access_level`（由 `server-v3` 自己签发并管理刷新与撤销）**：
@@ -421,7 +434,7 @@ v3 不再手写一份与代码平行的 JSON Schema 契约目录；**定义类�
 - **跨设备配对**：Commit-Reveal SAS 协议细节见 1.9。
 - **预览鉴权**：推荐独立可注册域名，`__Host-` host-only Cookie，网关剥离鉴权 Cookie 后再转发给 dev server，见第 5 节。
 - **契约**：代码即契约（Zod / Pydantic → MeshCall 客户端与 OpenAPI），不手写平行契约目录，见第 8 节。
-- **MeshCall 拓扑**：云端为基于 etcd 的可信 Router 集群；本机边缘 Router 始终由 Connector 启动、与集群无关；局域网直连放到下一期，见 1.10。
+- **MeshCall 拓扑**：云端为多 Router 网络，接入任一边缘 Router 即等同接入整个 Mesh，并自动获得边缘端点列表用于故障转移；用户工作设备上的本机 Router 始终由 Connector 启动、不属于云端网络；局域网直连放到下一期，见 1.10。
 - **经典模式服务端缓存**：Server 在 Redis 中按 `(user_id, device_id)` 缓存普通设备的轻量项目/会话摘要（标题、`cwd`、更新时间；TTL + 扇出回填 + 变化触发刷新），不存正文、不落 PG、不缓存加密设备。这是「Server 不存会话数据」原则对普通设备摘要的明确例外。
 - **新对话配置**：沿用该 Agent 最近一次新建对话时的配置，不设 `default_config`。
 - **进程休眠**：只有一个全局闲置时长；任一客户端连接即拉起全部已启用 Agent。
