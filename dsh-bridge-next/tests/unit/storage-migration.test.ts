@@ -104,6 +104,21 @@ test('copy failure leaves no completion receipt and retries missing files withou
   })
 })
 
+test('skipped entries are neither copied nor rewritten, and everything else still migrates', async () => {
+  await fixture(async (source, target) => {
+    await writeJson(join(source, 'account.json'), { accessToken: 'test-token' })
+    const config = { statePath: join(source, 'connector', 'conn_test.sqlite3'), token: 'SERVICE-SECRET' }
+    await writeJson(join(source, 'connector', 'connector.json'), config)
+    await writeJson(join(source, 'connector-source', 'project.json'), { name: 'service' })
+    await migrateStateRoot(target, source, { skip: ['connector', 'connector-source'] })
+    assert.deepEqual(await readJson(join(target, 'account.json')), { accessToken: 'test-token' })
+    await assert.rejects(stat(join(target, 'connector')), { code: 'ENOENT' })
+    await assert.rejects(stat(join(target, 'connector-source')), { code: 'ENOENT' })
+    assert.deepEqual(await readJson(join(target, '.legacy-state-migrated.json')), { version: 1 })
+    assert.deepEqual(await readJson(join(source, 'connector', 'connector.json')), config)
+  })
+})
+
 test('symlinks fail explicitly instead of keeping checkpoint writes in the old directory', async () => {
   await fixture(async (source, target) => {
     await writeJson(join(source, 'account.json'), {})

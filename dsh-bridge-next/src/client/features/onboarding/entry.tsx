@@ -165,7 +165,7 @@ export function ConnectionEntry({ wide, host, t, renderTrigger }: ConnectionEntr
           <BridgeStatusNotice t={t} status={snapshot?.bridge} busy={state.busy} error={state.error}
             onRestart={() => void state.run(() => host.restartBridge())} onLogs={() => setTab('logs')} />
           <div id={`${tabId}-panel`} role="tabpanel" aria-labelledby={`${tabId}-${tab}`}>
-        {tab === 'logs' ? <BridgeLogsPanel t={t} host={host} /> : ownershipError ? <p className={css.placeholder} role="alert">{translateMessage(t, ownershipError)}</p> : !standalone ? <>
+        {tab === 'logs' ? <BridgeLogsPanel t={t} host={host} externallyManaged={Boolean(snapshot?.connector?.externallyManaged)} /> : ownershipError ? <p className={css.placeholder} role="alert">{translateMessage(t, ownershipError)}</p> : !standalone ? <>
           <p className={css.placeholder} role={detectionError ? 'alert' : 'status'}>{translateMessage(t, detectionMessage)}</p>
           {state.error ? <p className={css.placeholder} role="alert">{translateMessage(t, state.error)}</p> : null}
           {detectionError

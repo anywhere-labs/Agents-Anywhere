@@ -36,5 +36,7 @@ export interface ConnectorManagement {
   logsPath: string
   canOpenFolders: boolean
   deviceName: string | null
+  /** A system service, not this plugin, starts and owns the Connector. */
+  externallyManaged?: boolean
   lastError: string | null
 }

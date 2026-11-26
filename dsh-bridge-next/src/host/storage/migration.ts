@@ -5,8 +5,8 @@ import { acquireManagerLock, hasCode, readJson, writeJson } from './files.js'
 
 const receipt = '.legacy-state-migrated.json'
 
-/** Caller holds the destination manager lease until the manager stops. */
-export async function migrateStateRoot(target: string, source?: string): Promise<void> {
+/** Caller holds the destination manager lease until the manager stops. Names in skip are left where they are, neither copied nor rewritten. */
+export async function migrateStateRoot(target: string, source?: string, options: { skip?: readonly string[] } = {}): Promise<void> {
   if (!source) return
   const migrated = await readJson<{ version: number }>(join(target, receipt))
   if (migrated !== null) {
@@ -21,14 +21,14 @@ export async function migrateStateRoot(target: string, source?: string): Promise
   if (sourceExists) {
     // Also exclude a still-running plugin using the old default directory.
     const release = await acquireManagerLock(join(source, 'manager.lock'))
-    try { await copyMissing(source, target, source, target) }
+    try { await copyMissing(source, target, source, target, options.skip) }
     finally { await release() }
   }
   // Retaining this small receipt prevents logout/reset from resurrecting old data.
   await writeJson(join(target, receipt), { version: 1 })
 }
 
-async function copyMissing(source: string, target: string, oldRoot: string, newRoot: string): Promise<void> {
+async function copyMissing(source: string, target: string, oldRoot: string, newRoot: string, skip: readonly string[] = []): Promise<void> {
   const entry = await lstat(source)
   let existing: Awaited<ReturnType<typeof lstat>> | undefined
   try { existing = await lstat(target) } catch (error) { if (!hasCode(error, 'ENOENT')) throw error }
@@ -37,8 +37,8 @@ async function copyMissing(source: string, target: string, oldRoot: string, newR
     await mkdir(target, { recursive: true, mode: 0o700 })
     for (const name of await readdir(source)) {
       // Virtual environments contain absolute paths; uv recreates them at the new root.
-      if (source === oldRoot && ['connector-venv', 'manager.lock', receipt].includes(name)) continue
-      await copyMissing(join(source, name), join(target, name), oldRoot, newRoot)
+      if (source === oldRoot && (skip.includes(name) || ['connector-venv', 'manager.lock', receipt].includes(name))) continue
+      await copyMissing(join(source, name), join(target, name), oldRoot, newRoot, skip)
     }
     return
   }

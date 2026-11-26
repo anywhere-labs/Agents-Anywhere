@@ -2,7 +2,7 @@ import { translateMessage, type Translate } from '../../locales.js'
 import { useState } from 'react'
 import { Button, Modal, StateDot, type StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
 import { Globe, User } from 'lucide-react'
-import type { AccountProfile, OnboardingHostApi, OnboardingSnapshot } from '../../../contracts/index.js'
+import type { AccountProfile, DeviceRecoveryAction, OnboardingHostApi, OnboardingSnapshot } from '../../../contracts/index.js'
 import { resolveWebAppUrl } from '../../../contracts/web-address.js'
 import type { OnboardingState } from './state.js'
 import css from './account-panel.module.css'
@@ -22,7 +22,9 @@ export function connectorStatus(snapshot: OnboardingSnapshot, readError: string 
   if (snapshot.connector?.lastError) return { label: t('运行异常'), state: 'error', detail: snapshot.connector.lastError }
   const expired = snapshot.accountExpired ? { detail: snapshot.connectorRunning
     ? '账号登录已过期，同步不受影响；手机连接等账号功能需要重新登录。' : '账号登录已过期，请重新登录。' } : {}
-  return snapshot.connectorRunning ? { label: t('运行中'), state: 'done', ...expired } : { label: t('未运行'), state: 'warning', ...expired }
+  // Not following a service-managed Connector is not the same as that Connector having stopped.
+  return snapshot.connectorRunning ? { label: t('运行中'), state: 'done', ...expired }
+    : { label: snapshot.connector?.externallyManaged ? t('未跟随') : t('未运行'), state: 'warning', ...expired }
 }
 
 export function AccountPanel({ t, host, state, snapshot, account }: {
@@ -41,8 +43,12 @@ export function AccountPanel({ t, host, state, snapshot, account }: {
   const recovery = snapshot.deviceRecovery
   // An expired account with a healthy device still offers sign-in, without blocking the running Connector.
   const relogin = recovery?.status === 'login_required' || (!recovery && Boolean(snapshot.accountExpired))
-  const recoveryLabel = relogin ? t('重新登录') : recovery?.status === 'deleted' ? t('重新配置')
-    : recovery?.status === 'disconnected' ? t('重新连接') : t('重新检查')
+  const external = Boolean(snapshot.connector?.externallyManaged)
+  // A service-managed Connector is never reconnected or recreated from here: the plugin can only check the device again.
+  const recoveryAction: DeviceRecoveryAction = !external && recovery?.status === 'deleted' ? 'recreate'
+    : !external && recovery?.status === 'disconnected' ? 'reconnect' : 'check'
+  const recoveryLabel = relogin ? t('重新登录') : recoveryAction === 'recreate' ? t('重新配置')
+    : recoveryAction === 'reconnect' ? t('重新连接') : t('重新检查')
   const avatar = account.avatar && account.avatar !== failedAvatar ? account.avatar : null
   // Client HMR can arrive before the Host reloads. The backend address exists
   // in older snapshots, so this action remains usable throughout development.
@@ -75,7 +81,7 @@ export function AccountPanel({ t, host, state, snapshot, account }: {
             setLoginUrl(result.url)
             window.open(result.url, '_blank', 'noopener,noreferrer')
           } else if (recovery) {
-            const result = await host.recoverDevice(recovery.status === 'deleted' ? 'recreate' : recovery.status === 'disconnected' ? 'reconnect' : 'check')
+            const result = await host.recoverDevice(recoveryAction)
             if (result?.url) {
               setOnboardingUrl(result.url)
               window.open(result.url, '_blank', 'noopener,noreferrer')
@@ -101,7 +107,7 @@ export function AccountPanel({ t, host, state, snapshot, account }: {
       </Button>
     </div>
     <Modal open={confirmLogout} title={t('退出登录')} closeLabel={t('关闭退出登录确认')}
-      description={t('退出登录后，本机连接将停止。确定要退出登录吗？')}
+      description={t(external ? '退出登录后，插件将停止跟随本机 Connector；它由系统服务管理，仍在运行。确定要退出登录吗？' : '退出登录后，本机连接将停止。确定要退出登录吗？')}
       onClose={() => { if (!state.busy) setConfirmLogout(false) }}
       footer={<>
         <Button variant="outline" data-modal-autofocus disabled={state.busy}

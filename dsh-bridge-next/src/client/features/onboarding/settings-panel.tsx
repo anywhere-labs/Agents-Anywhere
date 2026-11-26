@@ -24,6 +24,7 @@ export function SettingsPanel({ t, host, state, snapshot, onConnection }: {
   t: Translate; host: OnboardingHostApi; state: OnboardingState; snapshot: OnboardingSnapshot; onConnection: () => void
 }) {
   const management = snapshot.connector
+  const external = Boolean(management?.externallyManaged)
   const [draft, setDraft] = useState(management?.settings)
   const [saved, setSaved] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -80,11 +81,11 @@ export function SettingsPanel({ t, host, state, snapshot, onConnection }: {
         <dt>{t('服务器')}</dt><dd>{snapshot.settings.apiBaseUrl}</dd>
       </dl>
       {status.detail ? <p className={css.hint} role="status">{translateMessage(t, status.detail)}</p> : null}
-      {snapshot.stage === 'error' && !snapshot.deviceRecovery ? <p className={css.hint}>{t('如果依赖下载反复失败，可以切换下方的 PyPI 镜像，或在“维护”中重装依赖环境。')}</p> : null}
+      {snapshot.stage === 'error' && !snapshot.deviceRecovery && !external ? <p className={css.hint}>{t('如果依赖下载反复失败，可以切换下方的 PyPI 镜像，或在“维护”中重装依赖环境。')}</p> : null}
       {!snapshot.account || snapshot.deviceRecovery ? <Button variant="outline" onClick={onConnection}>
         {snapshot.account ? t('前往恢复连接') : t('前往登录')}
       </Button> : <div className={css.actions}>
-        {snapshot.connectorRunning ? <>
+        {external ? <span className={css.hint}>{t('由系统服务管理')}</span> : snapshot.connectorRunning ? <>
           <Button variant="outline" icon={<Power size={14} />} disabled={stopping || Boolean(state.readError)} onClick={() => {
             setStopping(true)
             void state.run(() => host.controlConnector('stop'), { interrupt: true }).finally(() => setStopping(false))
@@ -94,7 +95,7 @@ export function SettingsPanel({ t, host, state, snapshot, onConnection }: {
       </div>}
     </div>
 
-    <form className={css.form} onSubmit={event => {
+    {external ? <div className={css.section}><p className={css.hint} role="status">{t('本机 Connector 由系统服务启动和管理：它的运行环境、网络和同步设置，以及启停、重装和恢复出厂设置都不在插件里进行。')}</p></div> : <form className={css.form} onSubmit={event => {
       event.preventDefault()
       if (!busy && dirty) {
         setSaving(true)
@@ -156,21 +157,24 @@ export function SettingsPanel({ t, host, state, snapshot, onConnection }: {
           </Button>
         </div>
       </div>
-    </form>
+    </form>}
 
     <div className={css.section}>
       <h3>{t('维护')}</h3>
       <div className={css.actions}>
-        <Button variant="outline" icon={<FolderOpen size={14} />} disabled={openingFolder !== null || !management.canOpenFolders}
-          onClick={() => openFolder('data')}>{t('打开数据目录')}</Button>
+        {/* The data folder holds the service's configuration and credential, not this plugin's. */}
+        {!external ? <Button variant="outline" icon={<FolderOpen size={14} />} disabled={openingFolder !== null || !management.canOpenFolders}
+          onClick={() => openFolder('data')}>{t('打开数据目录')}</Button> : null}
         <Button variant="outline" icon={<FolderOpen size={14} />} disabled={openingFolder !== null || !management.canOpenFolders}
           onClick={() => openFolder('logs')}>{t('打开日志目录')}</Button>
+        {!external ? <>
         <Button variant="outline" icon={<PackageX size={14} />} disabled={reinstalling || Boolean(state.readError)}
           onClick={() => { setReinstall(true); setReinstallAcknowledged(false); state.clearError() }}>
           {reinstalling ? t('正在重装依赖环境…') : t('重装依赖环境')}
         </Button>
         <Button variant="outline" className={css.danger} disabled={busy}
           onClick={() => { setReset('normal'); setAcknowledged(false); state.clearError() }}>{t('恢复出厂设置')}</Button>
+        </> : null}
       </div>
       {!management.canOpenFolders ? <p className={css.hint}>{t('当前环境不支持打开本机目录。')}</p> : null}
       <RiskConfirmation open={reinstall} title={t('重装依赖环境')}
