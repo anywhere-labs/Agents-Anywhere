@@ -70,7 +70,7 @@ flowchart TB
 
 | 服务 | 挂载位置 | `targeted` | 门控与职责 |
 | --- | --- | --- | --- |
-| **`aa.v3.LocalAdmin`** | **仅 `LocalMesh`** | `false` | 仅本机宿主（Desktop 主进程 / CLI）凭 `admin_token` 调用：生命周期状态（`status`, `watch_status`）、账号登录与 Token 托管（`auth_status`, `login_start`, `login_poll`, `login_watch`, `get_access_token`, `logout`）、显式声明加密与上线（`online`, `offline`, `switch_mode`, `set_mcp`）、签发本机隧道/Token（`open_local_tunnel`, `issue_local_token`）、跨设备 SAS 配对审批（`list_pairings`, `watch_pairings`, `resolve_pairing`）、已配对白名单管理（`list_clients`, `add_client`, `revoke_client`）、缓存清理（`clear_cache`） |
+| **`aa.v3.LocalAdmin`** | **仅 `LocalMesh`** | `false` | 仅本机宿主（Desktop 主进程 / CLI）凭 `admin_token` 调用：生命周期与停机（`status`, `watch_status`, `shutdown`）、账号登录与 Token 托管（`auth_status`, `login_start`, `login_poll`, `login_watch`, `get_access_token`, `logout`）、显式声明加密与上线（`online`, `offline`, `switch_mode`, `set_mcp`）、签发本机隧道/Token（`open_local_tunnel`, `issue_local_token`）、跨设备 SAS 配对审批（`list_pairings`, `watch_pairings`, `resolve_pairing`）、已配对白名单管理（`list_clients`, `add_client`, `revoke_client`）、缓存清理（`clear_cache`） |
 | **`aa.v3.DeviceAdmin`** | **仅 `RemoteMesh`** | `true` | 控制面无业务内容管理通道（无隧道，加密/普通模式均接受）：`ping`、`close_tunnel_sessions`、`check_update`、`rename` + **SAS 公开交换中转**（`pairing_start`, `pairing_reveal`, `pairing_status`）。严禁读写会话或擅自改模式/白名单 |
 | **`aa.v3.Sessions`** | `LocalMesh` + `RemoteMesh` | `true` | 薄 ACP 客户端 + Timeline 对话服务（`list`, `watch_list`, `refresh_list`, `get_snapshot`, `watch`, `get_slot_snapshot`, `watch_slot`, `start_turn`, `steer_turn`, `interrupt_turn`, `answer_interaction`, `fork_turn`, `rewind_turn` 等，详见 1.3） |
 | **`aa.v3.Agents`** | `LocalMesh` + `RemoteMesh` | `true` | 从原 `aa.v3.Device` 拆出的独立 Agent 管理服务：安装探测、**设备本地 Agent 设置读写（`agents.json` / `custom-agents.json`）**、**启用 / 禁用 / 重启 ACP 进程**、增删自定义 Agent、安装与登录、CC Switch Provider、订阅用量（详见 1.4） |
@@ -187,7 +187,8 @@ dataDir/
 ├── agents.json / custom-agents.json (0600)# 机器级 ACP Agent 本地设置（含启用开关与 env）
 ├── last-session-config.json               # 每个 Agent 最近一次新建对话时的配置（新对话沿用）
 ├── local-router-auth.json (0600)          # 本机 meshcall-router 随机账密
-├── local-admin.json (0600)                # 运行中 Connector 本机发现文件（取代 admin.sock）
+├── connector.lock (0600)                  # 单实例进程互斥锁（pid, started_at, instance_nonce, mode）
+├── local-admin.json (0600)                # 运行中 Connector 本机发现文件（含 instance_nonce，取代 admin.sock）
 ├── logs/connector-NNNNNN.ndjson (0600)    # ≤ 10 MiB 轮转日志
 ├── cache/ (0700)                          # 可随时安全删除重建的派生磁盘缓存
 │   ├── agents-scan.json
@@ -207,7 +208,7 @@ dataDir/
   - **普通退出（Logout）**：立即断开云端 `RemoteMesh` 与 `presence`，向 Server 吊销 `refresh_token` 并删除 `auth.json`，退回离线态；保留该档案的 `binding.json` / 密钥 / 白名单，便于**同一账号再次登回**时免重做手机 SAS 配对（若设备已在云端被删，探测失效后自动清空档案重选）。
   - **退出并解绑（`--unbind`）**：通知 Server 删除设备记录并彻底删除本机对应 `profiles/<id>/` 目录。
 
-### 1.8 双接口规范（彻底淘汰 `admin.sock`）
+### 1.8 双接口规范与单实例进程互斥（彻底淘汰 `admin.sock`）
 
 - **接口一：RPC 模式（`aa-connector serve --rpc [--shutdown-on-stdin-close]`）**
   - 日志绝不写 stdio（`stderr` 仅保留 RPC 就绪前的启动致命错误）；就绪后向 `stdout` 输出**单行 JSON**：
@@ -215,7 +216,18 @@ dataDir/
   - 宿主后续全部通过本机 `meshcall-router` 调 `aa.v3.LocalAdmin` 与业务六件套。
 - **接口二：CLI 模式（Headless 运维、脚本、云编排）**
   - 默认 TTY 文本模式允许交互；带 `--json` / `--non-interactive` 或非 TTY **强制非交互**（单条命令一个原子动作，状态通过参数 / 环境变量 / `dataDir` 文件传递，输出 `{ ok, data | error }` 或 NDJSON，带规范退出码）。
-  - 核心命令：`serve`、`login [start|poll|status]`、`logout [--unbind]`、`online --mode <encrypted|normal>`、`offline`、`status`、`mode`、`mcp`、`agents [list|enable|disable|restart|settings]`、`logs [--lines N] [--follow]`、`pair [watch|list|approve|reject]`、`clients [list|add|revoke]`、`previews [list|open|update|close]`、`cache clear`、`local-token`。
+  - 核心命令：`serve [--replace]`、`stop`、`login [start|poll|status]`、`logout [--unbind]`、`online --mode <encrypted|normal>`、`offline`、`status`、`mode`、`mcp`、`agents [list|enable|disable|restart|settings]`、`logs [--lines N] [--follow]`、`pair [watch|list|approve|reject]`、`clients [list|add|revoke]`、`previews [list|open|update|close]`、`cache clear`、`local-token`。
+- **单实例进程互斥（默认单机仅允许运行一个 Connector）**：
+  - **互斥粒度**：按 `dataDir` 互斥。由于 Desktop 与 CLI 统一默认使用 `~/.agents-anywhere/connector-v3`，一般一台机器默认同时只能运行一个 Connector；自动化测试或特殊多环境场景如需并行，显式传入独立 `--data-dir` 即可互不干扰。
+  - **跨平台零原生依赖锁机制（macOS / Linux / Windows 通用）**：
+    1. **原子抢锁**：进程启动最早期（在初始化 `LocalRouter`、ACP 进程或写任何状态文件之前），以 `fs.open("dataDir/connector.lock", "wx", 0o600)` 原子创建锁文件，写入 `{ v: 1, pid, started_at, instance_nonce, mode: "cli" | "rpc", connector_version }`。`LocalRouter` 就绪后再原子写入带同一 `instance_nonce` 的 `local-admin.json`，且 `LocalAdmin/status` 暴露 `pid / instance_nonce / host_mode / connector_version / data_dir`。
+    2. **冲突判定（`LocalAdmin` 探活优先，杜绝 PID 复用误判）**：遇 `EEXIST` 时，先读取 `local-admin.json` 向本机 `LocalRouter` 发起短超时（1.5s）的 `aa.v3.LocalAdmin/status` 探活；**探活成功**即 100% 确认为活体冲突。
+    3. **冷启动宽限与陈旧锁原子回收**：探活不可达时再检锁内 `pid`（`process.kill(pid, 0)`）：
+       - 进程已死（`ESRCH`）→ 确认为崩溃残留的陈旧锁，先原子 `rename(connector.lock, connector.lock.stale.<myNonce>)` 再 `unlink`，随后重试 `wx` 抢锁（避免并发启动时误删竞争胜出者的新锁）。
+       - 进程存活且距 `started_at < 10s` → 处于冷启动竞态窗口，短退避轮询等待对方 `LocalAdmin` 就绪后归入活体冲突。
+       - 进程存活且超启动宽限仍无响应 → 校验进程命令特征以区分「OS PID 复用给了无关进程」（按陈旧锁回收）与「旧 Connector 僵死」（**绝不静默抢锁**，返回 `lock_held_unresponsive` 交由用户或 Desktop 决定）。
+    4. **安全释放与子进程回收**：优雅退出（`SIGINT`/`SIGTERM` 或 RPC 模式下 stdin 关闭）时先停 ACP、`frpc` 与 `LocalRouter`，最后**仅在磁盘文件的 `instance_nonce` 与自身一致时**删除 `local-admin.json` 与 `connector.lock`。
+  - **CLI 冲突策略**：第二个 `aa-connector serve` 遇到活体冲突立即失败退出（专用退出码 `4`，结构化错误 `{ code: "already_running", pid, mode, router_url, data_dir }`），绝不静默杀死已有实例；仅在显式执行 `aa-connector stop` 或 `aa-connector serve --replace` 时才优雅停掉旧实例并接管。其他 CLI 子命令（`status`、`logs`、`pair` 等）直接经 `local-admin.json` 复用当前运行中的 Connector。
 
 ### 1.9 跨设备 SAS 配对协议（加密模式）
 
@@ -274,7 +286,10 @@ dataDir/
   - 渲染窗口 `contextIsolation: true`、`sandbox: true`、`nodeIntegration: false`、`webSecurity: true`；所有 IPC 校验来源为 `app://aa/`；OS Keychain 走 `safeStorage`（Linux 拒 `basic_text`）；本地签名包属于 **`verified_app`（绿锁）**。
   - `app://aa/` 托管 `web-v3` 静态导出并反代 `/api/control/*` & `/api/remote`（免 CORS），`webRequest` 剥离 WebSocket `Origin` 头；**修正 `resolveStaticFile` 使真实静态文件优先于动态 `_` 占位符**。
 - **极薄主进程（删除 `admin-client.ts`、`connector.log` 接管、`qrcode`、5 秒轮询、停机重启注册）**：
-  1. 以 `ELECTRON_RUN_AS_NODE=1` 拉起 `aa-connector serve --rpc --shutdown-on-stdin-close`，解析 stdout 就绪 JSON；
+  1. **单实例与 Connector 托管/附着双模式**：Desktop 自身通过 Electron `app.requestSingleInstanceLock()` 保证单实例（重复启动仅唤起已有窗口）。启动时先按 1.8 探测默认 `dataDir` 的 `local-admin.json` 与 `aa.v3.LocalAdmin/status`：
+     - **本机无运行中 Connector** → 进入**托管模式（managed）**，以 `ELECTRON_RUN_AS_NODE=1` 拉起 `aa-connector serve --rpc --shutdown-on-stdin-close`，解析 stdout 就绪 JSON（Desktop 退出时随 stdin 关闭优雅停机）；
+     - **本机已有兼容版本的外部 Connector 运行**（如用户经终端 / `launchd` / `systemd` 启动）→ 进入**附着模式（attached）**，直接连该外部 Connector 的 `LocalRouter`（不重复拉起进程，界面提示「已连接外部本机 Connector」，**Desktop 退出时仅断开附着、不杀死外部 Connector**）；
+     - **遇到版本不兼容或僵死无响应锁** → 弹窗由用户明确选择「停止旧进程并接管」或「退出」，绝不静默损坏 `dataDir`。
   2. 连本机 `LocalRouter` 调 `aa.v3.LocalAdmin`：订阅 `watch_status`（驱动托盘与前端状态）和 **`watch_pairings`（跨设备 SAS 配对主审批端：后台时弹原生系统通知并唤起窗口弹出审批框）**；
   3. **账号单点登录托管**：Desktop 不维护第二套登录栈，通过 `LocalAdmin/login_start(access_level="full")` 触发浏览器 OAuth 授权，并通过 `LocalAdmin/get_access_token` 获取 Connector 自动续期的完整用户级 Token 去调 Server 服务；登出/换号与 Connector 原子同步；
   4. 向渲染层下发本机普通隧道 `{ routerUrl, credential, deviceId }`（Connector 重启或切换活跃档案时通过 `onLocalConnection` 推送刷新），让渲染层直连本机业务六件套。
@@ -446,6 +461,7 @@ v3 不再手写一份与代码平行的 JSON Schema 契约目录；**定义类�
 - **`⌘J`**：改为跳转到 Orches。
 - **QuickJS `aa` 对象权限**：可调用的设备与 `/mcp` 相同（仅普通模式 + 开启 `allow_mcp`），见 6.1。
 - **本机信任边界**：能操作用户电脑的就是用户本人；读得到 `dataDir` 中 0600 文件的本机进程（含 CLI）可经 `LocalAdmin/get_access_token` 拿到与 Desktop 相同的 Token，暂不按调用方分级。
+- **单实例进程互斥**：按 `dataDir` 互斥（默认共享 `~/.agents-anywhere/connector-v3`，即一般单机仅运行一个 Connector；显式 `--data-dir` 可隔离多实例）；采用零原生依赖的原子 `wx` 锁文件（`connector.lock`）+ `LocalAdmin/status` 活体探活 + 原子 `rename` 陈旧锁回收；第二个 `serve` 默认拒绝启动，Desktop 遇到兼容外部 Connector 时自动附着（退出不杀）、遇到僵死/不兼容锁时弹窗决策，见 1.8 与第 2 节。
 
 ### 局部待拍板细节（动工到对应模块前确认）
 1. **自定义对话排序交互范围**：支持全列表在「按最近活跃 / 自定义拖拽排序」间切换，还是仅「置顶区自由拖拽 + 未置顶区按最近活跃冒泡」。
