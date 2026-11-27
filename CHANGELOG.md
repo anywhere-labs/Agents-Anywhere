@@ -19,6 +19,7 @@
 
 - DSH 0.2.3 在回复末尾附带的操作卡片（例如推荐启用某个插件）不再以一段 JSON 代码块出现在 Agents Anywhere 的会话里；卡片本身仍要在 DSH 中查看和操作。（[#829](https://github.com/anywhere-labs/Agents-Anywhere/pull/829)）
 - 修复 DSH 0.2.3 中「远程控制」弹窗被压窄的问题：标签、说明文字和底部按钮不再挤得换行，运行日志页恢复原来的宽度，自建服务的地址输入框恢复原来的高度；在 DSH 0.2.3 里更新 AA 插件后，面板不用刷新页面也会用上新版样式。（[#829](https://github.com/anywhere-labs/Agents-Anywhere/pull/829)、[#830](https://github.com/anywhere-labs/Agents-Anywhere/pull/830)）
+- 本机连接拒绝一次会话历史采集后（例如链路卡住、正在等待重试），AA 插件不再每有一点变化就把整个会话重新采集一遍（这些重采都会被丢弃）；连接器重试时或 30 秒后会自动再采一次，期间该会话仍显示为暂不可用。
 
 ### Desktop
 
