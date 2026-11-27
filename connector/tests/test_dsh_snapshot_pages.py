@@ -21,6 +21,8 @@ class Uplink(httpx.AsyncBaseTransport):
     def __init__(self, fail: dict[int, list] | None = None) -> None:
         self.bodies: list[dict] = []
         self.lengths: list[int] = []
+        self.sizes: list[int] = []  # Content-Length of every attempt, the failed ones too
+        self.items: list[int] = []  # items in the body of every attempt, 0 for a batch
         self.fail = {index: list(outcomes) for index, outcomes in (fail or {}).items()}
         self.attempts: list[int] = []
         self.refused: list[int] = []
@@ -31,6 +33,8 @@ class Uplink(httpx.AsyncBaseTransport):
         self.read_timeouts.append(request.extensions["timeout"]["read"])
         page = len(self.bodies)
         self.attempts.append(page)
+        self.sizes.append(int(request.headers["Content-Length"]))
+        self.items.append(len(json.loads(raw)["notifications"][-1]["params"].get("items", [])))
         outcomes = self.fail.get(page)
         if outcomes:
             outcome = outcomes.pop(0)
@@ -276,28 +280,197 @@ def _upload(client: ConnectorIngestClient, session: str = "session", **options) 
     return client.ingest_snapshot("dsh", "instance", session, META, iter(ITEMS), **options)
 
 
-def test_a_page_whose_body_stalls_is_given_up_at_once():
+class Stalling(Uplink):
+    """Stalls every page: `after` chunks of the body are written, the next one is taken but not written.
+
+    `taken` is what was written before that and `length` the page's size.
+    """
+
+    def __init__(self, after: int) -> None:
+        super().__init__()
+        self.after = after
+        self.taken = 0
+        self.length = 0
+
+    async def handle_async_request(self, request):
+        self.attempts.append(len(self.bodies))
+        self.length = int(request.headers["Content-Length"])
+        chunks = 0
+        async for chunk in request.stream:
+            if chunks == self.after:
+                await asyncio.sleep(0.02)  # the path took its time before it stalled
+                raise httpx.WriteTimeout("stalled")
+            chunks += 1
+            self.taken += len(chunk)
+
+
+def test_a_stall_cuts_a_page_to_the_legacy_size_first_then_halves_it_down_to_the_floor():
+    import connector.server.ingest as module
+    from connector.server.snapshot_body import (
+        SNAPSHOT_LEGACY_PAGE_BYTES,
+        SNAPSHOT_MIN_PAGE_BYTES,
+    )
+
+    mib = 1024 * 1024
+    assert (SNAPSHOT_LEGACY_PAGE_BYTES, SNAPSHOT_MIN_PAGE_BYTES) == (8 * mib, mib)
+    stalled = ConnectorNetworkError("backend ingest request failed: WriteTimeout: stalled")
+    stalled.__cause__ = httpx.WriteTimeout("stalled")
+    # A stall says nothing about any proxy's limit, but the path could not carry this page:
+    # above the legacy size it goes down to it, below it is halved as for a 413, and never
+    # under the floor.
+    assert module._smaller_page_bytes(45 * mib, stalled) == 8 * mib
+    assert module._smaller_page_bytes(8 * mib + 1, stalled) == 8 * mib
+    assert module._smaller_page_bytes(8 * mib, stalled) == 4 * mib
+    assert module._smaller_page_bytes(5 * mib, stalled) == 5 * mib // 2
+    assert module._smaller_page_bytes(2 * mib, stalled) == mib
+    assert module._smaller_page_bytes(2 * mib - 1, stalled) is None, "its half would be under the floor"
+    assert module._smaller_page_bytes(mib, stalled) is None
+    # A 413 is still cut from the page's own size, and an outage still cuts nothing.
+    refused = httpx.HTTPStatusError("413", request=httpx.Request("POST", "http://test"), response=httpx.Response(413))
+    assert module._smaller_page_bytes(45 * mib, refused) == 45 * mib // 2
+    assert module._smaller_page_bytes(45 * mib, ConnectorNetworkError("backend ingest temporarily unavailable: HTTP 503")) is None
+
+
+def test_a_stalled_page_is_cut_to_the_legacy_size_and_the_pages_before_it_are_not_sent_again(monkeypatch):
     import connector.server.ingest as module
 
-    # No progress for the whole write timeout: the path cannot carry bulk
-    # traffic now. Sent again, the page only keeps the path busy.
-    stalled = Uplink(fail={1: [httpx.WriteTimeout("stalled")] * (module.SNAPSHOT_PAGE_RETRIES + 1)})
-    with pytest.raises(ConnectorNetworkError) as raised:
-        _run(stalled)
-    assert stalled.attempts == [0, 1], "sent once: not again at the same size, not re-paged"
-    assert isinstance(raised.value.__cause__, httpx.WriteTimeout)
-    assert len(stalled.bodies) == 1, "the first page was accepted and is never sent again"
+    monkeypatch.setattr(module, "SNAPSHOT_LEGACY_PAGE_BYTES", 2048)
+    monkeypatch.setattr(module, "SNAPSHOT_MIN_PAGE_BYTES", 512)
+    # A stall says nothing about how far the page got, and a page given up at once lost
+    # everything the path had taken of it. The page goes out again from its own start;
+    # the pages the Server accepted before are not, and the rest of the capture goes at
+    # the size the stall led to. The next capture starts from the configured size again.
+    items = [{"id": str(index), "orderSeq": index, "content": {"text": "x" * 400}} for index in range(48)]
+    stalled = Uplink(fail={1: [httpx.WriteTimeout("stalled")]})
+    http = httpx.AsyncClient(transport=stalled)
+    client = ConnectorIngestClient("http://test", AsyncMock(return_value="token"), lambda: http, lambda _: http, snapshot_page_bytes=8192)
+    pages: list[int] = []
+
+    async def exercise():
+        async with http:
+            await client.ingest_snapshot("dsh", "instance", "session", META, iter(items))
+            pages.append(len(stalled.bodies))
+            await _upload(client, "next")
+
+    asyncio.run(exercise())
+    (own,) = pages
+    assert stalled.attempts[:3] == [0, 1, 1] and stalled.attempts.count(0) == 1, "the first page was accepted and is never sent again"
+    assert 2048 < stalled.sizes[0] <= 8192 and stalled.sizes[1] > 2048, "the stalled page was at the configured size"
+    assert stalled.sizes[2] <= 2048, "cut to the legacy size"
+    assert all(length <= 2048 for length in stalled.lengths[1:own]), "the rest of the capture goes at the legacy size"
+    assert max(stalled.lengths[1:own]) > 1024, "at that size, not smaller"
+    assert stalled.sizes[own + 1] > 2048, "the next capture starts from the configured size again"
+    own_bodies = stalled.bodies[:own]
+    assert _replacements(own_bodies) == 1 and own_bodies[0]["notifications"][1]["params"]["complete"] is True
+    assert _items(own_bodies) == [item["id"] for item in items]
+    assert client._snapshot_page_bytes == 8192 and client.snapshot_wait() == 0.0
 
 
-def test_an_oversized_page_that_stalls_is_not_cut_to_the_legacy_size(monkeypatch):
+def test_a_stalled_page_below_the_legacy_size_is_halved_and_never_below_the_floor(monkeypatch):
     import connector.server.ingest as module
 
-    monkeypatch.setattr(module, "SNAPSHOT_LEGACY_PAGE_BYTES", 1024)
-    # A stalled body says nothing about the page's size, whatever the size.
+    monkeypatch.setattr(module, "SNAPSHOT_MIN_PAGE_BYTES", 1024)
+    # Below the legacy size the page is halved, as for a 413; it was the first page, so
+    # the re-paged one still replaces the timeline.
     stalled = Uplink(fail={0: [httpx.WriteTimeout("stalled")]})
-    with pytest.raises(ConnectorNetworkError):
-        _run(stalled, page_bytes=4096)
-    assert stalled.attempts == [0] and stalled.bodies == []
+    client = _run(stalled, page_bytes=4096)
+    assert stalled.attempts[:2] == [0, 0] and 1024 <= stalled.sizes[1] <= stalled.sizes[0] // 2
+    assert max(stalled.lengths) <= stalled.sizes[0] // 2 and _replacements(stalled.bodies) == 1
+    assert _items(stalled.bodies) == [item["id"] for item in ITEMS] and client._snapshot_page_bytes == 4096
+
+    # Never below the floor: a page whose half would be under it is given up instead of cut.
+    floor = Uplink(fail={0: [httpx.WriteTimeout("stalled")] * 2})
+    with pytest.raises(ConnectorIngestDeferredError) as raised:
+        _run(floor, page_bytes=4096)
+    assert raised.value.stalled is True and floor.attempts == [0, 0] and floor.bodies == []
+    assert floor.sizes[0] // 2 >= 1024 > floor.sizes[1] // 2, "the first cut cleared the floor, the next would not"
+
+
+def test_a_page_that_stalls_again_after_each_of_its_three_cuts_is_given_up(monkeypatch):
+    import connector.server.ingest as module
+
+    monkeypatch.setattr(module, "SNAPSHOT_MIN_PAGE_BYTES", 64)
+    # Cut three times, then given up as a stall always was, with the session's own backoff
+    # to follow. The page starts at 16 KiB so that the fourth one still holds many items
+    # and a fourth cut would still be above the floor: the cuts were spent, not the page.
+    items = [{"id": str(index), "orderSeq": index, "content": {"text": "x"}} for index in range(200)]
+    assert module.SNAPSHOT_STALL_SHRINKS == 3, "three cuts are tried before a stalled page is given up"
+    stalls = module.SNAPSHOT_STALL_SHRINKS + 1
+    stalled = Uplink(fail={0: [httpx.WriteTimeout("stalled")] * stalls})
+    lines: list[str] = []
+    sink = module.logger.add(lines.append, level="WARNING")
+    http = httpx.AsyncClient(transport=stalled)
+    client = ConnectorIngestClient("http://test", AsyncMock(return_value="token"), lambda: http, lambda _: http, snapshot_page_bytes=16 * 1024)
+
+    async def exercise():
+        async with http:
+            with pytest.raises(ConnectorIngestDeferredError) as raised:
+                await client.ingest_snapshot("dsh", "instance", "session", META, iter(items))
+            assert raised.value.stalled is True and isinstance(raised.value.__cause__, httpx.WriteTimeout)
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        module.logger.remove(sink)
+    assert stalled.attempts == [0] * stalls and stalled.bodies == [], "sent once at its size and once after each cut"
+    assert stalled.sizes == sorted(stalled.sizes, reverse=True) and stalled.sizes[-1] >= 64, "each cut smaller, never below the floor"
+    assert stalled.sizes[-1] // 2 >= 64 and stalled.items[stalls - 1] >= 2, "another cut was still possible: the cuts were spent"
+    # The stalls met one cool-down: one slow path, one wait.
+    assert 0 < client.snapshot_wait() <= module.SNAPSHOT_STALL_WAIT_SECONDS and client._snapshot_stalls == 1
+    given_up = [line for line in lines if "an upload body stalled and was given up" in line]
+    assert len(given_up) == stalls and all("stalls=1 " in line for line in given_up)
+    assert len([line for line in lines if "re-paging the remaining" in line]) == stalls - 1
+
+
+def test_a_one_item_page_that_stalls_is_final(monkeypatch):
+    import connector.server.ingest as module
+
+    monkeypatch.setattr(module, "SNAPSHOT_MIN_PAGE_BYTES", 1)
+    # One item cannot be cut, whatever the floor.
+    stalled = Uplink(fail={0: [httpx.WriteTimeout("stalled")]})
+    with pytest.raises(ConnectorIngestDeferredError) as raised:
+        _run(stalled, page_bytes=1024 * 1024, items=ITEMS[:1])
+    assert raised.value.stalled is True and stalled.attempts == [0]
+
+
+def test_the_cuts_are_counted_per_page(monkeypatch):
+    import connector.server.ingest as module
+
+    monkeypatch.setattr(module, "SNAPSHOT_MIN_PAGE_BYTES", 64)
+    monkeypatch.setattr(module, "SNAPSHOT_STALL_SHRINKS", 1)
+    # A page that used its cuts and landed does not spend the next page's: every page
+    # starts with the full count.
+    items = [{"id": str(index), "orderSeq": index, "content": {"text": "x" * 10}} for index in range(24)]
+    stalled = Uplink(fail={1: [httpx.WriteTimeout("stalled")], 2: [httpx.WriteTimeout("stalled")]})
+    client = _run(stalled, page_bytes=1024, items=items)
+    assert stalled.attempts[:5] == [0, 1, 1, 2, 2], "each page once at its size and once cut"
+    assert _replacements(stalled.bodies) == 1 and _items(stalled.bodies) == [item["id"] for item in items]
+    assert client.snapshot_wait() == 0.0
+
+
+@pytest.mark.parametrize("after", [0, 1, 2])
+def test_a_stalled_page_is_reported_with_how_far_it_got(after):
+    import connector.server.ingest as module
+
+    # A give-up says how long one chunk was not taken, not how much of the page was
+    # written before: only the latter says whether the page was nearly whole.
+    stalled = Stalling(after=after)
+    lines: list[str] = []
+    sink = module.logger.add(lines.append, level="WARNING")
+    try:
+        with pytest.raises(ConnectorIngestDeferredError) as raised:
+            _run(stalled, page_bytes=1024 * 1024)
+    finally:
+        module.logger.remove(sink)
+    page = raised.value.page
+    assert raised.value.stalled is True and page is not None
+    assert (page.written, page.total) == (stalled.taken, stalled.length), "the chunk the stall hit is not counted"
+    assert 0.02 <= page.seconds < 30
+    assert page.rate == pytest.approx(page.written / page.seconds), "the average over the whole send"
+    assert f"deferred for {module.SNAPSHOT_STALL_WAIT_SECONDS:.0f}s: its page stalled (" in str(raised.value)
+    assert f"{stalled.taken} of {stalled.length} bytes written at " in str(raised.value)
+    (given_up,) = [line for line in lines if "an upload body stalled and was given up" in line]
+    assert f"stalls=1 page {stalled.taken} of {stalled.length} bytes written at " in given_up
 
 
 @pytest.mark.parametrize("ordered", [True, False])
@@ -485,16 +658,22 @@ def test_an_outage_or_a_slow_answer_never_makes_snapshots_wait(outage):
 
 
 class Held(Uplink):
-    """Holds every request until release is set, so that uploads are admitted and in flight together."""
+    """Holds every request until release is set, so that uploads are admitted and in flight together.
 
-    def __init__(self, fail: dict[int, list] | None = None) -> None:
+    Or only the arrivals in `hold`, counted from the first.
+    """
+
+    def __init__(self, fail: dict[int, list] | None = None, hold: set[int] | None = None) -> None:
         super().__init__(fail)
         self.arrived = 0
+        self.hold = hold
         self.release = asyncio.Event()
 
     async def handle_async_request(self, request):
+        arrival = self.arrived
         self.arrived += 1
-        await self.release.wait()
+        if self.hold is None or arrival in self.hold:
+            await self.release.wait()
         return await super().handle_async_request(request)
 
 
@@ -579,6 +758,82 @@ def test_an_upload_admitted_earlier_that_gets_through_ends_the_wait():
     assert len(held.bodies) == 2 and _items(held.bodies) == [item["id"] for item in ITEMS] * 2
 
 
+class Gated(Held):
+    """Holds each arrival in `gates` until its own event is set; the others go straight through."""
+
+    def __init__(self, fail: dict[int, list] | None = None, gates: set[int] | None = None) -> None:
+        super().__init__(fail)
+        self.gates = {arrival: asyncio.Event() for arrival in gates or set()}
+
+    async def handle_async_request(self, request):
+        arrival = self.arrived
+        self.arrived += 1
+        gate = self.gates.get(arrival)
+        if gate is not None:
+            await gate.wait()
+        return await Uplink.handle_async_request(self, request)
+
+
+def test_the_cool_down_is_on_while_a_stalled_page_is_cut_again_and_ends_as_soon_as_that_page_lands(monkeypatch):
+    import connector.server.ingest as module
+
+    monkeypatch.setattr(module, "SNAPSHOT_MIN_PAGE_BYTES", 512)
+    # The stall starts the cool-down at once, as a give-up did: another session is refused
+    # unsent while this capture tries its page smaller. The cut page landing is proof that
+    # the path carries bulk again: the wait ends there, not at the end of the capture, and
+    # the next stall of the same capture counts as a first one.
+    # `fail` is by page: the second page stalls on its first try, and so does the third. On the path,
+    # each until its gate opens: arrival 2 is the second page cut, arrival 3 the third page (it stalls
+    # once released), arrival 4 that page cut.
+    # Small items, so that the pages after a cut still hold several items.
+    small = [{"id": str(index), "orderSeq": index, "content": {"text": "x" * 40}} for index in range(72)]
+    held = Gated(fail={1: [httpx.WriteTimeout("stalled")], 2: [httpx.WriteTimeout("stalled again")]}, gates={2, 3, 4})
+    http = httpx.AsyncClient(transport=held)
+    client = ConnectorIngestClient("http://test", AsyncMock(return_value="token"), lambda: http, lambda _: http, snapshot_page_bytes=3200)
+    upload = lambda session="session": client.ingest_snapshot("dsh", "instance", session, META, iter(small))
+    seen: list[tuple[int, float]] = []
+    counts: list[int] = []  # requests of this capture
+
+    async def exercise():
+        async with http:
+            capture = asyncio.ensure_future(upload())
+            await _in_flight(held, 3)
+            # Not deferred, the other session would queue for the post lock the held capture
+            # has and never answer: the wait_for turns that into a failure, not a hang.
+            with pytest.raises(ConnectorIngestDeferredError) as deferred:
+                await asyncio.wait_for(upload("another"), 1)
+            assert deferred.value.stalled is False and 0 < deferred.value.retry_in <= module.SNAPSHOT_STALL_WAIT_SECONDS
+            assert held.arrived == 3, "the other session sent nothing"
+            seen.append((client._snapshot_stalls, client.snapshot_wait()))
+            held.gates[2].set()
+            # The cut page landed; the next page is on the path and has not answered.
+            await _in_flight(held, 4)
+            assert not capture.done()
+            seen.append((client._snapshot_stalls, client.snapshot_wait()))
+            held.gates[3].set()
+            # That page stalled: a wait is on again, of the first length, and the page is cut.
+            await _in_flight(held, 5)
+            seen.append((client._snapshot_stalls, client.snapshot_wait()))
+            held.gates[4].set()
+            await asyncio.wait_for(capture, 1)
+            seen.append((client._snapshot_stalls, client.snapshot_wait()))
+            counts.append(len(held.attempts))
+            await upload("after")
+
+    asyncio.run(exercise())
+    stalls, waits = [row[0] for row in seen], [row[1] for row in seen]
+    assert stalls == [1, 0, 1, 0], "on from the stall, over when the cut page lands, on again for the next stall, over for good"
+    assert 0 < waits[0] <= module.SNAPSHOT_STALL_WAIT_SECONDS and waits[1] == 0.0, "the wait ended while the capture was still on the path"
+    assert 0 < waits[2] <= module.SNAPSHOT_STALL_WAIT_SECONDS and waits[3] == 0.0
+    (own,) = counts
+    # The page index is how many pages landed before it: the first page once, each stalled page twice.
+    assert held.attempts[:own] == [0, 1, 1, 2, 2, *range(3, own - 2)], f"each stalled page twice, the rest once: {held.attempts}"
+    assert _replacements(held.bodies[:own - 2]) == 1
+    assert _items(held.bodies[:own - 2]) == [item["id"] for item in small], "the first page once, the rest from the stalled one on"
+    assert max(held.sizes[2:own]) <= held.sizes[1] // 2 < held.sizes[own], f"cut for this capture only: {held.sizes}"
+    assert len(held.attempts) == own + 3, "the upload after this capture went out at its own size"
+
+
 def test_a_batch_that_stalls_ahead_of_an_ordered_snapshot_also_makes_snapshots_wait(monkeypatch):
     import connector.server.ingest as module
 
@@ -588,6 +843,8 @@ def test_a_batch_that_stalls_ahead_of_an_ordered_snapshot_also_makes_snapshots_w
     stalled = Held(fail={0: [httpx.WriteTimeout("stalled")] * (module.SYNC_BATCH_RETRIES + 1)})
     http = httpx.AsyncClient(transport=stalled)
     client = ConnectorIngestClient("http://test", AsyncMock(return_value="token"), lambda: http, lambda _: http)
+    lines: list[str] = []
+    sink = module.logger.add(lines.append, level="WARNING")
 
     async def exercise():
         async with http:
@@ -601,6 +858,11 @@ def test_a_batch_that_stalls_ahead_of_an_ordered_snapshot_also_makes_snapshots_w
             with pytest.raises(ConnectorIngestDeferredError):
                 await _upload(client, "later")
 
-    asyncio.run(exercise())
+    try:
+        asyncio.run(exercise())
+    finally:
+        module.logger.remove(sink)
+    (given_up,) = [line for line in lines if "an upload body stalled and was given up" in line]
+    assert " page " not in given_up, "the stalled body was a batch: no page to report"
     assert stalled.attempts == [0] * (module.SYNC_BATCH_RETRIES + 1) and stalled.bodies == []
     assert client._snapshot_stalls == 1, "the batch's stalls made snapshots wait"
