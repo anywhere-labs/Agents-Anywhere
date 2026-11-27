@@ -66,8 +66,8 @@ API key 形如 `mk_<id>_<随机 hex>`，Router 按 id 查表并比对 SHA-256。
 - 批次按 `batchSeq` 严格递增；乱序或 `subscriptionId` 未知是错误，由插件重新订阅。已结束订阅的批次返回 `subscription_unknown`，不会被确认。
 - Connector 连不上 Server，或 Server 把这一批全部按可重试拒收（`rejected[].retryable: true`，例如等待会话锁超时）时，`ingestBatch` 和 `ingestSnapshot` 以应用错误码 `backend_unavailable`（`retryable: true`）失败，订阅不受影响。插件对 `ingestBatch` 退避后重发同一批，不结束同步流；不认识这个错误码的旧版插件按其他错误处理，重新订阅。
 - 检查点只在覆盖的历史被 Server 接受之后保存；被隔离的会话不保存检查点。
-- 快照页流可取消（调用取消即中止）；`captureId` 让被取消的旧流无法污染下一次捕获。提交被永久拒绝时返回 `accepted:false` 并给出隔离原因 `history_too_large` / `history_rejected`。此前有上传卡住、等待尚未结束时，提交同样返回 `accepted:false`（原因 `history_deferred`）且不上传；等待结束后 Connector 请求一次新的采集。
-- 隔离、退避重捕（30 s 起，超大 5 min 起，上限 30 min）、单会话失败隔离与 1.0 相同。
+- 快照页流可取消（调用取消即中止）；`captureId` 让被取消的旧流无法污染下一次捕获。提交被永久拒绝时返回 `accepted:false` 并给出隔离原因 `history_too_large` / `history_rejected`。此前有上传卡住、等待尚未结束时，提交同样返回 `accepted:false`（原因 `history_deferred`）且不上传；等待结束后 Connector 请求一次新的采集。若卡住的是本会话自己的页（上传已开始、中途不再前进而被放弃），Connector 按它自己的退避重捕：10 min 起，每再卡住一次翻倍，上限 60 min，不因等待结束而提前；有一次上传成功后重新计起。
+- 隔离、退避重捕（30 s 起，超大 5 min 起，上限 30 min；自己的页卡住 10 min 起、上限 60 min）、单会话失败隔离与 1.0 相同。
 - 健康上报：Bridge 连上后即为 `running`；全量清单建立期间和同步中断重试期间带 phase `syncing` / `sync_interrupted`，清单完成后清除 phase。只有 Bridge 不可达才回到 `starting`（`waiting_bridge`）或 `error`。
 - 清单扫描期间，已发布基线的会话的事件随扫描进度交付，不等清单完成；`session.inventory.complete` 仍在全部会话校准后发送。
 - 不再有上传进度续期：一次 ingest 调用就是一个慢请求，连接由 MeshCall keepalive 维持。
