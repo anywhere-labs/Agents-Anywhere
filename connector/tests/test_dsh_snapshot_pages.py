@@ -866,3 +866,238 @@ def test_a_batch_that_stalls_ahead_of_an_ordered_snapshot_also_makes_snapshots_w
     assert " page " not in given_up, "the stalled body was a batch: no page to report"
     assert stalled.attempts == [0] * (module.SYNC_BATCH_RETRIES + 1) and stalled.bodies == []
     assert client._snapshot_stalls == 1, "the batch's stalls made snapshots wait"
+
+
+class Tokens:
+    """An access-token provider that records the `force` of every call."""
+
+    def __init__(self) -> None:
+        self.forces: list[bool] = []
+
+    async def __call__(self, force: bool = False) -> str:
+        self.forces.append(force)
+        return "token"
+
+
+def _client(transport: Uplink, tokens: Tokens, page_bytes: int) -> tuple[httpx.AsyncClient, ConnectorIngestClient]:
+    http = httpx.AsyncClient(transport=transport)
+    return http, ConnectorIngestClient("http://test", tokens, lambda: http, lambda _: http, snapshot_page_bytes=page_bytes)
+
+
+async def _capture(http: httpx.AsyncClient, client: ConnectorIngestClient, items=ITEMS) -> None:
+    async with http:
+        await client.ingest_snapshot("dsh", "instance", "session", META, iter(items))
+
+
+def test_a_page_above_the_legacy_size_starts_with_a_fresh_token_and_only_its_first_attempt_does(monkeypatch):
+    import connector.server.ingest as module
+
+    monkeypatch.setattr(module, "SNAPSHOT_LEGACY_PAGE_BYTES", 2048)
+    # The Server checks the token only after the whole body arrived, so the token must
+    # outlive the page: a reused one may have a minute left. A page above the legacy
+    # size forces a fresh one for its first attempt; the retry of that page (a slow
+    # answer here) and every page at or below the legacy size take the cached one.
+    items = [{"id": str(index), "orderSeq": index, "content": {"text": "x" * 400}} for index in range(48)]
+    tokens = Tokens()
+    slow_answer = Uplink(fail={1: [httpx.ReadTimeout("slow")]})
+    http, client = _client(slow_answer, tokens, 8192)
+    asyncio.run(_capture(http, client, items))
+    first_attempts = [slow_answer.attempts.index(page) == index for index, page in enumerate(slow_answer.attempts)]
+    assert slow_answer.attempts[:3] == [0, 1, 1], "the slow answer was waited for, at the same size"
+    assert tokens.forces == [size > 2048 and first for size, first in zip(slow_answer.sizes, first_attempts)]
+    assert tokens.forces[:3] == [True, True, False], "the large page forced a token once; its retry did not"
+
+    tokens = Tokens()
+    at_legacy = Uplink()
+    http, client = _client(at_legacy, tokens, 2048)
+    asyncio.run(_capture(http, client, items))
+    assert len(at_legacy.bodies) > 1 and tokens.forces == [False] * len(at_legacy.sizes), "a page at the legacy size never forces"
+
+
+def test_a_401_after_a_body_that_outlived_the_token_cuts_the_page_instead_of_sending_it_again(monkeypatch):
+    import connector.server.ingest as module
+
+    monkeypatch.setattr(module, "SNAPSHOT_LEGACY_PAGE_BYTES", 2048)
+    monkeypatch.setattr(module, "SNAPSHOT_MIN_PAGE_BYTES", 512)
+    monkeypatch.setattr(module, "SNAPSHOT_TOKEN_OUTLIVED_SECONDS", 0.0)
+    # The Server answers 401 only once the whole body arrived, so this page was paid
+    # for in full and the same size could only fail the same way: cut, as a stall is
+    # cut, and sent from its own start. The path is slow, not stalled: no cool-down.
+    items = [{"id": str(index), "orderSeq": index, "content": {"text": "x" * 400}} for index in range(48)]
+    tokens = Tokens()
+    # Arrival 2 is the re-cut page, held on the path: the wait is read while it is there.
+    expired = Gated(fail={1: [httpx.Response(401)]}, gates={2})
+    http, client = _client(expired, tokens, 8192)
+    seen: list[tuple[int, float]] = []
+
+    async def exercise():
+        async with http:
+            capture = asyncio.ensure_future(client.ingest_snapshot("dsh", "instance", "session", META, iter(items)))
+            await _in_flight(expired, 3)
+            seen.append((client._snapshot_stalls, client.snapshot_wait()))
+            expired.gates[2].set()
+            await asyncio.wait_for(capture, 1)
+
+    asyncio.run(exercise())
+    assert seen == [(0, 0.0)], "a slow path is not a stalled one: no cool-down while the cut page is on the path"
+    assert expired.attempts[:3] == [0, 1, 1] and expired.attempts.count(0) == 1, "the first page was sent once"
+    assert expired.refused == [expired.sizes[1]] and 2048 < expired.sizes[1], "the 401 came for the large page, once"
+    assert expired.sizes[2] <= 2048, "nothing went out again at that size: the page was cut"
+    assert all(length <= 2048 for length in expired.lengths[1:]), "the rest of the capture goes at the cut size"
+    assert tokens.forces[:3] == [True, True, False], "no token was forced after the 401"
+    assert _replacements(expired.bodies) == 1 and _items(expired.bodies) == [item["id"] for item in items]
+    assert client.snapshot_wait() == 0.0, "a slow path is not a stalled one: no cool-down"
+
+
+def test_a_401_after_a_short_body_is_sent_once_more_at_the_same_size_with_a_fresh_token():
+    # Today's behaviour, kept: a 401 that came quickly is a stale token, not a page too
+    # large for its life, so the page goes out again, once, with a forced token.
+    tokens = Tokens()
+    stale = Uplink(fail={1: [httpx.Response(401)]})
+    http, client = _client(stale, tokens, 2048)
+    asyncio.run(_capture(http, client))
+    assert stale.attempts[:3] == [0, 1, 1] and stale.sizes[1] == stale.sizes[2] and stale.refused == [stale.sizes[1]]
+    assert tokens.forces == [False, False, True] + [False] * (len(tokens.forces) - 3), "one forced token, for the resend"
+    assert _items(stale.bodies) == [item["id"] for item in ITEMS] and client.snapshot_wait() == 0.0
+
+
+def test_a_one_item_page_whose_401_outlived_the_token_is_final(monkeypatch):
+    import connector.server.ingest as module
+
+    monkeypatch.setattr(module, "SNAPSHOT_TOKEN_OUTLIVED_SECONDS", 0.0)
+    # One item cannot be cut: given up as a stall is, cool-down included, for a path
+    # this slow carries none of the other snapshots either.
+    expired = Uplink(fail={0: [httpx.Response(401)]})
+    http, client = _client(expired, Tokens(), 1024 * 1024)
+    with pytest.raises(ConnectorIngestDeferredError) as raised:
+        asyncio.run(_capture(http, client, ITEMS[:1]))
+    assert raised.value.stalled is True and raised.value.retry_in > 0 and raised.value.page is None
+    assert expired.attempts == [0] and expired.bodies == [], "nothing was sent again"
+    assert client.snapshot_wait() > 0 and client._snapshot_stalls == 1, "the cool-down is on"
+    assert "answered 401 after a body that outlived its token" in str(raised.value) and raised.value.page is None, (
+        "the deferral says what happened: the body was paid in full, nothing stalled"
+    )
+
+
+def test_a_first_page_cut_after_a_401_that_outlived_the_token_still_replaces_the_timeline_once(monkeypatch):
+    import connector.server.ingest as module
+
+    monkeypatch.setattr(module, "SNAPSHOT_LEGACY_PAGE_BYTES", 2048)
+    monkeypatch.setattr(module, "SNAPSHOT_MIN_PAGE_BYTES", 512)
+    monkeypatch.setattr(module, "SNAPSHOT_TOKEN_OUTLIVED_SECONDS", 0.0)
+    # The re-cut page is still the first page of the capture: it replaces the timeline
+    # once, and the pages after it append.
+    items = [{"id": str(index), "orderSeq": index, "content": {"text": "x" * 400}} for index in range(48)]
+    expired = Uplink(fail={0: [httpx.Response(401)]})
+    http, client = _client(expired, Tokens(), 8192)
+    asyncio.run(_capture(http, client, items))
+    assert expired.attempts[:2] == [0, 0] and expired.attempts.count(0) == 2, "the first page twice: refused, then cut"
+    assert expired.refused == [expired.sizes[0]] and 2048 < expired.sizes[0] and expired.sizes[1] <= 2048
+    assert _replacements(expired.bodies) == 1 and expired.bodies[0]["notifications"][1]["params"]["complete"] is True
+    assert all(body["notifications"][0]["params"]["complete"] is False for body in expired.bodies[1:])
+    assert _items(expired.bodies) == [item["id"] for item in items] and client.snapshot_wait() == 0.0
+
+
+def test_a_401_that_outlived_the_token_and_a_stall_share_one_cut_budget(monkeypatch):
+    import connector.server.ingest as module
+
+    monkeypatch.setattr(module, "SNAPSHOT_LEGACY_PAGE_BYTES", 4096)
+    monkeypatch.setattr(module, "SNAPSHOT_MIN_PAGE_BYTES", 64)
+    monkeypatch.setattr(module, "SNAPSHOT_TOKEN_OUTLIVED_SECONDS", 0.0)
+    # Three cuts, stall and 401 mixed, then the fourth failure gives up. Every attempt
+    # is still a page of several items and a fourth cut was within the floor, so it is
+    # the budget that ended it, as for a stall.
+    entries = [{"id": str(index), "orderSeq": index, "content": {"text": "x" * 10}} for index in range(192)]
+    weak_path = Uplink(fail={0: [httpx.WriteTimeout("stalled"), httpx.Response(401), httpx.WriteTimeout("stalled"), httpx.Response(401)]})
+    http, client = _client(weak_path, Tokens(), 8192)
+    with pytest.raises(ConnectorIngestDeferredError) as raised:
+        asyncio.run(_capture(http, client, entries))
+    assert weak_path.attempts == [0] * 4 and weak_path.bodies == []
+    sizes = weak_path.sizes
+    assert sizes == sorted(sizes, reverse=True) and len(set(sizes)) == 4, "cut after every failure"
+    assert all(count > 1 for count in weak_path.items) and sizes[3] // 2 >= 64, "a fourth cut was possible: the budget ended it"
+    assert raised.value.stalled is True and client.snapshot_wait() > 0
+
+
+class Clock:
+    """`time` for the ingest module: the real clock, moved ahead by `offset` while a body is answered."""
+
+    offset = 0.0
+
+    @staticmethod
+    def monotonic() -> float:
+        return time.monotonic() + Clock.offset
+
+
+@pytest.fixture
+def clock():
+    """The ingest module reads the time through `Clock`, which starts at the real clock in every test."""
+    Clock.offset = 0.0
+    yield Clock
+    Clock.offset = 0.0
+
+
+class Took(Uplink):
+    """Every refused request of this transport took `seconds` of body, by the module's clock."""
+
+    def __init__(self, fail: dict[int, list], seconds: float) -> None:
+        super().__init__(fail)
+        self.seconds = seconds
+
+    async def handle_async_request(self, request):
+        if self.fail.get(len(self.bodies)):
+            Clock.offset = self.seconds
+        return await super().handle_async_request(request)
+
+
+def _a_page_answered_401_after(monkeypatch, clock, seconds: float) -> tuple[Took, Tokens]:
+    import connector.server.ingest as module
+
+    monkeypatch.setattr(module, "time", clock)
+    monkeypatch.setattr(module, "SNAPSHOT_MIN_PAGE_BYTES", 512)
+    took, tokens = Took(fail={1: [httpx.Response(401)]}, seconds=seconds), Tokens()
+    http, client = _client(took, tokens, 2048)
+    asyncio.run(_capture(http, client))
+    return took, tokens
+
+
+def test_ten_minutes_of_body_is_the_limit_with_its_default_value_and_a_401_at_it_cuts_the_page(monkeypatch, clock):
+    import connector.server.ingest as module
+
+    # The limit is not patched here: the body is made to take exactly that long by the module's clock.
+    took, tokens = _a_page_answered_401_after(monkeypatch, clock, module.SNAPSHOT_TOKEN_OUTLIVED_SECONDS)
+    assert module.SNAPSHOT_TOKEN_OUTLIVED_SECONDS == 600.0
+    assert took.attempts[:3] == [0, 1, 1] and took.sizes[2] <= took.sizes[1] // 2 < took.sizes[1], "cut, not sent again"
+    assert tokens.forces == [False] * len(tokens.forces), "no token was forced for a cut"
+
+
+def test_a_401_one_second_short_of_the_limit_is_a_stale_token_and_the_page_goes_out_again(monkeypatch, clock):
+    import connector.server.ingest as module
+
+    took, tokens = _a_page_answered_401_after(monkeypatch, clock, module.SNAPSHOT_TOKEN_OUTLIVED_SECONDS - 1.0)
+    assert took.attempts[:3] == [0, 1, 1] and took.sizes[1] == took.sizes[2], "sent again at the same size"
+    assert tokens.forces[:3] == [False, False, True], "once, with a forced token"
+
+
+def test_a_batch_answered_401_goes_out_again_however_long_its_body_took(monkeypatch, clock):
+    import connector.server.ingest as module
+
+    # Only a page can be cut. A batch keeps its answer to a 401: one resend with a forced token.
+    # Sent as the batch path sends it, without `page`.
+    monkeypatch.setattr(module, "time", clock)
+    tokens = Tokens()
+    answers = iter([httpx.Response(401), httpx.Response(200, json={}, request=httpx.Request("POST", "http://test/ingest"))])
+    sent: list[str] = []
+
+    async def send(token):
+        sent.append(token)
+        Clock.offset = module.SNAPSHOT_TOKEN_OUTLIVED_SECONDS + 1.0
+        return next(answers)
+
+    async def exercise():
+        async with http:
+            await client._send_with_auth(send, await tokens(False), size=100)
+
+    http, client = _client(Uplink(), tokens, 2048)
+    asyncio.run(exercise())
+    assert sent == ["token", "token"] and tokens.forces == [False, True], "the resend was made, with a forced token"

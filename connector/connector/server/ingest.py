@@ -66,6 +66,21 @@ SNAPSHOT_STALL_WAIT_MAX_SECONDS = 600.0
 # stalled never landed and goes out again from its own start; the pages it
 # accepted before are not sent again.
 SNAPSHOT_STALL_SHRINKS = 3
+# The Server checks the bearer token only once the whole body of a page has
+# arrived, so the token must outlive the page: a page whose body takes longer
+# than the token's life is answered 401 after all that time, and sent again at
+# the same size it can only fail the same way. A first 401 whose send ran this
+# long is therefore not answered by a resend: the page is cut smaller, as after
+# a stall, out of the same budget. The rule fires only when a 401 really came
+# after ten minutes of body; a page that needs ten minutes should be cut
+# whatever the token's life is, and the one false case (a credential revoked
+# during such a body) only costs a page sent smaller. A shorter 401 is a stale
+# token, as ever: one resend with a forced token. And a page above the legacy
+# size starts with a forced token, since a reused one may have a minute left.
+# The rule relies on the Server's token life (DEFAULT_EXPIRES_IN, 900 s) being
+# longer than this plus the reuse skew: were it shorter, the full-size resend
+# would return for pages that need most of the life, not a failure.
+SNAPSHOT_TOKEN_OUTLIVED_SECONDS = 600.0
 # A synchronous batch (for example one DSH sync batch the plugin waits on) that
 # fails for a transient reason is retried this often before the caller sees the
 # error. Delivery is at least once, as in the background flush loop; without a
@@ -109,7 +124,10 @@ class ConnectorIngestDeferredError(ConnectorNetworkError):
     `stalled` is True only when this caller's own upload body stalled and was
     given up, a page after its cuts (SNAPSHOT_STALL_SHRINKS) or a batch at
     once: its page was too much for the path, which the cool-down's ending
-    says nothing about. Every caller that uploads through ingest_snapshot then
+    says nothing about; or when its page was answered 401 after a body that
+    outlived its token and could not be cut smaller (`outlived`: the body was
+    paid in full, nothing stalled, and `page` is None). Every caller that
+    uploads through ingest_snapshot then
     holds the timeline back by a backoff of its own, longer than `retry_in`. It is
     False when nothing
     was sent because the cool-down was already on: such a caller waits `retry_in`.
@@ -119,15 +137,29 @@ class ConnectorIngestDeferredError(ConnectorNetworkError):
     stalled body was a notification batch.
     """
 
-    def __init__(self, retry_in: float, stalled: bool = False, *, page: _PageSend | None = None) -> None:
-        stalled_body = f"its page stalled ({page}) and" if page is not None else "the last one stalled and"
+    def __init__(
+        self, retry_in: float, stalled: bool = False, *, page: _PageSend | None = None, outlived: bool = False,
+    ) -> None:
+        if outlived:
+            stalled_body = "its page was answered 401 after a body that outlived its token, cannot be cut smaller, and"
+        else:
+            stalled_body = f"its page stalled ({page}) and" if page is not None else "the last one stalled and"
         super().__init__(
             f"snapshot upload deferred for {retry_in:.0f}s: {stalled_body} "
             "the path cannot carry bulk traffic right now"
         )
         self.retry_in = max(retry_in, 0.0)
-        self.stalled = stalled
+        self.stalled = stalled or outlived
         self.page = page
+
+
+class ConnectorPageOutlivedTokenError(ConnectorNetworkError):
+    """A page was answered 401 after a body that ran past its token's life.
+
+    Raised instead of a resend (SNAPSHOT_TOKEN_OUTLIVED_SECONDS): the body was
+    paid for in full and the same size could only fail the same way.
+    _post_snapshot_pages cuts the page as after a stall.
+    """
 
 
 class _PageSend:
@@ -322,7 +354,9 @@ class ConnectorIngestClient:
         # that the stall was its own: it did not land, and nothing will for a while.
         # The transport error stays its cause, as for every failed upload;
         # the wrapper stays as its context.
-        deferred = ConnectorIngestDeferredError(self.snapshot_wait(), stalled=True, page=_page_send(error))
+        deferred = ConnectorIngestDeferredError(
+            self.snapshot_wait(), stalled=True, page=_page_send(error), outlived=_outlived_token(error),
+        )
         deferred.__cause__ = error.__cause__
         return deferred
 
@@ -346,11 +380,12 @@ class ConnectorIngestClient:
         # back to back and the first is never sent again once accepted (on such
         # a Server it would drop the pages after it). A page the transport
         # refuses as too large, a page above the legacy size whose connection
-        # keeps getting dropped, or a page whose body stalled, is cut smaller
-        # and the remaining items are re-paged from that page's own start. Only
-        # a 413 says something about the deployment, so only that size sticks
-        # for later snapshots; the size a stall leads to lasts this capture
-        # only, and the other snapshots wait from the stall on (SNAPSHOT_STALL_SHRINKS).
+        # keeps getting dropped, a page whose body stalled, or a page answered 401
+        # after a body that outlived its token, is cut smaller and the remaining
+        # items are re-paged from that page's own start. Only a 413 says something
+        # about the deployment, so only that size sticks for later snapshots; the
+        # size a stall leads to lasts this capture only, and the other snapshots
+        # wait from the stall on, not from a 401 (SNAPSHOT_STALL_SHRINKS).
         start, first = 0, True
         page_bytes = self._snapshot_page_bytes
         shrinks = 0  # cuts of the page at `start` after a stall
@@ -361,6 +396,11 @@ class ConnectorIngestClient:
                 await self._post_snapshot_page(client, snapshot, start, end, first, on_progress)
             except (ConnectorNetworkError, httpx.HTTPStatusError) as exc:
                 stall = _body_stalled(exc)
+                # A 401 after a body that ran past the token's life is cut like a stall,
+                # out of the same budget, but it says the path is slow, not stalled: the
+                # small snapshots of other sessions pass, so no cool-down unless the
+                # page cannot be cut at all.
+                outlived = _outlived_token(exc)
                 size = snapshot.page_size(start, end, first=first)
                 smaller = _smaller_page_bytes(size, exc) if end - start > 1 else None
                 if stall:
@@ -369,11 +409,16 @@ class ConnectorIngestClient:
                     # often than this: then the page is given up as a stall always was.
                     self._defer_snapshots(exc)
                     stalled = True
+                if stall or outlived:
                     shrinks += 1
                     if shrinks > SNAPSHOT_STALL_SHRINKS:
                         smaller = None
                 if smaller is None or self._closed is not None:
-                    if stall:
+                    if outlived and smaller is None:
+                        # Nothing left to cut: given up as a stall is, cool-down included,
+                        # for a path this slow carries none of the other snapshots either.
+                        self._defer_snapshots(exc)
+                    if stall or outlived:
                         raise self._deferred(exc)
                     raise
                 logger.warning(
@@ -397,21 +442,26 @@ class ConnectorIngestClient:
         self, client, snapshot: EncodedSnapshot, start: int, end: int, first: bool, on_progress: UploadProgress | None,
     ) -> None:
         attempt = read_timeouts = 0
+        size = snapshot.page_size(start, end, first=first)
         while True:
-            token = await self._access_token_provider(False)
+            # The Server checks the token only after the whole body arrived, so the token
+            # must outlive the page: a reused one may have a minute left, and a large page
+            # takes longer than that. Only the first attempt of a page above the legacy
+            # size forces a fresh one; a retry of it, and a smaller page, go with the cache.
+            token = await self._access_token_provider(attempt == 0 and size > SNAPSHOT_LEGACY_PAGE_BYTES)
             try:
                 await self._send_with_auth(
                     lambda token, read_timeouts=read_timeouts: self._post_snapshot_body(
                         client, token, snapshot, start, end, first, on_progress, read_timeouts,
                     ),
-                    token, size=snapshot.page_size(start, end, first=first),
+                    token, size=size, page=True,
                 )
                 return
             except ConnectorNetworkError as exc:
-                if _body_stalled(exc):
-                    # No progress for the whole write timeout: sent again at this size the
-                    # page only keeps the path busy. _post_snapshot_pages makes the other
-                    # snapshots wait and cuts the page smaller.
+                if _body_stalled(exc) or _outlived_token(exc):
+                    # No progress for the whole write timeout, or a 401 after a body that
+                    # ran past the token's life: sent again at this size the page only
+                    # keeps the path busy. _post_snapshot_pages cuts the page smaller.
                     raise
                 attempt += 1
                 read_timeouts += _read_timed_out(exc)
@@ -554,11 +604,20 @@ class ConnectorIngestClient:
             if owned:
                 await client.aclose()
 
-    async def _send_with_auth(self, send, token, *, size: int):
+    async def _send_with_auth(self, send, token, *, size: int, page: bool = False):
         started = time.monotonic()
         try:
             response = await send(token)
             if getattr(response, "status_code", None) == 401:
+                if page and time.monotonic() - started >= SNAPSHOT_TOKEN_OUTLIVED_SECONDS:
+                    # The Server answers a page 401 only once its whole body arrived: one
+                    # whose body ran past the token's life was paid for in full, and would
+                    # be again. _post_snapshot_pages cuts it instead (SNAPSHOT_TOKEN_OUTLIVED_SECONDS).
+                    # Only a page can be cut: a batch is sent again whatever its body took.
+                    raise ConnectorPageOutlivedTokenError(
+                        f"backend ingest request outlived its access token: HTTP 401 "
+                        f"(body {size} bytes, after {time.monotonic() - started:.1f}s)"
+                    )
                 token = await self._access_token_provider(True)
                 response = await send(token)
                 if getattr(response, "status_code", None) == 401:
@@ -621,6 +680,17 @@ def _body_stalled(error: Exception) -> bool:
     return isinstance(error.__cause__, httpx.WriteTimeout)
 
 
+def _outlived_token(error: BaseException) -> bool:
+    """Whether a page's 401 came after a body that ran past the token's life.
+
+    The error is raised in _send_with_auth and reaches _post_snapshot_page and
+    _post_snapshot_pages as it is: nothing on the way wraps it (the wrapping of
+    httpx errors happens below, in _send_with_auth), so the type is read off
+    the error itself, not its cause.
+    """
+    return isinstance(error, ConnectorPageOutlivedTokenError)
+
+
 def _page_send(error: Exception) -> _PageSend | None:
     """How far the body of a stalled page got; None for a body that was not a page."""
     return getattr(error.__cause__, "page_send", None)
@@ -640,10 +710,11 @@ def _smaller_page_bytes(size: int, error: Exception) -> int | None:
     if _too_large(error):
         smaller = size // 2
         return smaller if smaller >= SNAPSHOT_MIN_PAGE_BYTES else None
-    if _body_stalled(error):
+    if _body_stalled(error) or _outlived_token(error):
         # The path could not carry this page, whatever any proxy's limit: to the
         # legacy size first, as a large page whose connection keeps dropping, then
-        # halved as for a 413, and never below the floor.
+        # halved as for a 413, and never below the floor. A page whose body outlived
+        # its token is cut the same way: it needs a shorter body, not a new token.
         smaller = SNAPSHOT_LEGACY_PAGE_BYTES if size > SNAPSHOT_LEGACY_PAGE_BYTES else size // 2
         return smaller if smaller >= SNAPSHOT_MIN_PAGE_BYTES else None
     if size > SNAPSHOT_LEGACY_PAGE_BYTES and isinstance(
