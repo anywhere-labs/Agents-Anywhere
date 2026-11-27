@@ -227,7 +227,9 @@ dataDir/
        - 进程存活且距 `started_at < 10s` → 处于冷启动竞态窗口，短退避轮询等待对方 `LocalAdmin` 就绪后归入活体冲突。
        - 进程存活且超启动宽限仍无响应 → 校验进程命令特征以区分「OS PID 复用给了无关进程」（按陈旧锁回收）与「旧 Connector 僵死」（**绝不静默抢锁**，返回 `lock_held_unresponsive` 交由用户或 Desktop 决定）。
     4. **安全释放与子进程回收**：优雅退出（`SIGINT`/`SIGTERM` 或 RPC 模式下 stdin 关闭）时先停 ACP、`frpc` 与 `LocalRouter`，最后**仅在磁盘文件的 `instance_nonce` 与自身一致时**删除 `local-admin.json` 与 `connector.lock`。
-  - **CLI 冲突策略**：第二个 `aa-connector serve` 遇到活体冲突立即失败退出（专用退出码 `4`，结构化错误 `{ code: "already_running", pid, mode, router_url, data_dir }`），绝不静默杀死已有实例；仅在显式执行 `aa-connector stop` 或 `aa-connector serve --replace` 时才优雅停掉旧实例并接管。其他 CLI 子命令（`status`、`logs`、`pair` 等）直接经 `local-admin.json` 复用当前运行中的 Connector。
+  - **CLI 冲突与单次命令策略**：
+    - 只有 `aa-connector serve` 会抢占 `connector.lock`。第二个 `serve` 遇到活体冲突立即失败退出（专用退出码 `4`，结构化错误 `{ code: "already_running", pid, mode, router_url, data_dir }`），绝不静默杀死已有实例；仅在显式执行 `aa-connector stop` 或 `aa-connector serve --replace` 时才优雅停掉旧实例并接管。
+    - **单次 CLI 子命令允许在 `serve` 运行期间正常执行，且遵循「单写入者」原则**：启动时先经 `local-admin.json` 探活 `LocalAdmin`——**有 `serve` 在跑时一律走本机 RPC**，由唯一持有锁的 `serve` 统一写磁盘并同步内存态与连接（CLI 绝不绕过 `serve` 直写 `dataDir`）；**无 `serve` 在跑时**，强依赖运行态的命令（如 `pair`、`previews`、`agents enable|disable|restart`、`local-token`、`stop`）明确报错提示未运行，支持离线预配置/排障的命令（如 `login`、`logout`、`mode`、`mcp`、`clients`、`agents list|settings`、`logs --lines N`、`cache clear`）则直接安全读写 `dataDir`。
 
 ### 1.9 跨设备 SAS 配对协议（加密模式）
 
