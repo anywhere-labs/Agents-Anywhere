@@ -40,6 +40,14 @@ const SESSION_INVALIDATIONS = new Set(['session', 'status', 'question', 'approva
 const RETAINED_EVENTS = new Set(['turn/end', 'plan/mode', 'model/selection', 'agent-preset/selected'])
 export const MAX_RETAINED_PROJECTIONS = 8
 export const SYNC_FLUSH_MS = Math.ceil(1000 / 30)
+/**
+ * A capture the Connector refuses leaves the session unpublished while the
+ * Connector holds it until its own retry asks for a fresh one (a `refresh`).
+ * Until then a change would recapture the whole session at the feed's cadence,
+ * and every page is dropped. That retry is the real trigger; this interval only
+ * bounds how long a session stays unsynced when it never comes.
+ */
+export const REFUSED_CAPTURE_INTERVAL_MS = 30_000
 
 class SyncTransportError extends Error {}
 /** The Connector's code for a Server it cannot reach; see contracts/dsh-bridge/2.0. */
@@ -59,6 +67,8 @@ export class SyncFeed {
   private published = new Map<string, string>()
   private sourceAvailability = new Map<string, string>()
   private failedSessions = new Map<string, SourceState>()
+  /** performance.now() of the last refused capture, per session; lives and dies with failedSessions. */
+  private refusedAt = new Map<string, number>()
   private wake: (() => void) | undefined
   private closed = false
   private unwatch: () => void
@@ -72,7 +82,7 @@ export class SyncFeed {
 
   constructor(private native: NativeRuntime, private namespace: string, readonly id: string,
     private transport: SyncTransport, private failed: (error: unknown) => void,
-    private durableCheckpoints = false) {
+    private durableCheckpoints = false, private refusedCaptureIntervalMs = REFUSED_CAPTURE_INTERVAL_MS) {
     this.unwatch = native.watch(change => {
       if (this.closed) return
       // These events invalidate current facts; replaying every invalidation
@@ -183,7 +193,7 @@ export class SyncFeed {
     this.wake?.(); this.wake = undefined
     this.queue = []; this.queuedBytes = 0; this.projections.clear()
     this.queuedInvalidations.clear(); this.lastQueued.clear()
-    this.failedSessions.clear()
+    this.failedSessions.clear(); this.refusedAt.clear()
     this.bufferedOperations = undefined; this.bufferedBytes = 0
   }
   private async send(operations: SyncOperation[]): Promise<void> {
@@ -329,10 +339,11 @@ export class SyncFeed {
       if (!result.accepted) {
         // Permanently refused: the Connector already published the session as unavailable.
         this.failedSessions.set(id, { availability: 'unavailable', reason: (result.reason ?? 'sync_failed') as string, observedAt: new Date().toISOString() })
+        this.refusedAt.set(id, performance.now())
         this.native.diagnostics.log('warn', 'snapshot.quarantined', { streamId: this.id, sessionId: id, reason: result.reason ?? undefined })
         return
       }
-      this.failedSessions.delete(id)
+      this.failedSessions.delete(id); this.refusedAt.delete(id)
       projection.drain()
       this.projections.delete(id); this.projections.set(id, projection)
       this.checkpointDirty.add(id)
@@ -410,6 +421,11 @@ export class SyncFeed {
     if (this.durableCheckpoints) await this.delivery(() => this.transport.deleteCheckpoint(id))
     this.published.delete(id); this.projections.delete(id)
   }
+  /** Whether the Connector refused this session's capture so recently that a change must not recapture it. */
+  private refusedRecently(id: string): boolean {
+    const refusedAt = this.refusedAt.get(id)
+    return refusedAt !== undefined && performance.now() - refusedAt < this.refusedCaptureIntervalMs
+  }
   private async sourceState(id: string): Promise<SourceState> {
     const source = await this.native.source.state(id)
     return source.availability === 'available' ? this.failedSessions.get(id) ?? source : source
@@ -465,7 +481,7 @@ export class SyncFeed {
     const pending = live.filter(change => !this.published.has(change.id))
     let reconcile = await this.deliverLive(imported)
     for (const id of new Set(pending.map(change => change.id))) {
-      if (!this.published.has(id) && await this.native.visible(id)) await this.baseline(id, true)
+      if (!this.published.has(id) && !this.refusedRecently(id) && await this.native.visible(id)) await this.baseline(id, true)
     }
     if (await this.deliverLive(pending)) reconcile = true
     if (reconcile && !this.queuedInvalidations.has('visibility')) {
@@ -520,7 +536,9 @@ export class SyncFeed {
           // that a checkpoint delta cannot remove; only a full capture replaces them.
           await this.baseline(id, change.resume === true && (this.projections.get(id)?.settled ?? true)); return
         }
-        if (!this.published.has(id)) await this.baseline(id)
+        // The Connector holds a refused session until its retry, so a change within the interval must not recapture it;
+        // a `refresh`, reconcile() and the inventory still do.
+        if (!this.published.has(id) && !this.refusedRecently(id)) await this.baseline(id)
         if (!this.published.has(id)) return
         if (change.type === 'question' || change.type === 'approval') await this.notices(id)
         if (change.type === 'stream') {
