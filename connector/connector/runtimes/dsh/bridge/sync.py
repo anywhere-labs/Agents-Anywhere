@@ -77,9 +77,22 @@ _DURABLE_NOTIFICATIONS = {
 # after a growing delay. Captures the plugin makes before then are acknowledged
 # without uploading. Transient failures keep the resubscribe path.
 # A snapshot the ingest client deferred, because an earlier upload stalled and
-# its wait is still on, is quarantined the same way until that wait is over.
-# Failing the capture instead would end the feed, and every resubscribe would
-# capture every session again, about a second apart, for as long as the wait lasts.
+# its cool-down is still on, is quarantined the same way until that cool-down
+# is over. Failing the capture instead would end the feed, and every resubscribe
+# would capture every session again, about a second apart, for as long as the
+# cool-down lasts.
+# Not so when this session's own page stalled. The ingest client's cool-down only
+# says when it takes snapshots again, not whether this page can get through now:
+# a page too much for the path as it was is not less so that soon, and sent again
+# it only keeps the path busy, with every other session's snapshot behind it
+# (on a weak link, one 45 MiB page stalled four times, and 19 of 20 other
+# snapshots were never sent). That session is asked for again after a
+# backoff of its own, which doubles with each further stall of it, capped here,
+# and starts over once one of its uploads gets through. Only its own stalls
+# count: a refusal unsent behind another session's stall says nothing about
+# its page.
+STALL_RETRY_BASE_SECONDS = 600.0
+STALL_RETRY_MAX_SECONDS = 3600.0
 QUARANTINE_RETRY_DELAY_SECONDS = 30.0
 QUARANTINE_TOO_LARGE_RETRY_DELAY_SECONDS = 5 * 60.0
 QUARANTINE_MAX_RETRY_DELAY_SECONDS = 30 * 60.0
@@ -96,6 +109,12 @@ class _Quarantine:
     stale: bool = False
     # Event loop time from which a capture of this session is uploaded again.
     retry_at: float = 0.0
+    # This session's own page stalled (history_deferred only). retry_at is then its
+    # own backoff, which the ingest client's cool-down ending does not shorten.
+    stalled: bool = False
+    # Own stalls of the session since its last upload got through. A record left by
+    # another reason carries the count on, so the next own stall goes on growing.
+    stalls: int = 0
 
     def source_state(self) -> dict[str, Any]:
         return {"availability": "unavailable", "reason": self.reason,
@@ -316,9 +335,10 @@ class SyncRelay:
             await self.quarantine(session_id, meta.get("externalSessionId"), snapshot.get("throughSeq"), error)
             return
         except ConnectorIngestDeferredError as error:
-            # Not sent: an earlier upload stalled and the wait is still on. Failing the
+            # Not landed: an earlier upload stalled and the cool-down is still on, or this
+            # capture's own page stalled and was given up (error.stalled). Failing the
             # capture here would end the feed, and its resubscription would capture every
-            # session again, about a second apart, for as long as the wait lasts.
+            # session again, about a second apart, for as long as either lasts.
             await self.quarantine(session_id, meta.get("externalSessionId"), snapshot.get("throughSeq"), error)
             return
         await self.release(session_id, meta)
@@ -327,23 +347,47 @@ class SyncRelay:
         """Isolate one session whose history the backend refused for good, or that waits for a slow path."""
 
         deferred = isinstance(error, ConnectorIngestDeferredError)
+        # This session's own page stalled, as against a capture refused unsent because
+        # another session's did: the path was too weak for this page in particular.
+        stalled = deferred and error.stalled
         too_large = isinstance(error, httpx.HTTPStatusError) and error.response.status_code == 413
         previous = self.quarantined.get(session_id)
         attempts = previous.attempts + 1 if previous is not None else 1
         reason = "history_deferred" if deferred else "history_too_large" if too_large else "history_rejected"
-        # A deferred upload is taken again when the ingest client takes snapshots again: it says when.
-        delay = error.retry_in if deferred else min(
-            self._retry_base(too_large) * 2 ** (attempts - 1), QUARANTINE_MAX_RETRY_DELAY_SECONDS,
-        )
+        # Only the session's own stalls grow its backoff: a refusal unsent while another
+        # session's stall has the client cooling down is not one, and counted as one it had
+        # a page that stalled once wait three times as long as it should.
+        stalls = previous.stalls if previous is not None else 0
+        if stalled:
+            stalls += 1
+            # Its own backoff, doubling with each further stall of the session: the client's
+            # cool-down says when it takes snapshots again, not whether this page can get
+            # through now. The exponent is bounded because the cap is reached at the third
+            # doubling: weeks of stalls must not overflow the float.
+            delay = min(STALL_RETRY_BASE_SECONDS * 2 ** min(stalls - 1, 3), STALL_RETRY_MAX_SECONDS)
+        else:
+            # A deferred upload is taken again when the ingest client takes snapshots again: it says when.
+            delay = error.retry_in if deferred else min(
+                self._retry_base(too_large) * 2 ** (attempts - 1), QUARANTINE_MAX_RETRY_DELAY_SECONDS,
+            )
         record = _Quarantine(
             external_id, through_seq, reason,
             attempts=attempts, retry_at=asyncio.get_running_loop().time() + delay,
+            stalled=stalled, stalls=stalls,
         )
         self.quarantined[session_id] = record
         # Captures are withheld until the retry, so it must exist even if the
         # report below fails.
         self._schedule_retry(session_id, record)
-        if deferred:
+        if stalled:
+            # The session's backoff, not the client's cool-down the error repeats: two
+            # waits in one line read as one.
+            logger.warning(
+                "DSH session history deferred: its upload stalled; session quarantined "
+                "session_id={} attempts={} stalls={} backoff={:.0f}s error={}",
+                session_id, record.attempts, stalls, delay, error,
+            )
+        elif deferred:
             logger.warning(
                 "DSH session history deferred: the path cannot carry it now; session quarantined until the wait is over "
                 "session_id={} attempts={} retry_in={:.0f}s error={}",
@@ -388,7 +432,10 @@ class SyncRelay:
         # A deferral is over when the client's wait is: earlier than retry_at if an upload it
         # had admitted before the stall got through, later if a new stall grew it. The client
         # says; ask once it is over. The backoff of a failed request below is not touched.
-        follows_wait = record.reason == "history_deferred" and self.snapshot_wait is not None
+        # Not so for a session whose own page stalled: its backoff is its own and runs in
+        # full, whatever the client's wait does; that wait is waited for after it.
+        deferred = record.reason == "history_deferred" and self.snapshot_wait is not None
+        follows_wait = deferred and not record.stalled
         if follows_wait:
             # Not before retry_at, unless the wait is over before it: then at once.
             while delay > 0 and self.snapshot_wait() > 0:
@@ -401,7 +448,7 @@ class SyncRelay:
             await asyncio.sleep(max(delay, 0.0))
             if self.quarantined.get(session_id) is not record:
                 return  # Released, or a newer refusal owns the retry.
-            if follows_wait and self.snapshot_wait() > 0:
+            if deferred and self.snapshot_wait() > 0:
                 # A wait that began since keeps the client from taking a snapshot: ask once it
                 # is over, after the backoff has run in full.
                 while self.snapshot_wait() > 0:
@@ -727,9 +774,11 @@ class SyncRelay:
         self.clear_snapshot()
         record = self.quarantined.get(request.sessionId)
         withheld = record is not None and asyncio.get_running_loop().time() < record.retry_at
-        if withheld and record.reason == "history_deferred" and self.snapshot_wait is not None and self.snapshot_wait() <= 0:
+        if (withheld and record.reason == "history_deferred" and not record.stalled
+                and self.snapshot_wait is not None and self.snapshot_wait() <= 0):
             # The client's wait ended early (an upload it had admitted before the stall got
-            # through): this capture can land now.
+            # through): this capture can land now. Not one of a session whose own page
+            # stalled: that waits for its backoff, whatever the client's wait does.
             withheld = False
         self.snapshot = {"captureId": request.captureId, "sessionId": request.sessionId,
                          "meta": request.meta, "throughSeq": request.throughSeq,

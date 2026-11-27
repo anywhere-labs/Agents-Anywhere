@@ -36,16 +36,25 @@ UPLOAD_CHUNK_BYTES = 64 * 1024
 SNAPSHOT_PAGE_RETRIES = 4
 SNAPSHOT_PAGE_RETRY_BACKOFF_SECONDS = 0.5
 # A page whose body stalls for the whole write timeout is given up at once,
-# and snapshot uploads then wait this long before the next attempt. The wait
-# doubles with each upload that stalls (stalls while a wait is on are one slow
-# path) and is reset by one that gets through. A caller that asks during the
-# wait meets ConnectorIngestDeferredError, which says how long the wait still
-# is: asking again sooner cannot help, and a caller that retries at its own
-# pace stays busy for the whole wait. It starts as long as the wait for a
-# timeline the Server rejected (runtime_sync) and is capped at an hour: once
-# the path is back, the history should not have to wait most of a day for it.
-SNAPSHOT_STALL_WAIT_SECONDS = 600.0
-SNAPSHOT_STALL_WAIT_MAX_SECONDS = 3600.0
+# and snapshot uploads then cool down this long before the next attempt. A
+# stall says the path is weak right now, not that every session must wait ten
+# minutes: the cool-down only keeps the stalled page from being sent again at
+# once, and one stalled page must not starve the small snapshots of all the
+# other sessions, which would pass in a second or two (seen on a weak link: 19
+# of 20 snapshots were refused unsent behind one 45 MiB page). The cool-down
+# doubles with each upload that stalls (stalls while a cool-down is on are one
+# slow path) and is reset by one that gets through, so a path that stalls again
+# and again with nothing getting through still backs off, up to ten minutes. A
+# caller that asks during the cool-down meets ConnectorIngestDeferredError,
+# which says how long it still is: asking again sooner cannot help, and a caller
+# that retries at its own pace stays busy for the whole cool-down. The timeline
+# whose own page stalled is held back longer by every caller that uploads it
+# here and knows the timeline (the DSH sync relay, the ACP queue and the runtime
+# sync of polling runtimes), each with a backoff of its own on top of this
+# cool-down. The cool-down only keeps that page from being sent again at once;
+# uploads through the batch path see no flag and keep their own retries.
+SNAPSHOT_STALL_WAIT_SECONDS = 60.0
+SNAPSHOT_STALL_WAIT_MAX_SECONDS = 600.0
 # A synchronous batch (for example one DSH sync batch the plugin waits on) that
 # fails for a transient reason is retried this often before the caller sees the
 # error. Delivery is at least once, as in the background flush loop; without a
@@ -78,20 +87,29 @@ class ConnectorIngestRetryableError(ConnectorNetworkError):
 
 
 class ConnectorIngestDeferredError(ConnectorNetworkError):
-    """A snapshot upload was not attempted: an earlier one stalled and its wait is not over.
+    """A snapshot upload did not land: one stalled and the cool-down is not over.
 
-    The wait is the same for every snapshot of the client. `retry_in` is how
-    many seconds of it are left, so that a caller can wait exactly that long
-    instead of asking again. It is still a network failure for a caller that
-    does not look: nothing reached the backend.
+    The cool-down is the same for every snapshot of the client. `retry_in` is
+    how many seconds of it are left, so that a caller can wait exactly that
+    long instead of asking again. It is still a network failure for a caller
+    that does not look: the snapshot did not land (with `stalled`, part of its
+    body may have reached the backend before the stall gave it up).
+
+    `stalled` is True only when this caller's own upload body stalled and was
+    given up: its page was too much for the path, which the cool-down's ending
+    says nothing about. Every caller that uploads through ingest_snapshot then
+    holds the timeline back by a backoff of its own, longer than `retry_in`. It is
+    False when nothing
+    was sent because the cool-down was already on: such a caller waits `retry_in`.
     """
 
-    def __init__(self, retry_in: float) -> None:
+    def __init__(self, retry_in: float, stalled: bool = False) -> None:
         super().__init__(
             f"snapshot upload deferred for {retry_in:.0f}s: the last one stalled "
             "and the path cannot carry bulk traffic right now"
         )
         self.retry_in = max(retry_in, 0.0)
+        self.stalled = stalled
 
 
 def _rejection_is_retryable(rejected: list[Any]) -> bool:
@@ -175,12 +193,13 @@ class ConnectorIngestClient:
         then neither waits for the shared queue nor stalls it, and live
         notifications keep using the WebSocket meanwhile.
 
-        A page whose body stalls for the whole write timeout ends the upload at
-        once, and snapshot uploads then wait before the next attempt: a path
-        that could not carry one page cannot carry it sent again, and for as
-        long as the upload is kept up the backend WebSocket's keepalive starves
-        and the Server drops the connection. A caller that asks during the wait
-        meets ConnectorIngestDeferredError before anything is sent.
+        A page whose body stalls for the whole write timeout is given up at
+        once: for as long as the upload is kept up the backend WebSocket's
+        keepalive starves and the Server drops the connection. Snapshot uploads
+        then cool down before the next attempt, so the page is not sent again
+        at once; the caller that knows the timeline holds it back longer still,
+        see ConnectorIngestDeferredError. A caller that asks during the
+        cool-down meets ConnectorIngestDeferredError before anything is sent.
         """
         wait = self.snapshot_wait()
         if wait > 0:
@@ -215,11 +234,11 @@ class ConnectorIngestClient:
         except ConnectorNetworkError as exc:
             if _body_stalled(exc):
                 self._defer_snapshots(exc)
-                # The upload that found the stall is told what every later one is: it did
-                # not land, and nothing will for a while.
+                # The upload that found the stall is told what every later one is, and
+                # that the stall was its own: it did not land, and nothing will for a while.
                 # The transport error stays its cause, as for every failed upload;
                 # the wrapper stays as its context.
-                deferred = ConnectorIngestDeferredError(self.snapshot_wait())
+                deferred = ConnectorIngestDeferredError(self.snapshot_wait(), stalled=True)
                 deferred.__cause__ = exc.__cause__
                 raise deferred
             raise

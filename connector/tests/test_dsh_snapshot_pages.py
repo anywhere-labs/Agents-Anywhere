@@ -301,10 +301,10 @@ def test_an_oversized_page_that_stalls_is_not_cut_to_the_legacy_size(monkeypatch
 
 
 @pytest.mark.parametrize("ordered", [True, False])
-def test_a_stalled_upload_makes_the_next_snapshots_wait_without_touching_the_path(monkeypatch, ordered):
+def test_a_stalled_upload_makes_the_next_snapshots_wait_without_touching_the_path(ordered):
     import connector.server.ingest as module
 
-    monkeypatch.setattr(module, "SNAPSHOT_STALL_WAIT_SECONDS", 600)
+    wait = module.SNAPSHOT_STALL_WAIT_SECONDS
     stalled = Uplink(fail={0: [httpx.WriteTimeout("stalled")]})
     http = httpx.AsyncClient(transport=stalled)
     client = ConnectorIngestClient("http://test", AsyncMock(return_value="token"), lambda: http, lambda _: http)
@@ -316,8 +316,8 @@ def test_a_stalled_upload_makes_the_next_snapshots_wait_without_touching_the_pat
             for session in ("one", "another"):
                 with pytest.raises(ConnectorIngestDeferredError) as deferred:
                     await _upload(client, session, ordered=ordered)
-                assert "deferred for 600s" in str(deferred.value)
-                assert deferred.value.retry_in == pytest.approx(600, abs=5), "the caller is told how long to wait"
+                assert f"deferred for {wait:.0f}s" in str(deferred.value)
+                assert deferred.value.retry_in == pytest.approx(wait, abs=5), "the caller is told how long to wait"
                 assert isinstance(deferred.value, ConnectorNetworkError), "and it is still an outage for a caller that does not look"
             # Live notifications are not bulk traffic: they still go out.
             await client.post_batch([{"method": "session.state.updated", "params": {"sessionId": "one"}}])
@@ -353,6 +353,112 @@ def test_the_wait_doubles_with_each_stalled_upload_and_ends_after_one_gets_throu
     asyncio.run(exercise())
     assert stalled.attempts.count(0) == len(waits) + 2
     assert _items(stalled.bodies) == [item["id"] for item in ITEMS] and client._snapshot_stalls == 0
+
+class Switchable(Uplink):
+    """Stalls every page while `stall` is set; passes everything once it is not."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.stall = True
+
+    async def handle_async_request(self, request):
+        if self.stall:
+            self.attempts.append(len(self.bodies))
+            raise httpx.WriteTimeout("stalled")
+        return await super().handle_async_request(request)
+
+
+def _over(path) -> tuple[httpx.AsyncClient, ConnectorIngestClient]:
+    http = httpx.AsyncClient(transport=path)
+    return http, ConnectorIngestClient("http://test", AsyncMock(return_value="token"), lambda: http, lambda _: http)
+
+
+def test_a_stalled_upload_cools_down_for_one_minute():
+    import connector.server.ingest as module
+
+    # A stall says the path is weak right now, not for the next ten minutes (seen on a weak
+    # link: 19 of 20 snapshots were refused unsent behind one stalled page). A minute keeps the
+    # page from being sent again at once; ten minutes starved every other session.
+    assert (module.SNAPSHOT_STALL_WAIT_SECONDS, module.SNAPSHOT_STALL_WAIT_MAX_SECONDS) == (60.0, 600.0)
+    http, client = _over(Switchable())
+
+    async def exercise():
+        async with http:
+            with pytest.raises(ConnectorIngestDeferredError) as stalled:
+                await _upload(client)
+            assert stalled.value.stalled is True, "its own page stalled: told apart from a refusal unsent"
+            assert isinstance(stalled.value.__cause__, httpx.WriteTimeout)
+            assert "deferred for 60s" in str(stalled.value)
+            assert client.snapshot_wait() == pytest.approx(60, abs=1)
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("ordered", [True, False])
+def test_only_the_upload_whose_body_stalled_is_told_so(ordered):
+    path = Switchable()
+    http, client = _over(path)
+
+    async def exercise():
+        async with http:
+            with pytest.raises(ConnectorIngestDeferredError) as own:
+                await _upload(client, "own", ordered=ordered)
+            assert own.value.stalled is True, "its page was too much for the path: a caller that knows the page may wait longer"
+            for session in ("another", "third"):
+                with pytest.raises(ConnectorIngestDeferredError) as refused:
+                    await _upload(client, session, ordered=ordered)
+                assert refused.value.stalled is False, "nothing of it was sent: only the path's cool-down holds it"
+                assert refused.value.__cause__ is None
+            assert path.attempts == [0]
+
+    asyncio.run(exercise())
+
+
+def test_each_further_stall_with_nothing_getting_through_doubles_the_cool_down_up_to_ten_minutes():
+    import connector.server.ingest as module
+
+    http, client = _over(Switchable())
+
+    async def exercise():
+        async with http:
+            for stalls, cool_down in enumerate((60, 120, 240, 480, 600, 600, 600), start=1):
+                if stalls > 1:
+                    client._snapshot_retry_at = time.monotonic() - 1  # the cool-down ran its course, nothing got through in it
+                with pytest.raises(ConnectorIngestDeferredError):
+                    await _upload(client)
+                left = client.snapshot_wait()
+                assert cool_down - 1 < left <= cool_down, f"stall {stalls}: a cool-down of {cool_down}s was due, {left:.0f}s was set"
+
+    asyncio.run(exercise())
+    assert client._snapshot_stalls == 7 and client.snapshot_wait() == pytest.approx(600, abs=1)
+    assert module._snapshot_stall_wait(1000) == module.SNAPSHOT_STALL_WAIT_MAX_SECONDS == 600.0, "the cap holds for any count"
+
+
+def test_an_upload_that_gets_through_starts_the_cool_down_over():
+    path = Switchable()
+    http, client = _over(path)
+
+    async def exercise():
+        async with http:
+            for stalls in (1, 2, 3, 4):
+                if stalls > 1:
+                    client._snapshot_retry_at = time.monotonic() - 1  # the cool-down ran out
+                with pytest.raises(ConnectorIngestDeferredError):
+                    await _upload(client)
+            assert client._snapshot_stalls == 4 and 479 < client.snapshot_wait() <= 480
+            # The cool-down ran out and the path came back: this one gets through.
+            client._snapshot_retry_at = time.monotonic() - 1
+            path.stall = False
+            await _upload(client)
+            assert client.snapshot_wait() == 0.0 and client._snapshot_stalls == 0
+            # The next stall starts over: a minute, not the eight minutes after four stalls.
+            path.stall = True
+            with pytest.raises(ConnectorIngestDeferredError):
+                await _upload(client)
+            assert client.snapshot_wait() == pytest.approx(60, abs=1), "counted from the upload that got through"
+
+    asyncio.run(exercise())
+    assert _items(path.bodies) == [item["id"] for item in ITEMS]
 
 
 @pytest.mark.parametrize("outage", [httpx.Response(503), httpx.ConnectError("refused"), httpx.ReadTimeout("slow")])
@@ -400,10 +506,9 @@ async def _in_flight(transport: Held, count: int) -> None:
     assert transport.arrived == count, f"expected {count} request(s) waiting on the path, saw {transport.arrived}"
 
 
-def test_stalls_while_a_wait_is_on_are_one_wait(monkeypatch):
+def test_stalls_while_a_wait_is_on_are_one_wait():
     import connector.server.ingest as module
 
-    monkeypatch.setattr(module, "SNAPSHOT_STALL_WAIT_SECONDS", 600)
     # Two uploads admitted together both stall: one slow path, not two.
     stalled = Held(fail={0: [httpx.WriteTimeout("stalled")] * 2})
     http = httpx.AsyncClient(transport=stalled)
@@ -418,16 +523,13 @@ def test_stalls_while_a_wait_is_on_are_one_wait(monkeypatch):
             assert [isinstance(result, ConnectorIngestDeferredError) for result in results] == [True, True]
             with pytest.raises(ConnectorIngestDeferredError) as deferred:
                 await _upload(client, "third")
-            assert deferred.value.retry_in <= 600, "the second stall did not double the wait"
+            assert deferred.value.retry_in <= module.SNAPSHOT_STALL_WAIT_SECONDS, "the second stall did not double the wait"
 
     asyncio.run(exercise())
     assert stalled.attempts == [0, 0] and client._snapshot_stalls == 1
 
 
-def test_an_ordered_upload_that_queued_for_the_lock_is_deferred_once_it_holds_it(monkeypatch):
-    import connector.server.ingest as module
-
-    monkeypatch.setattr(module, "SNAPSHOT_STALL_WAIT_SECONDS", 600)
+def test_an_ordered_upload_that_queued_for_the_lock_is_deferred_once_it_holds_it():
     stalled = Uplink(fail={0: [httpx.WriteTimeout("stalled")]})
     http = httpx.AsyncClient(transport=stalled)
     client = ConnectorIngestClient("http://test", AsyncMock(return_value="token"), lambda: http, lambda _: http)
@@ -442,17 +544,17 @@ def test_an_ordered_upload_that_queued_for_the_lock_is_deferred_once_it_holds_it
             with pytest.raises(ConnectorNetworkError):
                 await _upload(client, "stalled", ordered=False)
             client._post_lock.release()
-            with pytest.raises(ConnectorIngestDeferredError):
+            with pytest.raises(ConnectorIngestDeferredError) as deferred:
                 await queued
+            assert deferred.value.stalled is False, "nothing of it was sent: only the path's cool-down holds it"
 
     asyncio.run(exercise())
     assert stalled.attempts == [0], "the queued upload sent nothing during the wait"
 
 
-def test_an_upload_admitted_earlier_that_gets_through_ends_the_wait(monkeypatch):
+def test_an_upload_admitted_earlier_that_gets_through_ends_the_wait():
     import connector.server.ingest as module
 
-    monkeypatch.setattr(module, "SNAPSHOT_STALL_WAIT_SECONDS", 600)
     # The first upload stalls; the second was admitted before that and gets through.
     held = Held(fail={0: [httpx.WriteTimeout("stalled")]})
     http = httpx.AsyncClient(transport=held)
@@ -467,7 +569,8 @@ def test_an_upload_admitted_earlier_that_gets_through_ends_the_wait(monkeypatch)
             held.release.set()
             with pytest.raises(ConnectorIngestDeferredError) as stalled:
                 await stalling
-            assert stalled.value.retry_in == pytest.approx(600, abs=5), "the upload that found the stall is told the wait too"
+            assert stalled.value.retry_in == pytest.approx(module.SNAPSHOT_STALL_WAIT_SECONDS, abs=5), "the upload that found the stall is told the wait too"
+            assert stalled.value.stalled is True, "and that the stall was its own"
             await through
             assert client._snapshot_stalls == 0 and client.snapshot_wait() == 0.0
             await _upload(client, "after")
@@ -479,7 +582,6 @@ def test_an_upload_admitted_earlier_that_gets_through_ends_the_wait(monkeypatch)
 def test_a_batch_that_stalls_ahead_of_an_ordered_snapshot_also_makes_snapshots_wait(monkeypatch):
     import connector.server.ingest as module
 
-    monkeypatch.setattr(module, "SNAPSHOT_STALL_WAIT_SECONDS", 600)
     monkeypatch.setattr(module, "SYNC_BATCH_RETRY_BACKOFF_SECONDS", 0)
     # A notification batch of 64 KiB chunks that the path cannot take says as much about
     # bulk traffic as a page does. The snapshot itself is not sent.

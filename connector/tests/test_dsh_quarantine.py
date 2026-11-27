@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -710,5 +711,352 @@ def test_a_retry_that_ends_after_its_record_was_replaced_does_not_take_the_newer
             assert relay.retry_owners == {"session": next(iter(relay.retry_tasks))}, "the newer retry keeps its place"
             assert relay._retry_pending("session") is True
         finally:
+            await relay.close()
+    asyncio.run(exercise())
+
+
+async def _elapse(relay: SyncRelay, session_id: str = "session") -> None:
+    """Let the backoff of the session's record run out.
+
+    The retry the refusal scheduled went to sleep for the whole backoff, and it runs
+    first (nothing in the harness yields before this), so the record's time alone
+    does not wake it. The retry is scheduled again, as for a wait that ended early
+    or a relay that was rebuilt; the one still asleep outlives the test."""
+    record = relay.quarantined[session_id]
+    await asyncio.sleep(0)
+    record.retry_at = asyncio.get_running_loop().time()
+    relay._schedule_retry(session_id, record)
+
+
+async def _until(over) -> None:
+    for _ in range(300):
+        if over():
+            return
+        await asyncio.sleep(0.01)
+
+
+def _own_stall(retry_in: float = 60.0) -> ConnectorIngestDeferredError:
+    """What the ingest client raises for the upload whose own page stalled."""
+    return ConnectorIngestDeferredError(retry_in, stalled=True)
+
+
+def test_a_session_whose_own_page_stalled_waits_its_own_backoff_not_the_clients_cool_down():
+    from connector.runtimes.dsh.bridge import sync as relay_module
+
+    async def exercise():
+        wait = [60.0]
+        lines: list[str] = []
+        sink = relay_module.logger.add(lines.append, level="WARNING")
+        harness = Harness(failure=_own_stall())
+        relay = harness.relay
+        relay.snapshot_wait, relay.wait_poll_interval = lambda: wait[0], 0.01
+        try:
+            assert (await harness.capture()).accepted is False
+            record = relay.quarantined["session"]
+            assert record.reason == "history_deferred" and record.stalled is True and record.attempts == 1
+            assert record.stalls == 1
+            remaining = record.retry_at - asyncio.get_running_loop().time()
+            assert 595 < remaining <= 600, "ten minutes of its own, not the minute the client's cool-down takes"
+            (own,) = [line for line in lines if "DSH session history deferred: its upload stalled; session quarantined" in line]
+            # One wait in the line: the session's backoff. (The error at its end repeats the client's.)
+            assert "attempts=1 stalls=1 backoff=600s" in own and "retry_in=" not in own, lines
+            assert "the path cannot carry it now" not in own and own.rstrip().endswith(str(_own_stall())), lines
+            source = harness.published()[-1]
+            assert source["method"] == "session.source.updated" and source["params"]["reason"] == "history_deferred"
+
+            # The client's cool-down ends a minute in and the path takes snapshots again: nothing is asked...
+            wait[0] = 0.0
+            harness.failure = None
+            await asyncio.sleep(0.05)
+            assert harness.requests == [], "the client's wait ending does not shorten the session's backoff"
+            # ...and a capture the plugin makes on its own is withheld for as long.
+            result = await harness.capture(through_seq=20)
+            assert result.accepted is False and result.quarantined is True and harness.uploads == 1
+
+            # Ten minutes on: asked for once, and that capture lands.
+            await _elapse(relay)
+            await _until(lambda: harness.requests)
+            assert harness.requests == [("refreshSync", {"sessionId": "session", "externalSessionId": "native"})]
+            result = await harness.capture(through_seq=20)
+            assert result.accepted is True and relay.quarantined == {}
+            assert harness.uploads == 2 and harness.snapshots == ["session"], "the capture was not withheld"
+        finally:
+            relay_module.logger.remove(sink)
+            await relay.close()
+    asyncio.run(exercise())
+
+
+def test_each_further_stall_of_the_same_session_doubles_its_backoff_up_to_an_hour():
+    async def exercise():
+        harness = Harness(failure=_own_stall())
+        relay = harness.relay
+        relay.snapshot_wait = lambda: 0.0   # the client takes snapshots: only the session's own backoff holds it
+        try:
+            for attempts, backoff in enumerate((600, 1200, 2400, 3600, 3600), start=1):
+                assert (await harness.capture(through_seq=12 + attempts)).accepted is False
+                record = relay.quarantined["session"]
+                assert record.attempts == attempts and record.stalled is True
+                assert record.stalls == attempts
+                remaining = record.retry_at - asyncio.get_running_loop().time()
+                assert backoff - 1 < remaining <= backoff, f"stall {attempts}: {backoff}s due, {remaining:.0f}s recorded"
+                # The backoff runs out and the retry asks; the plugin's fresh capture stalls again.
+                await _elapse(relay)
+                await _until(lambda asked=attempts: len(harness.requests) >= asked)
+            assert harness.requests == [("refreshSync", {"sessionId": "session", "externalSessionId": "native"})] * 5
+        finally:
+            await relay.close()
+    asyncio.run(exercise())
+
+
+def test_a_session_that_stalled_for_weeks_waits_the_cap_and_not_an_overflow():
+    """2 ** (stalls - 1) with stalls in the thousands does not fit a float: the cap is reached
+    long before, and the exponent is bounded."""
+
+    async def exercise():
+        harness = Harness(failure=_own_stall())
+        relay = harness.relay
+        relay.snapshot_wait = lambda: 0.0
+        try:
+            assert (await harness.capture(through_seq=12)).accepted is False
+            record = relay.quarantined["session"]
+            record.stalls, record.retry_at = 5000, 0.0   # weeks of stalls; its backoff ran out
+            assert (await harness.capture(through_seq=13)).accepted is False
+            record = relay.quarantined["session"]
+            assert record.stalls == 5001
+            remaining = record.retry_at - asyncio.get_running_loop().time()
+            assert 3599 < remaining <= 3600, f"the cap, not an overflow: {remaining:.0f}s"
+        finally:
+            await relay.close()
+    asyncio.run(exercise())
+
+
+def test_a_session_deferred_by_another_sessions_stall_waits_only_for_the_clients_cool_down_as_before():
+    from connector.runtimes.dsh.bridge import sync as relay_module
+
+    async def exercise():
+        wait = [60.0]
+        lines: list[str] = []
+        sink = relay_module.logger.add(lines.append, level="WARNING")
+        harness = Harness(failure=ConnectorIngestDeferredError(60.0))
+        relay = harness.relay
+        relay.snapshot_wait, relay.wait_poll_interval = lambda: wait[0], 0.01
+        try:
+            assert (await harness.capture()).accepted is False
+            record = relay.quarantined["session"]
+            assert record.reason == "history_deferred" and record.stalled is False and record.attempts == 1
+            remaining = record.retry_at - asyncio.get_running_loop().time()
+            assert 59 < remaining <= 60, "as long as the client says, as before"
+            (other,) = [line for line in lines if "DSH session history deferred: the path cannot carry it now; session quarantined until the wait is over" in line]
+            assert "attempts=1 retry_in=60s" in other and "its upload stalled" not in other, lines
+            # The client's cool-down ends early: asked at once, as before.
+            wait[0] = 0.0
+            harness.failure = None
+            await _until(lambda: harness.requests)
+            assert len(harness.requests) == 1
+            result = await harness.capture(through_seq=20)
+            assert result.accepted is True and relay.quarantined == {}
+        finally:
+            relay_module.logger.remove(sink)
+            await relay.close()
+    asyncio.run(exercise())
+
+
+def test_refused_unsent_behind_another_sessions_stall_then_stalling_itself_waits_ten_minutes():
+    """Only the session's own stalls grow its backoff. Counted as one, a first own stall that
+    followed one or three refusals unsent waited 20 or 60 minutes, just when several big
+    sessions share a weak path."""
+    async def exercise():
+        wait = [60.0]
+        harness = Harness(failure=ConnectorIngestDeferredError(60.0))
+        relay = harness.relay
+        relay.snapshot_wait, relay.wait_poll_interval = lambda: wait[0], 0.01
+        try:
+            # Another session's page stalled and the client is cooling down: refused unsent.
+            assert (await harness.capture()).accepted is False
+            refused = relay.quarantined["session"]
+            assert refused.stalled is False and refused.attempts == 1 and refused.stalls == 0
+            wait[0] = 0.0
+            await _until(lambda: harness.requests)
+            # The plugin's fresh capture stalls: the session's first own stall.
+            harness.failure = _own_stall()
+            assert (await harness.capture(through_seq=20)).accepted is False
+            record = relay.quarantined["session"]
+            assert record.stalled is True and record.attempts == 2 and record.stalls == 1
+            remaining = record.retry_at - asyncio.get_running_loop().time()
+            assert 595 < remaining <= 600, "ten minutes for a first own stall, not the twenty of a second attempt"
+        finally:
+            await relay.close()
+    asyncio.run(exercise())
+
+
+def test_own_stall_then_another_sessions_stall_then_own_stall_waits_twenty_minutes():
+    """A refusal unsent between two own stalls carries the count on: the second is a second."""
+    async def exercise():
+        wait = [0.0]
+        harness = Harness(failure=_own_stall())
+        relay = harness.relay
+        relay.snapshot_wait, relay.wait_poll_interval = lambda: wait[0], 0.01
+        try:
+            assert (await harness.capture()).accepted is False
+            assert relay.quarantined["session"].stalls == 1
+            await _elapse(relay)
+            await _until(lambda: harness.requests)
+            # Another session's page stalled since: this capture is refused unsent, as before.
+            wait[0], harness.failure = 60.0, ConnectorIngestDeferredError(60.0)
+            assert (await harness.capture(through_seq=20)).accepted is False
+            carried = relay.quarantined["session"]
+            assert carried.stalled is False and carried.attempts == 2 and carried.stalls == 1
+            wait[0] = 0.0
+            await _until(lambda: len(harness.requests) >= 2)
+            # Its next capture stalls: the second own stall, twenty minutes.
+            harness.failure = _own_stall()
+            assert (await harness.capture(through_seq=30)).accepted is False
+            record = relay.quarantined["session"]
+            assert record.stalled is True and record.attempts == 3 and record.stalls == 2
+            remaining = record.retry_at - asyncio.get_running_loop().time()
+            assert 1199 < remaining <= 1200, "its second own stall waits twice ten minutes"
+        finally:
+            await relay.close()
+    asyncio.run(exercise())
+
+
+def test_the_stall_count_of_a_session_starts_over_once_one_of_its_uploads_gets_through():
+    async def exercise():
+        harness = Harness(failure=_own_stall())
+        relay = harness.relay
+        relay.snapshot_wait = lambda: 0.0
+        try:
+            assert (await harness.capture()).accepted is False
+            assert relay.quarantined["session"].attempts == 1
+            await _elapse(relay)
+            await _until(lambda: harness.requests)
+            # Its fresh capture stalls again: the second stall waits twice as long.
+            assert (await harness.capture(through_seq=20)).accepted is False
+            twice = relay.quarantined["session"]
+            assert twice.attempts == 2 and twice.stalls == 2
+            assert 1199 < twice.retry_at - asyncio.get_running_loop().time() <= 1200
+            await _elapse(relay)
+            await _until(lambda: len(harness.requests) >= 2)
+            # The path came back: the upload gets through, and release() drops the record with its count.
+            harness.failure = None
+            assert (await harness.capture(through_seq=30)).accepted is True and relay.quarantined == {}
+            # The session's next stall is its first again.
+            harness.failure = _own_stall()
+            assert (await harness.capture(through_seq=40)).accepted is False
+            record = relay.quarantined["session"]
+            assert record.attempts == 1 and record.stalls == 1 and record.stalled is True
+            remaining = record.retry_at - asyncio.get_running_loop().time()
+            assert 595 < remaining <= 600, "ten minutes, not the forty of a third attempt"
+        finally:
+            await relay.close()
+    asyncio.run(exercise())
+
+
+def test_the_retry_of_a_session_whose_own_page_stalled_waits_too_for_a_client_cool_down_that_began_since():
+    async def exercise():
+        wait = [0.0]
+        harness = Harness(failure=_own_stall())
+        relay = harness.relay
+        relay.snapshot_wait, relay.wait_poll_interval = lambda: wait[0], 0.01
+        try:
+            assert (await harness.capture()).accepted is False
+            # Its backoff runs out while another session's page has the client cooling down again.
+            wait[0] = 30.0
+            await _elapse(relay)
+            await asyncio.sleep(0.05)
+            assert harness.requests == [], "retry_at is due, but the client still waits: nothing is asked"
+            wait[0] = 0.0
+            await _until(lambda: harness.requests)
+            assert len(harness.requests) == 1
+        finally:
+            await relay.close()
+    asyncio.run(exercise())
+
+
+class _Link(httpx.AsyncBaseTransport):
+    """A weak relay link: session A's page never gets through while `a_stalls` is set; everything else passes at once."""
+
+    def __init__(self) -> None:
+        self.a_stalls = True
+        self.accepted: list[str] = []
+
+    async def handle_async_request(self, request):
+        body = json.loads(b"".join([chunk async for chunk in request.stream]))
+        sessions = [n["params"]["sessionId"] for n in body["notifications"] if n["method"] == "timeline.sync"]
+        if self.a_stalls and "A" in sessions:
+            raise httpx.WriteTimeout("stalled")
+        self.accepted.extend(sessions)
+        return httpx.Response(200, json={})
+
+
+def test_one_stalled_page_starves_no_other_session(monkeypatch):
+    """Seen on a weak link: A's page of 45 MiB stalled, and every other session's snapshot was
+    refused unsent behind it, ten minutes at a stretch. Now B's goes out one cool-down after the stall."""
+    import connector.server.ingest as ingest_module
+    from connector.server.ingest import ConnectorIngestClient
+
+    async def exercise():
+        # The ingest client's clock: its minute passes at a stroke. The relay keeps the loop's
+        # clock, so A's ten minutes do not.
+        clock = [1000.0]
+        monkeypatch.setattr(ingest_module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+        lines: list[str] = []
+        sink = ingest_module.logger.add(lines.append, level="WARNING")
+        link = _Link()
+        http = httpx.AsyncClient(transport=link)
+        ingest = ConnectorIngestClient("http://test", AsyncMock(return_value="token"), lambda: http, lambda _: http)
+        host = SimpleNamespace(
+            connector_id="test",
+            publish_runtime_notifications=AsyncMock(),
+            sync_state_write=AsyncMock(),
+            snapshot_wait=ingest.snapshot_wait,
+            publish_runtime_snapshot=lambda runtime, session_id, meta, items, **options: ingest.ingest_snapshot(
+                runtime, "instance", session_id, meta, items, **options),
+        )
+        # The runtime hands the relay the host's wait (see runtime.py); the helper builds a bare relay.
+        relay = ready_relay(host)
+        relay.snapshot_wait = host.snapshot_wait
+        relay.wait_poll_interval = 0.01
+        asks: list[str] = []
+
+        async def capture(session_id: str, through_seq: int = 12):
+            meta = {"externalSessionId": f"native-{session_id}", "sourceState": {"availability": "available"}}
+            await begin_snapshot(relay, session_id=session_id, meta=meta, through_seq=through_seq)
+            await add_page(relay, [item("one", session_id)])
+            return await relay.commit_snapshot()
+
+        async def refresh(method, params=None):
+            assert method == "refreshSync"
+            asks.append(params["sessionId"])
+            await capture(params["sessionId"], 20)   # the plugin answers at once and captures after it does
+            return {"ok": True}
+
+        relay.client.request = refresh
+        try:
+            async with http:
+                # t=0: A's page stalls.
+                assert (await capture("A")).accepted is False
+                a = relay.quarantined["A"]
+                assert a.reason == "history_deferred" and a.stalled is True and a.attempts == 1
+                assert 595 < a.retry_at - asyncio.get_running_loop().time() <= 600, "A waits its ten minutes"
+                (given_up,) = [line for line in lines if "an upload body stalled and was given up" in line]
+                assert "snapshot uploads wait 60s stalls=1" in given_up, given_up
+
+                # B's small snapshot arrives while the client cools down: refused unsent, as every
+                # other session's was before...
+                result = await capture("B")
+                assert result.accepted is False and result.reason == "history_deferred"
+                b = relay.quarantined["B"]
+                assert b.stalled is False and 59 < b.retry_at - asyncio.get_running_loop().time() <= 60
+                assert link.accepted == [] and asks == []
+
+                # ...but one minute later the client takes snapshots again: B is asked for and lands.
+                clock[0] += ingest_module.SNAPSHOT_STALL_WAIT_SECONDS
+                await _until(lambda: "B" in link.accepted)
+                assert asks == ["B"] and link.accepted == ["B"], "B and only B: A's page is not sent again"
+                assert relay.quarantined == {"A": a}, "B is released; A keeps the record it was given"
+                assert a.retry_at - asyncio.get_running_loop().time() > 500, "A still waits most of its ten minutes"
+        finally:
+            ingest_module.logger.remove(sink)
             await relay.close()
     asyncio.run(exercise())

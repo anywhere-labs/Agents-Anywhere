@@ -59,7 +59,10 @@ RECOVERY_SESSIONS_PER_SCAN = 100
 # A session whose timeline the Server refused for good (for example 413 after
 # the pages could not be cut any smaller) is not read or uploaded again until
 # this delay has passed. It doubles with every further refusal, up to the cap,
-# so one session cannot hold up every scan of its runtime.
+# so one session cannot hold up every scan of its runtime. A timeline whose own
+# page stalled waits the same way: with only the ingest client's cool-down it
+# was read and stalled again at every scan (23 times in 22 minutes on a weak
+# link), and the sessions ordered after it in a scan got nothing through.
 TIMELINE_REJECTION_BACKOFF_SECONDS = 600.0
 TIMELINE_REJECTION_BACKOFF_MAX_SECONDS = 6 * 3600.0
 
@@ -462,7 +465,10 @@ class RuntimeSyncRunner:
                 runtime, session, state, active=active, recovering=recovering
             )
         except Exception as exc:
-            if not _permanently_rejected(exc):
+            # A refusal for good and the timeline's own page stalling are kept from the
+            # next scans alike: sent again as soon as the ingest client's cool-down is
+            # over, such a page only stalls again and again, each time holding up the scan.
+            if not (_permanently_rejected(exc) or _own_stall(exc)):
                 raise
             backoff = self._back_off_timeline(session, backoff, exc)
             await self._publish_while_backing_off(session, state, backoff)
@@ -588,7 +594,8 @@ class RuntimeSyncRunner:
         backoff = _TimelineBackoff(failures=failures, retry_at=time.monotonic() + delay)
         self._timeline_backoffs[session.session_id] = backoff
         logger.warning(
-            "existing session timeline rejected; skipping it for {:.0f}s runtime={} session_id={} external_session_id={} failures={} error={}",
+            "existing session timeline {}; skipping it for {:.0f}s runtime={} session_id={} external_session_id={} failures={} error={}",
+            "stalled" if _own_stall(error) else "rejected",
             delay,
             session.runtime,
             session.session_id,
@@ -850,6 +857,16 @@ def _permanently_rejected(error: Exception) -> bool:
         status = error.response.status_code
         return 400 <= status < 500 and status not in {401, 408, 429}
     return False
+
+
+def _own_stall(error: Exception) -> bool:
+    """Whether sending this timeline again now would only stall its page again.
+
+    True when the ingest client gave this timeline's own page up as stalled. A
+    deferral because another upload stalled and the client is cooling down is
+    not: that one is sent as soon as the client takes snapshots again.
+    """
+    return isinstance(error, ConnectorIngestDeferredError) and error.stalled
 
 
 def _timeline_sync_items(
