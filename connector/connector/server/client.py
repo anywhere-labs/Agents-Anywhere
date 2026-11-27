@@ -94,6 +94,7 @@ class BackendRpcClient:
             sync_state_store=self.sync_state_store,
             ingest_notifications=self.ingest_notifications,
             ingest_snapshot=self.ingest_snapshot,
+            snapshot_wait=self.snapshot_wait,
             defer_payload_projection=True,
         )
         if agent_runtime_providers is None:
@@ -151,6 +152,7 @@ class BackendRpcClient:
             ingest_notifications=self.ingest_notifications,
             flush_sync_state=self._flush_sync_state,
             ingest_snapshot=self.ingest_snapshot,
+            snapshot_wait=self.snapshot_wait,
         )
         self._runtime_sync_task: asyncio.Task[None] | None = None
 
@@ -476,6 +478,10 @@ class BackendRpcClient:
             model_connection_result(entry).get("modelConnection"),
             self.agent_runtime_supervisor.config_digest(runtime_id),
         )
+
+    def snapshot_wait(self) -> float:
+        """Seconds left before the ingest client takes snapshots again; 0 when it takes them now."""
+        return self._ingest.snapshot_wait()
 
     async def ingest_snapshot(self, *args, **kwargs) -> None:
         await self._ingest.ingest_snapshot(*args, **kwargs)
